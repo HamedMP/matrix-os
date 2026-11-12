@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
+import { sourceChangeScript } from '../../scripts/ci/changes.mjs';
 
 function readWorkflowStepRun(
   root: string,
@@ -101,6 +101,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
 function runChangeDetectionCheckout(
   checkoutRun: string,
   failuresBeforeSuccess: number,
+  checkedOutSha = '0123456789012345678901234567890123456789',
 ): {
   attempts: string;
   checkoutCompleted: boolean;
@@ -122,8 +123,8 @@ if [[ " $* " == *" fetch "* ]]; then
     echo "fetch did not request the event commit" >&2
     exit 64
   fi
-  if [[ " $* " == *" --depth=1 "* ]]; then
-    echo "event commit fetch must retain full history" >&2
+  if [[ " $* " == *" --depth="* ]] || [[ " $* " != *" --filter=blob:none "* ]]; then
+    echo "event commit fetch must retain full history without historical blobs" >&2
     exit 65
   fi
   attempt=0
@@ -138,6 +139,9 @@ if [[ " $* " == *" fetch "* ]]; then
 fi
 if [[ " $* " == *" checkout --force --detach "* ]]; then
   touch "$FAKE_GIT_CHECKOUT_MARKER"
+fi
+if [[ " $* " == *" rev-parse HEAD "* ]]; then
+  printf '%s\\n' "$FAKE_GIT_CHECKED_OUT_SHA"
 fi
 `,
   );
@@ -154,6 +158,7 @@ fi
         CHECKOUT_MAX_ATTEMPTS: '3',
         CHECKOUT_TIMEOUT_SECONDS: '1',
         FAKE_GIT_CHECKOUT_MARKER: checkoutMarker,
+        FAKE_GIT_CHECKED_OUT_SHA: checkedOutSha,
         FAKE_GIT_FAILURES_BEFORE_SUCCESS: String(failuresBeforeSuccess),
         FAKE_GIT_FETCH_ATTEMPTS: fetchAttempts,
         GH_TOKEN: 'test-token',
@@ -180,7 +185,7 @@ function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
   draft: boolean,
-  options: { action?: string; baseEdit?: boolean } = {},
+  options: { action?: string } = {},
 ): {
   output: string;
   status: number | null;
@@ -237,7 +242,6 @@ exit 64
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
         PR_ACTION: options.action ?? 'synchronize',
-        PR_BASE_EDIT: String(options.baseEdit ?? false),
         PR_DRAFT: String(draft),
       },
     });
@@ -301,36 +305,32 @@ describe('CI workflows', () => {
     }
   });
 
-  it('reruns core CI on a base retarget but not on title or body edits', () => {
+  it('never reruns core CI on title or body edits', () => {
     const path = '.github/workflows/ci.yml';
-    const retarget = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited', baseEdit: true });
-    expect(retarget.output).toContain('trigger_requested=true');
+    expect(parse(readFileSync(join(process.cwd(), path), 'utf8')).on.pull_request.types)
+      .toEqual(['opened', 'ready_for_review', 'synchronize', 'reopened']);
     const metadata = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited' });
     expect(metadata.output).toContain('trigger_requested=false');
     const unknown = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'labeled' });
     expect(unknown.output).toContain('trigger_requested=false');
   });
 
-  it('omits the required check only for drafts and executes authenticated metadata verification', () => {
+  it('omits the required check only for drafts', () => {
     // A draft cannot merge; leaving the required check absent shows "expected", never red.
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const results = workflow.jobs['ci-results'];
     const ignored = "(github.event_name == 'pull_request' && github.event.pull_request.draft == true)";
     expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft (ignored)' || 'CI Results' }}`);
     expect(results.if).toBe(`always() && !${ignored}`);
-    expect(results.steps.find(step => step.name === 'Verify exact-source coverage after metadata edit')?.with.script).toContain('verifyMetadataCoverage');
-    expect(results.steps.find(step => step.name === 'Summarize required CI jobs')?.if).toContain("github.event.action == 'edited'");
+    expect(results.steps.map(step => step.name)).toEqual(['Summarize required CI jobs']);
   });
 
-  it('runs every main commit to completion in its own concurrency group', () => {
+  it('runs every main commit to completion and cancels superseded PR heads', () => {
     const root = process.cwd();
-    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const concurrency = parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')).concurrency;
 
-    expect(workflow).toContain("format('CI coverage-v1 · {0}', github.sha)");
-    expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
-    expect(workflow).toContain('queue: max');
-    expect(workflow).not.toContain('cancel-in-progress:');
-    expect(parse(workflow).concurrency.group).toContain("github.event_name == 'push' && github.sha");
+    expect(concurrency.group).toBe("ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}");
+    expect(concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
     expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
     expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);
   });
@@ -344,7 +344,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
+    expect(aggregate.needs).toEqual(['changes', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -367,7 +367,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
-  it('plans main coverage from the last trusted frontier and wires its range into diff checks', () => {
+  it('diffs main against the commit before the push and wires that range into diff checks', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
@@ -375,18 +375,29 @@ describe('CI workflows', () => {
       workflow.indexOf('\n  typecheck:'),
     );
 
-    expect(changesJob).toContain('timeout-minutes: 3');
-    expect(changesJob).toContain('name: Checkout with bounded retry');
-    expect(changesJob).toContain('CHECKOUT_MAX_ATTEMPTS: "3"');
-    expect(changesJob).toContain('CHECKOUT_TIMEOUT_SECONDS: "30"');
-    expect(changesJob).toContain('CHECKOUT_BACKOFF_SECONDS: "5"');
-    expect(changesJob).toContain('timeout --foreground --kill-after=5s');
+    const changes = parse(workflow).jobs.changes;
+    const checkout = changes.steps.find(step => step.name === 'Checkout with bounded retry');
+    const attempts = Number(checkout.env.CHECKOUT_MAX_ATTEMPTS);
+    const seconds = Number(checkout.env.CHECKOUT_TIMEOUT_SECONDS);
+    const backoff = Number(checkout.env.CHECKOUT_BACKOFF_SECONDS) * attempts * (attempts - 1) / 2;
+    const classifier = readFileSync(join(root, 'scripts/ci/changes.mjs'), 'utf8');
+    const classifierSeconds = Number(classifier.match(/timeout:\s*(\d+)/)?.[1]) / 1000;
+    expect(attempts).toBe(3);
+    expect(seconds).toBeGreaterThanOrEqual(120);
+    expect(seconds).toBeLessThanOrEqual(180);
+    expect(classifierSeconds).toBeGreaterThan(0);
+    expect(changes['timeout-minutes'] * 60).toBeGreaterThan(attempts * (seconds + 5) + backoff + classifierSeconds + 60);
+    expect(changes['timeout-minutes']).toBeLessThanOrEqual(15);
+    expect(checkout.run).toContain('timeout --kill-after=5s');
+    expect(checkout.run).not.toContain('--foreground');
     expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
     expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
     expect(sourceChangeScript).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
     expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
-    expect(sourceChangeScript).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(sourceChangeScript).toContain('git diff --no-renames --name-only "$MAIN_BEFORE" "$GITHUB_SHA"');
+    expect(sourceChangeScript).toContain('echo "bootstrap=true" >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('MAIN_BEFORE: ${{ github.event.before }}');
     expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
@@ -406,6 +417,16 @@ describe('CI workflows', () => {
     expect(result.checkoutCompleted).toBe(true);
     expect(result.stdout).toContain('Checkout fetch attempt 1/3');
     expect(result.stdout).toContain('Checkout fetch attempt 2/3');
+  });
+
+  it('rejects a checkout at another commit even when every fetch succeeds', () => {
+    const checkoutRun = readChangeDetectionCheckoutRun(process.cwd());
+    expect(checkoutRun).toBeTypeOf('string');
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', 0, 'f'.repeat(40));
+    expect(result.status).toBe(1);
+    expect(result.attempts).toBe('3');
+    expect(result.checkoutCompleted).toBe(true);
+    expect(result.stdout).toContain('Checkout fetch failed after 3 attempts');
   });
 
   it('fails change detection after the bounded checkout attempts are exhausted', () => {
@@ -429,7 +450,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('docs-contract:');
     expect(workflow).toContain('name: Docs Contract Tests');
-    expect(workflow).toContain("docs_contract_tests: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests) }}");
+    expect(workflow).toContain("docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}");
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
     expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
@@ -481,7 +502,7 @@ describe('CI workflows', () => {
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
-    expect(readme).toContain('coverage frontier');
+    expect(readme).toContain('Main plans\nagainst the commit before the push');
     expect(readme).not.toContain('ci-supersede.yml');
     expect(readme).toMatch(/newer merge never cancels or delays an\s+older commit's run/);
     expect(readme).toContain('Screenshot workflow removed');
@@ -566,13 +587,13 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Download Docker image artifact');
     expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
     expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
-    expect(workflow).toContain('outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar');
-    expect(workflow).toContain('gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('rm /tmp/matrix-os-dev-ci.tar');
-    expect(workflow).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
-    expect(workflow).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load');
+    expect(workflow).toContain('outputs: type=docker,dest=${{ runner.temp }}/matrix-os-dev-ci.tar');
+    expect(workflow).toContain('gzip -1 < "$RUNNER_TEMP/matrix-os-dev-ci.tar" > "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('rm "$RUNNER_TEMP/matrix-os-dev-ci.tar"');
+    expect(workflow).toContain('test "$(stat -c%s "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz")" -gt 1000000');
+    expect(workflow).toContain('gzip -t "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('gzip -t "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('gzip -dc "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz" | docker load');
     expect(workflow).not.toContain('docker save matrix-os-dev:ci | gzip -1');
 
     const dockerBuildActionUses = workflow.match(/uses: docker\/build-push-action@v7/g) ?? [];
@@ -969,6 +990,22 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
+  it('labels every platform revision with the exact deployed source SHA', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateDeploy = workflow.match(
+      /- name: Deploy tagged revision[\s\S]*?- name: Verify deployed provisioning contract/,
+    )?.[0] ?? '';
+    const productionDeploy = workflow.match(
+      /- name: Deploy production-role revision[\s\S]*?- name: Verify production provisioning contract/,
+    )?.[0] ?? '';
+
+    expect(candidateDeploy).toContain('--labels "matrix-source-sha=${GITHUB_SHA}"');
+    expect(productionDeploy).toContain('--labels "matrix-source-sha=${GITHUB_SHA}"');
+    expect(workflow).toContain('candidate source label is $actual_source_sha, expected $GITHUB_SHA');
+    expect(workflow).toContain('production source label is $actual_source_sha, expected $GITHUB_SHA');
+  });
+
   it('keeps production web replicas free of workers and gives the dedicated worker CPU', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
@@ -1085,6 +1122,32 @@ describe('CI workflows', () => {
     expect(workflow).toContain('${build_id}');
     expect(workflow).toContain('- cache_image:');
     expect(workflow).toContain('${cache_image}');
+  });
+
+  it('prints actionable Cloud Build diagnostics before failing the platform image job', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const buildStep = workflow.slice(
+      workflow.indexOf('      - name: Build platform image'),
+      workflow.indexOf('      - name: Deploy tagged revision'),
+    );
+
+    expect(buildStep).toContain('print_cloud_build_diagnostics()');
+    expect(buildStep).toContain('gcloud builds log "$build_id"');
+    expect(buildStep).toContain("--format='yaml(status,statusDetail,failureInfo,logUrl)'");
+
+    const terminalFailure = buildStep.indexOf('FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)');
+    const diagnosticsAfterFailure = buildStep.indexOf('print_cloud_build_diagnostics', terminalFailure);
+    const failureExit = buildStep.indexOf('exit 1', terminalFailure);
+    expect(terminalFailure).toBeGreaterThan(0);
+    expect(diagnosticsAfterFailure).toBeGreaterThan(terminalFailure);
+    expect(diagnosticsAfterFailure).toBeLessThan(failureExit);
+
+    const pollTimeout = buildStep.indexOf('Timed out waiting for Cloud Build');
+    const diagnosticsAfterTimeout = buildStep.indexOf('print_cloud_build_diagnostics', pollTimeout);
+    const timeoutExit = buildStep.indexOf('exit 1', pollTimeout);
+    expect(pollTimeout).toBeGreaterThan(0);
+    expect(diagnosticsAfterTimeout).toBeGreaterThan(pollTimeout);
+    expect(diagnosticsAfterTimeout).toBeLessThan(timeoutExit);
   });
 
   it('publishes main dev host bundles without deploying the fleet', () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
@@ -13,10 +13,14 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
+import { AppSiteButton } from "../app-sites/AppSiteButton";
+import { publishingAppSlugFromPath } from "../app-viewer-helpers";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 import {
   MacGlassTitleBarChrome,
   MacTitleBarChrome,
@@ -62,6 +66,22 @@ interface CanvasWindowProps {
   deferAppContent?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/only-export-components -- Imperative window-manager entrypoint is intentionally colocated with the Canvas renderer whose positioning stores it coordinates; moving it would create a component-to-component cycle.
+export function openSharedCanvasApp(target: CollaborativeAppDirectoryItem): void {
+  const path = sharedAppWindowPath(target);
+  useWindowManager.getState().openWindow(sharedAppWindowTitle(target), path, 0, { sharedAppTarget: target });
+  requestAnimationFrame(() => {
+    const win = useWindowManager.getState().windows.find((candidate) => candidate.path === path);
+    if (!win || win.minimized) return;
+    const canvas = useCanvasTransform.getState();
+    canvas.focusOnWindow(
+      win,
+      canvas.containerRect?.width ?? window.innerWidth,
+      canvas.containerRect?.height ?? window.innerHeight,
+    );
+  });
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
 export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
@@ -79,6 +99,11 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   const isFullscreen = fullscreenWindowId === win.id;
   const showTitles = useCanvasSettings((s) => s.showTitles);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  const setWindowRef = useCallback((node: HTMLDivElement | null) => {
+    wrapperRef.current = node;
+    setPortalContainer(node);
+  }, []);
   const isMobile = useMobileViewport();
   const themeStyle = useThemeStyle();
   const titleBarVariant = resolveTitleBarVariant(themeStyle);
@@ -89,7 +114,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
-  const isIframeWindow = !win.path.startsWith("__");
+  const isIframeWindow = Boolean(win.sharedAppTarget) || !win.path.startsWith("__");
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
@@ -149,6 +174,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       const cs = getComputedStyle(parent);
       saved.push({ el: parent, overflow: parent.style.overflow, zIndex: parent.style.zIndex });
       if (cs.overflow === "hidden") {
+        // react-doctor-disable-next-line react-hooks-js/immutability -- fullscreen Canvas deliberately and temporarily relaxes ancestor clipping, then the effect cleanup restores every captured inline value.
         parent.style.overflow = "visible";
         if (!canvasContainer) canvasContainer = parent;
       }
@@ -292,6 +318,16 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   const titleBarHeight = 36;
   const titleBarGap = 8;
+  const publishingSlug = publishingAppSlugFromPath(win.path);
+  const publishingControl = publishingSlug && !hidden && (isFullscreen || (isInteractive && showTitles)) ? (
+    <div
+      className="pointer-events-auto"
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <AppSiteButton appSlug={publishingSlug} portalContainer={portalContainer} />
+    </div>
+  ) : null;
 
   // All five title-bar variants share the same handlers; only the visual bar
   // differs. Chrome components live in window/DesignTitleBarChrome.tsx.
@@ -302,6 +338,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
     onClose: () => closeWindow(win.id),
     onMinimize: animateMinimize,
     onMaximize: () => useWindowManager.getState().toggleFullscreen(win.id),
+    rightActions: publishingControl,
   };
 
   const titleBarChrome = (() => {
@@ -321,6 +358,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   const titleBarInner = (
     <div
+      data-canvas-title-bar
       className={titleBarVariant === "mac" || titleBarVariant === "macos-glass"
         ? "absolute cursor-grab active:cursor-grabbing select-none group/titlebar transition-all duration-200"
         : "absolute cursor-grab active:cursor-grabbing select-none"}
@@ -377,7 +415,9 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         )}
         <span className="text-xs font-medium text-foreground/70 truncate">{win.title}</span>
       </div>
-      <div className="w-[42px] shrink-0" />
+      <div className={publishingControl ? "flex min-w-[104px] shrink-0 justify-end" : "w-[42px] shrink-0"}>
+        {publishingControl}
+      </div>
     </div>
   );
 
@@ -478,6 +518,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
                 onOpenSharedChat={chatState.openSharedChat}
                 onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
+                onOpenSharedApp={openSharedCanvasApp}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
@@ -496,8 +537,9 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onSwitchConversation={chatState.switchConversation}
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
+              onDeleteConversation={chatState.deleteConversation}
               onSubmit={chatState.submitMessage}
-              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
+              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} gatewayUrl={chatState.gatewayUrl} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn} onSteerQueuedTurn={chatState.steerQueuedTurn} canSteerQueuedTurns={chatState.canSteerQueuedTurns} chatProjectId={chatState.chatProjectId} projectSkillRootAvailable={chatState.projectSkillRootAvailable} onSetChatProject={chatState.setChatProject}
               onSubmitApproval={chatState.submitApproval}
                 browserPermissions={chatState.browserPermissions}
               onSubmitInput={chatState.submitInput}
@@ -527,7 +569,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview} />
+        <CanvasAppViewer path={win.path} sharedAppTarget={win.sharedAppTarget}
+          active={isFocused && !win.minimized && !hidden && !isPreview} />
       )}
     </>
   );
@@ -543,7 +586,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational positioning wrapper, not a control. The onMouseDown is a pure pointer convenience that raises window focus/z-index; keyboard users focus the window by tabbing into its own interactive children (title-bar buttons and the app content), so no role/onKeyDown is needed. Giving this whole-window container (which wraps an app iframe) a button role would mislabel it for assistive tech.
     <div
-      ref={wrapperRef}
+      ref={setWindowRef}
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={{ ...wrapperStyle, ...windowMotionStyle }}

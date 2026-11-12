@@ -1,6 +1,7 @@
 // IPC handler registration. Every request and response is validated against
 // the shared contract (FR-081); failures are rejected with generic messages
 // and logged with detail on the trusted side only.
+import type { DesktopReleaseChannel } from "../../shared/channel-identity";
 import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeResponse } from "../../shared/ipc-contract";
 import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
@@ -33,12 +34,19 @@ export interface HandlerContext {
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
   toggleWindowMaximize: () => void;
+  /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
+  authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
+  openTerminalWindow: () => Promise<void>;
+  focusMainWindow: () => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
     shouldOpen: boolean;
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
+  getPreviewContext?: () => InvokeResponse<"app:get-preview">;
   getAppVersion: () => string;
+  /** Build channel; only stable builds raise advisory release-alignment notices. */
+  desktopChannel?: DesktopReleaseChannel;
   buildSource: BuildSource | null;
   completeAnalyticsFlush: () => void;
   fetchSupportIdentity: () => Promise<SupportIdentityResponse>;
@@ -184,8 +192,16 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     || typeof cancelOrganizationDriveTransfer !== "function") {
     throw new Error("download service unavailable");
   }
+  if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
+    || typeof ctx.focusMainWindow !== "function") {
+    throw new Error("window services unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
+      if (!ctx.authorizeSender(_event, channel, rawPayload)) {
+        console.warn(`[ipc] rejected untrusted sender on ${channel}`);
+        throw new Error("invalid request");
+      }
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
       if (!parsedRequest.success) {
         console.warn(`[ipc] rejected malformed request on ${channel}`);
@@ -230,7 +246,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
-  handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
+  handle("app:get-preview", () => ctx.getPreviewContext?.() ?? null);
+  handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource, channel: ctx.desktopChannel ?? "stable" }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {
@@ -295,6 +312,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     zoomTarget(event)?.setZoomFactor(factor);
     return { factor };
   });
+  handle("terminal-window:open", async () => {
+    await ctx.openTerminalWindow();
+    return { ok: true };
+  });
+  handle("terminal-window:focus-main", () => {
+    ctx.focusMainWindow();
+    return { ok: true };
+  });
   handle("window:toggle-maximize", () => {
     ctx.toggleWindowMaximize();
     return { ok: true };
@@ -352,6 +377,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
         return await ctx.embeds.open({
           kind: request.kind,
           url: request.url,
+          bounds,
+          active: request.active,
+        });
+      }
+      if (request.kind === "shared-app") {
+        return await ctx.embeds.open({
+          kind: request.kind,
+          target: request.target,
           bounds,
           active: request.active,
         });

@@ -62,6 +62,8 @@ import {
   createTerminalLayoutId,
   type TerminalPersistence,
 } from "@/lib/terminal-window-metadata";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 
 interface OpenApp {
   id: string;
@@ -70,6 +72,7 @@ interface OpenApp {
   terminalLayoutId?: string;
   terminalPersistence?: TerminalPersistence;
   sharedTerminalScopeId?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -162,7 +165,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("appearance");
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("agents-providers");
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
@@ -251,7 +254,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   });
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
-  const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }): boolean => {
+  const openApp = useCallback((app: MobileApp, options?: {
+    sharedTerminalScopeId?: string;
+    sharedAppTarget?: CollaborativeAppDirectoryItem;
+  }): boolean => {
     if (app.path.startsWith("__terminal__") && options?.sharedTerminalScopeId) {
       const currentTerminals = stackRef.current.filter((entry) => entry.app.path.startsWith("__terminal__"));
       if (mobileTerminalCapacityAction(currentTerminals, options.sharedTerminalScopeId).kind === "reject") {
@@ -284,15 +290,27 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       if (existing >= 0) {
         const next = prev.slice();
         const [taken] = next.splice(existing, 1);
-        next.push(taken);
+        next.push(options?.sharedAppTarget ? { ...taken, sharedAppTarget: options.sharedAppTarget } : taken);
         return next;
       }
       const id = `${app.id}:${Date.now().toString(36)}`;
-      return [...prev, { id, app, openedAt: Date.now() }];
+      return [...prev, {
+        id,
+        app,
+        openedAt: Date.now(),
+        ...(options?.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
+      }];
     });
     setView("app");
     return true;
   }, []);
+
+  const openSharedApp = useCallback((target: CollaborativeAppDirectoryItem) => {
+    const path = sharedAppWindowPath(target);
+    openApp({ id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps" }, {
+      sharedAppTarget: target,
+    });
+  }, [openApp]);
 
   const openAppFromBridge = useCallback((name: string, requestedPath: string) => {
     routeAppBridgeLaunch(name, requestedPath, (title, path) => {
@@ -489,7 +507,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge}
+                onOpenSharedApp={openSharedApp} />
             </motion.div>
           );
         })}
@@ -509,7 +528,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 apps={displayApps}
                 onOpen={openApp}
                 onOpenSettings={() => {
-                  setSettingsDefaultSection("appearance");
+                  setSettingsDefaultSection("agents-providers");
                   setSettingsOpen(true);
                 }}
                 openStackCount={openStack.length}
@@ -598,11 +617,13 @@ function MobileAppFrame({
   chat,
   visible,
   onOpenApp,
+  onOpenSharedApp,
 }: {
   openApp: OpenApp;
   visible: boolean;
   chat: ReturnType<typeof useChatContext>;
   onOpenApp: (name: string, path: string) => void;
+  onOpenSharedApp: (target: CollaborativeAppDirectoryItem) => void;
 }) {
   const { app, id: openId } = openApp;
   if (app.path.startsWith("__terminal__")) {
@@ -639,6 +660,7 @@ function MobileAppFrame({
         onOpenSharedChat={chat.openSharedChat}
         onOpenSharedProject={chat.openSharedProject}
         onOpenSharedHome={chat.openSharedHome}
+        onOpenSharedApp={onOpenSharedApp}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 readState={chat.readState}
@@ -657,7 +679,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
         onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
         onSubmitInput={chat.submitInput}
@@ -668,6 +690,9 @@ function MobileAppFrame({
         onComposerDraftConsumed={chat.consumeComposerDraft}
       />
     );
+  }
+  if (openApp.sharedAppTarget) {
+    return <AppViewer path={app.path} sharedAppTarget={openApp.sharedAppTarget} onOpenApp={onOpenApp} />;
   }
   if (app.path.startsWith("__")) {
     // Unknown built-in path: render a clear message instead of falling through

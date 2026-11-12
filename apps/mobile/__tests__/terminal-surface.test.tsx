@@ -1,4 +1,5 @@
 import React from "react";
+import { Linking } from "react-native";
 import { act, render, screen } from "@testing-library/react-native";
 
 const mockInjectJavaScript = jest.fn();
@@ -16,6 +17,7 @@ jest.mock("react-native-webview", () => {
 
 import { TerminalSurface, type TerminalSurfaceHandle } from "../components/TerminalSurface";
 import { TAP_CURSOR_SCRIPT } from "../components/terminal/tap-cursor-script";
+import { TERMINAL_LINK_SCRIPT } from "../components/terminal/link-script";
 
 interface TapCursorInput {
   col: number;
@@ -346,5 +348,95 @@ describe("native mobile terminal surface", () => {
     }));
 
     expect(onBinary).toHaveBeenCalledWith("\x1b]10;?\x07\x80\xff");
+  });
+
+  describe("links in terminal output", () => {
+    // The page runs this as plain script; run the same text here.
+    const { terminalLinkHandler } = new Function(
+      `${TERMINAL_LINK_SCRIPT}; return { terminalLinkHandler };`,
+    )() as {
+      terminalLinkHandler: (post: (message: Record<string, unknown>) => void) => {
+        activate: (event: unknown, uri: unknown) => void;
+      };
+    };
+
+    let openURL: jest.SpyInstance;
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
+      warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+      openURL.mockRestore();
+      warn.mockRestore();
+    });
+
+    it("gives xterm a link handler, so a tapped link never reaches its confirm and window.open", () => {
+      const { webView } = renderSurface();
+      const html = String(webView.props.source.html);
+      expect(html).toContain(TERMINAL_LINK_SCRIPT);
+      expect(html).toContain("linkHandler: terminalLinkHandler(post)");
+
+      const post = jest.fn();
+      terminalLinkHandler(post).activate({}, "https://github.com/login/device");
+      expect(post).toHaveBeenCalledWith({ type: "link", url: "https://github.com/login/device" });
+    });
+
+    it("sends nothing for an address that is not text", () => {
+      const post = jest.fn();
+      terminalLinkHandler(post).activate({}, undefined);
+      terminalLinkHandler(post).activate({}, "");
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("opens a tapped web link in the phone's browser", () => {
+      const { emulatorSays } = renderSurface();
+
+      emulatorSays({ type: "link", url: "https://github.com/login/device" });
+
+      expect(openURL).toHaveBeenCalledTimes(1);
+      expect(openURL).toHaveBeenCalledWith("https://github.com/login/device");
+    });
+
+    it.each([
+      ["a script address", "javascript:alert(1)"],
+      ["a file", "file:///etc/passwd"],
+      ["an app link", "matrixos://sign-in-computer"],
+      ["an address with a password", "https://user:secret@example.com/"],
+      ["an address that is too long", `https://example.com/${"a".repeat(2100)}`],
+      ["text around the address", "see https://example.com/"],
+      ["a value that is not text", 42],
+    ])("opens nothing for %s", (_name, url) => {
+      const { emulatorSays } = renderSurface();
+
+      emulatorSays({ type: "link", url });
+
+      expect(openURL).not.toHaveBeenCalled();
+    });
+
+    it("logs only the error name when the browser cannot open", async () => {
+      openURL.mockRejectedValueOnce(new TypeError("cannot open https://github.com/login/device"));
+      const { emulatorSays } = renderSurface();
+
+      emulatorSays({ type: "link", url: "https://github.com/login/device" });
+      await act(async () => {});
+
+      expect(warn).toHaveBeenCalledWith("[mobile] terminal link unavailable", "TypeError");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("github.com");
+    });
+
+    it("keeps the terminal page: no navigation or new window replaces it", () => {
+      const { webView } = renderSurface();
+
+      expect(webView.props.onShouldStartLoadWithRequest({ url: "about:blank" })).toBe(true);
+      expect(webView.props.onShouldStartLoadWithRequest({ url: "https://github.com/login/device" })).toBe(false);
+      expect(webView.props.onShouldStartLoadWithRequest({ url: "about:blank#x", isTopFrame: false })).toBe(false);
+
+      // With no onOpenWindow, react-native-webview on iOS loads a window.open
+      // request into this WebView, which blanks the terminal.
+      expect(typeof webView.props.onOpenWindow).toBe("function");
+      act(() => webView.props.onOpenWindow({ nativeEvent: { targetUrl: "about:blank" } }));
+      expect(openURL).not.toHaveBeenCalled();
+    });
   });
 });

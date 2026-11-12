@@ -1,36 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useRef, useState } from "react";
+import { useFocusEffect } from "expo-router";
 
 import { useGateway } from "@/app/_layout";
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Button, Spacer, Text } from "@/components/ui";
 import type { GithubDeveloperStatus } from "@/lib/github-developer-access";
-import { isSafeSessionId } from "@/lib/terminal-state";
+import { useGithubDeveloperSetup } from "@/lib/use-github-developer-setup";
+import { GithubDeveloperSetup } from "@/components/settings/GithubDeveloperSetup";
 
 const STATUS_ERROR = "Status unavailable";
-const SETUP_ERROR = "Could not open the setup terminal. Try again.";
 
 export default function DeveloperAccessSettingsScreen() {
-  const router = useRouter();
   const { client } = useGateway();
   const [status, setStatus] = useState<GithubDeveloperStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusError, setStatusError] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const [isStartingSetup, setIsStartingSetup] = useState(false);
   const refreshGeneration = useRef(0);
-  const setupGeneration = useRef(0);
-  const setupInFlight = useRef(false);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      setupGeneration.current += 1;
-    };
-  }, []);
-
   const refreshStatus = useCallback(async () => {
     const generation = ++refreshGeneration.current;
     setIsRefreshing(true);
@@ -54,46 +39,12 @@ export default function DeveloperAccessSettingsScreen() {
     }
   }, [client]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const focusedSetupGeneration = ++setupGeneration.current;
-      void refreshStatus();
-      return () => {
-        refreshGeneration.current += 1;
-        if (setupGeneration.current === focusedSetupGeneration) {
-          setupGeneration.current += 1;
-        }
-      };
-    }, [refreshStatus]),
-  );
-
-  const startSetup = async () => {
-    if (!client || setupInFlight.current) return;
-    const generation = setupGeneration.current;
-    setupInFlight.current = true;
-    setIsStartingSetup(true);
-    setSetupError(null);
-    try {
-      const terminalRef = await client.createGithubDeveloperSetupSession();
-      if (!mounted.current || generation !== setupGeneration.current) return;
-      if (!terminalRef || !isSafeSessionId(terminalRef)) {
-        setSetupError(SETUP_ERROR);
-        return;
-      }
-      router.push({
-        pathname: "/terminal-session/[session]",
-        params: { session: terminalRef },
-      } as never);
-    } catch (error: unknown) {
-      console.warn("[mobile] GitHub developer setup failed", error instanceof Error ? error.name : "unknown");
-      if (mounted.current && generation === setupGeneration.current) {
-        setSetupError(SETUP_ERROR);
-      }
-    } finally {
-      setupInFlight.current = false;
-      if (mounted.current) setIsStartingSetup(false);
-    }
-  };
+  const setup = useGithubDeveloperSetup(client, refreshStatus);
+  useFocusEffect(useCallback(() => {
+    setStatus(null);
+    void refreshStatus();
+    return () => { refreshGeneration.current += 1; };
+  }, [refreshStatus]));
 
   const setupLabel = status?.authenticated ? "Finish setup" : "Connect";
   const setupAccessibilityLabel = status?.authenticated
@@ -123,26 +74,16 @@ export default function DeveloperAccessSettingsScreen() {
       {statusError ? (
         <>
           <Spacer size="xs" />
-          <Text tone="subtle">Refresh the status or finish setup in Terminal.</Text>
+          <Text tone="subtle">Update this Matrix computer, then refresh and try again.</Text>
         </>
       ) : null}
-      {setupError ? (
-        <>
-          <Spacer size="xs" />
-          <Text tone="action">{setupError}</Text>
-        </>
-      ) : null}
+      {status && !status.installed ? <><Spacer size="xs" /><Text tone="subtle">Update this Matrix computer to enable GitHub setup.</Text></> : null}
       <Spacer size="lg" />
-      {!status?.ready ? (
+      <GithubDeveloperSetup setup={setup} />
+      {status?.installed && !status.ready && !setup.view ? (
         <>
-          <Button
-            fullWidth
-            label={setupLabel}
-            accessibilityLabel={setupAccessibilityLabel}
-            loading={isStartingSetup}
-            disabled={!client}
-            onPress={() => void startSetup()}
-          />
+          <Button fullWidth label={setupLabel} accessibilityLabel={setupAccessibilityLabel}
+            loading={setup.pending} disabled={!client} onPress={() => void setup.start()} />
           <Spacer size="md" />
         </>
       ) : null}

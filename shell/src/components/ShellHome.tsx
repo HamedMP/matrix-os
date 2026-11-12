@@ -1,14 +1,16 @@
 "use client";
 
-import { GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { GetStartedAnswersProvider, GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useAuth, useUser } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
+import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
+import { organizationDriveNavigationIdentity } from "@/stores/organization-drive-navigation";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
@@ -21,6 +23,9 @@ import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
 import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
+import { AppSiteOwnerIdentityProvider } from "@/components/app-sites/AppSiteOwnerIdentity";
+import { NativeCollaborationActorProvider } from "@/lib/native-collaboration-identity";
+import { OwnerCollaborationParticipantProvider } from "@/lib/owner-collaboration-participant";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -53,9 +58,18 @@ function readRuntimeSlotFromLocation(): string | null {
   return new URLSearchParams(window.location.search).get("runtime");
 }
 
-type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
+type ShellHomeProps = {
+  initialCollaborationView?: ChatCollaborationView;
+  nativeCollaborationActorId?: string | null;
+};
 
-export function ShellHome({ initialCollaborationView }: ShellHomeProps = {}) {
+const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+
+export function ShellHome(props: ShellHomeProps = {}) {
+  if (localAuthBypass) {
+    return <ShellHomeContent {...props} userId={null} sessionId={null} ownerIdentity="local-user" />;
+  }
+
   // Self-hosted documents render without ClerkProvider, so useAuth must never run there.
   // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
   if (isSelfHostedRuntime()) {
@@ -63,20 +77,46 @@ export function ShellHome({ initialCollaborationView }: ShellHomeProps = {}) {
       <ShellHomeBody
         userId={SELF_HOSTED_SHELL_USER_ID}
         sessionId={null}
-        initialCollaborationView={initialCollaborationView}
+        ownerIdentity={SELF_HOSTED_SHELL_USER_ID}
+        initialCollaborationView={props.initialCollaborationView}
       />
     );
   }
-  return <ClerkShellHome initialCollaborationView={initialCollaborationView} />;
+
+  // Native Electron shared-app views authenticate at the trusted network
+  // boundary and run in a fresh partition without Clerk cookies.
+  if (props.nativeCollaborationActorId) {
+    return <ShellHomeContent {...props} userId={props.nativeCollaborationActorId} sessionId={null} ownerIdentity={props.nativeCollaborationActorId} />;
+  }
+
+  return <ManagedShellHome {...props} />;
 }
 
-function ClerkShellHome({ initialCollaborationView }: ShellHomeProps) {
+function ManagedShellHome(props: ShellHomeProps) {
+  return <ClerkShellHome {...props} />;
+}
+
+function ClerkShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
+  const { user } = useUser();
+  const ownerIdentity = user?.primaryEmailAddress?.emailAddress ?? userId ?? "signed-in-user";
+  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} ownerIdentity={ownerIdentity} />;
+}
+
+function ShellHomeContent({
+  initialCollaborationView,
+  nativeCollaborationActorId,
+  userId,
+  sessionId,
+  ownerIdentity,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined; ownerIdentity: string }) {
   return (
     <ShellHomeBody
       userId={userId}
       sessionId={sessionId}
+      ownerIdentity={ownerIdentity}
       initialCollaborationView={initialCollaborationView}
+      nativeCollaborationActorId={nativeCollaborationActorId}
     />
   );
 }
@@ -84,12 +124,20 @@ function ClerkShellHome({ initialCollaborationView }: ShellHomeProps) {
 function ShellHomeBody({
   userId,
   sessionId,
+  ownerIdentity,
   initialCollaborationView,
-}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
+  nativeCollaborationActorId,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined; ownerIdentity: string }) {
   const isMobile = useMobileViewport();
   // Canonical Chat captures this transport on mount. Shared navigation rewrites
   // history without replacing it; actual Computer switches reload the document.
   const [chatGatewayUrl] = useState(getGatewayUrl);
+  const fileAuthority = organizationDriveNavigationIdentity(userId, sessionId, chatGatewayUrl);
+  useLayoutEffect(() => {
+    if (!localAuthBypass && !nativeCollaborationActorId) {
+      usePreviewWindow.getState().setDraftAuthority(fileAuthority);
+    }
+  }, [fileAuthority, nativeCollaborationActorId]);
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
@@ -147,8 +195,13 @@ function ShellHomeBody({
     });
   }, [isMobile]);
 
+  const gettingStartedScope = JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot]);
   return (
-    <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
+    <AppSiteOwnerIdentityProvider value={ownerIdentity}>
+    <OwnerCollaborationParticipantProvider actorId={userId ?? (localAuthBypass ? "user_e2e" : null)}>
+    <NativeCollaborationActorProvider actorId={nativeCollaborationActorId ?? null}>
+    <GettingStartedVisibilityProvider scope={gettingStartedScope}>
+    <GetStartedAnswersProvider scope={gettingStartedScope}>
     <ChatProvider value={chat}>
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -176,6 +229,10 @@ function ShellHomeBody({
         <ApprovalDialog />
       </div>
     </ChatProvider>
+    </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
+    </NativeCollaborationActorProvider>
+    </OwnerCollaborationParticipantProvider>
+    </AppSiteOwnerIdentityProvider>
   );
 }

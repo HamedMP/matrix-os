@@ -20,10 +20,19 @@
     "./slack-bridge": "./src/slack-bridge.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
     "./data-imports": "./src/data-imports.ts",
-    "./command-preview-policy": "./src/command-preview-policy.mjs"
+    "./command-preview-policy": "./src/command-preview-policy.mjs",
+    "./preview-pair": "./src/preview-pair.ts",
+    "./preview-pair-artifact": "./src/preview-pair-artifact.ts",
+    "./preview-pair-control": "./src/preview-pair-control.ts",
+    "./preview-pair-launch": "./src/preview-pair-launch.ts",
+    "./http-request-deadlines": "./src/http-request-deadlines.ts",
+    "./ai-usage": "./src/ai-usage/index.ts",
+    "./ai-usage/node": "./src/ai-usage/node.ts"
   },
   "imports": {
+    "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
+    "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
     "#local-chat-import/*": "./src/local-chat-import/*.ts",
@@ -38,9 +47,11 @@
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",
+    "#chat-legacy-assistant-text": "./src/chat-legacy-assistant-text.ts",
     "#chat-links": "./src/chat-links.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
+    "#project-agent-context": "./src/project-agent-context.ts",
     "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
@@ -67,6 +78,7 @@
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
+    "#collaborative-app-sharing": "./src/collaborative-app-sharing.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
@@ -90,7 +102,16 @@
     "#jev": "./src/jev.ts",
     "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
+    "#app-gallery": "./src/app-gallery.ts",
+    "#get-started": "./src/get-started.ts",
+    "#get-started-arrival": "./src/get-started-arrival.ts",
+    "#get-started-bot": "./src/get-started-bot.ts",
+    "#get-started-bot-names": "./src/get-started-bot-names.ts",
+    "#get-started-recipe-bots": "./src/get-started-recipe-bots.ts",
+    "#get-started-connect": "./src/get-started-connect.ts",
+    "#get-started-wizard": "./src/get-started-wizard.ts",
     "#getting-started": "./src/getting-started.ts",
+    "#github-developer-access": "./src/github-developer-access.ts",
     "#integration-connections": "./src/integration-connections.ts",
     "#onboarding-widget": "./src/onboarding-widget.ts",
     "#onboarding-widget-catalog": "./src/onboarding-widget-catalog.ts",
@@ -117,7 +138,12 @@
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
     "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
-    "#command-preview": "./src/command-preview.ts"
+    "#command-preview": "./src/command-preview.ts",
+    "#routine-action": "./src/routine-action.ts",
+    "#preview-pair": "./src/preview-pair.ts",
+    "#routine-full-access": "./src/routine-full-access.ts",
+    "#routine-full-access-view": "./src/routine-full-access-view.ts",
+    "#routine-origin-proof": "./src/routine-origin-proof.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -127,7 +153,7 @@
   "dependencies": {
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

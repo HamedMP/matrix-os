@@ -63,7 +63,7 @@ describe("MessageList", () => {
 
     view.rerender(<MessageList messages={[reply, question]} chatId="chat_1" />);
     expect(screen.queryByText("Needs your approval")).toBeNull();
-    expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeNull();
+    expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeUndefined();
     expect(screen.UNSAFE_getAllByType(AnalyticsMask)).toHaveLength(2);
   });
 

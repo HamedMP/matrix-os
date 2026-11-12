@@ -1,9 +1,25 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FilePreviewActions } from "../../packages/ui/src/files/FilePreviewActions";
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  // Radix restores focus on a deferred timer after unmount; let it run before jsdom is torn down.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+});
+it("offers path copying and Files navigation with safe error feedback", async () => {
+  const copyPath = vi.fn(async () => {});
+  const openFiles = vi.fn().mockRejectedValueOnce(new Error("private location")).mockResolvedValue(undefined);
+  render(<FilePreviewActions name="report.md" onCopyPath={copyPath} onOpenInFiles={openFiles}><div>Report</div></FilePreviewActions>);
+  fireEvent.contextMenu(screen.getByText("Report"));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy path report.md" }));
+  await waitFor(() => expect(copyPath).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open in Files report.md" }).hasAttribute("data-disabled")).toBe(false));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in Files report.md" }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not open Files. Try again.");
+  expect(screen.queryByText("private location")).toBeNull();
+});
 it("offers image actions only on right click with safe retry and completion feedback", async () => {
   const download = vi.fn(async () => {});
   const copy = vi.fn().mockRejectedValueOnce(new Error("private failure")).mockResolvedValue(undefined);

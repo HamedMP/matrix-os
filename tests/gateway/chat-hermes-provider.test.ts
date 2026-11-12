@@ -2,6 +2,7 @@ import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/stee
 import { resolveHermesIntegrationCapability } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
+import { resolveHermesPython } from "../../packages/gateway/src/chat/hermes-python-environment.js";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
 import { openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
 
@@ -152,7 +153,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     try {
       const gateway = fakeGateway();
       const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn, jev: {
-        verifyRuntime: async () => undefined, resolveCredentials: async () => ({ provider: "anthropic", model: "claude-sonnet-4-6",
+        verifyRuntime: async () => "/home/matrix/home/.hermes/hermes-agent/venv/bin/python", resolveCredentials: async () => ({ provider: "anthropic", model: "claude-sonnet-4-6",
           apiMode: "anthropic_messages", baseUrl: "https://api.anthropic.com", env: { ANTHROPIC_API_KEY: "synthetic-key" } }),
         preflight: async () => undefined, clearRun: () => undefined, summary: () => null,
       } });
@@ -1018,7 +1019,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "run.completed", outcome: "completed" },
     ]);
     const [command, args, options] = gateway.spawnFn.mock.calls[0]!;
-    expect(command).toBe("/home/matrix/home/.hermes/hermes-agent/venv/bin/python");
+    expect(command).toBe(await resolveHermesPython("/home/matrix/home/.hermes/hermes-agent"));
     expect(args).toEqual(["-u", "-m", "tui_gateway.entry"]);
     expect(options).toMatchObject({
       cwd: "/safe/project",
@@ -1793,17 +1794,20 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("caps streamed Hermes output before it can grow adapter memory without bound", async () => {
+  it("caps streamed Hermes preview without ending the active task", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
     const eventsPromise = collect(adapter.start(baseInput));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
-    gateway.event("message.delta", { text: "x".repeat(96 * 1024 + 1) });
+    const text = "x".repeat(96 * 1024 + 1);
+    gateway.event("message.delta", { text });
+    gateway.event("message.complete", { text, status: "complete" });
 
-    expect(await eventsPromise).toEqual([
-      expect.objectContaining({ type: "run.completed", outcome: "failed" }),
-    ]);
-    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+    const events = await eventsPromise;
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    const preview = events.flatMap(event => event.type === "assistant.delta" ? [event.delta] : []).join("");
+    expect(Buffer.byteLength(JSON.stringify(preview))).toBeLessThanOrEqual(96 * 1024 + 2);
+    expect(preview.match(/Output preview truncated/g)).toHaveLength(1);
   });
 
   it("bounds JSON-RPC requests instead of waiting forever for a response", async () => {

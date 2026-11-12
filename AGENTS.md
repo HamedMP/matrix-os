@@ -96,7 +96,9 @@ file so the rules have one source of truth.
 
 ## Development Rules
 
+- **Reuse the component library first**: inspect existing components before changing UI. Use the project's shadcn controls and shared `packages/ui` components; extract a shared implementation when web and Electron both need it. Avoid native controls styled to imitate library components or parallel custom versions of existing controls.
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
+- **Test effectiveness**: follow `docs/dev/testing-effectiveness.md`. Name the user outcome and fault a test detects; exercise production code, preserve real producer/consumer boundaries, and show regression red/green evidence. Do not test local replicas, freeze invented policy, or add duplicate suites for coverage. Delete only with recorded no-protection or equivalent-retained-coverage proof. Required lanes must execute assertions, not silently skip.
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
@@ -497,6 +499,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
+- **Keep native PR stacks bounded** -- plan for about 5-6 PRs per stack; 10 is the hard maximum, including setup, docs, and rollout layers. Count before planning or adding layers. Consolidate closely related work within per-PR size limits or use sequential follow-on stacks after the previous stack merges. See `docs/dev/stacked-prs.md`.
 - **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
 - **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
@@ -539,7 +542,7 @@ Read these on demand, not every session:
 
 - `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
-- `docs/dev/fast-ci.md` -- when using the `fast-ci` label, reading Linux CI checks (skipped hosted lanes, `Dedicated CI Results`), or merging a fast-ci PR
+- `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
@@ -584,6 +587,10 @@ Read these on demand, not every session:
 - No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
 - TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 1.0.0 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, scope-runtime loopback inference bridge (536-conversational-bots)
 - Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
+- TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML. + Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store. (codex/eng-418-preview-pair-foundation)
+- Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores. (codex/eng-418-preview-pair-foundation)
+- TypeScript 5.5+ strict ES modules on Node.js 24+ + Hono gateway/WS, Next.js 16, React 19, Electron `WebContentsView`, Kysely, Zod 4 (`zod/v4`), existing Matrix direct-session/relay/event infrastructure (2689-collaborative-app-sharing)
+- Owner-controlled PostgreSQL through Kysely for app records and collaboration state; owner filesystem/build cache for immutable qualified app assets; platform PostgreSQL for metadata/routing only (2689-collaborative-app-sharing)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -628,6 +635,15 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
 - Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
+### Unblock tickets
+
+- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
+- It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
+
+### Daily update
+
+- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
@@ -641,5 +657,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current feature plan: specs/536-conversational-bots/plan.md
+Current feature plan: specs/2689-collaboration-preview-pair/plan.md
 <!-- SPECKIT END -->

@@ -1,3 +1,4 @@
+import { codexCatalogObservation } from "../ai-providers/codex-native-observation.js";
 import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
@@ -641,6 +642,7 @@ export function createChatProviderCatalogService(options: {
       : undefined;
     const executableDriverKinds = options.executableDriverKinds;
     const instances = applyHarnessSettings({
+      codexObservation: codexCatalogObservation(settingsResult.status === "fulfilled" ? settingsResult.value : null),
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [

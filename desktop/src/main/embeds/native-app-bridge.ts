@@ -1,4 +1,4 @@
-import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, CollaborationSafeErrorCodeSchema, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
@@ -6,11 +6,17 @@ import { z } from "zod/v4";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { renewBrowserProductSession } from "./browser-product-bootstrap";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
+import { NATIVE_APP_OPEN_CHAT_CHANNEL, NativeAppOpenChatRequestSchema, type NativeAppOpenChatRequest } from "../../shared/native-app-chat";
 import {
   NATIVE_APP_QUERY_CHANNEL,
   NativeAppQuerySchema,
   type NativeAppQuery,
 } from "../../shared/native-app-bridge";
+import {
+  NATIVE_APP_COLLABORATION_CHANNEL, NATIVE_COLLABORATION_ERROR_KEY, NativeAppCollaborationError, NativeAppCollaborationRequestSchema,
+  NativeAppCollaborationStateSchema, type NativeAppCollaborationRequest,
+} from "../../shared/native-app-collaboration";
+import { CollaborationAppActionResponseSchema, CollaborativeAppQueryResponseSchema } from "@matrix-os/contracts";
 
 import {
   NATIVE_APP_GATEWAY_CHANNEL,
@@ -69,10 +75,12 @@ interface NativeAppBridgeOptions {
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
   aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
+  collaborationRequest?: (slug: string, request: NativeAppCollaborationRequest) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown>;
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
+  openChat?: (request: NativeAppOpenChatRequest, signal: AbortSignal) => Promise<void>;
   maxSenders?: number;
   getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
 }
@@ -173,6 +181,69 @@ export function createNativeAppQueryRequester(
   };
 }
 
+export function createNativeAppCollaborationRequester(options: NativeAppQueryRequesterOptions & {
+  legacyRequest: (slug: string, query: NativeAppQuery) => Promise<unknown>;
+}): (slug: string, request: NativeAppCollaborationRequest) => Promise<unknown> {
+  const fetchFn = options.fetchFn ?? fetch;
+  return async (slug, raw) => {
+    if (!/^[A-Za-z0-9_-]{1,256}$/.test(slug)) throw new Error("Collaboration unavailable");
+    const request = NativeAppCollaborationRequestSchema.parse(raw);
+    const token = options.getToken();
+    if (!token) throw new Error("desktop authentication required");
+    const origin = new URL(options.getGatewayOrigin());
+    if (origin.protocol !== "https:" && origin.protocol !== "http:") throw new Error("invalid gateway origin");
+    const generation = options.getAuthGeneration?.();
+    const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
+      && options.getAuthGeneration?.() === generation;
+    const endpoint = new URL(`/api/collaboration/apps/${encodeURIComponent(slug)}/owner-bridge`, origin).toString();
+    const getState = async () => {
+      const response = await fetchFn(endpoint, { method: "GET", redirect: "error",
+        headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      if (!response.ok) throw new Error("Collaboration unavailable");
+      const state = NativeAppCollaborationStateSchema.parse(await readBoundedJson(response));
+      if (!isCurrent()) throw new Error("Collaboration unavailable");
+      return state;
+    };
+    if (request.kind === "state") return getState();
+    const state = await getState();
+    if (!isCurrent()) throw new Error("Collaboration unavailable");
+    if (request.kind === "mutate" && request.scopeId !== (state.participant?.scopeId ?? null)) {
+      throw new NativeAppCollaborationError("forbidden");
+    }
+    const action = { ...request.action, app: slug };
+    if (!state.participant) {
+      const legacyAction = { ...request.action };
+      delete legacyAction.app;
+      const legacy = NativeAppQuerySchema.parse(legacyAction);
+      const result = await options.legacyRequest(slug, legacy);
+      if (!isCurrent()) throw new Error("Collaboration unavailable");
+      return request.kind === "query"
+        ? { result: legacy.action === "count" ? (result as { count: number }).count : result, revision: "0" }
+        : { result, revision: "0", replayed: false };
+    }
+    const body = request.kind === "query" ? { action } : {
+      action, clientRequestId: request.clientRequestId, expectedRevision: request.expectedRevision, scopeId: request.scopeId,
+    };
+    const response = await fetchFn(endpoint, { method: "POST", redirect: "error",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    if (!response.ok) {
+      const failure = await readBoundedJson(response).catch((error: unknown) => {
+        console.warn("[native-app-bridge] error response unavailable", error instanceof Error ? error.name : "UnknownError");
+        return null;
+      });
+      const code = CollaborationSafeErrorCodeSchema.safeParse(
+        failure && typeof failure === "object" && "code" in failure ? failure.code : undefined);
+      throw new NativeAppCollaborationError(code.success ? code.data : "unavailable");
+    }
+    const value = await readBoundedJson(response);
+    if (!isCurrent()) throw new Error("Collaboration unavailable");
+    if (request.kind === "query") return CollaborativeAppQueryResponseSchema.parse(value);
+    const mutation = CollaborationAppActionResponseSchema.parse(value);
+    return { ...mutation, revision: String(mutation.revision) };
+  };
+}
+
 export function createNativeAppGatewayRequester(
   options: NativeAppQueryRequesterOptions,
 ): (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown> {
@@ -224,8 +295,15 @@ export class NativeAppBridge {
   private generateWindow = 0;
   private generateCount = 0;
   private pendingOpens = 0;
+  private pendingChatOpens = 0;
   private pendingCapabilities = 0;
   private readonly options: NativeAppBridgeOptions;
+
+  async initialParticipant(slug: string) {
+    if (!this.options.collaborationRequest) return null;
+    const state = await this.options.collaborationRequest(slug, { kind: "state" });
+    return NativeAppCollaborationStateSchema.parse(state).participant;
+  }
   private readonly maxSenders: number;
 
   constructor(options: NativeAppBridgeOptions) {
@@ -295,6 +373,15 @@ export class NativeAppBridge {
     const parsed = NativeAppQuerySchema.safeParse(rawQuery);
     if (!parsed.success) throw new Error("invalid request");
     return this.options.request(identity.appIdentity, parsed.data);
+  }
+
+  async collaboration(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
+    const identity = this.authorizeCapability(sender);
+    if (!this.options.collaborationRequest) throw new Error("Collaboration unavailable");
+    const request = NativeAppCollaborationRequestSchema.parse(rawRequest);
+    const result = await this.options.collaborationRequest(identity.routeSlug, request);
+    if (this.authorizeCapability(sender) !== identity) throw new Error("not authorized");
+    return result;
   }
 
   async gatewayFetch(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
@@ -396,7 +483,40 @@ export class NativeAppBridge {
     }
   }
 
+  async openChat(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
+    const identity = this.senders.get(sender.id);
+    const authorized = () => identity && this.senders.get(sender.id) === identity
+      && identity.authGeneration === this.options.authGeneration()
+      && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
+    if (!identity || !authorized()) throw new Error("not authorized");
+    if (!this.options.openChat) throw new Error("Chat navigation dependency is unavailable");
+    const request = NativeAppOpenChatRequestSchema.parse(rawRequest);
+    const now = Date.now();
+    if (now - identity.openWindow >= 60_000) { identity.openWindow = now; identity.openCount = 0; }
+    if (identity.openCount >= 10 || this.pendingChatOpens >= 1) throw new Error("Chat navigation rate limit exceeded");
+    identity.openCount++;
+    this.pendingChatOpens++;
+    try {
+      await this.options.openChat(request, identity.controller.signal);
+      if (!authorized()) throw new Error("not authorized");
+    } finally {
+      this.pendingChatOpens--;
+    }
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    if (this.options.collaborationRequest) ipcMain.handle(NATIVE_APP_COLLABORATION_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+        return await this.collaboration({ id: event.sender.id, get url() {
+          if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+          return event.sender.getURL();
+        } }, rawRequest);
+      } catch (error: unknown) {
+        console.warn("[native-app-bridge] collaboration failed", error instanceof Error ? error.name : "UnknownError");
+        return { [NATIVE_COLLABORATION_ERROR_KEY]: error instanceof NativeAppCollaborationError ? error.code : "unavailable" };
+      }
+    });
     if (this.options.capabilityRequest || this.options.aiRoutesRequest) {
       if (!this.options.capabilityRequest || !this.options.aiRoutesRequest) throw new Error("App capability dependencies are required");
       registerNativeAppCapabilityIpc(ipcMain, {
@@ -417,6 +537,21 @@ export class NativeAppBridge {
         } catch (error: unknown) {
           console.warn("[native-app-bridge] launch failed:", error instanceof Error ? error.name : "UnknownError");
           throw new Error("App launch is unavailable");
+        }
+      });
+    }
+    if (this.options.openChat) {
+      ipcMain.handle(NATIVE_APP_OPEN_CHAT_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+        try {
+          if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+          await this.openChat({ id: event.sender.id, get url() {
+            if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+            return event.sender.getURL();
+          } }, rawRequest);
+          return { ok: true };
+        } catch (error: unknown) {
+          console.warn("[native-app-bridge] Chat navigation failed:", error instanceof Error ? error.name : "UnknownError");
+          throw new Error("Chat navigation is unavailable");
         }
       });
     }

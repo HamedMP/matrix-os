@@ -6,6 +6,8 @@ build/
 desktop/build/*
 !desktop/build/dmg-background.png
 !desktop/build/dmg-background@2x.png
+!desktop/build/icon-canary.icns
+!desktop/build/icon-canary.png
 .next/
 *.tsbuildinfo
 .build-stamp
@@ -45,8 +47,13 @@ logs/
 # Local platform data
 packages/platform/data/
 
+# Generated local parity credentials, host bundles, and VM images
+/.amp/in/local-production-parity/
+/.local/production-parity/
+
 # Test artifacts
 /output/chat-dock-badge/
+/output/chat-large-transcript/
 /output/chat-subagent-activity/
 /output/chat-tool-details/
 /output/eng203/
@@ -120,6 +127,10 @@ skills-lock.json
 !.agents/skills/worktree-pr-monitor/**
 !.agents/skills/matrix-handoff/
 !.agents/skills/matrix-handoff/**
+!.agents/skills/unblock-tickets/
+!.agents/skills/unblock-tickets/**
+!.agents/skills/daily-update/
+!.agents/skills/daily-update/**
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**

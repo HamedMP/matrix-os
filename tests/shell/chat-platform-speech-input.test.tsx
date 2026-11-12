@@ -7,6 +7,7 @@ import { ChatInput } from "../../shell/src/components/chat/ChatInput.js";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft.js";
 import type { BrowserSpeechClient } from "../../shell/src/lib/platform-speech-client.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/index.js";
+import { localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils.js";
 
 const requestId = "sp_1788998400000_abcdefghijklmnop";
 
@@ -87,7 +88,7 @@ describe("shared chat platform speech input", () => {
   it("appends transcription to the current editable draft and requires manual Send", async () => {
     const onSubmit = vi.fn();
     render(<TestComposer onSubmit={onSubmit} />);
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Typed first" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     await screen.findByRole("button", { name: "Stop recording" });
@@ -108,7 +109,7 @@ describe("shared chat platform speech input", () => {
     const onSubmit = vi.fn();
     const client = speechClient();
     const view = render(<TestComposer onSubmit={onSubmit} client={client} />);
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Keep this draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const stop = await screen.findByRole("button", { name: "Stop recording" });
@@ -182,7 +183,7 @@ describe("shared chat platform speech input", () => {
     const onSubmit = vi.fn();
     render(<TestComposer onSubmit={onSubmit} adapter={pendingCapture} />);
 
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Keep the pending draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const cancel = await screen.findByRole("button", { name: "Cancel microphone request" });
@@ -201,5 +202,40 @@ describe("shared chat platform speech input", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(lateCancel).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps exhausted Preview dictation visible and disabled on Web Desktop and Web Canvas", async () => {
+    const exhausted = speechClient();
+    vi.mocked(exhausted.capabilities).mockResolvedValue({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: 1_024,
+          maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+      previewQuota: {
+        requestLimit: 3,
+        requestsUsed: 3,
+        requestsRemaining: 0,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    });
+    render(<TestComposer onSubmit={vi.fn()} client={exhausted} />);
+
+    const expiry = localDateTimeWithZone("2026-10-20T16:00:00.000Z");
+    const status = await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`);
+    const microphone = screen.getByRole("button", { name: "Preview dictation allowance exhausted" });
+    const toolbar = microphone.closest('[data-slot="prompt-input-toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.contains(status)).toBe(false);
+    expect(toolbar?.closest(".prompt-card")?.contains(status)).toBe(true);
+    expect(microphone.hasAttribute("disabled")).toBe(true);
   });
 });

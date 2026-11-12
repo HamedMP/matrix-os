@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createOpenClawChatProviderAdapter } from "../../packages/gateway/src/chat/openclaw-provider-adapter.js";
-import type { OpenClawRpcClient } from "../../packages/gateway/src/agent-config/openclaw-rpc.js";
+import type { OpenClawRpcClient, OpenClawRpcEvent } from "../../packages/gateway/src/agent-config/openclaw-rpc.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
 
 const baseInput = {
@@ -13,11 +13,12 @@ const baseInput = {
 
 async function runTool(name: string, args: Record<string, unknown>, failed = false): Promise<CanonicalProviderRunEvent[]> {
   let sequence = 0;
+  let listener: ((event: OpenClawRpcEvent) => void) | undefined;
   const rpc: OpenClawRpcClient = {
     async call(method, _params, _signal, options) {
       if (method !== "agent") throw new Error("Unexpected synthetic RPC method");
       options?.onAccepted?.({ runId: "native-preview-run", sessionKey: "agent:main:preview", agentId: "main", status: "accepted" });
-      const emit = (stream: string, data: Record<string, unknown>) => options?.onEvent?.({ event: "agent", payload: {
+      const emit = (stream: string, data: Record<string, unknown>) => listener?.({ event: "agent", payload: {
         runId: "native-preview-run", sessionKey: "agent:main:preview", seq: ++sequence,
         stream, ts: 1_789_000_000_000 + sequence, data,
       } });
@@ -29,7 +30,7 @@ async function runTool(name: string, args: Record<string, unknown>, failed = fal
       emit("assistant", { delta: "Finished the fixture." });
       return { runId: "native-preview-run", status: "ok" };
     },
-    subscribe() { return { dispose() {} }; },
+    subscribe(receive) { listener = receive; return { dispose() { listener = undefined; } }; },
     async close() {},
   };
   const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });

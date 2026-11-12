@@ -87,22 +87,42 @@ describe("web fetch response limits", () => {
   });
 
   it("uses one deadline across redirect hops instead of resetting it", async () => {
-    let calls = 0;
-    const signals: AbortSignal[] = [];
-    const responses: Response[] = [];
-    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      signals.push(init!.signal!);
-      await new Promise((resolve) => setTimeout(resolve, 35));
-      const response = new Response("redirect", { status: 302, headers: { location: `/hop-${++calls}` } });
-      responses.push(response);
-      return response;
+    // Drive the deadline clock explicitly: a delayed CI timer can legitimately
+    // expire before the first hop returns, so wall time cannot promise two hops.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((delay) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Deadline elapsed", "TimeoutError")), delay);
+      return controller.signal;
     });
-    await expect(createWebFetchTool({ cache, fetcher, timeoutMs: 55 }).execute({ url })).rejects.toThrow("deadline");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(signals[0]).toBe(signals[1]);
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
-    expect(responses.every((response) => response.bodyUsed)).toBe(true);
+    try {
+      let calls = 0;
+      const signals: AbortSignal[] = [];
+      const responses: Response[] = [];
+      const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        signals.push(init!.signal!);
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        const response = new Response("redirect", { status: 302, headers: { location: `/hop-${++calls}` } });
+        responses.push(response);
+        return response;
+      });
+      let settled = false;
+      const operation = createWebFetchTool({ cache, fetcher, timeoutMs: 55 }).execute({ url });
+      operation.then(() => { settled = true; }, () => { settled = true; });
+      const rejected = expect(operation).rejects.toThrow("deadline");
+      await vi.advanceTimersByTimeAsync(35);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(settled).toBe(true);
+      await rejected;
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(signals[0]).toBe(signals[1]);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(responses.every((response) => response.bodyUsed)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("cancels error and redirect response bodies without reading them", async () => {

@@ -1,4 +1,5 @@
 import type { SitePublishing } from '@matrix-os/contracts';
+import type { Generated } from 'kysely';
 export interface SitesTable {
     id: string;
     owner_id: string;
@@ -9,6 +10,7 @@ export interface SitesTable {
     slug: string | null;
     revision: number;
     status: 'published' | 'unpublished';
+    access_mode: Generated<'public' | 'private_link'>;
     active_version: string | null;
     created_at: string;
 }
@@ -26,6 +28,16 @@ export interface SiteVersionsTable {
 export interface SiteAliasesTable {
     slug: string;
     site_id: string | null;
+}
+export interface SiteAccessLinksTable {
+    id: string;
+    site_id: string;
+    claim_token_hash: string;
+    session_token_hash: string | null;
+    created_at: string;
+    claim_expires_at: string;
+    claimed_at: string | null;
+    session_expires_at: string | null;
 }
 export interface SiteOwner {
     ownerId: string;

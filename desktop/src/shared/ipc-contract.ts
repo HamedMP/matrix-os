@@ -1,3 +1,4 @@
+import { DesktopPreviewSummarySchema } from "./preview-pair";
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
@@ -6,8 +7,10 @@
 import { z } from "zod/v4";
 import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
+import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
+import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
 import {
   AppGenerateEventSchema,
   OrganizationDriveUploadFolderSchema,
@@ -42,6 +45,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   MatrixComputerListSchema,
+  CollaborativeAppDirectoryItemSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -63,6 +67,8 @@ import {
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
+import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
+import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 
 const Empty = z.object({}).strict();
 
@@ -79,7 +85,15 @@ const CodingAgentCreateThreadResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), snapshot: AgentThreadSnapshotSchema }).strict(),
   z.object({ ok: z.literal(false), error: SafeClientErrorSchema }).strict(),
 ]);
-const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
+const EmbedStateSchema = z.enum([
+  "loading",
+  "ready",
+  "auth-required",
+  "host-offline",
+  "access-ended",
+  "needs-recheck",
+  "failed",
+]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
@@ -89,6 +103,7 @@ const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
 const NativeAppVersionResultSchema = z.object({
   version: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   source: BuildSourceSchema.nullable(),
+  channel: z.enum(["stable", "beta", "canary", "dev"]),
 }).strict();
 
 const ProfileSchema = z
@@ -135,7 +150,8 @@ const BoundedJsonValue = z.unknown().refine(
   (value) => {
     try {
       return JSON.stringify(value).length <= MAX_STATE_VALUE_BYTES;
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) console.warn("[ipc] state value validation failed", error instanceof Error ? error.name : "UnknownError");
       return false;
     }
   },
@@ -143,11 +159,15 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...TERMINAL_WINDOW_INVOKE,
+  ...LOCAL_TERMINAL_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
+  ...AI_USAGE_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
+  "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
     response: z
@@ -163,6 +183,7 @@ export const INVOKE_CHANNELS = {
     response: z
       .object({
         status: z.enum(["pending", "authorized", "expired"]),
+        reason: z.literal("preview_account_mismatch").optional(),
         profile: ProfileSchema.optional(),
       })
       .strict(),
@@ -353,6 +374,7 @@ export const INVOKE_CHANNELS = {
   // App-wide UI zoom: the renderer owns the persisted factor; main applies it
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
+  "app:get-preview": { request: Empty, response: DesktopPreviewSummarySchema.nullable() },
   "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {
@@ -394,6 +416,12 @@ export const INVOKE_CHANNELS = {
         appIdentity: z.string().min(1).max(256)
           .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
           .optional(),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("shared-app"),
+        target: CollaborativeAppDirectoryItemSchema,
         bounds: BoundsSchema,
         active: z.boolean().optional(),
       }),
@@ -470,8 +498,9 @@ export const INVOKE_CHANNELS = {
           .refine((value) => {
             try {
               return new URL(value).protocol === "https:";
-            } catch {
-              return false;
+            } catch (error: unknown) {
+              if (error instanceof TypeError) return false;
+              throw error;
             }
           }, "https urls only"),
       })
@@ -506,9 +535,12 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_TERMINAL_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
+  "app:open-chat": NativeAppOpenChatEventSchema,
+  "app:open-chat-cancel": NativeAppChatCancellationSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

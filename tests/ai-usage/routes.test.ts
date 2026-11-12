@@ -1,0 +1,38 @@
+import {it,expect,vi} from 'vitest';
+import {createAiUsageRoutes} from '../../packages/gateway/src/ai-usage/routes';
+const data={version:1 as const,events:[],issues:3};
+it('permits only the verified runtime owner to scan fixed roots',async()=>{
+ const scan=vi.fn(async()=>data);let owner:string|null=null;
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=>owner,scan});
+ expect((await app.request('/api/ai-usage')).status).toBe(401);owner='guest';
+ expect((await app.request('/api/ai-usage')).status).toBe(403);expect(scan).not.toHaveBeenCalled();owner='owner';
+ expect((await app.request('/api/ai-usage?home=/other')).status).toBe(400);
+ const response=await app.request('/api/ai-usage');expect(response.status).toBe(200);expect(await response.json()).toEqual(data);
+ expect(scan.mock.calls[0][0]).toEqual(['/owner/.claude/projects','/owner/.codex/sessions','/owner/.codex/archived_sessions']);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+});
+it('reports missing configuration and scan failure without exposing filesystem errors',async()=>{
+ const missing=createAiUsageRoutes({homePath:'/owner',getOwnerId:()=> 'owner'});expect((await missing.request('/api/ai-usage')).status).toBe(503);
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner',scan:async()=>{throw new Error('/private/secret');}});
+ const response=await app.request('/api/ai-usage');expect(response.status).toBe(503);expect(await response.text()).not.toContain('/private');
+});
+it('does not substitute a capped sample when the historical index is unconfigured',async()=>{
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner'});
+ expect((await app.request('/api/ai-usage')).status).toBe(503);
+});
+it('buckets history in the requested reporting timezone and rejects anything else in the query',async()=>{
+ const read=vi.fn(async(timeZone?:string)=>({version:1 as const,events:[],issues:0,timeZone}));
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner',history:{read}});
+ expect(await(await app.request('/api/ai-usage?timeZone=Europe%2FStockholm')).json()).toMatchObject({timeZone:'Europe/Stockholm'});
+ expect((await app.request('/api/ai-usage?timeZone=Asia%2FCalcutta')).status).toBe(200);
+ await app.request('/api/ai-usage');expect(read).toHaveBeenLastCalledWith(undefined);
+ for(const query of ['timeZone=Mars%2FOlympus','timeZone=','timeZone=UTC&home=/other','timeZone=UTC&timeZone=Asia%2FTokyo'])
+  expect((await app.request('/api/ai-usage?'+query)).status,query).toBe(400);
+ expect(read).toHaveBeenCalledTimes(3);
+});
+it('answers not-found on a computer where history collection is switched off, but only to its owner',async()=>{
+ let owner:string|null='guest';const read=vi.fn();
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=>owner,history:{read},enabled:false});
+ expect((await app.request('/api/ai-usage')).status).toBe(403);owner='owner';
+ expect((await app.request('/api/ai-usage')).status).toBe(404);expect(read).not.toHaveBeenCalled();
+});

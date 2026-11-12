@@ -8,6 +8,10 @@ export const SITE_PUBLISH_CLIENT_TIMEOUT_MS = SITE_PUBLISH_PROXY_TIMEOUT_MS + 15
 export const SITE_MAX_FILES = 200;
 export const SITE_MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
 export const SITE_MAX_FORM_BYTES = 16 * 1024;
+export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
+export const SITE_MANAGEMENT_CONTRACT_VERSION = "2";
 const reserved = new Set(["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SiteIdSchema = z.uuid();
@@ -69,9 +73,11 @@ export function validateSiteForm(form: SiteForm, input: unknown) {
 const title = z.string().trim().min(1).max(200);
 const description = z.string().trim().max(1000);
 const baseRevision = z.number().int().min(0).max(2_147_483_647);
+export const SiteAccessModeSchema = z.enum(["public", "private_link"]);
 export const SiteOwnerMutationSchema = z.object({
   title: title.optional(), description: description.optional(),
-  slug: SiteSlugSchema.nullable().optional(), baseRevision: baseRevision.optional(),
+  slug: SiteSlugSchema.nullable().optional(), accessMode: SiteAccessModeSchema.optional(),
+  baseRevision: baseRevision.optional(),
 }).strict();
 export const SiteMetadataSchema = SiteOwnerMutationSchema;
 export const SitePublishRequestSchema = SiteMetadataSchema.extend({ reviewedConfig: SitePublishingSchema });
@@ -94,7 +100,7 @@ export const SiteAssetSchema = z.object({
 }).strict();
 export const SiteDeploymentSchema = z.object({
   title, description: description.default(""), slug: SiteSlugSchema.nullable().optional(),
-  baseRevision: baseRevision.optional(), config: SitePublishingSchema,
+  accessMode: SiteAccessModeSchema.optional(), baseRevision: baseRevision.optional(), config: SitePublishingSchema,
   files: z.array(SiteAssetSchema).min(1).max(SITE_MAX_FILES),
 }).strict().refine((d) => d.files.some((f) => f.path === "index.html"), "App entry point is missing")
   .refine((d) => new Set(d.files.map((f) => f.path)).size === d.files.length, "Duplicate asset")
@@ -105,9 +111,50 @@ export const SiteRecordSchema = z.object({
   id: SiteIdSchema, appSlug: SiteAppSlugSchema, title, description,
   slug: SiteSlugSchema.nullable(), url: SiteUrlSchema, revision: baseRevision,
   status: z.enum(["published", "unpublished"]), activeVersion: SiteIdSchema.nullable(),
+  accessMode: SiteAccessModeSchema.default("public"),
   versions: z.array(SiteVersionSchema).max(50), config: SitePublishingSchema,
 }).strict();
 export type SiteRecord = z.infer<typeof SiteRecordSchema>;
+export const SiteAccessLinkSecretSchema = z.string().length(43).regex(/^[A-Za-z0-9_-]{43}$/);
+export const SiteAccessClaimSchema = z.object({ linkId: SiteIdSchema, token: SiteAccessLinkSecretSchema }).strict();
+export const SiteAccessLinkCreateRequestSchema = z.object({ baseRevision }).strict();
+export const SiteAccessLinkStatusSchema = z.enum(["unclaimed", "claimed", "expired"]);
+export const SiteAccessLinkSummarySchema = z.object({
+  id: SiteIdSchema,
+  status: SiteAccessLinkStatusSchema,
+  createdAt: z.string().datetime(),
+  claimExpiresAt: z.string().datetime(),
+  claimedAt: z.string().datetime().nullable(),
+  sessionExpiresAt: z.string().datetime().nullable(),
+}).strict();
+export type SiteAccessLinkSummary = z.infer<typeof SiteAccessLinkSummarySchema>;
+export const SiteAccessLinkCursorSchema = z.string().max(80).refine((value) => {
+  const [createdAt, id, extra] = value.split("|");
+  return extra === undefined && Boolean(createdAt)
+    && z.string().datetime().safeParse(createdAt).success
+    && SiteIdSchema.safeParse(id).success;
+}, "Invalid access-link cursor");
+export const SiteAccessLinksQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: SiteAccessLinkCursorSchema.optional(),
+}).strict();
+export const SiteAccessLinksResponseSchema = z.object({
+  links: z.array(SiteAccessLinkSummarySchema).max(100),
+  nextCursor: SiteAccessLinkCursorSchema.nullable(),
+}).strict();
+export type SiteAccessLinksResponse = z.infer<typeof SiteAccessLinksResponseSchema>;
+export const SiteAccessLinkCreateResponseSchema = z.object({
+  link: SiteAccessLinkSummarySchema,
+  url: z.url().refine(value => {
+    const url = new URL(value);
+    const [linkId, token, extra] = url.hash.slice(1).replace(/^access=/, "").split(".");
+    return url.origin === "https://matrix.page" && !url.username && !url.password && !url.search
+      && /^#access=/.test(url.hash) && extra === undefined
+      && SiteIdSchema.safeParse(url.pathname.slice(1)).success
+      && SiteIdSchema.safeParse(linkId).success && SiteAccessLinkSecretSchema.safeParse(token).success;
+  }, "Invalid access link URL"),
+}).strict();
+export type SiteAccessLinkCreateResponse = z.infer<typeof SiteAccessLinkCreateResponseSchema>;
 export const SiteIdempotencyKeySchema = z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/);
 export const SiteFormFieldsSchema = z.record(SiteFieldNameSchema, z.union([z.string().max(4000), z.number().finite(), z.boolean()]));
 export const SiteFormSubmissionSchema = z.object({ fields: SiteFormFieldsSchema, idempotencyKey: SiteIdempotencyKeySchema }).strict();

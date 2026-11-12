@@ -6,6 +6,7 @@ export * from "#bots/tasks";
 export * from "#bots/interactions";
 export * from "#bots/authority";
 export * from "#bots/broker";
+export * from "#bots/github-developer";
 export * from "#bots/worker";
 export * from "#bots/view-model";
 export * from "#bots/selection";
@@ -19,3 +20,6 @@ export * from "#bots/image-inference";
 export * from "#bots/owner-personality";
 
 export * from "#bots/tool-display";
+export * from "#bots/routines";
+export * from "#bots/routine-management";
+export * from "#bots/output-policy";

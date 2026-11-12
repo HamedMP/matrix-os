@@ -1,3 +1,4 @@
+import { createCodingOutputBuffer } from "./coding-output-buffer.js";
 import { EventEmitter } from "node:events";
 import { randomBytes } from "node:crypto";
 import type { UserInputAnswerRequest } from "@matrix-os/contracts";
@@ -11,8 +12,6 @@ export const OPENCODE_READ_ONLY_PERMISSIONS = [
   ...["read", "glob", "grep", "list", "question"].map(permission => ({ permission, pattern: "*", action: "allow" })),
 ];
 const MAX_BODY = 1024 * 1024;
-const MAX_STREAM = 8 * 1024 * 1024;
-const RUN_TIMEOUT = 10 * 60_000;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/;
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -45,13 +44,37 @@ export function createOpenCodeServerProcess(
   let desiredExit: number | null = null; let killTimer: ReturnType<typeof setTimeout> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   const emit = (record: Record<string, unknown>) => { if (!stopped) stdout.emit("data", Buffer.from(`${JSON.stringify(record)}\n`)); };
-  async function request(path: string, body?: unknown, method = body === undefined ? "GET" : "POST", timeout = 10_000): Promise<Response> {
+  async function fetchOwned(path: string, body: unknown, method: string, signal: AbortSignal): Promise<Response> {
     const response = await requestFetch(`${origin}${path}`, {
       method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: "error",
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]),
+      signal,
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error("OpenCode request failed"); }
     return response;
+  }
+  async function request(path: string, body?: unknown, method = body === undefined ? "GET" : "POST", timeout = 10_000): Promise<Response> {
+    return fetchOwned(path, body, method, AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]));
+  }
+  // The owned local server has already passed bounded startup and session
+  // verification. A synchronous message waits for the whole agent turn, so a
+  // response deadline here would reintroduce the removed turn deadline. The
+  // event connection alone must acknowledge headers promptly; after that its
+  // stream, and the message response, remain owned by explicit Stop.
+  async function executionRequest(path: string, body?: unknown, waitForHeaders = false): Promise<Response> {
+    const opening = new AbortController();
+    const signal = AbortSignal.any([controller.signal, opening.signal]);
+    const timer = waitForHeaders ? setTimeout(() => opening.abort(), 10_000) : undefined;
+    timer?.unref?.();
+    let rejectAborted!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = () => reject(new Error("OpenCode execution channel closed")); });
+    signal.addEventListener("abort", rejectAborted, { once: true });
+    if (signal.aborted) rejectAborted();
+    const pending = fetchOwned(path, body, body === undefined ? "GET" : "POST", signal);
+    void pending.then(response => {
+      if (signal.aborted) void response.body?.cancel().catch(error => logCodingAgentWarning("OpenCode late response cleanup failed", error));
+    }, () => undefined);
+    try { return await Promise.race([pending, aborted]); }
+    finally { if (timer) clearTimeout(timer); signal.removeEventListener("abort", rejectAborted); }
   }
   const submissions = new Set<Promise<void>>(); // At most 16 active questions; cleared as requests settle.
   const inputs = createOpenCodeInputController(emit, async (path, body) => boundedJson(await request(path, body)));
@@ -83,23 +106,16 @@ export function createOpenCodeServerProcess(
   }
   async function stream(response: Response): Promise<void> {
     if (!response.body) throw new Error("OpenCode event stream missing");
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let bytes = 0; let records = 0;
+    const reader = response.body.getReader();
+    const frames = createCodingOutputBuffer(MAX_BODY, "\n\n");
     try {
       while (!stopped) {
         const result = await reader.read(); if (result.done) { if (!stopped) throw new Error("OpenCode event stream ended"); break; }
-        bytes += result.value.byteLength; if (bytes > MAX_STREAM) throw new Error("OpenCode event limit exceeded");
-        buffer += decoder.decode(result.value, { stream: true }).replace(/\r\n/g, "\n");
-        if (Buffer.byteLength(buffer) > MAX_BODY) throw new Error("OpenCode frame limit exceeded");
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary >= 0 && !stopped) {
-          const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+        frames.push(Buffer.from(result.value), frame => {
+          if (stopped) return false;
           const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
-          if (data) {
-            records++; if (records > 4096) throw new Error("OpenCode event count exceeded");
-            receive(JSON.parse(data));
-          }
-          boundary = buffer.indexOf("\n\n");
-        }
+          if (data) receive(JSON.parse(data));
+        });
       }
     } finally { await reader.cancel(); reader.releaseLock(); }
   }
@@ -152,13 +168,13 @@ export function createOpenCodeServerProcess(
       || verified.permission.some((value, index) => { const rule = object(value); const expected = OPENCODE_READ_ONLY_PERMISSIONS[index]!;
         return rule?.permission !== expected.permission || rule.pattern !== expected.pattern || rule.action !== expected.action; }))) throw new Error("OpenCode read-only session verification failed");
     emit({ type: "step_start", sessionID: sessionId });
-    const subscribed = await request("/event", undefined, "GET", RUN_TIMEOUT);
+    const subscribed = await executionRequest("/event", undefined, true);
     const eventStream = stream(subscribed).catch(fail);
     const separator = model?.indexOf("/") ?? -1;
-    const result = object(await boundedJson(await request(`${path}/message`, {
+    const result = object(await boundedJson(await executionRequest(`${path}/message`, {
       parts: [{ type: "text", text: prompt }],
       ...(model && separator > 0 ? { model: { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) } } : {}),
-    }, "POST", RUN_TIMEOUT)));
+    })));
     if (object(result?.info)?.error || !Array.isArray(result?.parts)) throw new Error("OpenCode message failed");
     for (const part of result.parts) { const parsed = object(part); if (parsed) publishPart(parsed); }
     await Promise.allSettled([...submissions]);

@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import RefreshIcon from "@hugeicons/core-free-icons/RefreshIcon";
-import { Swipeable } from "react-native-gesture-handler";
+import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
 import {
@@ -135,7 +135,7 @@ function SwipeableConnectionRow({
   onRefresh: () => Promise<boolean>;
   onDelete: (resetSwipe: () => void) => void;
 }) {
-  const swipeableRef = useRef<Swipeable>(null);
+  const swipeableRef = useRef<SwipeableMethods>(null);
   const { theme } = useUnistyles();
   const refreshAndClose = async () => {
     const succeeded = await onRefresh();

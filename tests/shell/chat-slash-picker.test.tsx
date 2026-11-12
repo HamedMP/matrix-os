@@ -1,26 +1,29 @@
 import { shellChatAttachmentPolicy } from "../../shell/src/components/chat/attachment-policy.js";
 // @vitest-environment jsdom
 import React,{useState} from "react";
-import {cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {act,cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {afterEach,expect,it,vi} from "vitest";
+import type { ProjectChatSlashScope } from "@matrix-os/ui";
 import {ChatInput} from "../../shell/src/components/chat/ChatInput.js";
 import type {CanonicalProviderInstanceDescriptor} from "@matrix-os/contracts";
 import type {ChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
 import {createCanonicalProviderCatalogFixture} from "../contracts/fixtures/canonical-chat.js";
 vi.mock("../../shell/src/components/chat/ChatMentionPicker.js",()=>({ChatMentionPicker:()=>null}));
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCatalogFixture().instances[0]!,skills:[
  {id:"review",displayName:"Review",description:"Review changes",invocation:"/review"},
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy}: {
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false}: {
  selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
+ projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;
 }) {
  const [text,setText]=useState(initial);
  const composer={text,setText,resources:[],setResources:vi.fn(),setDraft:vi.fn(),clear:vi.fn(),requestId:"req_web_slash"} as unknown as ChatComposerDraft;
- return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={false} attachmentsEnabled
-  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} speechCaptureAdapter={capture}/>;
+ return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={busy} attachmentsEnabled
+  activeRunId={busy ? "run_web_slash" : undefined} onAbortCurrent={busy ? () => undefined : undefined}
+  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
 }
 it("uses only selected runtime descriptors and inserts the selected Skill without submitting",()=>{
  const submit=vi.fn();render(<Harness submit={submit}/>);
@@ -91,7 +94,8 @@ it("positions the slash popup above the textarea card without adding a composer 
  const popup=screen.getByRole("listbox");const input=screen.getByLabelText("Message chat");
  expect(popup.classList.contains("absolute")).toBe(true);
  expect(popup.classList.contains("bottom-full")).toBe(true);
- expect(popup.parentElement).toBe(input.parentElement);
+ // Anchored to the wrapper around the shared prompt card, so it overlays instead of joining the flow.
+ expect(popup.parentElement?.contains(input)).toBe(true);
  expect(popup.parentElement?.classList.contains("relative")).toBe(true);
 });
 
@@ -152,9 +156,115 @@ it("retains Web Chat/Bot text and attachments when the shared managed file limit
  const selected = { ...instance, driverKind: "matrix_pi" as const, models: instance.models.map(model => ({ ...model, supportsVision: true })) };
  const policy = shellChatAttachmentPolicy({ revision: "managed", drivers: [], instances: [selected] }, { instanceId: selected.id, model: selected.models[0]!.id });
  const submit = vi.fn(); const view = render(<Harness initial="Unsent file draft" submit={submit} selected={selected} attachmentPolicy={policy.error}/>);
- fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["x".repeat(1024 * 1024 + 1)], "notes.txt", { type: "text/plain" })] } });
+ fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["x".repeat(10 * 1024 * 1024 + 1)], "notes.txt", { type: "text/plain" })] } });
  fireEvent.click(screen.getByRole("button", { name: "Send" }));
- expect((await screen.findByRole("alert")).textContent).toContain("1 MiB");
+ expect((await screen.findByRole("alert")).textContent).toContain("10 MiB");
  expect((screen.getByLabelText("Message chat") as HTMLTextAreaElement).value).toBe("Unsent file draft");
  expect(screen.getByText("notes.txt")).toBeTruthy(); expect(submit).not.toHaveBeenCalled();
+});
+
+const reviewSkillPath = ".agents/skills/review/SKILL.md";
+const inventory = (name: string) => ({
+  instructions: [], configFiles: [], skills: [{ source: ".agents/skills", name }],
+  mcpServers: [], incompleteSources: [],
+});
+const projectScope = (projectId: string, name: string): ProjectChatSlashScope => ({
+  scope: "test-runtime", projectId, read: vi.fn(async () => inventory(name)),
+});
+
+it("selects a project skill separately from the message and only passes its relative path on Send", async () => {
+  const projectSlash = projectScope("proj_one", "review");
+  const submit = vi.fn();
+  render(<Harness projectSlash={projectSlash} initial="Check this /" submit={submit} />);
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  expect(projectSlash.read).toHaveBeenCalledWith("/api/projects/proj_one/agent-context", expect.any(AbortSignal));
+  expect(screen.queryByRole("option", { name: /research/i })).toBeNull();
+  const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  expect(input.value).toBe("Check this ");
+  expect(screen.getByRole("button", { name: /remove.*review/i })).toBeTruthy();
+  expect(submit).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+  expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+});
+
+it("offers Queue next for a project skill alone during an active run", async () => {
+  const submit = vi.fn();
+  render(<Harness projectSlash={projectScope("proj_one", "review")} initial="Wait for this turn" submit={submit} busy />);
+  const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(submit).not.toHaveBeenCalled();
+
+  fireEvent.change(input, { target: { value: "/" } });
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  expect(input.value).toBe("");
+  expect(screen.getByRole("button", { name: "Remove skill review" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith(
+    expect.stringContaining(reviewSkillPath),
+    undefined,
+    expect.objectContaining({ resources: [], projectSkillProjectId: "proj_one", permissionMode: "supervised" }),
+  ));
+});
+
+it("keeps the typed slash when a sixth project skill cannot be added", async () => {
+  const names = ["alpha", "beta", "delta", "epsilon", "gamma", "zeta"];
+  const read = vi.fn(async () => ({
+    ...inventory("alpha"),
+    skills: names.map(name => ({ source: ".agents/skills", name })),
+  }));
+  render(<Harness projectSlash={{ scope: "test-runtime", projectId: "proj_one", read }} />);
+  const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  for (const name of names) {
+    fireEvent.change(input, { target: { value: `/${name}` } });
+    fireEvent.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
+  }
+  expect(input.value).toBe("/zeta");
+  expect(screen.getByText("Remove a project skill to add another.")).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: /remove skill/i })).toHaveLength(5);
+  fireEvent.click(screen.getByRole("button", { name: "Remove skill alpha" }));
+  fireEvent.click(await screen.findByRole("option", { name: /zeta/i }));
+  expect(input.value).toBe("");
+  expect(screen.getByRole("button", { name: "Remove skill zeta" })).toBeTruthy();
+});
+
+it("discards a selected project skill when the same draft changes projects", async () => {
+  const submit = vi.fn();
+  const view = render(<Harness projectSlash={projectScope("proj_one", "review")} submit={submit} />);
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  expect(screen.getByRole("button", { name: /remove.*review/i })).toBeTruthy();
+  view.rerender(<Harness projectSlash={projectScope("proj_two", "release")} submit={submit} />);
+  expect(screen.queryByRole("button", { name: /remove.*review/i })).toBeNull();
+  const input = screen.getByRole("textbox", { name: "Message chat" });
+  fireEvent.change(input, { target: { value: "/" } });
+  expect(await screen.findByRole("option", { name: /release/i })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /review/i })).toBeNull();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("refuses to send a selected project skill if authority changes during attachment reading", async () => {
+  let current = true;
+  let finishRead: (() => void) | undefined;
+  vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) {
+    Object.defineProperty(this, "result", { configurable: true, value: "data:text/plain;base64,ZXhhbXBsZQ==" });
+    finishRead = () => this.dispatchEvent(new ProgressEvent("load"));
+  });
+  const submit = vi.fn();
+  render(<Harness projectSlash={projectScope("proj_one", "review")} submit={submit} isCurrentAuthority={() => current} />);
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  fireEvent.change(screen.getByLabelText("Attach files", { selector: "input" }), { target: { files: [new File(["example"], "notes.txt", { type: "text/plain" })] } });
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Message chat" }), { key: "Enter" });
+  expect(finishRead).toBeDefined();
+  current = false;
+  await act(async () => finishRead?.());
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("keeps provider commands but suppresses global skills when the checkout is unverified", () => {
+  const selected = { ...instance, commands: [{ id: "plan", displayName: "Plan", description: "Plan changes", invocation: "/plan" }] };
+  render(<Harness selected={selected} projectSlash={{ scope: "test-runtime", projectId: "proj_one", read: null }} />);
+  expect(screen.getByRole("option", { name: /\/plan/ })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /\/review|\/research/ })).toBeNull();
 });

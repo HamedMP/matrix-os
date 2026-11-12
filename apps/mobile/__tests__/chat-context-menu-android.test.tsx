@@ -105,7 +105,7 @@ describe("ChatContextMenu on Android", () => {
   });
 
   it("shares the message's text through the system share sheet", async () => {
-    const share = jest.spyOn(Share, "share").mockResolvedValue({ action: Share.sharedAction });
+    const share = jest.spyOn(Share, "share").mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
     renderMenu({ chatId: "chat_1", messageText: REPLY });
 
     press(openMenu(alert).buttons, "Share");

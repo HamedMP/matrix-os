@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
   MatrixComputerRuntimeSlotSchema,
-  SupportIdentityResponseSchema,
 } from '@matrix-os/contracts';
 import {
   createDeviceFlow,
@@ -14,6 +13,7 @@ import {
 } from './device-flow.js';
 import {
   issueSyncJwt,
+  isSyncJwtConfigError,
   verifySyncJwt,
   type SyncJwtClaims,
 } from './sync-jwt.js';
@@ -28,13 +28,7 @@ import {
 } from './db.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { approvalPage, approvalSuccessPage } from './device-approval-page.js';
-
-function isSyncJwtConfigError(err: unknown): boolean {
-  return err instanceof Error && (
-    err.message === 'verifySyncJwt requires either secret or publicKey' ||
-    err.message.includes('PLATFORM_JWT_SECRET must be at least 32 characters')
-  );
-}
+import { registerSupportIdentityRoute } from './support-identity-routes.js';
 
 const DEVICE_BODY_LIMIT = 4096;
 const DEVICE_EXPIRES_IN_SEC = 2700;
@@ -156,7 +150,10 @@ function normalizeNativeRedirectUri(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 512) return null;
   try {
     const url = new URL(value);
-    if (url.protocol === 'matrixos:' && url.hostname === 'auth') return url.toString();
+    // matrixos-canary lets Matrix OS Canary run beside the stable desktop app.
+    if ((url.protocol === 'matrixos:' || url.protocol === 'matrixos-canary:') && url.hostname === 'auth') {
+      return url.toString();
+    }
     if (url.protocol === 'matrix-os:' && url.hostname === 'device-auth' && url.search === '') {
       return url.toString();
     }
@@ -509,33 +506,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     },
   );
 
-  // GET /api/support/identity -- authenticated Support ownership proof.
-  app.get('/api/support/identity', async (c) => {
-    const auth = c.req.header('authorization');
-    if (!auth?.startsWith('Bearer ')) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
-
-    let claims: SyncJwtClaims;
-    try {
-      claims = await verifySyncJwt(auth.slice(7), { secret: config.jwtSecret });
-    } catch (err: unknown) {
-      if (isSyncJwtConfigError(err)) throw err;
-      return c.json({ error: 'unauthorized' }, 401);
-    }
-
-    if (!config.supportIdentitySecret) {
-      return c.json(SupportIdentityResponseSchema.parse({ status: 'unavailable' }), 503);
-    }
-
-    return c.json(SupportIdentityResponseSchema.parse({
-      status: 'verified',
-      distinctId: claims.sub,
-      identityHash: createHmac('sha256', config.supportIdentitySecret)
-        .update(claims.sub)
-        .digest('hex'),
-    }));
-  });
+  registerSupportIdentityRoute(app, config);
 
   // GET /api/me -- authed via sync JWT. Returns handle + gatewayUrl.
   app.get('/api/me', async (c) => {

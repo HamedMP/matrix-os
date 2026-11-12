@@ -2,7 +2,7 @@
   "expo": {
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
-    "version": "0.2.8",
+    "version": "0.2.10",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
@@ -111,7 +111,8 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "enableMinifyInReleaseBuilds": false
           }
         }
       ]

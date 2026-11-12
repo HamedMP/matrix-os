@@ -1,9 +1,11 @@
+import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
+import { createCodexExecutionIdleProof } from "./coding-agents/codex-execution-observation.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
@@ -11,10 +13,9 @@ import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-in
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
-import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
-import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
+import { configureEdgeRequestDeadlines } from "@matrix-os/contracts/http-request-deadlines";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
   backupModule,
@@ -88,14 +89,12 @@ import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
-import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
-import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
@@ -107,7 +106,6 @@ import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.j
 import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
 import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
-import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import {
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
@@ -166,6 +164,7 @@ import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRepository } from "./onboarding/tool-packs.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
+import { registerGithubDeveloperSetup } from "./github-developer-setup.js";
 import { createProvisioner } from "./provisioner.js";
 import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
@@ -235,13 +234,14 @@ import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
   createPluginRegistry,
-  loadAllPlugins,
   type HookRunner,
   type LoadedPlugin,
   type PluginRegistry,
 } from "./plugins/index.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { startGatewayPlugins } from "./server/plugin-startup.js";
+import { registerSettingsRoutes } from "./server/settings-routes.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
@@ -258,14 +258,14 @@ import { createMessagingRoutes } from "./messages/routes.js";
 import { wsConnectionsActive } from "./metrics.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
-import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
-import { registerFileRoutes } from "./server/file-routes.js";
+import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
+import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -514,7 +514,9 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
-    enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
+    supervisedRunExpiresAt: process.env.MATRIX_SUPERVISED_BROWSER_DEV_SCOPE === undefined
+      ? undefined : supervisedBrowserRuntime?.supervisedRunExpiresAt ?? (() => 0),
+    enabled: isBrowserRuntimeEnabled(process.env), ownerId: terminalRuntimeOwnerId,
     clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
@@ -596,6 +598,8 @@ export async function createGateway(config: GatewayConfig) {
       ? createCodexEventBridge({
         homePath,
         codexExecutable,
+        isExecutionIdle: createCodexExecutionIdleProof({ sessions: () => codingAgentWorkspaceRuntime,
+          control: createCodexControlClient({ homePath }), backgroundRuntime: backgroundAgentRuntime }),
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
@@ -609,6 +613,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      backgroundRuntime: backgroundAgentRuntime,
       codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
       sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,
@@ -1261,19 +1266,6 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
-  const legacyProjectPathAdmission = gatewayCollaboration
-    ? createLegacyProjectPathAdmission({
-        homePath,
-        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-        listOwnerProjects: async (ownerType, ownerId) => {
-          const result = await codingAgentProjectManager.listManagedProjects({
-            visibility: "all",
-            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
-          });
-          return result.projects.map((project) => ({ id: project.id, localPath: project.localPath }));
-        },
-      })
-    : undefined;
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1304,27 +1296,18 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
-  app.route("/api/coding-agents", createCodingAgentRoutes({
+  registerGatewayCodingAgentRoutes(app, {
     service: codingAgentRuntimeSummaryService,
     projectWorkspaces: codingAgentProjectWorkspaceStore,
-    projectMutations: createCodingAgentProjectMutationService({ projects: codingAgentProjectManager }),
+    projects: codingAgentProjectManager,
     threads: codingAgentThreadStore,
     turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
     notificationPreferences: codingAgentNotificationPreferenceStore,
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-      resolveProjectId: async (principal, projectSlug) => {
-        const project = await codingAgentProjectManager.getProject(
-          projectSlug,
-          { type: "user", id: principal.userId },
-        );
-        return project.ok ? project.project.id : null;
-      },
-    } : {}),
-  }));
+    projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
+  });
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
@@ -1391,14 +1374,9 @@ export async function createGateway(config: GatewayConfig) {
     captureGatewayProductEvent, nativeProviderProfileGuard,
   });
 
-  registerFileRoutes(app, {
-    homePath,
-    filePreviewService,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-    ...(legacyProjectPathAdmission ? {
-      getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      projectPathAdmission: legacyProjectPathAdmission,
-    } : {}),
+  registerGatewayProjectFileRoutes(app, {
+    homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
+    projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
   });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -1554,11 +1532,9 @@ export async function createGateway(config: GatewayConfig) {
     chatGptPlanSource: appSubscriptionSource,
   });
   const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
-  const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
-  app.route("/",chatDriveContext.routes);
-  app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
+  const chatDriveContext = await registerGatewayProjectDriveRoutes(app, { repository: chatRepository, collaborationReady: gatewayCollaboration !== null });
   const {
-    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog,
   } = createGatewayChatProviderCatalog({
     canRecoverNativeConnection: principal => codingAgentOwnerIds.includes(principal.userId),
     observationScope: canonicalPhaseDiscovery.observationScope,
@@ -1697,6 +1673,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
+    await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
@@ -1773,6 +1750,16 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const githubSettingsStore = providerSettingsStore;
+  const githubDeveloperSetup = registerGithubDeveloperSetup({
+    app, homePath,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    canWrite: async signal => (await githubSettingsStore.getSnapshot({
+      refresh: true, signal, suppressFundedProbes: true,
+    })).access.mode === "writable",
+    checkReady: async () => (await codingAgentProjectManager.getGithubStatus()).ready,
+  });
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
   matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
     profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
@@ -1783,6 +1770,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
     inventory: () => aiProviderService.getSnapshot(),
+    invalidateNativeLoginCatalog,
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
@@ -1807,20 +1795,19 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
-  app.route("/api/settings", settingsRoutes);
-  if (osViewStateRepository) {
-    app.route("/api/os-view-state", createOsViewStateRoutes({
+  // Persistent collection is opt-in per computer until product review approves a general rollout (spec 651).
+  const usageHistoryEnabled = process.env.MATRIX_AI_USAGE_HISTORY === "true";
+  const usageHistory = usageHistoryEnabled && kyselyInstance && terminalRuntimeOwnerId ? startUsageHistory({db:kyselyInstance,owner:terminalRuntimeOwnerId,home:homePath}) : undefined;
+  registerSettingsRoutes({
+    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId, usageHistory, usageHistoryEnabled,
+    getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+    getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
+    osViewState: osViewStateRepository ? {
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      onChanged: (ownerId, state) => broadcastToOwner(ownerId, {
-        type: "os-view:changed",
-        revision: state.revision,
-        updatedAt: state.updatedAt,
-      }),
-    }));
-  } else {
-    app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
-  }
+      onChanged: (ownerId, state) => broadcastToOwner(ownerId, { type: "os-view:changed", revision: state.revision, updatedAt: state.updatedAt }),
+    } : null,
+  });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
@@ -1873,45 +1860,10 @@ export async function createGateway(config: GatewayConfig) {
     upgradeBodyLimit, logUnexpectedJsonParseFailure,
   });
 
-  // Load plugins and mount their HTTP routes
-  async function initPlugins() {
-    try {
-      loadedPlugins = await loadAllPlugins({
-        homePath,
-        configPaths: pluginsConfig.list,
-        registry: pluginRegistry,
-        systemConfig: {},
-        pluginConfigs: pluginsConfig.configs,
-      });
+  loadedPlugins = await startGatewayPlugins({ app, homePath, pluginsConfig, pluginRegistry, hookRunner, port });
 
-      // T944: Mount plugin HTTP routes
-      for (const route of pluginRegistry.getRoutes()) {
-        const fullPath = `/plugins/${route.pluginId}${route.path}`;
-        const method = route.method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
-        app[method](fullPath, route.handler);
-      }
-
-      // T945: Start background services
-      for (const svc of pluginRegistry.getServices()) {
-        try {
-          await svc.start();
-        } catch (err) {
-          console.error(`[plugin:${svc.pluginId}] Service ${svc.name} failed to start: ${err}`);
-        }
-      }
-
-      // T939: Fire gateway_start hook
-      await hookRunner.fireVoidHook("gateway_start", { port });
-    } catch (err) {
-      console.error("[plugins] Failed to initialize plugins:", err);
-    }
-  }
-
-  await initPlugins().catch((err) => {
-    console.error("[plugins] Plugin init error:", err);
-  });
-
-  const server = serve({ fetch: app.fetch, port });
+  const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
+  configureEdgeRequestDeadlines(server);
   injectWebSocket(server);
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
@@ -1939,6 +1891,7 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       await managedFeatureRestart.close();
+      await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
@@ -1971,6 +1924,7 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
 
+      await usageHistory?.dispose();
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();

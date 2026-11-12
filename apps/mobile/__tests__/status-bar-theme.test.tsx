@@ -83,7 +83,9 @@ const secureStoreItems = new Map<string, string>();
 const themeReaders = new Set<() => void>();
 const appearanceListeners = new Set<AppearanceListener>();
 let activeTheme: ThemeName = "light";
-let systemAppearance: ReturnType<typeof Appearance.getColorScheme> = "light";
+// Wider than React Native's own type, which no longer includes `undefined` or
+// "unspecified": the app still treats either as light.
+let systemAppearance: ColorSchemeName | "unspecified" | null | undefined = "light";
 let app: RenderAPI | null = null;
 
 function subscribeToTheme(notify: () => void) {
@@ -171,7 +173,7 @@ describe("status bar content", () => {
       getToken: jest.fn(async () => null),
     });
 
-    jest.spyOn(Appearance, "getColorScheme").mockImplementation(() => systemAppearance);
+    jest.spyOn(Appearance, "getColorScheme").mockImplementation(() => systemAppearance as ColorSchemeName | null);
     jest.spyOn(Appearance, "addChangeListener").mockImplementation((listener) => {
       appearanceListeners.add(listener);
       return { remove: () => appearanceListeners.delete(listener) } as ReturnType<typeof Appearance.addChangeListener>;
@@ -180,7 +182,7 @@ describe("status bar content", () => {
     // React Native's jest preset pins useColorScheme to light. Serve the
     // device appearance set here, and re-render its readers when it changes.
     jest.mocked(useColorScheme).mockImplementation(
-      () => useSyncExternalStore(subscribeToAppearance, () => systemAppearance) ?? "light",
+      () => (useSyncExternalStore(subscribeToAppearance, () => systemAppearance) ?? "light") as ColorSchemeName,
     );
 
     // The Unistyles jest mock always serves the first registered theme and

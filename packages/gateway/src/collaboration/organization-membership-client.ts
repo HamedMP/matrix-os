@@ -49,7 +49,7 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   private readonly maxEntries: number;
   private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission; membershipEpoch: string }>();
   private readonly inflight = new Map<string, Promise<OrganizationMembershipAssertion>>();
-  /** Keys evicted while their lookup was in flight; the result is delivered but never cached. Bounded by the in-flight cap. */
+  /** Keys evicted while their lookup was in flight; stale results are rejected. Bounded by the in-flight cap. */
   private readonly evictedInflight = new Set<string>();
   /** Lookups admitted in the current tick, sent together on the next microtask. */
   private pending: PendingLookup[] = [];
@@ -113,7 +113,7 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   /**
    * Drops cached evidence for one actor, or for every actor of an organization,
    * so the next request asks the platform again. A pushed denial calls this;
-   * evidence still in flight for an evicted key is settled but not cached.
+   * evidence still in flight for an evicted key is rejected and never cached.
    */
   evict(input: { organizationId: string; actorId?: string }): void {
     const organizationId = CollaborationOrganizationIdSchema.parse(input.organizationId);
@@ -153,9 +153,13 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
         }
         // Additive contract field: a platform that predates it means owner-only (fail closed).
         const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
-        if (!this.evictedInflight.delete(lookup.key)) {
-          this.cache.set(lookup.key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
+        if (this.evictedInflight.delete(lookup.key)) {
+          // A denial may have been acknowledged while this older response was pending.
+          // Dropping only the cache write would still authorize the waiting caller.
+          lookup.reject(new OrganizationMembershipClientError());
+          continue;
         }
+        this.cache.set(lookup.key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
         lookup.resolve(assertion.member
           ? { member: true, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch }
           : { member: false });

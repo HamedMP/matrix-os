@@ -2,10 +2,11 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
+import { CanonicalCreateChatTurnRequestSchema, CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
+import { useChatProviderState } from "../../shell/src/components/chat-app-provider-setup.js";
 import { OPEN_PROVIDER_SETTINGS_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
@@ -14,6 +15,11 @@ vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
   ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// The Projects rail loads its own list; these suites count only provider requests.
+vi.mock("../../shell/src/components/chat/web-projects", async (original) => ({
+  ...await original<typeof import("../../shell/src/components/chat/web-projects")>(),
+  useWebProjects: () => ({ identity: "owner", projects: [], loading: false, error: false, retry: () => {} }),
+}));
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
@@ -118,12 +124,12 @@ describe("Chat canonical provider state", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatApp messages={[]} busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
-    const trigger = screen.getByRole("button", { name: "Choose model and connection" });
+    const trigger = screen.getByRole("button", { name: "Choose model and provider" });
     await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
     const catalogReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat-providers")).length;
     expect(catalogReads()).toBe(1);
     fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Choose model and connection" })).toBeVisible();
+    expect(screen.getByRole("dialog")).toBeVisible();
     expect(catalogReads()).toBe(1);
     expect(within(trigger).queryByRole("status")).toBeNull();
     fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
@@ -168,31 +174,29 @@ describe("Chat canonical provider state", () => {
         onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
       fireEvent.click(screen.getByRole("button", { name: "Open Agents & providers settings" }));
       expect(openSettings).toHaveBeenCalledOnce();
-      expect(screen.queryByRole("dialog", { name: "Choose model and connection" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Choose model and provider" })).toBeNull();
     } finally {
       window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openSettings);
     }
   });
 
-  it("keeps setup out of chat layout and dismisses with Escape, trigger and outside pointer", async () => {
+  it("opens model choices from the composer toolbar and dismisses with Escape and the trigger", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     render(<ChatApp messages={[]} busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
-    await screen.findByText("Pi");
-    const trigger = screen.getByRole("button", { name: "Choose model and connection" });
+    const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+    await waitFor(() => expect(trigger).toHaveTextContent("Claude Sonnet 5"));
+    expect(trigger.closest('[data-slot="prompt-input-toolbar"]')).not.toBeNull();
     fireEvent.click(trigger);
-    const panel = screen.getByRole("dialog", { name: "Choose model and connection" });
-    expect(panel.className).toContain("absolute");
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-slot", "provider-model-picker");
     expect(screen.queryByRole("button", { name: "Connect OpenCode" })).toBeNull();
-    expect(screen.getByText("Execution options").parentElement).not.toHaveAttribute("open");
+    expect(screen.queryByText("Execution options")).toBeNull();
     fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(trigger).toHaveFocus();
+    // Radix restores focus to the trigger right after the popover unmounts.
+    await waitFor(() => expect(trigger).toHaveFocus());
     fireEvent.click(trigger);
     fireEvent.click(trigger);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(trigger);
-    fireEvent.pointerDown(await screen.findByPlaceholderText("Ask anything..."));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -298,8 +302,44 @@ describe("Chat canonical provider state", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     resolveFirst!(Response.json(providerCatalog()));
 
-    expect(await screen.findByText("Pi")).toBeVisible();
+    // The composer toolbar names the harness once the catalog has loaded.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Pi"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains trust after a routine failure and forces the next read while settings trust is suspended", async () => {
+    let finishRoutine!: (response: Response) => void;
+    let finishSettings!: (response: Response) => void;
+    const routineRefresh = new Promise<Response>((resolve) => { finishRoutine = resolve; });
+    const settingsRefresh = new Promise<Response>((resolve) => { finishSettings = resolve; });
+    let catalogReads = 0;
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      catalogReads += 1;
+      if (catalogReads === 1 || catalogReads === 4) return Response.json(providerCatalog());
+      if (catalogReads === 2) return routineRefresh;
+      if (catalogReads === 3) return settingsRefresh;
+      throw new Error("Unexpected provider catalog read");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useChatProviderState());
+    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(catalogReads).toBe(2));
+    await act(async () => finishRoutine(new Response("{}", { status: 503 })));
+    await waitFor(() => expect(result.current.unavailable).toBe(true));
+    expect(result.current.hasTrustedCatalog).toBe(true);
+
+    act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+    await waitFor(() => expect(catalogReads).toBe(3));
+    expect(result.current.hasTrustedCatalog).toBe(false);
+    await act(async () => finishSettings(new Response("{}", { status: 503 })));
+    expect(result.current.hasTrustedCatalog).toBe(false);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(catalogReads).toBe(4));
+    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("refresh=true");
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {
@@ -310,27 +350,28 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true$/);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/);
 
     fireEvent(window, new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true");
   });
 
   it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
     const fetchMock = vi.fn(async () => Response.json(providerCatalog()));
     vi.stubGlobal("fetch", fetchMock);
-    const onSubmit = vi.fn();
+    const onSubmit = vi.fn(async () => false);
     render(<ChatApp
       messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Pi")).toBeVisible();
-    const draft = screen.getByPlaceholderText("Ask anything...");
+    // The composer toolbar names the harness once the catalog has loaded.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Pi"));
+    const draft = screen.getByPlaceholderText("How can I help you today?");
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
 
     expect(await screen.findByRole("option", { name: "Claude Sonnet 5 via Pi" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi" }).querySelector("img"))
@@ -339,26 +380,36 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByText("Not supported in this runtime")).toBeVisible();
     expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true$/), expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/), expect.any(Object));
 
-    fireEvent.click(screen.getByText("Execution options"));
-    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
-    fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
-    fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
-    fireEvent.click(screen.getByLabelText("Thinking"));
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+    // Like Electron Desktop, the toolbar offers composer options only; advanced ones keep their saved value.
+    expect(screen.queryByRole("button", { name: "Thinking" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Interaction mode" })).toBeNull();
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
       "Keep this draft", undefined, {
         displayText: "Keep this draft",
+        clientRequestId: expect.any(String),
+        onAccepted: expect.any(Function),
         instanceId: "pi_default",
         model: "anthropic:claude-sonnet-5",
-        interactionMode: "plan",
+        interactionMode: "default",
         permissionMode: "full_access",
-        modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: true }],
+        modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: false }],
       },
     ));
+    const options = onSubmit.mock.calls[0]![2]!;
+    expect(CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.safeParse(options.clientRequestId).success).toBe(true);
+    expect(draft).toHaveValue("Keep this draft");
+    act(() => { options.onAccepted?.(); });
+    expect(draft).toHaveValue("");
   });
 
   it("keeps offline drafts editable while disabling submission for settings-disabled harnesses", async () => {
@@ -369,8 +420,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Choose a model to start chatting.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    expect(await screen.findByPlaceholderText("Write or dictate a draft — connect a harness to send")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     fireEvent.click(await screen.findByRole("button", { name: "Pi agent, Disabled in Settings" }));
     expect(await screen.findByText("Disabled in Settings")).toBeVisible();
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
@@ -392,10 +443,12 @@ describe("Chat canonical provider state", () => {
       onProviderSetupAction={onProviderSetupAction}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     fireEvent.click(await screen.findByRole("button", { name: "Pi agent, Disabled in Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Configure Pi" }));
-    fireEvent.click(screen.getByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
+    // A setup action closes the picker, as on Electron Desktop.
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(await screen.findByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
 
     expect(onProviderSetupAction).toHaveBeenNthCalledWith(
@@ -420,7 +473,7 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Choose a model to start chatting.")).toBeVisible();
+    expect(await screen.findByPlaceholderText("Write or dictate a draft — connect a harness to send")).toBeVisible();
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: "Keep this bound draft" } });
@@ -444,22 +497,20 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.change(await screen.findByPlaceholderText("How can I help you today?"), { target: { value: "Continue" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     const opus = await screen.findByRole("option", { name: "Claude Opus 5 via Pi" });
     await waitFor(() => expect(opus).toBeEnabled());
     fireEvent.click(opus);
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByText("Execution options"));
-    fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
-    fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Continue", undefined, expect.objectContaining({
       instanceId: "pi_default",
       model: "anthropic:claude-opus-5",
-      interactionMode: "plan",
+      interactionMode: "default",
       permissionMode: "full_access",
       modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: false }],
     })));
@@ -474,8 +525,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Use OpenCode" } });
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.change(await screen.findByPlaceholderText("How can I help you today?"), { target: { value: "Use OpenCode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     fireEvent.click(await screen.findByRole("button", { name: "OpenCode agent, Available" }));
     const openCode = await screen.findByRole("option", { name: "GPT-5 via OpenCode" });
     expect(openCode).toBeEnabled();
@@ -524,7 +575,7 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     fireEvent.click(await screen.findByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
     fireEvent.click(await screen.findByRole("button", { name: "Connect OpenCode" }));
 
@@ -540,8 +591,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Hello" } });
-    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.change(await screen.findByPlaceholderText("How can I help you today?"), { target: { value: "Hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.queryByText("Channels")).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -549,4 +600,66 @@ describe("Chat canonical provider state", () => {
       promptText: expect.anything(),
     })));
   });
+});
+
+it("retains a saved native Codex choice during checking rather than choosing another provider", async () => {
+  const base = providerCatalog().instances[0]!;
+  const selection = { instanceId: "codex_default", modelId: "gpt-5.6-sol" };
+  window.localStorage.setItem("matrix:canonical-chat-provider-selection", JSON.stringify({ key: `${selection.instanceId}:${selection.modelId}`, options: [], interactionMode: "default", permissionMode: "supervised" }));
+  const catalog = { revision: "catalog_shell", drivers: [{ kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }, { kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }], instances: [
+    { ...base, id: selection.instanceId, driverKind: "codex", displayName: "Codex", availability: "unavailable", observationState: "checking", unavailabilityReason: "runtime_unavailable", models: [{ ...base.models[0], id: selection.modelId, displayName: "GPT-5.6-Sol", availability: "unavailable" }], defaultSelection: undefined }, base,
+  ] };
+  CanonicalProviderCatalogSchema.parse(catalog);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(catalog), { status: 200 })));
+  const { result } = renderHook(() => useChatProviderState());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.displaySelection).toEqual(selection);
+  expect(result.current.selected).toBeNull();
+  expect(result.current.selectionStatus).toBe("Checking Codex access…");
+});
+
+it.each([false, true])("keeps explicitly chosen unavailable Matrix models selectable and saved without enabling Web send (mobile=%s)", async mobile => {
+  const catalog = providerCatalog(true, true);
+  const base = catalog.instances[0]!;
+  catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" });
+  catalog.instances.push({ ...base, id: "matrix_pi_default", driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
+    availability: "unavailable", connectionState: "unavailable", unavailabilityReason: "runtime_unavailable", options: [], defaultSelection: undefined,
+    models: base.models.map(model => ({ ...model, availability: "unavailable" as const })) });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
+  const onSubmit = vi.fn();
+  const props = { messages: [], busy: false, connected: true, conversations: [], mobile, onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit };
+  const view = render(<ChatApp {...props} />);
+  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-busy", "false"));
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI unavailable" }));
+  const model = screen.getByRole("option", { name: "Claude Opus 5 via Matrix AI" });
+  expect(model).toBeEnabled();
+  fireEvent.click(model);
+  expect(trigger).toHaveAttribute("data-provider-instance", "matrix_pi_default");
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(trigger.title).toContain("Unavailable");
+  fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "Keep my intended model" } });
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(onSubmit).not.toHaveBeenCalled();
+  const managed = catalog.instances.find(instance => instance.id === "matrix_pi_default")!;
+  managed.connectionState = "credit_reserved";
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+  await waitFor(() => expect(trigger.title).toContain("Credit reserved"));
+  expect(trigger).toHaveAttribute("data-provider-instance", "matrix_pi_default");
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  managed.availability = "available";
+  managed.connectionState = "ready";
+  delete managed.unavailabilityReason;
+  managed.models.forEach(model => { model.availability = "available"; });
+  managed.defaultSelection = { instanceId: managed.id, model: managed.models[0]!.id };
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(trigger.title).not.toContain("Unavailable");
+  view.unmount();
+  render(<ChatApp {...props} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveAttribute("data-model", "anthropic:claude-opus-5"));
+  expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveAttribute("data-provider-instance", "matrix_pi_default");
 });

@@ -203,7 +203,7 @@ describe("shared project Chat routes", () => {
     await expect(repository.applyDirectoryEvent(chatRoute({ metadataRevision: 6, parentScopeId: undefined, recipients: [{ actorId: owner, status: "accepted" }] })))
       .rejects.toMatchObject({ code: "conflict" });
     await expect(repository.applyDirectoryEvent(chatRoute({ metadataRevision: 4, parentScopeId: undefined, recipients: [{ actorId: invited, status: "accepted" }] })))
-      .resolves.toBeUndefined();
+      .resolves.toBe(false);
     expect(await repository.getDirectoryRoute(chatScope)).toMatchObject({ parentScopeId: projectScope });
     expect((await repository.listForActorPage(invited, "accepted", { limit: 50 })).items).toEqual([]);
   });

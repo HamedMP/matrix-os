@@ -21,6 +21,10 @@ export interface GettingStartedSnapshot {
   steps: GettingStartedStep[];
   completedCount: number;
   loaded: boolean;
+  /** Signed-in coding agents ("codex", "claude"); null while unknown. */
+  availableAgents: string[] | null;
+  /** Connected integration services; null while unknown. */
+  connectedServices: string[] | null;
 }
 
 export interface GettingStartedResults {
@@ -40,7 +44,7 @@ const STEP_LABELS: Record<GettingStartedStepId, string> = {
   billing: "Set up billing",
 };
 
-const GithubStatusSchema = z.object({ authenticated: z.boolean() }).passthrough();
+const GithubStatusSchema = z.object({ ready: z.boolean() }).passthrough();
 const AgentStatusSchema = z.object({
   agents: z.array(z.object({
     agent: z.string().max(64),
@@ -106,6 +110,8 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
   return {
     loaded: false,
     completedCount: 0,
+    availableAgents: null,
+    connectedServices: null,
     steps: GETTING_STARTED_STEP_IDS.map((id) => ({
       id,
       label: STEP_LABELS[id],
@@ -114,29 +120,27 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
   };
 }
 
+/** The agents the agent step counts (Codex, Claude) that are signed in. */
+function availableAgents(value: unknown): string[] {
+  return (AgentStatusSchema.parse(value).agents ?? [])
+    .filter((agent) => (agent.agent === "codex" || agent.agent === "claude") && agent.status === "available")
+    .map((agent) => agent.agent);
+}
+
 export function deriveGettingStartedSnapshot(
   results: GettingStartedResults,
 ): GettingStartedSnapshot {
-  const githubCliStatus = statusFrom(
+  const githubDeveloperStatus = statusFrom(
     results.github,
-    (value) => GithubStatusSchema.parse(value).authenticated,
-  );
-  const githubIntegrationStatus = statusFrom(
-    results.integrations,
-    (value) => connectedServices(value).has("github"),
+    (value) => GithubStatusSchema.parse(value).ready,
   );
   const statuses: Record<GettingStartedStepId, GettingStartedStepStatus> = {
-    github: alternativeCompletionStatus(githubCliStatus, githubIntegrationStatus),
+    github: githubDeveloperStatus,
     "email-calendar": statusFrom(results.integrations, (value) => {
       const services = connectedServices(value);
       return services.has("gmail") && services.has("google_calendar");
     }),
-    agent: statusFrom(results.agents, (value) => (
-      AgentStatusSchema.parse(value).agents?.some((agent) => (
-        (agent.agent === "codex" || agent.agent === "claude")
-        && agent.status === "available"
-      )) === true
-    )),
+    agent: statusFrom(results.agents, (value) => availableAgents(value).length > 0),
     "first-work": alternativeCompletionStatus(
       statusFrom(results.projects, (value) => ProjectsSchema.parse(value).projects.length > 0),
       statusFrom(results.chats, (value) => ChatsSchema.parse(value).items.length > 0),
@@ -156,5 +160,7 @@ export function deriveGettingStartedSnapshot(
     steps,
     completedCount: steps.filter((step) => step.status === "complete").length,
     loaded: true,
+    availableAgents: results.agents.status === "fulfilled" && statuses.agent !== "unavailable" ? availableAgents(results.agents.value) : null,
+    connectedServices: results.integrations.status === "fulfilled" ? [...connectedServices(results.integrations.value)] : null,
   };
 }

@@ -33,11 +33,21 @@ export async function findConflictingActiveReservation(
   executor: Executor,
   ownerId: string,
   billingMode: FundedBillingMode,
+  checked: Date,
 ): Promise<boolean> {
   await readRecoveredUnknowns(executor, ownerId);
   const active = await executor.selectFrom("ai_funded_usage_reservations")
     .select("reservation_id").where("owner_id", "=", ownerId)
-    .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
+    .where((eb) => eb.or([
+      eb("status", "in", ["reserved", "starting", "in_flight", "settling"]),
+      // Financial release must not assert that unconfirmed upstream work stopped.
+      eb.and([
+        eb("status", "=", "expired"), eb("customer_charge_release", "is not", null),
+        eb("started_at", "is not", null), eb("terminal_outcome", "is", null),
+        eb("expires_at", ">", checked.toISOString()),
+        sql<boolean>`authorization_response::jsonb ->> 'capability' IS DISTINCT FROM 'speech:transcribe'`,
+      ]),
+    ]))
     .where("execution_admission_release", "is", null)
     .$if(billingMode !== "usage", (query) => query.where(
       sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'`,
@@ -72,7 +82,7 @@ export async function evaluateFundedPriority(executor: Executor, input: Priority
 
   const ownIndex = liveClaims.findIndex(isOwnSlot);
   const olderClaimWaiting = otherConflicting.some((claim) => ownIndex < 0 || liveClaims.indexOf(claim) < ownIndex);
-  const slotBusy = await findConflictingActiveReservation(executor, input.ownerId, input.billingMode);
+  const slotBusy = await findConflictingActiveReservation(executor, input.ownerId, input.billingMode, input.checked);
 
   if (!slotBusy && !olderClaimWaiting) {
     if (ownIndex >= 0) {

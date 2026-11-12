@@ -1,4 +1,5 @@
 import { act, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
 import {
   $createParagraphNode,
   $createTextNode,
@@ -16,6 +17,23 @@ if (!("getBoundingClientRect" in Range.prototype)) {
     configurable: true,
     value: () => document.createElement("span").getBoundingClientRect(),
   });
+}
+
+// Floating UI uses the viewport and the anchor rectangle to decide when the menu is clipped.
+export function mockSharedComposerPopoverLayout() {
+  const width = vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(900);
+  const height = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(700);
+  const getBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+  const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.dataset.slot === "shared-chat-composer"
+      ? new DOMRect(24, 96, 600, 120)
+      : getBoundingClientRect.call(this);
+  });
+  return () => {
+    rect.mockRestore();
+    height.mockRestore();
+    width.mockRestore();
+  };
 }
 
 export async function setSharedComposerText(composer: HTMLElement, value: string) {

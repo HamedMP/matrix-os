@@ -1,6 +1,6 @@
 import type { SharedBrowserSupervisedPolicy } from "../shared-browser/approval-policy.js";
 import { randomUUID } from "node:crypto";
-import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { sharedBrowserEndpoint } from "./shared-browser-client.js";
 
 export const NATIVE_SHARED_BROWSER_SERVER = "matrix_shared_browser";
@@ -16,12 +16,15 @@ export function openNativeSharedBrowserRun(options: {
 }, input: NativeBrowserRunInput) {
   sharedBrowserEndpoint(options.gatewayPort);
   if (input.owner.type !== "personal" || input.sharedScopeId || !["full_access", "supervised"].includes(input.permissionMode) || input.interactionMode !== "default") return undefined;
+  const binding = { ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness: options.harness };
+  const supervised = input.permissionMode === "supervised";
+  if (supervised && !options.broker.allowsSupervisedRun(binding)) return undefined;
   input.signal.throwIfAborted();
   let lease: ReturnType<SharedBrowserBroker["openRun"]>;
-  try { lease = options.broker.openRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness: options.harness }, input.signal,
-      input.permissionMode === "supervised" ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction
-        ?? (async () => { throw new SharedBrowserError("browser_changed"); }) } : undefined); }
+  try { lease = options.broker.openRun(binding, input.signal,
+      supervised ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction ?? null } : undefined); }
   catch (error: unknown) {
+    if (supervised && !options.broker.allowsSupervisedRun(binding)) return undefined;
     console.warn("[shared-browser-native] Run admission unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new Error("Browser run unavailable");
   }

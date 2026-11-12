@@ -13,7 +13,7 @@ import { createNativeProviderWriterLease } from "../../packages/gateway/src/ai-p
 
 const roots: string[] = [], services: AiProviderService[] = [];
 afterEach(async () => { services.splice(0).forEach(service => service.close()); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function fixture(unboundProof = false) {
+async function fixture(unboundProof = false, legacyMatrix = false) {
   const root = await mkdtemp(join(tmpdir(), "claude-completion-admission-")); roots.push(root);
   const home = join(root, "home"); await mkdir(home, { mode: 0o700 });
   let loggedIn = true, principal = "fixture@example.invalid", installed = true;
@@ -35,9 +35,13 @@ async function fixture(unboundProof = false) {
   const config = JSON.parse(await readFile(store.configurationPath, "utf8"));
   const saved = config.harnesses.find((row: { id: string }) => row.id === harness.id);
   saved.accessSourceId = "owner_anthropic_key"; saved.selectedAccountId = "owner_anthropic";
+  if (legacyMatrix) {
+    Object.assign(saved, {id: "harness_kernel", enabled: true, accessSourceId: "matrix_included", selectedAccountId: null});
+    delete saved.enablementOrigin;
+  }
   await writeFile(store.configurationPath, JSON.stringify(config));
   const before = await store.getSnapshot();
-  const input = { harnessInstanceId: harness.id, expectedRevision: before.revision, idempotencyKey: "fixture-complete" };
+  const input = { harnessInstanceId: saved.id as string, expectedRevision: before.revision, idempotencyKey: "fixture-complete" };
   return { store, before, input, runtime, systemRead, systemUpdate, readMetadata, runCommand, home,
     expireProof: () => { currentTime = new Date(+currentTime + 31_000); },
     setLoggedIn: (value: boolean) => { loggedIn = value; }, setPrincipal: (value: string) => { principal = value; },
@@ -59,8 +63,13 @@ it("completes the production fixed Claude client, selects the verified subscript
   expect(f.systemRead).not.toHaveBeenCalled(); expect(f.systemUpdate).not.toHaveBeenCalled();
 });
 
-it("foreground workflow adopts through the production Terminal facade/store/coordinator and replay preserves later Off", async () => {
-  const f = await fixture();
+it.each(["saved-key", "legacy-matrix"])("foreground workflow adopts %s through the production Terminal facade/store/coordinator and replay preserves later Off", async mode => {
+  const f = await fixture(false, mode === "legacy-matrix");
+  const savedBefore = await readFile(f.store.configurationPath, "utf8");
+  const observed = await f.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+  if (mode === "legacy-matrix") expect(observed.harnesses.find(row => row.id === f.input.harnessInstanceId)).toMatchObject({configuredAccessSourceId: "matrix_included", configuredEnabled: true, selectedAccountId: null});
+  expect(await readFile(f.store.configurationPath, "utf8")).toBe(savedBefore);
+  const savedRoute = f.before.harnesses.find(row => row.id === f.input.harnessInstanceId)!.route;
   const terminal = { ensureWorkspace: vi.fn(), createTab: vi.fn(), terminateTab: vi.fn(), attach: vi.fn(), listWorkspaces: vi.fn() };
   const browserLogin = vi.fn(async () => ({ cancel: vi.fn(async () => {}), submitCode: vi.fn(async () => {}) }));
   const resolver = vi.fn(async () => { throw new Error("native adoption must not resolve Terminal"); });
@@ -78,6 +87,7 @@ it("foreground workflow adopts through the production Terminal facade/store/coor
     expect(connected.harnesses.find(row => row.id === request.harnessInstanceId)).toMatchObject({
       configuredEnabled: true, accessSourceId: "owner_claude_profile", selectedAccountId: "owner_claude_profile", authState: "authenticated",
     });
+    expect(connected.harnesses.find(row => row.id === request.harnessInstanceId)?.route).toEqual(savedRoute);
     expect(f.runCommand).toHaveBeenCalled();
     const off = await f.store.mutate({ type: "set_harness_enabled", harnessInstanceId: request.harnessInstanceId,
       expectedRevision: connected.revision, enabled: false, idempotencyKey: "foreground-owner-off" });

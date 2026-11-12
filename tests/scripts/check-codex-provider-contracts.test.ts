@@ -209,8 +209,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.164.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.164.0");
+  it("retains reviewed Codex schemas through 0.167.1", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.167.1");
     expect(contract.verifiedVersions["0.162.1"]).toEqual(contract.verifiedVersions["0.162.0"]);
     expect(appServerContract.verifiedVersions["0.162.1"]).toEqual(appServerContract.verifiedVersions["0.162.0"]);
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
@@ -239,7 +239,16 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.160.0"]).toEqual(appServerContract.verifiedVersions["0.159.3"]);
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.164.0");
+    expect(contract.verifiedVersions["0.166.0"]).toEqual(contract.verifiedVersions["0.165.0"]);
+    expect(appServerContract.latestVerifiedVersion).toBe("0.167.1");
+    expect(contract.verifiedVersions["0.167.1"]).toEqual(contract.verifiedVersions["0.167.0"]);
+    expect(appServerContract.verifiedVersions["0.167.1"]).toEqual(appServerContract.verifiedVersions["0.167.0"]);
+    expect(appServerContract.verifiedVersions["0.166.0"]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c",
+        "linux-x64": "8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c",
+      },
+    });
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
@@ -268,15 +277,15 @@ describe("Codex provider contract checker", () => {
       "item/commandExecution/requestApproval"
     ]).toEqual({
       schemaSha256ByTarget: {
-        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
-        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+        "darwin-arm64": "4305e3c4d4828ca41a134cae982cf47f59d70e56390e1f07d33691f5d701c890",
+        "linux-x64": "4305e3c4d4828ca41a134cae982cf47f59d70e56390e1f07d33691f5d701c890",
       },
     });
     expect(appServerContract.requiredServerProtocolSchemaDigests).toMatchObject({
       "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-      "item/started": "554ed510ef9adc011a14b1d0045b2741c536a0f6a4728b07723537c31f088cb5",
-      "item/completed": "7f57001a4be1380e4d2d183ae76dafc2beb274a9e4401edc4bd676cc59e7d2a3",
-      "turn/completed": "2417c2c44801a090d921300b88a225c379a80fb559cdc96a72f6861514e1351a",
+      "item/started": "91a60058ca9e9b9dee61f91aa674d5577f48ab94ecd80833b7500573ed19d644",
+      "item/completed": "091914fa7fb2f8aa285ce5c2452b3abbd7177c6d7193d56d7bb3e8c0f1dcddff",
+      "turn/completed": "a422130287e89c148ef74c9c38773df548c11153e68cfd57409705154ca16940",
     });
   });
 

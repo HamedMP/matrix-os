@@ -1,3 +1,5 @@
+import { POPOVER_LAYER } from "@matrix-os/ui/layering";
+
 export const SHELL_Z_INDEX = {
   // Windows XP desktop icons: above the wallpaper (painted on <body>) but
   // below every app window — window z-order starts at
@@ -31,6 +33,9 @@ export const SHELL_Z_INDEX = {
   // Onboarding widget: floats over windows and shell chrome so its corner card
   // stays usable, but Settings (which it opens) must cover it.
   onboardingWidget: 660,
+  // Get started wizard (spec 635): covers the whole desktop over a blurred
+  // scrim until the new owner finishes or skips it; below Settings and gates.
+  getStarted: 690,
   settings: 700,
   hardGate: 800,
   // Simulated OS session overlays (lock screens, XP welcome/log-off/shutdown
@@ -45,7 +50,7 @@ export const SHELL_Z_INDEX = {
   notifications: 10000,
   // Floating menus/popovers (e.g. the account dropdown) portal to <body>, so they
   // must out-rank modal surfaces, hard gates, and passive notification cards.
-  popover: 11000,
+  popover: POPOVER_LAYER,
 } as const;
 
 export const SHELL_WINDOW_Z_INDEX_START = 1;

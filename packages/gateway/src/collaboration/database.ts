@@ -345,7 +345,48 @@ export interface CollaborationUploadPartsTable {
   byte_count: number;
 }
 
+export interface CollaborationAppReadinessTable {
+  id: string;
+  owner_id: string;
+  catalog_id: string;
+  registration_incarnation: string;
+  app_id: string;
+  manifest_version: string;
+  build_id: string;
+  manifest_digest: string;
+  schema_digest: string;
+  asset_digest: string;
+  bridge_contract_version: string;
+  runtime_abi: string;
+  artifact_ref: string;
+  status: "checking" | "ready" | "blocked" | "stale" | "failed";
+  gate_results: JsonValue;
+  verified_at: NullableTimestamp;
+  invalidated_at: NullableTimestamp;
+  invalidation_reason: "build_drift" | "catalog_deleted" | "runtime_incompatible" | "manual_recheck" | null;
+  verifier_version: string;
+  revision: ColumnType<number, number | undefined, number>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationAppBindingsTable {
+  scope_id: string;
+  catalog_id: string;
+  registration_incarnation: string;
+  readiness_id: string;
+  build_id: string;
+  data_revision: ColumnType<number, number | undefined, number>;
+  state: "active" | "needs_recheck" | "stopped";
+  revision: ColumnType<number, number | undefined, number>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  stopped_at: NullableTimestamp;
+}
+
 export interface CollaborationDatabase {
+  collaboration_app_readiness: CollaborationAppReadinessTable;
+  collaboration_app_bindings: CollaborationAppBindingsTable;
   collaboration_terminal_bindings: CollaborationTerminalBindingsTable;
   collaboration_resource_catalog: CollaborationResourceCatalogTable;
   collaboration_upload_stages: CollaborationUploadStagesTable;

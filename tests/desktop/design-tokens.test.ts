@@ -20,7 +20,16 @@ const CSS_PROPERTY_RULE = /@property\s+(--[A-Za-z0-9_-]+)/g;
 const TS_CUSTOM_PROPERTY = /["'](--[A-Za-z0-9_-]+)["']\s*\]?\s*:/g;
 const TAILWIND_CUSTOM_PROPERTY = /\[(--[A-Za-z0-9_-]+)\s*:/g;
 const TS_STYLE_PROPERTY_SETTER = /\.style\.setProperty\(\s*["'](--[A-Za-z0-9_-]+)["']/g;
-const FRAMEWORK_VARS = new Set(["--spacing", "--scroll-fade-reveal"]);
+const FRAMEWORK_VARS = new Set([
+  "--spacing", "--scroll-fade-reveal",
+  // Radix DropdownMenu.Content defines this from its collision-aware Popper height.
+  // The built account-picker E2E verifies the dependency supplies a positive value.
+  "--radix-dropdown-menu-content-available-height",
+  // Radix Popover.Content supplies the composer's collision bounds and anchor width.
+  "--radix-popover-content-available-height",
+  "--radix-popover-content-available-width",
+  "--radix-popover-trigger-width",
+]);
 
 function buildDefinitions(files: string[]): Set<string> {
   const defined = new Set<string>();
@@ -160,7 +169,8 @@ describe("Figma semantic surface tokens", () => {
 
 describe("composer focus presentation", () => {
   it("suppresses the global focus ring inside the rich prompt editor", () => {
-    expect(readRendererFile("design", "index.css")).toMatch(
+    expect(readRendererFile("design", "index.css")).toContain('@import "@matrix-os/ui/chat-composer.css";');
+    expect(readFileSync(path.resolve(import.meta.dirname, "../../packages/ui/src/chat/composer/chat-composer.css"), "utf8")).toMatch(
       /\.prompt-card \[data-slot="prompt-input-content"\]:focus-visible\s*\{[^}]*box-shadow:\s*none;/,
     );
   });

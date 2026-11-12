@@ -1,4 +1,5 @@
 import { BotToolDisplaySchema } from "#bots/tool-display";
+import {BotRoutineProposalSchema,BotRoutineToolControlSchema} from "#bots/routines";
 import { z } from "zod/v4";
 import { SharedBrowserActionSchema } from "#shared-browser";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
@@ -6,11 +7,14 @@ import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
 import { BotInteractionPayloadSchema } from "#bots/interactions";
 import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotMemorySourceSchema } from "#bots/memory";
 import { JevInboxInputSchema } from "#jev-inbox";
+import { GithubDeveloperActionSchema } from "#bots/github-developer";
 
 /** Leaves room for the broker envelope inside the 256 KiB broker request cap. */
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
 /** Binary imports stay in the workspace; each explicit read returns at most 32 KiB. */
 export const BOT_ARTIFACT_BINARY_MAX_BYTES = 1024 * 1024;
+/** Explicitly submitted uploads have their own bound; workspace/integration imports stay unchanged. */
+export const BOT_INPUT_FILE_MAX_BYTES = 10 * 1024 * 1024;
 export const BOT_ARTIFACT_CHUNK_MAX_BYTES = 32 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
 /** Saved bot transcripts; the runtime compacts well before this cap. */
@@ -24,8 +28,11 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "routine.propose",
+  "routine.control",
   "agent.task",
   "browser.action",
+  "github.developer",
   "integration.inventory",
   "integration.call",
   "integration.describe",
@@ -48,6 +55,9 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
+  capability("github.developer", GithubDeveloperActionSchema),
+  capability("routine.propose",BotRoutineProposalSchema),
+  capability("routine.control",BotRoutineToolControlSchema),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
@@ -84,12 +94,16 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
     content: z.string().max(BOT_ARTIFACT_MAX_BYTES)
       .refine((content) => textEncoder.encode(content).byteLength <= BOT_ARTIFACT_MAX_BYTES, { message: "Artifact is too large" }),
     mimeType: ArtifactMimeTypeSchema,
-    replace: z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
+    replace: z.union([
+      z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict(),
+      z.object({ expectedSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    ]).optional(),
   }).strict()),
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
+    withHash: z.boolean().optional(),
     chunk: z.object({
-      offset: z.number().int().min(0).max(BOT_ARTIFACT_BINARY_MAX_BYTES),
+      offset: z.number().int().min(0).max(BOT_INPUT_FILE_MAX_BYTES),
       length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
     }).strict().optional(),

@@ -13,11 +13,15 @@ import {
   type AgentProviderSummary,
   type CanonicalProviderCatalog,
   type ProviderSettingsSnapshot,
+  ProviderManagedCreditObservationSchema,
+  type ProviderManagedCreditObservation,
 } from "@matrix-os/contracts";
 
 const NOW = "2026-09-20T00:00:00.000Z";
 
 export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaudeProfile = false): ProviderSettingsSnapshot {
+  // Fresh CLI identity does not refresh cached allowance/readiness observations.
+  const nativeObservedAt = nativeClaudeProfile ? new Date().toISOString() : NOW;
   const authState = authenticated ? "authenticated" as const : "unauthenticated" as const;
   const accountId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account";
   const accessSourceId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account_source";
@@ -26,7 +30,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaud
     atomicConnectSupported: false,
     projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: authenticated ? 2 : 1 },
     revision: authenticated ? 2 : 1,
-    refreshedAt: NOW,
+    refreshedAt: nativeObservedAt,
     access: { mode: "writable" },
     supportedActions: [authenticated ? "logout_account" : "start_login", "set_harness_enabled"],
     harnessCatalog: (["hermes", "openclaw", "pi", "opencode"] as const).map((harness) => ({
@@ -64,7 +68,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaud
       displayName: "Claude",
       authMethod: "terminal",
       authState,
-      lastCheckedAt: NOW,
+      lastCheckedAt: nativeObservedAt,
       accessSourceId,
       dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
     }],
@@ -95,6 +99,7 @@ export async function startProviderAuthGateway(options: {
   inlineClaude?: boolean;
   catalog?: CanonicalProviderCatalog;
   settings?: (authenticated: boolean) => ProviderSettingsSnapshot;
+  managedCredit?: (snapshot: ProviderSettingsSnapshot) => ProviderManagedCreditObservation;
   failSettingsRead?: () => boolean;
 } = {}) {
   const upstream = await startStubGateway();
@@ -221,6 +226,11 @@ export async function startProviderAuthGateway(options: {
     if (req.method === "GET" && path === "/api/chat-providers" && options.catalog) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(options.catalog));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/ai/provider-settings/managed-credit" && options.managedCredit) {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(ProviderManagedCreditObservationSchema.parse(options.managedCredit(settings()))));
       return;
     }
     if (req.method === "GET" && path === "/api/ai/provider-settings") {

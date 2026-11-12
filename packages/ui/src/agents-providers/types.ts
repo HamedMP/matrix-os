@@ -6,6 +6,7 @@ import type {
   ProviderHarnessRoute,
   ProviderLoginMethod,
   ProviderSettingsSnapshot,
+  SpeechCapabilitiesResponse,
 } from "@matrix-os/contracts";
 
 export type ProviderSettingsMutationIntent =
@@ -51,19 +52,26 @@ export type ProviderSettingsMutationIntent =
 
 export interface AgentsProvidersViewProps {
   snapshot: ProviderSettingsSnapshot;
+  /** Controller discovery revision; native timestamp-only renewals leave it stable. */
+  capabilityRefreshRevision?: number;
   selectedHarnessId: string | null;
   connectionAttempt?: import("@matrix-os/contracts").ProviderConnectionAttempt | null;
   busy?: boolean;
   error?: string | null;
   onSelectHarness: (harnessInstanceId: string) => void;
   onRefresh: () => void;
-  onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
+  onRefreshForConnection?: (loginReceipt?: import("@matrix-os/contracts").ProviderWorkflow) => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
   workflowClient?: ProviderWorkflowClient;
   localChatgptClient?: import("./local-chatgpt-plan-client.js").LocalChatgptPlanClient;
+  /** Hosts with receipt-driven catalog invalidation only need a cached Settings projection. */
+  onLocalChatgptChanged?: () => void;
   matrixAnthropicClient?: import("./matrix-anthropic-connection-client.js").MatrixAnthropicConnectionClient;
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
+  speechClient?: {
+    capabilities(signal?: AbortSignal): Promise<SpeechCapabilitiesResponse>;
+  };
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;

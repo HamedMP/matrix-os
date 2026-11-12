@@ -154,6 +154,10 @@ export function zellijThemeForShellTheme(themeId: MatrixZellijShellThemeId): "de
   }
 }
 
+export const MATRIX_ZELLIJ_INDEPENDENT_FOCUS = `// Canonical tab attachments retain their own pane focus (spec 107).
+// Mirroring lets another tab's viewer redirect this attachment's output/input.
+mirror_session false`;
+
 export function renderMatrixZellijConfig(
   configPaths: MatrixZellijConfigPaths,
   themeId: MatrixZellijShellThemeId = "dark",
@@ -163,8 +167,7 @@ export function renderMatrixZellijConfig(
 pane_frames false
 simplified_ui true
 hide_session_name true
-// All Matrix clients share a session focus, including scoped CLI pane actions.
-mirror_session true
+${MATRIX_ZELLIJ_INDEPENDENT_FOCUS}
 // Shells and agent TUIs receive their normal editing keys. Ctrl+g deliberately
 // unlocks Zellij's native prefix modes when Matrix shortcut handling is bypassed.
 default_mode "locked"

@@ -1,3 +1,4 @@
+import type { CodexCatalogObservation } from "../ai-providers/codex-native-observation.js";
 import { isRunnableGenericHarnessCredentialRoute, isLocallyObservedNativeHarnessRoute, isSupportedGenericHarnessCredentialRoute,
   type AiProviderSnapshotV3, type CanonicalProviderDriverKind, type CanonicalProviderInstanceDescriptor, type CanonicalProviderSetupAction,
   type ProviderAccessSource, type ProviderHarnessInstance, type ProviderHarnessKind, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
@@ -66,6 +67,7 @@ function configuredSystemInstance(
 }
 
 export function applyHarnessSettings(input: {
+  codexObservation?: CodexCatalogObservation;
   systemRepairAction: (kind: "hermes" | "openclaw") => CanonicalProviderSetupAction;
   now: Date;
   instances: InstanceDraft[];
@@ -97,6 +99,9 @@ export function applyHarnessSettings(input: {
       const ownerKey = instance.driverKind === "claude_code" && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_anthropic_key" && enabled[0]!.selectedAccountId === "owner_anthropic"
         && (enabled[0]!.configuredAccessSourceId === undefined || enabled[0]!.configuredAccessSourceId === "owner_anthropic_key");
+      if (instance.driverKind === "codex" && input.codexObservation === "authentication_required") {
+        return { ...unavailableInstance(instance, "authentication_required"), setupActions: [CODEX_SETTINGS_ACTION] };
+      }
       if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1) {
         const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
         const staleNativeBinding = source?.id === "owner_openai_profile"
@@ -118,6 +123,11 @@ export function applyHarnessSettings(input: {
           instance,
           authenticationRequired ? "authentication_required" : "runtime_unavailable",
         );
+        if (!authenticationRequired && input.codexObservation === "checking" && instance.availability === "available") {
+          return { ...unavailable, observationState: "checking" as const,
+            models: instance.models.map(model => ({ ...model, availability: "unavailable" as const })),
+            setupActions: [CODEX_SETTINGS_ACTION] };
+        }
         return authenticationRequired
           ? {
               ...unavailable,

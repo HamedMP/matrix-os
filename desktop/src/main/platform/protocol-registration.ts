@@ -1,3 +1,4 @@
+import type { VerifiedDesktopPreviewContext } from "../preview-pair-context";
 export const WINDOWS_PROTOCOL_SCHEMES = ["matrixos", "matrix-os"] as const;
 
 export interface ProtocolClientApp {
@@ -8,10 +9,12 @@ export interface ProtocolClientApp {
 export function registerWindowsProtocolClients(
   electronApp: ProtocolClientApp,
   platform: NodeJS.Platform = process.platform,
+  previewContext?: VerifiedDesktopPreviewContext,
+  schemes: readonly string[] = WINDOWS_PROTOCOL_SCHEMES,
 ): string[] {
-  if (platform !== "win32" || !electronApp.isPackaged) return [];
+  if (previewContext || platform !== "win32" || !electronApp.isPackaged) return [];
 
-  return WINDOWS_PROTOCOL_SCHEMES.filter(
+  return schemes.filter(
     (scheme) => !electronApp.setAsDefaultProtocolClient(scheme),
   );
 }

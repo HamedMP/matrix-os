@@ -299,6 +299,7 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
       feedEvent(parsed as Record<string, unknown>);
     },
+    get truncated(): boolean { return dropped > 0; },
     drain(): AgentThreadEvent[] {
       return events.splice(0, events.length);
     },

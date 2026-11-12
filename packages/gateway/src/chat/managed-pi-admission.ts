@@ -4,7 +4,9 @@ import { MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, CanonicalChatExecutionRootRefSchema
 import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION, SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID } from "@matrix-os/scope-runtime/bot-profile";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { BotAdmissionError } from "../bots/admission.js";
-import { BotRuntimeRegistry, isManagedPiBinding, type ManagedPiRuntimeBinding } from "../bots/runtime-registry.js";
+import { BOT_RUNTIME_REGISTRY_CAPACITY, BotRuntimeRegistry, isManagedPiBinding, type ManagedPiRuntimeBinding } from "../bots/runtime-registry.js";
+import { startRuntimeHeartbeat } from "../bots/runtime-heartbeat.js";
+import { ScopeRuntimeClientError } from "../collaboration/scope-runtime-client.js";
 import type { BotExecutor } from "../bots/repositories/shared.js";
 import type { ResolvedBotRoute } from "../bots/route-resolver.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
@@ -16,9 +18,10 @@ export function createManagedPiAdmission(deps: {
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   toolCapabilities?: readonly BotToolCapability[];
-  supervisedBrowser?: boolean;
+  supervisedBrowser?: (identity: { ownerId: string; chatId: string }) => boolean;
   roots: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
+  const heartbeats = new Map<string, { stop(): Promise<void> }>(); // at most one per registry binding (capacity 64)
   async function authority(input: { ownerId: string; chatId: string; runId: string }, allowPending = false) {
     const row = await deps.db.selectFrom("chat_runs as run").innerJoin("chats as chat", "chat.id", "run.chat_id")
       .select(["run.instance_id", "run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "chat.project_id"])
@@ -47,10 +50,13 @@ export function createManagedPiAdmission(deps: {
       throw new BotAdmissionError("not_found");
     }
   }
-  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription" | "anthropicApi">): Promise<string> {
+  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription" | "anthropicApi">, renewalSignal?: AbortSignal): Promise<string> {
+    const assertActive = () => { if (renewalSignal?.aborted) throw new BotAdmissionError("not_found"); };
+    assertActive();
     const owned = deps.registry.lookupRun(binding);
     if (!owned || !isManagedPiBinding(owned) || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
     const row = await authority(binding, true);
+    assertActive();
     if (!sameManagedPiRoute(owned, binding)) throw new BotAdmissionError("not_found");
     if (owned.rootFingerprint !== binding.rootFingerprint || !isDeepStrictEqual(owned.workspace, binding.workspace)) throw new BotAdmissionError("root_changed");
     if ("kind" in owned.workspace) {
@@ -61,22 +67,67 @@ export function createManagedPiAdmission(deps: {
         || owned.workspace.fingerprint !== owned.rootFingerprint || (row.project_id && row.project_id !== ref.projectId)) throw new BotAdmissionError("root_changed");
     }
     await assertSource(row, binding.ownerId, owned);
+    assertActive();
     const signal = deps.registry.inferenceSignal(owned);
     if (!signal || signal.aborted) throw new BotAdmissionError("not_found");
     const root = "kind" in owned.workspace
       ? await managedPiWorkspace(deps.homePath, binding.ownerId, binding.chatId)
       : await deps.roots.resolve({ type: "personal", ownerId: binding.ownerId }, owned.workspace.ref)
         .then((root) => ({ path: root.primaryWorkspaceRoot, fingerprint: root.fingerprint }));
+    assertActive();
     if (root.fingerprint !== binding.rootFingerprint) throw new BotAdmissionError("root_changed");
     // Root resolution awaits filesystem/project state. Native credential writes
     // can revoke the source during that wait without aborting the run signal.
     if (signal.aborted) throw new BotAdmissionError("not_found");
     await assertSource(row, binding.ownerId, owned);
+    assertActive();
     if (signal.aborted) throw new BotAdmissionError("not_found");
     return root.path;
   }
+  async function renew(binding: ManagedPiRuntimeBinding, renewalSignal?: AbortSignal): Promise<void> {
+    const assertActive = () => { if (renewalSignal?.aborted) throw new BotAdmissionError("not_found"); };
+    assertActive();
+    const owned = deps.registry.lookupRun(binding);
+    if (!owned || !isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)
+      || deps.registry.inferenceSignal(owned)?.aborted !== false) throw new BotAdmissionError("not_found");
+    if (!deps.host.available) throw new BotAdmissionError("unavailable");
+    await workspace(owned, renewalSignal);
+    assertActive();
+    try {
+      await deps.host.client.renewRuntime({ runtimeHandle: owned.runtimeHandle, executionGeneration: owned.executionGeneration,
+        ...(renewalSignal ? { signal: renewalSignal } : {}) });
+    } catch (error: unknown) {
+      assertActive();
+      if (error instanceof ScopeRuntimeClientError) throw new BotAdmissionError("unavailable");
+      throw error;
+    }
+    assertActive();
+    // Both owner authority and workspace/source can change during the host RPC.
+    await workspace(owned, renewalSignal);
+    assertActive();
+    if (!deps.registry.renew(owned)) throw new BotAdmissionError("not_found");
+  }
   return {
     workspace,
+    renew,
+    startRenewal(binding: ManagedPiRuntimeBinding, onFailure: (error: unknown) => void): { stop(): Promise<void> } {
+      const owned = deps.registry.lookupRun(binding);
+      if (!owned || !isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)
+        || deps.registry.inferenceSignal(owned)?.aborted !== false) throw new BotAdmissionError("not_found");
+      if (heartbeats.has(binding.runtimeHandle)) throw new BotAdmissionError("unavailable");
+      if (heartbeats.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotAdmissionError("capacity_exceeded");
+      const heartbeat = startRuntimeHeartbeat(signal => renew(binding, signal), error => {
+        if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+        onFailure(error);
+      });
+      heartbeats.set(binding.runtimeHandle, heartbeat);
+      return {
+        async stop() {
+          if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+          await heartbeat.stop();
+        },
+      };
+    },
     async toolAuthority(binding: ManagedPiRuntimeBinding) {
       const owned = deps.registry.lookupRun(binding);
       if (!owned || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
@@ -104,7 +155,7 @@ export function createManagedPiAdmission(deps: {
       const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
       if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability =>
         row.permission_mode === "full_access"
-        || (capability !== "mcp.call" && (capability !== "browser.action" || deps.supervisedBrowser === true))));
+        || (capability !== "github.developer" && capability !== "mcp.call" && (capability !== "browser.action" || deps.supervisedBrowser?.(input) === true))));
       if (!capabilities.length) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",
@@ -119,7 +170,11 @@ export function createManagedPiAdmission(deps: {
       return binding;
     },
     async release(runtimeHandle: string): Promise<void> {
+      const heartbeat = heartbeats.get(runtimeHandle);
+      heartbeats.delete(runtimeHandle);
+      const stopped = heartbeat?.stop();
       deps.registry.release(runtimeHandle);
+      await stopped;
       await deps.host.client.stopRuntime({ runtimeHandle });
     },
   };

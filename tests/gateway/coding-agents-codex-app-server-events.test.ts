@@ -14,6 +14,15 @@ function context() {
 }
 
 describe("Codex app-server request normalization", () => {
+  it.each(["humanCommand", "futureCommand", null])("does not project unsupported command kind %s", kind => {
+    const line = JSON.stringify({
+      id: 42,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread", turnId: "turn", itemId: "command", kind },
+    });
+    expect(parseCodexAppServerRequestLine(line, context())).toEqual({ events: [] });
+  });
+
   it("normalizes command approval without exposing commands or native request ids", () => {
     const line = JSON.stringify({
       id: 42,

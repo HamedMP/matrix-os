@@ -12,7 +12,11 @@ import { z } from "zod/v4";
 import { createBotClient, type BotClient } from "./bots/client.js";
 import { canonicalChatProviderCatalogPath } from "../provider-projection-paths.js";
 
-export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[] };
+/**
+ * `merge`: keep what the owner typed and add this text below it; an earlier merged suggestion the
+ * owner has not touched is replaced instead. Without it, the request replaces the draft.
+ */
+export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[]; merge?: boolean };
 export type StartAgentChat = (text: string, resources?: CanonicalChatResourceReference[]) => void;
 
 const MAX_RECIPE_CONNECTIONS = 200;

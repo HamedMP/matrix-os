@@ -21,10 +21,12 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
+    githubDeveloperSetup: service("GitHub developer setup"),
     jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
     hookRunner: { fireVoidHook: vi.fn(async () => undefined) }, pluginRegistry: { getServices: () => [] },
+    usageHistory: service("usage history"),
     heartbeat: service("heartbeat"), watchdog: service("watchdog"), proactiveHeartbeat: service("proactive"), cronService: service("cron"),
     localChatImportLifecycle: service("imports"), matrixAnthropicRuntime: service("anthropic"), providerWorkflowLifecycle: service("provider workflows"),
     backgroundChatProjection: service("projection"), slackRuntime: service("Slack"), companyBotSetup: service("company bots"), canonicalChatOrchestrator: service("chats"), botServices: service("bots"),
@@ -70,7 +72,7 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-  expect(shutdown.calls[0]).toBe("managed feature restart.close");
+  expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
 });
 
 it("continues shutdown while retaining the real Pi writer fence after forced worker termination", async () => {
@@ -110,7 +112,7 @@ export class ModelRuntime {
     expect(shutdown.calls).toContain("company bots.close");
     expect(shutdown.calls).toContain("platform database.destroy");
     expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-    expect(shutdown.calls[0]).toBe("managed feature restart.close");
+    expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
     const fence = join(dirname(home), ".matrix-private", basename(home), "native-writers/pi.json");
     expect(await readFile(fence, "utf8")).toBeTruthy();
     await expect(createGenericNativeWriter(home).acquire("pi")).rejects.toThrow();

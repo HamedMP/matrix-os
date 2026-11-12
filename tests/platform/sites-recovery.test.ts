@@ -13,6 +13,7 @@ import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { createSiteSubmissionTransport } from '../../packages/platform/src/sites/submission-transport.js';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '../../packages/contracts/src/sites.js';
 
 const secret = 'sites-recovery-platform-secret-32-chars';
 const owner = { ownerId: 'user_recovery', machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', appSlug: 'event' };
@@ -82,7 +83,10 @@ it('preserves permanent IDs, aliases and versions and signs submissions for the 
   app.route('/internal/containers/:handle/sites', createSiteManagementRoutes({ db, platformSecret: secret, service: sites }));
   const endpoint = '/internal/containers/recovery/sites/event?runtimeSlot=primary';
   expect((await app.request(endpoint, { headers: { authorization: `Bearer ${buildPlatformSyncVerificationToken(identity, secret, 2)}` } })).status).toBe(401);
-  const response = await app.request(endpoint, { headers: { authorization: `Bearer ${buildPlatformSyncVerificationToken({ ...identity, machineId: recovered.machineId }, secret, machine.runtimeTokenEpoch)}` } });
+  const response = await app.request(endpoint, { headers: {
+    authorization: `Bearer ${buildPlatformSyncVerificationToken({ ...identity, machineId: recovered.machineId }, secret, machine.runtimeTokenEpoch)}`,
+    [SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]: SITE_MANAGEMENT_CONTRACT_VERSION,
+  } });
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual(site);
   const updated = await sites.deploy(currentOwner, { ...deployment, baseRevision: site.revision });

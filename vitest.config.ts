@@ -43,6 +43,8 @@ export default defineConfig({
     alias: {
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
+      "@matrix-os/ui/collaborative-app-sharing": path.resolve(__dirname, "packages/ui/src/collaboration/collaborative-app-sharing.ts"),
+      "@matrix-os/ui/feature-flags": path.resolve(__dirname, "packages/ui/src/feature-flags.ts"),
       "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
       "vitest-environment-gateway-renderer": path.resolve(__dirname, "tests/helpers/gateway-renderer-environment.ts"),
       "@": path.resolve(__dirname, "shell/src"),
@@ -56,6 +58,7 @@ export default defineConfig({
       "@matrix-os/contracts/managed-integrations": path.resolve(__dirname, "packages/contracts/src/managed-integrations.ts"),
       "@matrix-os/contracts/bokio-integration": path.resolve(__dirname, "packages/contracts/src/bokio-integration.ts"),
       "@matrix-os/contracts/data-imports": path.resolve(__dirname, "packages/contracts/src/data-imports.ts"),
+      "@matrix-os/contracts/http-request-deadlines": path.resolve(__dirname, "packages/contracts/src/http-request-deadlines.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
       "@matrix-os/contracts/app-gallery-bridge-policy": path.resolve(__dirname, "packages/contracts/src/app-gallery-bridge-policy.ts"),
       "@matrix-os/contracts/app-gallery-inventory": path.resolve(__dirname, "packages/contracts/src/app-gallery-inventory.ts"),
@@ -63,10 +66,16 @@ export default defineConfig({
       "@matrix-os/contracts/codex-chat-import": path.resolve(__dirname, "packages/contracts/src/codex-chat-import.ts"),
       "@matrix-os/contracts/codex-chat-import-client": path.resolve(__dirname, "packages/contracts/src/codex-chat-import-client.ts"),
       "@matrix-os/contracts/collaboration": path.resolve(__dirname, "packages/contracts/src/collaboration.ts"),
+      "@matrix-os/contracts/ai-usage/node": path.resolve(__dirname, "packages/contracts/src/ai-usage/node.ts"),
+      "@matrix-os/contracts/ai-usage": path.resolve(__dirname, "packages/contracts/src/ai-usage/index.ts"),
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/slack-bridge": path.resolve(__dirname, "packages/contracts/src/slack-bridge.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
+      "@matrix-os/contracts/preview-pair-artifact": path.resolve(__dirname, "packages/contracts/src/preview-pair-artifact.ts"),
+      "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
+      "@matrix-os/contracts/preview-pair-control": path.resolve(__dirname, "packages/contracts/src/preview-pair-control.ts"),
+      "@matrix-os/contracts/preview-pair": path.resolve(__dirname, "packages/contracts/src/preview-pair.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/postgres": path.resolve(__dirname, "packages/observability/src/postgres.ts"),
       "@matrix-os/observability/client": path.resolve(
@@ -88,6 +97,10 @@ export default defineConfig({
       "@matrix-os/kernel/security/ssrf-guard": path.resolve(
         __dirname,
         "packages/kernel/src/security/ssrf-guard.ts",
+      ),
+      "@matrix-os/kernel/security/pinned-fetch": path.resolve(
+        __dirname,
+        "packages/kernel/src/security/pinned-fetch.ts",
       ),
       "@matrix-os/kernel/skill-registry": path.resolve(
         __dirname,

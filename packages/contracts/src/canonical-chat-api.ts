@@ -154,12 +154,25 @@ export const CanonicalCreateChatTurnRequestSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  routineCreation: z.literal("matrix").optional(),
 }).strict();
 
 export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
   .refine((value) => value.startsWith("qturn_"), {
     message: "Invalid queued Turn identifier",
   });
+
+/** Original admission identity, before Agent/Bot execution settings are applied.
+ * Hash this exact preimage with SHA-256 in the caller's runtime. Revision and
+ * request key fence the write separately and are intentionally excluded.
+ */
+export function canonicalChatTurnRequestIdentity(input: Pick<CanonicalCreateChatTurnRequest,
+  "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot" | "routineCreation">): string {
+  return JSON.stringify({ parts: input.parts, selection: input.selection,
+    interactionMode: input.interactionMode, permissionMode: input.permissionMode,
+    executionRoot: input.executionRoot ?? null,
+    ...(input.routineCreation ? { routineCreation: input.routineCreation } : {}) });
+}
 
 export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnRequestSchema;
 
@@ -199,6 +212,7 @@ export const CanonicalChatRunSteeringResponseSchema = z.object({
 
 export const CanonicalChatQueuedTurnSchema = z.object({
   context: ChatRunContextSchema.optional(),
+  routineCreation: z.literal("matrix").optional(),
   id: CanonicalChatQueuedTurnIdSchema,
   chatId: CanonicalChatSchema.shape.id,
   clientRequestId: CanonicalChatRequestIdSchema,

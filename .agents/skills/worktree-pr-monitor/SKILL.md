@@ -35,6 +35,9 @@ manual git worktree flow for isolated PR publication.
   stack in each layer. Use `/monitor-stack-reviews` for stack-wide review fixes.
   If merge is authorized, use `gh stack merge` after every included head passes
   its gates; never loop `gh pr merge`.
+- Plan about 5-6 PRs per stack; never exceed 10, counting all layers. Check the
+  planned count before adding a branch. Consolidate related work within the
+  per-PR size limits or start a follow-on stack after this one merges.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
   trusted Greptile result is `5/5`.
 - Open the PR as a draft. Full PR CI runs on every non-draft head, so mark it

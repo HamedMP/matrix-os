@@ -9,6 +9,10 @@ export function nativeWorkflowConnectionOptions(input: {
     id: `${providerId}_api_key`, providerId, authKind: "api_key", billingKind: "api_key", executionKind: "native", availability: "available",
   }));
   // Methods come from the installed, qualified native adapter.
+  if (input.harness === "hermes") return [...(input.methods.includes("terminal") ? ["openai", "anthropic"].map((providerId): ProviderWorkflowConnectionOption => ({
+    id: `${providerId}_terminal`, providerId: providerId as "openai" | "anthropic", authKind: "subscription", method: "terminal",
+    billingKind: "subscription", executionKind: "native", availability: "available",
+  })) : []), ...keys];
   if (input.harness !== "claude" && input.harness !== "codex") return keys;
   const providerId = input.harness === "codex" ? "openai" : "anthropic";
   const methods = input.harness === "codex" ? input.methods.filter(method => method === "terminal" || method === "device_code") : input.methods;

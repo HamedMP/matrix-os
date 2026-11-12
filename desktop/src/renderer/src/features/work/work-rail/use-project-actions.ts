@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { projectAgentContextFileLocationRequest } from "@matrix-os/ui/project-agent-context";
 import { parseProject, useBoard, type Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../../stores/runtime-generation";
@@ -44,14 +45,17 @@ export function useProjectActions(project: Project) {
       if (current()) { busy.current = false; setPending(false); }
     }
   };
-  const showInFiles = async () => {
+  const showInFiles = async (verifyProjectIdentity = false) => {
     if (!api || busy.current) return;
     const requestGeneration = generation.current;
     const runtimeGeneration = captureRuntimeGeneration();
     const current = () => generation.current === requestGeneration && isCurrentRuntimeGeneration(runtimeGeneration);
     busy.current = true; setPending(true); setError(null);
     try {
-      const response = await api.get<{ path: unknown }>(`/api/projects/${encodeURIComponent(project.slug)}/files-location`);
+      const pathRequest = verifyProjectIdentity && project.id
+        ? projectAgentContextFileLocationRequest(project.slug, project.id)
+        : `/api/projects/${encodeURIComponent(project.slug)}/files-location`;
+      const response = await api.get<{ path: unknown }>(pathRequest);
       if (!current()) return;
       const path = response.path;
       if (typeof path !== "string" || !path || path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f]/.test(path) || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Invalid folder location");

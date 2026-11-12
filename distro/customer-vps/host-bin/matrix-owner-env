@@ -21,6 +21,24 @@ matrix_export_owner_env() {
   matrix_prepend_path_once "/opt/matrix/runtime/node/bin"
   matrix_prepend_path_once "/opt/matrix/bin"
   matrix_prepend_path_once "$HOME/.local/bin"
+  matrix_export_agent_npm_config
+}
+
+matrix_export_agent_npm_config() {
+  # Installers/control wrappers call this before dropping privileges. Private
+  # PM executables belong to the runtime owner and must never run as root.
+  [ "${EUID:-0}" != 0 ] || return 0
+  # Respect explicit overrides, including an explicitly empty value.
+  [ "${npm_config_globalconfig+x}" != x ] && [ "${NPM_CONFIG_GLOBALCONFIG+x}" != x ] || return 0
+  local node="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin/node"
+  local helper="${MATRIX_APP_DIR:-/opt/matrix/app}/scripts/reconcile-agent-npm-prefix.mjs"
+  [ -x "$node" ] && [ -f "$helper" ] && [ -f "$HERMES_HOME/matrix-npm/npmrc" ] || return 0
+  local global_config
+  if global_config=$(MATRIX_RUNTIME_HOME="$HOME" "$node" "$helper" --globalconfig); then
+    [ -z "$global_config" ] || export npm_config_globalconfig="$global_config"
+  else
+    printf 'matrix-owner-env: agent npm default unavailable\n' >&2
+  fi
 }
 
 matrix_install_dir() {

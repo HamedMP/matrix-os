@@ -99,7 +99,24 @@ The gateway and control plane are therefore replaceable clients of the workspace
 
 The exact bundled binary is checksum-verified Zellij 0.44.3. Runtime control uses structured `list-tabs --json` and `list-panes --json` identifiers, targeted tab/pane actions, and `subscribe --format json`; tab-index shifting is prohibited.
 
+Runtime startup upgrades the exact previously shipped mirrored Zellij config
+for each generated theme. Owner-edited configs are preserved. New workspaces
+read the updated independent-focus default. Zellij 0.44.3 reads mirroring when
+it starts a workspace, so an already running workspace retains its startup
+mode until the owner closes and recreates it in the normal workspace lifecycle.
+
 One observer exists per active workspace. One attachment exists per viewed tab, shared by all viewers. Attachments have viewer TTL eviction, caps, shutdown drains, bounded input queues, and isolated broadcast failure handling.
+
+Workspace subscriptions include only tabs that still occupy live admission;
+exited/failed history retains its pane IDs without subscribing to missing panes.
+An observer's optional `closed` signal marks an exited subscription process as
+inactive (adapters without the signal retain the legacy live-handle contract).
+The existing 30-second sweep retries inactive observers through serialized
+workspace reconciliation, rebuilding native pane references before subscribing.
+There is no immediate respawn loop. Shutdown prevents queued recovery and
+reconciliations awaiting native inventory from starting a new subscription, and
+drains subscriptions already admitted. Observer snapshots provide reconnect
+history; the separate live PTY attachment does not require a saved snapshot.
 
 New-tab admission defaults to 64 concurrent tabs per workspace and 256 concurrent tabs per VPS. Operators may override these with `MATRIX_TERMINAL_MAX_TABS_PER_WORKSPACE` and `MATRIX_TERMINAL_MAX_TABS_TOTAL` (range 1..10,000, with total greater than or equal to the workspace limit). Exited and failed historical tabs do not consume admission. Raising either limit only requires a control-plane reload/restart and does not restart workspace units; lowering a limit never terminates existing tabs and affects only later creation attempts.
 

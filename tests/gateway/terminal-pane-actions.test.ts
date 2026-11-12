@@ -147,7 +147,7 @@ describe("Zellij pane commands", () => {
   it("defaults to locked mode so editing keys reach applications with an explicit Zellij unlock", () => {
     const config = renderMatrixZellijConfig(matrixZellijConfigPaths("/tmp/terminal-keymap"));
     expect(config).toContain('default_mode "locked"');
-    expect(config).toContain('mirror_session true');
+    expect(config).toContain('mirror_session false');
     expect(config).toContain('bind "Ctrl g" { SwitchToMode "Normal"; }');
     expect(config).toMatch(/normal\s*\{\s*unbind "Alt Left" "Alt Right" "Alt b" "Alt f"/);
   });

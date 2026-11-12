@@ -377,3 +377,12 @@ describe("createUpdater", () => {
     expect(updaterMock.autoUpdater.quitAndInstall).toHaveBeenCalledOnce();
   });
 });
+
+import { verifiedPreviewPairTestContext } from "./preview-pair-test-context.js";
+it("keeps a verified collaboration candidate pinned across every update entrypoint", async () => {
+  const previewContext = await verifiedPreviewPairTestContext();
+  const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() }, { previewContext });
+  await updater.check(); expect(await updater.install()).toBe(false);
+  expect(updater.snapshot()).toEqual({ status: "disabled" }); expect(updater.isInstallStarted()).toBe(false);
+  expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled(); expect(updaterMock.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+});

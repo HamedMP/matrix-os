@@ -278,7 +278,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         icon: FIXED_DESKTOP_APPS.find((app) => app.id === "vscode")?.iconUrl,
       })),
       settings: () => openRoot(() => {
-        useUi.getState().requestSettingsSection("account");
+        useUi.getState().requestSettingsSection("agents-providers");
         openTab({ kind: "settings", title: "Settings" });
       }),
       plugins: () => openRoot(() => {

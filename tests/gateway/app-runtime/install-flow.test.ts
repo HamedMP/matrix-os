@@ -31,6 +31,7 @@ describe("installApp", () => {
         version: "1.0.0",
         runtime: "static",
         runtimeVersion: "^1.0.0",
+        listingTrust: "first_party",
       }),
     );
     await writeFile(join(sourceDir, "index.html"), "<html><body>Calculator</body></html>");
@@ -45,6 +46,9 @@ describe("installApp", () => {
     const targetDir = join(homeDir, "apps", "calculator-static");
     expect(existsSync(join(targetDir, "matrix.json"))).toBe(true);
     expect(existsSync(join(targetDir, "index.html"))).toBe(true);
+    const installedManifest = JSON.parse(await readFile(join(targetDir, "matrix.json"), "utf8"));
+    expect(installedManifest.listingTrust).toBe("first_party");
+    expect(installedManifest.installed_from).toMatchObject({ slug: "calculator-static" });
   });
 
   it("installs and builds a vite app", async () => {

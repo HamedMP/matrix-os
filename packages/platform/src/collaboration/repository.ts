@@ -1,3 +1,4 @@
+import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
@@ -29,8 +30,17 @@ export interface DirectoryEventInput {
   ownerId: string;
   kind: CollaborationDirectoryKind;
   organizationId?: string;
-  audience?: "members" | "organization";
+  audience?: "members" | "organization" | "current_membership";
   organizationGrantId?: string;
+  app?: {
+    appId: string;
+    catalogId: string;
+    readinessId: string;
+    registrationIncarnation: string;
+    buildId: string;
+    shareRevision: number;
+    state: "active" | "needs_recheck" | "stopped";
+  };
   /** A shared project's Chat route: same home, owner and organization as the project, no recipients of its own. */
   parentScopeId?: string;
   authorityGeneration: number;
@@ -67,6 +77,20 @@ export interface CollaborationOrganizationShareEntry {
   grantId: string;
 }
 
+export interface CollaborationCurrentMembershipAppEntry {
+  scopeId: string;
+  runtimeId: string;
+  ownerId: string;
+  organizationId: string;
+  authorityGeneration: number;
+  appId: string;
+  catalogId: string;
+  readinessId: string;
+  registrationIncarnation: string;
+  buildId: string;
+  shareRevision: number;
+}
+
 /**
  * A project Chat may only be routed beside its own shared project: the same home, owner and
  * organization. The parent row is locked so a concurrent project change cannot slip between the
@@ -90,22 +114,25 @@ async function requireProjectChatParent(
 
 export class PlatformCollaborationRepository {
   private readonly now: () => Date;
+  private readonly admitRuntimeWrite?: CollaborationRuntimeWriteAdmission;
 
   constructor(
     public readonly db: Kysely<CollaborationPlatformDatabase>,
-    options: { now?: () => Date } = {},
+    options: { now?: () => Date; admitRuntimeWrite?: CollaborationRuntimeWriteAdmission } = {},
   ) {
     this.now = options.now ?? (() => new Date());
+    this.admitRuntimeWrite = options.admitRuntimeWrite;
   }
 
-  async applyDirectoryEvent(input: DirectoryEventInput): Promise<void> {
+  async applyDirectoryEvent(input: DirectoryEventInput): Promise<boolean> {
     const now = this.now().toISOString();
-    await this.db.transaction().execute(async (trx) => {
+    return this.db.transaction().execute(async (trx) => {
+      await this.admitRuntimeWrite?.(trx, input);
       // A person-to-person event is legacy ingestion: it must not commit inside
       // the cutover's final inventory-to-activation interval, so it takes the
-      // shared ingestion lock first. Organization events skip it and stay
-      // parallel. The lock is always taken before any row lock, so the two
-      // paths cannot deadlock.
+      // shared ingestion lock after runtime admission but before directory
+      // locks. Organization events skip it and stay parallel. Retirement uses
+      // the same machine-before-directory lock order.
       if (!input.organizationId) await lockLegacyDirectoryIngestion(trx);
       const existing = await trx.selectFrom("collaboration_directory")
         .selectAll()
@@ -126,7 +153,7 @@ export class PlatformCollaborationRepository {
       if (existing && (existing.owner_id !== input.ownerId || existing.runtime_id !== input.runtimeId)) {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
-      if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return;
+      if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return false;
       // A project Chat stays under its project. A directly shared Chat may join a project once,
       // when the owner shares the project that contains it.
       if (existing?.parent_scope_id && existing.parent_scope_id !== input.parentScopeId) {
@@ -146,6 +173,13 @@ export class PlatformCollaborationRepository {
         organization_id: input.organizationId ?? null,
         audience: input.audience ?? null,
         organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
+        app_id: input.app?.appId ?? null,
+        app_catalog_id: input.app?.catalogId ?? null,
+        app_readiness_id: input.app?.readinessId ?? null,
+        app_registration_incarnation: input.app?.registrationIncarnation ?? null,
+        app_build_id: input.app?.buildId ?? null,
+        app_share_revision: input.app?.shareRevision ?? null,
+        app_state: input.app?.state ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -156,6 +190,13 @@ export class PlatformCollaborationRepository {
         ...(input.organizationId ? { organization_id: input.organizationId } : {}),
         audience: input.audience ?? null,
         organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
+        app_id: input.app?.appId ?? null,
+        app_catalog_id: input.app?.catalogId ?? null,
+        app_readiness_id: input.app?.readinessId ?? null,
+        app_registration_incarnation: input.app?.registrationIncarnation ?? null,
+        app_build_id: input.app?.buildId ?? null,
+        app_share_revision: input.app?.shareRevision ?? null,
+        app_state: input.app?.state ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -165,7 +206,7 @@ export class PlatformCollaborationRepository {
         .returning("collaboration_directory.scope_id")
         .executeTakeFirst();
       // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
-      if (!applied) return;
+      if (!applied) return false;
       // A project Chat has no recipients of its own; any left from a direct share no longer apply.
       if (input.parentScopeId) {
         await trx.deleteFrom("collaboration_user_index").where("scope_id", "=", input.scopeId).execute();
@@ -192,6 +233,7 @@ export class PlatformCollaborationRepository {
           updated_at: now,
         })).execute();
       }
+      return true;
     });
   }
 
@@ -202,14 +244,25 @@ export class PlatformCollaborationRepository {
     kind: CollaborationDirectoryKind;
     /** S05: owning organization, null only for pre-organization rows (tickets fail closed). */
     organizationId: string | null;
-    audience: "members" | "organization" | null;
+    audience: "members" | "organization" | "current_membership" | null;
     organizationGrantId: string | null;
+    app: {
+      appId: string;
+      catalogId: string;
+      readinessId: string;
+      registrationIncarnation: string;
+      buildId: string;
+      shareRevision: number;
+      state: "active" | "needs_recheck" | "stopped";
+    } | null;
     /** Set for a shared project's Chat; its tickets follow the parent project's membership. */
     parentScopeId: string | null;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id", "parent_scope_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id",
+        "app_id", "app_catalog_id", "app_readiness_id", "app_registration_incarnation", "app_build_id",
+        "app_share_revision", "app_state", "parent_scope_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -220,6 +273,16 @@ export class PlatformCollaborationRepository {
       organizationId: row.organization_id ?? null,
       audience: row.audience,
       organizationGrantId: row.organization_grant_id,
+      app: row.app_id && row.app_catalog_id && row.app_readiness_id && row.app_registration_incarnation
+        && row.app_build_id && row.app_share_revision !== null && row.app_state ? {
+          appId: row.app_id,
+          catalogId: row.app_catalog_id,
+          readinessId: row.app_readiness_id,
+          registrationIncarnation: row.app_registration_incarnation,
+          buildId: row.app_build_id,
+          shareRevision: Number(row.app_share_revision),
+          state: row.app_state,
+        } : null,
       parentScopeId: row.parent_scope_id ?? null,
       authorityGeneration: Number(row.authority_generation),
     } : null;
@@ -462,6 +525,63 @@ export class PlatformCollaborationRepository {
     };
   }
 
+  async listCurrentMembershipAppsForActorPage(
+    actorId: string,
+    organizationIds: readonly string[],
+    options: { limit: number; after?: { updatedAt: string; scopeId: string } },
+  ): Promise<{ items: CollaborationCurrentMembershipAppEntry[]; nextCursor?: { updatedAt: string; scopeId: string } }> {
+    const organizations = [...new Set(organizationIds)].filter((id) => id.length > 0 && id.length <= 128).slice(0, 100);
+    if (organizations.length === 0) return { items: [] };
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
+    let query = this.db.selectFrom("collaboration_directory as directory")
+      .select([
+        "directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.organization_id",
+        "directory.authority_generation", "directory.app_id", "directory.app_catalog_id",
+        "directory.app_readiness_id", "directory.app_registration_incarnation", "directory.app_build_id",
+        "directory.app_share_revision", "directory.updated_at",
+      ])
+      .where("directory.kind", "=", "app")
+      .where("directory.audience", "=", "current_membership")
+      .where("directory.app_state", "=", "active")
+      .where("directory.organization_id", "in", organizations)
+      .where("directory.owner_id", "!=", actorId)
+      .where("directory.app_id", "is not", null)
+      .where("directory.app_catalog_id", "is not", null)
+      .where("directory.app_readiness_id", "is not", null)
+      .where("directory.app_registration_incarnation", "is not", null)
+      .where("directory.app_build_id", "is not", null)
+      .where("directory.app_share_revision", "is not", null);
+    if (options.after) {
+      query = query.where(({ and, eb, or }) => or([
+        eb("directory.updated_at", "<", options.after!.updatedAt),
+        and([
+          eb("directory.updated_at", "=", options.after!.updatedAt),
+          eb("directory.scope_id", ">", options.after!.scopeId),
+        ]),
+      ]));
+    }
+    const rows = await query.orderBy("directory.updated_at", "desc")
+      .orderBy("directory.scope_id", "asc").limit(limit + 1).execute();
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page.at(-1) : undefined;
+    return {
+      items: page.map((row) => ({
+        scopeId: row.scope_id,
+        runtimeId: row.runtime_id,
+        ownerId: row.owner_id,
+        organizationId: row.organization_id!,
+        authorityGeneration: Number(row.authority_generation),
+        appId: row.app_id!,
+        catalogId: row.app_catalog_id!,
+        readinessId: row.app_readiness_id!,
+        registrationIncarnation: row.app_registration_incarnation!,
+        buildId: row.app_build_id!,
+        shareRevision: Number(row.app_share_revision),
+      })),
+      ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
+    };
+  }
+
   async createConnectionTicket(input: {
     token: string;
     actorId: string;
@@ -477,6 +597,18 @@ export class PlatformCollaborationRepository {
     }
     const now = nowDate.toISOString();
     return this.db.transaction().execute(async (trx) => {
+      if (this.admitRuntimeWrite) {
+        const route = await trx.selectFrom("collaboration_directory").select(["runtime_id", "owner_id"])
+          .where("scope_id", "=", input.scopeId).executeTakeFirst();
+        if (!route) throw new PlatformCollaborationRepositoryError("invalid_ticket", "Ticket scope is unavailable");
+        await this.admitRuntimeWrite(trx, { runtimeId: route.runtime_id, ownerId: route.owner_id });
+        // Retirement may have committed between the unlocked route read and machine lock.
+        const current = await trx.selectFrom("collaboration_directory").select(["runtime_id", "owner_id"])
+          .where("scope_id", "=", input.scopeId).forShare().executeTakeFirst();
+        if (!current || current.runtime_id !== route.runtime_id || current.owner_id !== route.owner_id) {
+          throw new PlatformCollaborationRepositoryError("invalid_ticket", "Ticket scope is unavailable");
+        }
+      }
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.actorId}, 0))`.execute(trx);
       await trx.deleteFrom("collaboration_connection_tickets")
         .where("expires_at", "<=", now)

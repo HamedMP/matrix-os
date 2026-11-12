@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from "react";
-import { Platform, Text, TextInput, View } from "react-native";
+import { Platform, Text, TextInput, View, type TextInputInstance } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { IconButton, SendIcon, StopIcon } from "@/components/ui";
@@ -23,7 +23,7 @@ const SPEECH_PLACEHOLDERS: Partial<Record<ComposerSpeech["phase"], string>> = {
 };
 
 export interface ComposerProps {
-  inputRef?: Ref<TextInput>;
+  inputRef?: Ref<TextInputInstance>;
   draft: string;
   onChangeDraft: (text: string) => void;
   placeholder: string;
@@ -96,6 +96,11 @@ export function Composer({
         {speech?.error ? (
           <Text testID="composer-speech-error" accessibilityRole="alert" style={styles.speechError}>
             {speech.error}
+          </Text>
+        ) : null}
+        {speech?.previewQuotaLabel ? (
+          <Text testID="composer-speech-quota" accessibilityLiveRegion="polite" style={styles.speechQuota}>
+            {speech.previewQuotaLabel}
           </Text>
         ) : null}
         {/* Return starts a new line; only the button sends. */}
@@ -249,6 +254,12 @@ const styles = StyleSheet.create((theme) => ({
   speechError: {
     ...theme.v2.text.footnote,
     color: theme.v2.colors.danger,
+    paddingTop: theme.v2.space[8],
+    paddingHorizontal: theme.v2.space[14],
+  },
+  speechQuota: {
+    ...theme.v2.text.footnote,
+    color: theme.v2.colors.textSubtle,
     paddingTop: theme.v2.space[8],
     paddingHorizontal: theme.v2.space[14],
   },

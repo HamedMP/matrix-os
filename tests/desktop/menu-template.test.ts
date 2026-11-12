@@ -45,9 +45,10 @@ describe("createAppMenuTemplate", () => {
     }
   });
 
-  it("maps Cmd+R to hosted Home refresh in packaged and development builds", () => {
+  it("maps Cmd+R to a renderer reload in packaged and development builds", () => {
     for (const isPackaged of [true, false]) {
       const send = vi.fn();
+      const reloadWindow = vi.fn();
       const template = createAppMenuTemplate({
         appName: "Matrix OS",
         isPackaged,
@@ -57,10 +58,11 @@ describe("createAppMenuTemplate", () => {
         adjustZoom: vi.fn(),
         checkForUpdates: vi.fn(),
         quitApp: vi.fn(),
+        reloadWindow,
       });
       const viewMenu = template.find((item) => item.label === "View");
       const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
-      const refreshItem = submenu.find((item) => "label" in item && item.label === "Refresh Home");
+      const refreshItem = submenu.find((item) => "label" in item && item.label === "Reload");
 
       expect(refreshItem).toBeTruthy();
       expect(refreshItem && "accelerator" in refreshItem ? refreshItem.accelerator : null)
@@ -70,7 +72,8 @@ describe("createAppMenuTemplate", () => {
         throw new Error("Refresh Home menu item is not clickable");
       }
       refreshItem.click({} as never, {} as never, {} as never);
-      expect(send).toHaveBeenCalledWith("menu:action", { action: "refresh-home" });
+      expect(reloadWindow).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalled();
     }
   });
 
@@ -288,5 +291,18 @@ describe("createAppMenuTemplate", () => {
     }
     exit.click({} as never, {} as never, {} as never);
     expect(quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("lists third-party notices under Help only when the build ships them", () => {
+    const base = { appName: "Matrix OS", isPackaged: true, platform: "darwin" as const, openExternal: vi.fn(), send: vi.fn(),
+      adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn() };
+    const help = (template: ReturnType<typeof createAppMenuTemplate>) =>
+      template.find((item) => item.role === "help")!.submenu as Array<{ label?: string; click?: () => void }>;
+    expect(help(createAppMenuTemplate(base)).map((item) => item.label)).toEqual(["Matrix OS Documentation"]);
+    const openThirdPartyNotices = vi.fn();
+    const withNotices = help(createAppMenuTemplate({ ...base, openThirdPartyNotices }));
+    expect(withNotices.map((item) => item.label)).toEqual(["Matrix OS Documentation", "Third-Party Notices"]);
+    withNotices[1]!.click!();
+    expect(openThirdPartyNotices).toHaveBeenCalledTimes(1);
   });
 });

@@ -85,3 +85,31 @@ describe('Hermes credential kind metadata',()=>{
   expect(JSON.stringify(warning.mock.calls)).not.toContain('never-output');
  });
 });
+
+it('qualifies an inactive Hermes-owned Claude OAuth pool without accepting ambient API credentials',()=>{
+ const oauth = `
+auth.get_anthropic_key=lambda:''
+row={'id':'owned','auth_type':'oauth','source':'manual:hermes_pkce','access_token':'sk-ant-oat01-owned-only','refresh_token':'refresh-owned','expires_at_ms':4102444800000,'base_url':'https://api.anthropic.com'}
+auth.read_credential_pool=lambda provider:[dict(row)]
+cfg.load_config_readonly=lambda:{'model':{'provider':'openai-codex','default':'other-model'}}
+`;
+ expect(evaluate(oauth)).toEqual({providerId:'anthropic',modelId:'other-model',credentialKind:'provider_profile'});
+ expect(evaluate(oauth+"auth.get_anthropic_key=lambda:'sk-ant-api03-synthetic-only'\n")).toBeNull();
+ expect(evaluate(oauth+"row['source']='claude_code'\n")).toBeNull();
+ expect(evaluate(oauth+"row['expires_at_ms']=1\n")).toBeNull();
+ expect(evaluate(oauth+"row['base_url']='https://untrusted.invalid'\n")).toBeNull();
+});
+
+it('resolves the exact official PM shell shim and committed Python when the legacy venv is absent',async()=>{
+ const {createHash}=await import('node:crypto');const home=await mkdtemp(join(await realpath(tmpdir()),'hermes pm launcher '));
+ try{
+  const root=join(home,'.hermes/hermes-agent');await mkdir(join(root,'hermes_cli'),{recursive:true});await mkdir(join(home,'.local/bin'),{recursive:true});
+  const key=createHash('sha256').update(await realpath(root)).digest('hex').slice(0,16);const state=join(home,'.hermes/installs',key);const generation=join(state,'environments/current');
+  await mkdir(join(generation,'bin'),{recursive:true});await writeFile(join(generation,'pyvenv.cfg'),'fixture');await writeFile(join(generation,'bin/python'),'python',{mode:0o755});
+  await writeFile(join(state,'facts.json'),JSON.stringify({packages:{venv:{environment:generation}}}));
+  const quoted=spawnSync('python3',['-c','import sys,shlex;print(shlex.quote(sys.argv[1]))',join(root,'.hermes/bin/hermes')],{encoding:'utf8'}).stdout.trim();
+  const launcher=join(home,'.local/bin/hermes');await writeFile(launcher,`#!/bin/sh\nexec ${quoted} "$@"\n`,{mode:0o755});
+  expect(await resolveHermesNativeRoot(home)).toBe(root);
+  await writeFile(join(state,'facts.json'),'{}');await expect(resolveHermesNativeRoot(home)).rejects.toThrow('Hermes runtime setup required');
+ }finally{await rm(home,{recursive:true,force:true});}
+});

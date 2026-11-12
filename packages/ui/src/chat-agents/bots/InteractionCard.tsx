@@ -1,11 +1,15 @@
-import { botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { botSavedAnswerRecovery, botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
+import { routineApprovalPreview } from "./routine-presentation.js";
+import { RoutineApprovalDetails } from "./RoutineApprovalDetails.js";
 
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
 
-export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true }: {
+export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, currentRoutineRevision }: {
+  agentName?: string;
+  currentRoutineRevision?: number | null;
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
   onResolved?: () => void;
@@ -16,40 +20,63 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   const [typedAnswers, setTypedAnswers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (interaction.status !== "pending") return;
+    if (interaction.status !== "pending" && !interaction.recoveryAvailable && savedRevision === null) return;
     const delay = Date.parse(interaction.expiresAt) - Date.now();
     if (delay <= 0) { setNow(new Date().toISOString()); return; }
     const timer = setTimeout(() => setNow(new Date().toISOString()), Math.min(delay + 1, 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [interaction.expiresAt, interaction.status]);
+  }, [interaction.expiresAt, interaction.status, interaction.recoveryAvailable, savedRevision]);
+  const payload = interaction.payload;
   const card = botInteractionCard(interaction, now);
-  const actionable = card.state === "actionable" && !resolved && actionsAvailable;
+  const isRoutine = payload?.kind === "approval" && payload.tool === "routine.activate";
+  const routine = isRoutine && payload.kind === "approval" ? routineApprovalPreview(payload.preview) : null;
+  const staleRoutine = Boolean(routine?.source.routineId && currentRoutineRevision !== undefined
+    && currentRoutineRevision !== routine.source.baseRoutineRevision);
+  const title = routine ? `${routine.source.routineId ? "Update schedule" : "Schedule"} ${routine.proposal.name}` : card.title;
+  const recovery = !resolved ? botSavedAnswerRecovery(interaction, now, savedRevision) : null;
+  const recoveryOpen = recovery !== null && !recovery.expired;
+  const actionable = card.state === "actionable" && !resolved && actionsAvailable && (!isRoutine || routine !== null);
 
   const decide = async (request: ResolveBotInteractionRequest) => {
-    if (!actionable || pending) return;
+    if (request.kind === "approval" && request.decision === "approve" && staleRoutine) return;
+    if (pending || (request.kind === "resume" ? !recoveryOpen || !actionsAvailable : !actionable)) return;
     setPending(true);
     setError("");
     try {
       const response = await onResolve(request);
+      if (response?.continuationPending) {
+        setSavedRevision(response.interaction.revision);
+        onResolved?.();
+        return;
+      }
+      setSavedRevision(null);
       if (response?.connectUrl) setConnectUrl(response.connectUrl);
       setResolved(true);
       // Keep the returned consent link visible until the next status refresh.
       if (!response?.connectUrl) onResolved?.();
     } catch (failure: unknown) {
       console.warn("[chat-agents] Bot interaction failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError("Could not save your response. Refresh and try again.");
+      setError(request.kind === "resume" ? "Your answer is saved. Work could not resume. Refresh and try again." : "Could not save your response. Refresh and try again.");
     } finally {
       setPending(false);
     }
   };
+  if (recovery) return <section aria-label="Saved answer" className="matrix-chat-agent-card matrix-bot-interaction-card grid gap-3 rounded-xl border p-4">
+    <p className="text-sm">Your answer is saved. Resuming work is pending confirmation.</p>
+    {!recoveryOpen ? <p role="status">This request has expired.</p> : null}
+    {error ? <p role="alert">{error}</p> : null}
+    <button type="button" className={chatAgentButtonClass} disabled={!recoveryOpen || !actionsAvailable || pending}
+      onClick={() => void decide({ kind: "resume", baseRevision: recovery.revision })}>Resume</button>
+  </section>;
+
   const typeAnswer = (questionId: string, value: string) => {
     setTypedAnswers((current) => ({ ...current, [questionId]: value }));
     // Keep the last radio choice underneath Other so clearing Other restores it.
   };
-  const payload = interaction.payload;
   const access = payload?.kind === "connect_request" || (payload?.kind === "account_choice" && payload.access)
     ? botIntegrationAccessCopy(payload.service, payload.access!) : null;
   const questionAnswers = payload?.kind === "question"
@@ -65,9 +92,10 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   )));
   const allQuestionsAnswered = payload?.kind === "question" && !answerTooLong
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
-  return <section aria-label={card.title} className="matrix-chat-agent-card matrix-bot-interaction-card grid gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
-    <div><h3 className="text-sm font-semibold">{card.title}</h3>
+  return <section aria-label={title} className="matrix-chat-agent-card matrix-bot-interaction-card grid min-w-0 gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
+    <div><h3 className="break-words text-sm font-semibold">{title}</h3>
     {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {staleRoutine ? <p role="status" className="text-sm">This schedule changed. Cancel this review, then review your draft against the current revision.</p> : null}
     {access ? <div className="grid gap-1 text-xs" style={chatAgentMutedStyle}>
       <p>Requested access: {access.summary}</p>{access.boundary ? <p>{access.boundary}</p> : null}
     </div> : null}
@@ -118,17 +146,19 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "connect_request", baseRevision: interaction.revision, action }); }}>
         {action === "start" ? "Connect" : "Decline"}</button>)}</div>
     </> : null}
+    {routine && payload?.kind === "approval" ? <RoutineApprovalDetails approval={routine} agentName={agentName} preview={payload.preview}/> : null}
     {actionable && payload?.kind === "approval" ? <>
-      <p className="whitespace-pre-wrap text-sm leading-6">{payload.preview}</p>
+      {!routine ? <><p className="whitespace-pre-wrap text-sm leading-6">{payload.preview}</p>
       <details className="text-xs"><summary className="cursor-pointer font-medium">Approval details</summary><dl className="mt-2 grid gap-2">
         {payload.account ? <div><dt style={chatAgentMutedStyle}>Account</dt><dd>{payload.account.label} · {payload.account.service.replaceAll("_", " ")}</dd></div> : null}
         <div><dt style={chatAgentMutedStyle}>Action</dt><dd>{payload.tool.replaceAll("_", " ")}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Permission</dt><dd>This action only</dd></div>
-      </dl></details>
+      </dl></details></> : null}
       <div className="flex flex-wrap gap-2">{(["approve", "deny"] as const).map((decision) => <button key={decision} type="button"
-        className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
-        {decision === "approve" ? "Approve" : "Deny"}</button>)}</div>
+        className={chatAgentButtonClass} disabled={pending || staleRoutine && decision === "approve"} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
+        {routine ? decision === "approve" ? routine.source.routineId ? "Approve changes" : "Approve schedule" : "Cancel" : decision === "approve" ? "Approve" : "Deny"}</button>)}</div>
     </> : null}
+    {isRoutine && !routine ? <p role="alert" className="text-sm">Schedule details are unavailable. Ask the Bot for a new proposal.</p> : null}
     {error ? <p role="alert" className="text-xs">{error}</p> : null}
     {connectUrl ? <a className={chatAgentButtonClass} href={connectUrl} rel="noopener noreferrer">Continue connecting</a> : null}
   </section>;

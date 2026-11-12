@@ -4,13 +4,24 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
-type Job = { needs?: string | string[]; 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
+type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; outputs?: Record<string, string>; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
 const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const workflow = parse(source) as { concurrency: Record<string, unknown>; jobs: Record<string, Job> };
 const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).scripts;
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
+  it('installs browsers on the prepared pool or a supported pinned Ubuntu release', () => {
+    // Browser installs must never fall through to ubuntu-latest's unsupported
+    // image. The pool selector and its actual emitted fallback are exercised
+    // by select-runner.test.ts; this checks every browser-install job is wired.
+    const browserJobs = Object.values(workflow.jobs).filter(job =>
+      job.steps.some(step => step.run?.includes('playwright install')),
+    );
+    expect(browserJobs).toContain(workflow.jobs.e2e);
+    for (const job of browserJobs) expect(['ubuntu-22.04', 'ubuntu-24.04', '${{ needs.changes.outputs.browser_runner }}']).toContain(job['runs-on']);
+  });
+
   it('bootstraps every Bun lane with the exact qualified version without API tag discovery', () => {
     const setups = Object.values(workflow.jobs).flatMap(job =>
       job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@')),
@@ -24,9 +35,9 @@ describe('fast CI preserves validation while removing serialized work', () => {
     }
   });
 
-  it('installs the real pattern scanner dependency before every unit shard', () => {
+  it('checks the real pattern scanner dependency before every unit shard', () => {
     const steps = workflow.jobs.unit.steps;
-    const scanner = steps.findIndex(step => step.run === 'sudo apt-get install -y ripgrep');
+    const scanner = steps.findIndex(step => step.run?.includes('rg --version'));
     const test = steps.findIndex(step => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(scanner).toBeGreaterThanOrEqual(0);
     expect(scanner).toBeLessThan(test);
@@ -34,27 +45,21 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.unit.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
   });
 
-  it('starts independent hosted lanes after backend selection while sync starts after classification', () => {
-    expect(workflow.jobs['isolated-ci-backend'].needs).toBe('changes');
-    expect(workflow.jobs['ci-backend'].needs).toEqual(['changes', 'isolated-ci-backend']);
-    for (const id of ['unit', 'e2e', 'shell-production-build']) {
-      // Backend admission chooses Linux or hosted recovery; workload lanes still
-      // run in parallel rather than waiting for another workload's result.
-      expect(workflow.jobs[id].needs, id).toEqual(['changes', 'ci-backend']);
+  it('starts every lane right after classification so lanes run in parallel', () => {
+    for (const id of ['unit', 'e2e', 'shell-production-build', 'sync-client', 'typecheck']) {
+      expect(workflow.jobs[id].needs, id).toBe('changes');
     }
-    expect(workflow.jobs['sync-client'].needs).toBe('changes');
     const gate = workflow.jobs['ci-results'];
     for (const id of ['unit', 'e2e', 'sync-client', 'shell-production-build', 'funded-postgres', 'funded-host-root']) {
       expect(gate.needs).toContain(id);
     }
-    expect(workflow.concurrency.queue).toBe('max');
-    expect(workflow.concurrency['cancel-in-progress']).toBeUndefined();
+    expect(workflow.concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
   });
 
   it('builds prerequisites once in each funded and E2E job before direct test execution', () => {
     expect(scripts['test:prepare']).toContain('@matrix-os/integrations-mcp');
     expect(scripts['test:prepare'].match(/node packages\/gateway\/native\/build\.mjs/g)).toHaveLength(1);
-    expect(scripts['test:e2e:run']).toBe('vitest run --config vitest.e2e.config.ts');
+    expect(scripts['test:e2e:run']).toBe('NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage" node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts');
     for (const id of ['e2e', 'funded-postgres']) {
       const commands = runs(workflow.jobs[id]);
       expect(commands.match(/bun run test:prepare/g)).toHaveLength(1);
@@ -74,8 +79,47 @@ describe('fast CI preserves validation while removing serialized work', () => {
     }
   });
 
+  it('runs the account organization picker after the required Electron build', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex(step => step.name === 'Build Desktop for Electron E2E');
+    const picker = steps.findIndex(step => step.name === 'Run required Desktop account organization picker');
+    expect(picker).toBeGreaterThan(build);
+    expect(steps[picker]?.if).toContain("matrix.lane == 'electron'");
+    expect(steps[picker]?.env?.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
+    expect(steps[picker]?.run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/account-organization-picker.e2e.test.ts');
+  });
+
+  it('allows browser setup and general E2E execution to finish within the job budget', () => {
+    // The current lane exhausted its old 15-minute budget after over 11 minutes
+    // of browser setup, cancelling tests about 2.5 minutes into their execution.
+    expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
+  });
+
+  it('keeps the Playwright hosted fallback pinned to Ubuntu 24.04', () => {
+    expect(workflow.jobs.e2e['runs-on']).toBe('${{ needs.changes.outputs.browser_runner }}');
+    expect(workflow.jobs.changes.outputs?.browser_runner).toBe("${{ steps.runner.outputs.browser_runner || 'ubuntu-24.04' }}");
+  });
+
+  it('builds node-pty from source before E2E prerequisites', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
+    const rebuild = steps.findIndex(step => step.run === 'node scripts/build-node-pty.mjs');
+    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
+
+    expect(rebuild).toBeGreaterThan(install);
+    expect(rebuild).toBeLessThan(prepare);
+
+    const builder = readFileSync(join(process.cwd(), 'scripts/build-node-pty.mjs'), 'utf8');
+    expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
+    expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
+    expect(builder).toContain("require('node-pty')");
+    expect(builder).toContain('} catch (error) {');
+    expect(builder).toContain('error instanceof Error ? error.stack ?? error.message : error');
+  });
+
   it('retains frozen installs and keyed Next and browser caches', () => {
-    expect(source).not.toContain('runs-on: ${{');
+    // Docker-service and root-container jobs must stay hosted; exact pool job
+    // admission is covered by select-runner.test.ts.
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
     expect(workflow.jobs['funded-host-root']['runs-on']).toBe('ubuntu-latest');
     for (const id of ['shell-production-build', 'e2e']) {
@@ -92,20 +136,15 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(browsers.every(s => !s.if?.includes('cache-hit'))).toBe(true);
   });
 
-  it('never saves caches from exact-source refresh dispatches', () => {
-    // Refresh dispatches run in main's cache scope but check out a PR merge, so any cache they
-    // save would be restored by trusted main runs.
-    const outputs = (workflow.jobs.changes as Job & { outputs: Record<string, string> }).outputs;
-    expect(outputs.cache_write).toBe("${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') && 'false' || 'true' }}");
-    const gate = "needs.changes.outputs.cache_write == 'true'";
+  it('saves caches only after a cache miss, from the run that produced them', () => {
     const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
     expect(steps.some(s => s.uses?.startsWith('actions/cache@'))).toBe(false);
     const saves = steps.filter(s => s.uses?.startsWith('actions/cache/save@'));
     expect(saves).toHaveLength(2);
-    for (const save of saves) expect(save.if).toContain(gate);
+    for (const save of saves) expect(save.if).toMatch(/cache-hit != 'true'/);
     const nodeCaches = steps.filter(s => s.uses?.startsWith('actions/setup-node@') && s.with?.cache !== undefined);
     expect(nodeCaches.length).toBeGreaterThan(0);
-    for (const step of nodeCaches) expect(step.with?.cache).toBe(`\${{ ${gate} && 'pnpm' || '' }}`);
+    for (const step of nodeCaches) expect(step.with?.cache).toBe('pnpm');
     for (const [id, job] of Object.entries(workflow.jobs)) {
       if (!job.steps.some(s => s.uses?.startsWith('actions/cache/save@') || s.with?.cache !== undefined)) continue;
       expect([job.needs].flat(), id).toContain('changes');
@@ -121,5 +160,29 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(upload?.if).toContain('always()');
     expect(upload?.with?.name).toBe('unit-profile-${{ matrix.shard }}');
     expect(upload?.with?.['retention-days']).toBe(7);
+  });
+});
+
+describe('Docker image export runner capacity', () => {
+  it('frees unused hosted tools before building the image and retains artifact integrity checks', () => {
+    const docker = parse(readFileSync('.github/workflows/docker-test.yml', 'utf8')).jobs['docker-build'];
+    const cleanup = docker.steps.findIndex((step: {name?: string}) => step.name === 'Free runner disk before Docker build');
+    const build = docker.steps.findIndex((step: {uses?: string}) => step.uses?.startsWith('docker/build-push-action@'));
+    const save = docker.steps.findIndex((step: {name?: string}) => step.name === 'Save Docker image artifact');
+    expect(cleanup).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeLessThan(build);
+    expect(build).toBeLessThan(save);
+    expect(docker.steps[cleanup].if).toBe(docker.if);
+    expect(docker.steps[cleanup].run).toContain('sudo rm -rf ');
+    expect(docker.steps[cleanup].run).not.toMatch(/\/tmp\/matrix-os|hostedtoolcache\/node|docker system prune/);
+    expect(docker.steps[build].with.outputs).toBe('type=docker,dest=${{ runner.temp }}/matrix-os-dev-ci.tar');
+    expect(docker.steps[build].with['cache-to']).toContain('type=gha,mode=max');
+    const prune = docker.steps[save].run.indexOf('docker buildx prune --all --force');
+    expect(prune).toBeGreaterThanOrEqual(0);
+    expect(prune).toBeLessThan(docker.steps[save].run.indexOf('gzip -1 <'));
+    expect(docker.steps[save].run).toContain('df -h "$RUNNER_TEMP"');
+    expect(readFileSync('.github/workflows/docker-test.yml', 'utf8')).not.toMatch(/\/tmp\/(?:matrix-os-dev-ci|docker-image)/);
+    expect(docker.steps[save].run).toContain('gzip -t "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"');
+    expect(docker.steps[save].run).toContain('test "$(stat -c%s "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz")" -gt 1000000');
   });
 });

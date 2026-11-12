@@ -6,13 +6,16 @@ import { createLocalAttachmentController } from "./local-attachment-controller";
 export function useConversationAttachments(
   scopeKey?: string | null,
   apiOverride?: ApiClient | null,
+  validate?: (files: readonly File[]) => string | null,
 ) {
   const connectionApi = useConnection((state) => state.api);
   const api = apiOverride === undefined ? connectionApi : apiOverride;
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
+  const validation = useRef(validate);
+  useEffect(() => { validation.current = validate; }, [validate]);
   const controller = useMemo(
-    () => createLocalAttachmentController({ api }),
+    () => createLocalAttachmentController({ api, validate: files => validation.current?.(files) ?? null }),
     [api, runtimeSlot, authGeneration, scopeKey],
   );
   const pendingDispose = useRef<{ controller: typeof controller; timer: number } | null>(null);
@@ -76,6 +79,7 @@ export function useConversationAttachments(
 
   return {
     items,
+    selectionError: controller.getSelectionError(),
     add: controller.add,
     remove: controller.remove,
     retry: controller.retry,

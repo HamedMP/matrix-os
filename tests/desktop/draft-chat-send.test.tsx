@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
+import { mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
@@ -289,6 +290,7 @@ describe("draft chat implicit thread creation", () => {
   });
 
   it("sends Project Chat resource tokens as explicit agent context", async () => {
+    mockSharedComposerPopoverLayout();
     const { invoke } = mockOperator();
     const composer = await openDraft();
     await setComposerText(composer, "Inspect @Matrix");

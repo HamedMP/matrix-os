@@ -1,21 +1,21 @@
 "use client";
-import type { CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { matchChatSlashToken } from "@matrix-os/ui";
+import { mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
+import { matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   BOT_ATTACHMENT_HANDOFF_REASON,
+  ChatComposerAttachButton,
+  ChatPromptInput,
+  ChatSpeechInputButton,
+  ChatSpeechQuotaStatus,
   usePlatformSpeechDraft,
-  SpeechInputWaveform,
   type ChatAgentDraftRequest,
   type PlatformSpeechCaptureAdapter,
 } from "@matrix-os/ui";
 
-import { useState, useRef, useEffect } from "react";
-import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { CircleStop, Loader2Icon, MicIcon, SendIcon, XCircleIcon } from "@/lib/hugeicons";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { Attachments, useAttachments } from "@/components/ai-elements/attachments";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import { ChatMentionTokens } from "./ChatInputExtras";
@@ -33,7 +33,7 @@ import {
   PlatformSpeechRecorderError,
 } from "@/lib/platform-speech-recorder";
 export function ChatInput({
-  composer, agentClient, scope, permissionMode, onOpenBotMention, slashInstance, slashCatalogLoading = false,
+  composer, agentClient, scope, permissionMode, onOpenBotMention, slashInstance, slashCatalogLoading = false, projectSlash, isCurrentAuthority,
   connected,
   busy,
   activeRunId,
@@ -49,10 +49,16 @@ export function ChatInput({
   botControls, botConsentResources = [], botRequiresFullAccess = false,
   speechClient,
   speechCaptureAdapter,
+  placeholder = "Reply to chat…",
+  leadingControls,
+  toolbarControls,
+  queue,
 }: {
   composer: ChatComposerDraft;
   slashInstance?: CanonicalProviderInstanceDescriptor;
   slashCatalogLoading?: boolean;
+  projectSlash?: ProjectChatSlashScope;
+  isCurrentAuthority?: () => boolean;
   onOpenBotMention?: (chatId: string, text: string) => boolean | Promise<boolean>;
   agentClient?: ChatAgentClient;
   scope: string;
@@ -75,6 +81,13 @@ export function ChatInput({
   botConsentResources?: import("@matrix-os/contracts").CanonicalChatResourceReference[];
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
+  placeholder?: string;
+  /** Controls after attach (+), such as the project picker, like Electron Desktop. */
+  leadingControls?: React.ReactNode;
+  /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
+  toolbarControls?: React.ReactNode;
+  /** Queued turns, attached above the prompt card. */
+  queue?: React.ReactNode;
 }) {
   const { text: input, setText: setInput, setDraft, resources } = composer;
   const [sending, setSending] = useState(false);
@@ -82,8 +95,10 @@ export function ChatInput({
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const [cursor, setCursor] = useState(input.length);
   const [slashDismissal, setSlashDismissal] = useState<string|null>(null);
+  const skillBinding = JSON.stringify([scope, composer.permissionIdentity, projectSlash?.scope, projectSlash?.projectId, Boolean(projectSlash?.read), slashInstance?.id]);
+  const projectSkillDraft = useProjectSkillDraft(skillBinding);
   const slashToken = matchChatSlashToken(input,cursor);
-  const slashKey = `${scope}:${slashInstance?.id ?? ""}:${input}:${slashToken?.start ?? ""}`;
+  const slashKey = JSON.stringify([skillBinding, input, slashToken?.start]);
   const slashQuery = slashToken && slashDismissal !== slashKey ? slashToken.query : null;
   const slashListRef = useRef<HTMLDivElement|null>(null);
   const slashAnchorRef = useRef<HTMLDivElement|null>(null);
@@ -91,16 +106,22 @@ export function ChatInput({
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
-  const mayQueue = resources.length > 0;
+  const referenceCount = resources.length + projectSkillDraft.paths.length;
+  const mayQueue = referenceCount > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
   const mentionListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef(input);
   const pendingCursor = useRef<number|null>(null);
   const consumedDraftRequest = useRef<number | null>(null);
-  const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
+  // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
+  const mergedDraft = useRef<TrySuggestionDraft | null>(null);
+  const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  const currentComposer = useRef({ composer, scope });
+  useLayoutEffect(() => { currentComposer.current = { composer, scope }; }, [composer, scope]);
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
@@ -119,7 +140,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
+  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);
@@ -130,6 +151,17 @@ export function ChatInput({
     }
   }, [input]);
 
+  // Grow with the draft up to 220px, then scroll, like Electron Desktop's editor. Measured in
+  // script because CSS `field-sizing` is not available in every browser Web Chat supports.
+  useLayoutEffect(() => {
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = "0px";
+    const contentHeight = element.scrollHeight;
+    element.style.height = `${Math.min(Math.max(contentHeight, 40), 220)}px`;
+    element.style.overflowY = contentHeight > 220 ? "auto" : "hidden";
+  }, [input]);
+
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
     if (autoFocus) textareaRef.current?.focus();
@@ -138,10 +170,17 @@ export function ChatInput({
   useEffect(() => {
     if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
     consumedDraftRequest.current = draftRequest.id;
-    setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
+    if (draftRequest.merge) {
+      // The owner's own text stays; an earlier suggestion they have not touched is swapped.
+      mergedDraft.current = mergeTrySuggestion(inputRef.current, mergedDraft.current, draftRequest.text);
+      setDraft({ text: mergedDraft.current.text, resources });
+    } else {
+      mergedDraft.current = null;
+      setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
+    }
     textareaRef.current?.focus();
     onDraftConsumed?.(draftRequest.id);
-  }, [draftRequest, onDraftConsumed, setDraft]);
+  }, [draftRequest, onDraftConsumed, resources, setDraft]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -149,29 +188,43 @@ export function ChatInput({
     const attachmentError = attachmentPolicy?.(attachments.map(item => item.file));
     if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
+    const projectSkillProjectId = projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
+    const currentSkillScope = () => projectSkillDraft.isCurrent()
+      && currentComposer.current.composer.requestId === composer.requestId
+      && (isCurrentAuthority?.() ?? true);
+    if (projectSkillProjectId && !currentSkillScope()) return;
     setSending(true);
     setError(null);
+    const submittedIds = attachments.map(item => item.id);
+    let acknowledged = false;
+    const acknowledge = () => {
+      if (acknowledged || currentComposer.current.scope !== scope || currentComposer.current.composer.requestId !== composer.requestId) return;
+      if (projectSkillProjectId && !currentSkillScope()) return;
+      acknowledged = true; permission.confirm(false); composer.clear();
+      projectSkillDraft.clear();
+      for (const id of submittedIds) removeFile(id);
+    };
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finally is required to release the submission guard on every failure.
     try {
       const files = attachments.length ? await getBase64Files() : undefined;
-      const accepted = await onSubmit(text || (files?.length ? `Attached ${files.length} file(s)` : ""), files, {
-        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode,
+      if (projectSkillProjectId && !currentSkillScope()) return;
+      const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
+      const accepted = await onSubmit(prompt, files, {
+        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
+        ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
       });
-      if (accepted !== false) { permission.confirm(false); composer.clear(); clearAll(); }
+      if (accepted !== false) acknowledge();
     } catch (failure: unknown) {
+      if (projectSkillProjectId && !currentSkillScope()) return;
       console.warn("[chat] Message submission failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Message could not be sent. Try again.");
     } finally { setSending(false); }
   };
 
-  const handleMicClick = () => {
-    if (speech.phase === "recording") speech.stop();
-    else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
-    else void speech.start();
-  };
+  const editorPlaceholder = connected ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
 
   return (
-    <div className="@container/chat-composer flex flex-col gap-2" data-slot="chat-composer">
+    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
         const text = input.replace(/@[^\s@]*$/, "");
         const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
@@ -182,120 +235,98 @@ export function ChatInput({
         if (query !== null) setInput(input.replace(/@[^\s@]*$/, ""));
         textareaRef.current?.focus();
       }}/>
-      <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
       <ChatMentionControls client={agentClient} resources={permissionResources} permissionMode={permissionMode} bot={botContext} requiresFullAccess={botRequiresFullAccess} confirmed={permission.confirmed} onConfirm={permission.confirm} />
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-      {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
-      <Attachments attachments={attachments} onRemove={removeFile} />
-      <div ref={slashAnchorRef} className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
-        <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
+      <div ref={slashAnchorRef} className="relative flex flex-col">
+        <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} projectSlash={projectSlash} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
           onOutsideDismiss={()=>setSlashDismissal(slashKey)}
           onDismiss={()=>{setSlashDismissal(slashKey);textareaRef.current?.focus();}} onSelect={entry=>{
             if (!slashToken) return;
             // Matching stops at the caret for filtering; replacement consumes the rest of the same token.
-            const suffixLength=input.slice(slashToken.end).match(/^[a-z0-9_-]*/i)?.[0].length ?? 0;
-            const next=input.slice(0,slashToken.start)+entry.invocation+" "+input.slice(slashToken.end+suffixLength);
-            const nextCursor=slashToken.start+entry.invocation.length+1;
+            const suffixLength=input.slice(slashToken.end).match(/^[a-z0-9_.-]*/i)?.[0].length ?? 0;
+            let replacement = entry.invocation + " ";
+            if (entry.kind === "project_skill") {
+              if (isCurrentAuthority && !isCurrentAuthority()) return;
+              if (!projectSkillDraft.select(entry.path)) return;
+              replacement = "";
+            }
+            const next = input.slice(0, slashToken.start) + replacement + input.slice(slashToken.end + suffixLength);
+            const nextCursor = slashToken.start + replacement.length;
             inputRef.current=next;pendingCursor.current=nextCursor;setCursor(nextCursor);setInput(next);
             setSlashDismissal(slashKey);textareaRef.current?.focus();
           }}/>
-        <AttachmentButton
-          onFilesSelected={addFiles}
-          disabled={!connected || !attachmentsEnabled}
-          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
-          className="mb-2.5 ml-3"
-        />
-        <Textarea
-          aria-label="Message chat"
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => {inputRef.current=e.target.value;setInput(e.target.value);setCursor(e.target.selectionStart);}}
-          onSelect={e=>setCursor(e.currentTarget.selectionStart)}
-          onKeyDown={(event) => {
-            if (slashQuery !== null && !event.nativeEvent.isComposing) {
-              if (event.key === "Escape") {event.preventDefault();setSlashDismissal(slashKey);return;}
-              if (event.key === "ArrowDown" || event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                const first=slashListRef.current?.querySelector<HTMLButtonElement>('button[role="option"]');
-                if (event.key === "Enter") first?.click(); else first?.focus();
-                return;
-              }
-            }
-            handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() });
+        {queue}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          aria-label="Attach files"
+          onChange={(event) => {
+            if (event.target.files?.length) addFiles(event.target.files);
+            event.target.value = "";
           }}
-          placeholder={speech.phase === "requesting_permission"
-            ? "Waiting for microphone permission..."
-            : speech.phase === "transcribing"
-              ? "Transcribing into an editable draft..."
-              : speech.phase === "recording"
-                ? "Recording — stop when you're done"
-                : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder })}
-          rows={1}
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
-        <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {speech.isSupported ? (
-            <Button
-              type="button"
-              aria-label={speech.phase === "requesting_permission"
-                ? "Cancel microphone request"
-                : speech.phase === "recording"
-                  ? "Stop recording"
-                  : speech.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Start voice input"}
-              size="icon"
-              variant="ghost"
-              className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={handleMicClick}
-            >
-              {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />
-                : speech.phase === "transcribing" ? <XCircleIcon className="size-4" />
-                  : speech.phase === "recording" ? <CircleStop className="size-4" />
-                    : <MicIcon className="size-4" />}
-            </Button>
+        <ChatPromptInput
+          value={input}
+          onChange={setInput}
+          onSubmit={() => void handleSubmit()}
+          onAbort={canAbort ? onAbortCurrent : undefined}
+          busy={busy}
+          submitWhileBusy={mayQueue}
+          canSubmit={canSend}
+          sendLabel={busy && mayQueue ? "Queue next" : "Send"}
+          placeholder={editorPlaceholder}
+          attachments={attachments.length || resources.length || projectSkillDraft.paths.length ? (
+            <div data-slot="composer-context-row" className="flex min-w-0 flex-col gap-2 px-4 pt-3">
+              <ProjectSkillDraftChips paths={projectSkillDraft.paths} onRemove={projectSkillDraft.remove} />
+              <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
+              <Attachments attachments={attachments} onRemove={removeFile} />
+            </div>
           ) : null}
-          {speech.phase === "recording" ? (
-            <>
-              <SpeechInputWaveform
-                level={speech.inputLevel}
-                sampleSequence={speech.inputLevelSequence}
-                className="mx-1 text-destructive"
+          editor={(
+            <div data-slot="prompt-input-content" className="px-4">
+              <textarea
+                aria-label="Message chat"
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => {inputRef.current=e.target.value;setInput(e.target.value);setCursor(e.target.selectionStart);}}
+                onSelect={e=>setCursor(e.currentTarget.selectionStart)}
+                onKeyDown={(event) => {
+                  if (slashQuery !== null && !event.nativeEvent.isComposing) {
+                    if (event.key === "Escape") {event.preventDefault();setSlashDismissal(slashKey);return;}
+                    if (event.key === "ArrowDown" || event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      const first=slashListRef.current?.querySelector<HTMLButtonElement>('button[role="option"]');
+                      if (event.key === "Enter") first?.click(); else first?.focus();
+                      return;
+                    }
+                  }
+                  handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() });
+                }}
+                placeholder={editorPlaceholder}
+                rows={2}
+                className="block max-h-[220px] min-h-10 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-[20px] text-[var(--text-primary)] shadow-none outline-none placeholder:text-[var(--text-tertiary)] focus-visible:outline-none focus-visible:ring-0"
               />
-              <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
-                {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
-              </span>
+            </div>
+          )}
+          controls={(
+            <>
+              {attachmentsEnabled ? <ChatComposerAttachButton disabled={!connected} onClick={() => fileInputRef.current?.click()} /> : null}
+              {leadingControls}
             </>
-          ) : null}
-          {canAbort ? (
-            <Button
-              type="button"
-              aria-label="Stop"
-              title="Stop"
-              size="icon"
-              className="size-8 rounded-full"
-              onClick={onAbortCurrent}
-            >
-              <CircleStop className="size-4" />
-            </Button>
-          ) : null}
-          {!canAbort || mayQueue ? (
-            <Button
-              type="button"
-              aria-label={busy && mayQueue ? "Queue next" : "Send"}
-              size="icon"
-              className="size-8 rounded-full"
-              disabled={!canSend}
-              onClick={() => handleSubmit()}
-            >
-              <SendIcon className="size-4" />
-            </Button>
-          ) : null}
-        </div>
+          )}
+          status={<ChatSpeechQuotaStatus speech={speech} />}
+          trailingControls={(
+            <>
+              <ChatSpeechInputButton speech={speech} disabled={busy && !mayQueue} />
+              {botControls ?? toolbarControls}
+            </>
+          )}
+        />
       </div>
-      {botControls ? <div className="flex min-w-0 justify-end pt-1">{botControls}</div> : null}
     </div>
   );
 }

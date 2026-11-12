@@ -35,6 +35,7 @@ const activeBilling = {
 function makeApi(statusResponse: unknown) {
   return {
     baseUrl: "https://app.matrix-os.com",
+    forRuntime(_runtimeSlot: string) { return this; },
     get: vi.fn(async () => statusResponse),
     getText: vi.fn(),
     post: vi.fn(async (path: string) => ({
@@ -77,9 +78,11 @@ describe("desktop billing settings", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows billing in desktop settings navigation", () => {
+  it("opens billing from the agent-first settings navigation", async () => {
     render(<SettingsView />);
-    expect(screen.getByRole("button", { name: "Billing" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Billing" }));
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
   });
 
   it("loads native billing status through the desktop API client", async () => {
@@ -394,6 +397,7 @@ describe("desktop billing settings", () => {
   it.each([
     { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
     { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },
+    { selection: "explicit Finland location over the Asia suggestion", explicitRegion: "region_hel1", expectedRegion: "region_hel1" },
   ])("checks out with the $selection", async ({ explicitRegion, expectedRegion }) => {
     mockBrowserTimeZone("Asia/Shanghai");
     const api = makeApi({
@@ -421,6 +425,26 @@ describe("desktop billing settings", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://checkout.stripe.test/session",
     });
+  });
+
+  it("suggests Helsinki to a browser in Finland and checks out there", async () => {
+    mockBrowserTimeZone("Europe/Helsinki");
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+    });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByText("Billing required");
+    expect(screen.getByText(/Server location/).textContent).toContain("Helsinki, Finland");
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout|Start 3-day trial/i }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/billing/checkout",
+      { planSlug: "matrix_builder", interval: "monthly", regionSlug: "region_hel1" },
+    ));
   });
 
   it("keeps the billing portal available for locked Stripe subscriptions", async () => {

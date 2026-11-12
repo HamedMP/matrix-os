@@ -12,6 +12,8 @@ import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js
 import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
 import { projectStateRecoveryDir } from "./bounded-json-file.js";
 import { reconcileProjectIdentityIndex } from "./project-identity-index.js";
+import { getGithubDeveloperStatus, githubDeveloperSshCommand } from "./github-developer-status.js";
+import { githubOwnerEnvironment } from "./github-owner-environment.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
@@ -89,7 +91,7 @@ export interface WorkspaceError {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number },
+  options: { cwd: string; timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 type Result<T> = { ok: true; status?: number } & T;
@@ -157,7 +159,8 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     cwd: options.cwd,
     timeout: options.timeout,
     encoding: "utf-8",
-    maxBuffer: 2 * 1024 * 1024,
+    maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024,
+    env: options.env,
   });
   return { stdout, stderr };
 };
@@ -240,7 +243,7 @@ export function validateGitHubUrl(input: string):
       owner,
       repo,
       htmlUrl: `https://github.com/${owner}/${repo}`,
-      cloneUrl: value.startsWith("git@") ? value : `https://github.com/${owner}/${repo}.git`,
+      cloneUrl: `git@github.com:${owner}/${repo}.git`,
     };
   }
   return { ok: false, code: "invalid_repository_url", message: "Repository URL must point to GitHub" };
@@ -384,7 +387,12 @@ export function createProjectManager(options: {
   now?: () => string;
 }) {
   const homePath = resolve(options.homePath);
-  const runCommand = options.runCommand ?? defaultRunCommand;
+  const commandRunner = options.runCommand ?? defaultRunCommand;
+  const env = githubOwnerEnvironment(homePath);
+  const runCommand: CommandRunner = (command, args, commandOptions) => commandRunner(command, args, {
+    ...commandOptions,
+    env: commandOptions.env ?? env,
+  });
   const registry = createProjectRegistry({ homePath });
 
   return {
@@ -589,19 +597,18 @@ export function createProjectManager(options: {
           return genericError(409, "slug_conflict", "Project slug already exists");
         }
 
+        const githubStatus = await getGithubDeveloperStatus({ homePath, runCommand });
+        if (!githubStatus.authenticated) {
+          return genericError(424, "github_auth_required", "GitHub authentication is required");
+        }
+        if (githubStatus.gitProtocol !== "ssh" || githubStatus.sshStatus !== "verified") {
+          return genericError(424, "github_ssh_setup_required", "Finish GitHub Developer setup in Connect Apps before cloning.");
+        }
+
         const stagingRoot = join(homePath, "system", "clone-staging");
         const stagingPath = join(stagingRoot, `${slug}-${randomUUID()}`);
         const repoPath = join(targetProjectPath, "repo");
         await mkdir(stagingRoot, { recursive: true });
-
-        try {
-          await runCommand("gh", ["auth", "status"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
-        } catch (err: unknown) {
-          if (err instanceof Error) {
-            return genericError(424, "github_auth_required", "GitHub authentication is required");
-          }
-          return genericError(424, "github_auth_required", "GitHub authentication is required");
-        }
 
         try {
           await runCommand(
@@ -610,6 +617,15 @@ export function createProjectManager(options: {
             {
               cwd: stagingRoot,
               timeout: CLONE_TIMEOUT_MS,
+              env: {
+                ...env,
+                // Clone only the canonical SSH URL. Owner Git URL rewrites
+                // must not bypass the account and host checked above.
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                GIT_ALLOW_PROTOCOL: "ssh",
+                GIT_SSH_COMMAND: githubDeveloperSshCommand(homePath),
+                GIT_TERMINAL_PROMPT: "0",
+              },
             },
           );
           if (!await pathExists(stagingPath)) {
@@ -618,11 +634,7 @@ export function createProjectManager(options: {
           await mkdir(targetProjectPath, { recursive: true });
           await rename(stagingPath, repoPath);
         } catch (err: unknown) {
-          if (err instanceof Error) {
-            console.warn("[project-manager] Clone failed:", err.message);
-          } else {
-            console.warn("[project-manager] Clone failed:", err);
-          }
+          console.warn("[project-manager] Clone failed", err instanceof Error ? err.name : "UnknownError");
           await rm(stagingPath, { recursive: true, force: true });
           await rm(targetProjectPath, { recursive: true, force: true });
           return genericError(502, "clone_failed", "Repository clone failed");
@@ -635,7 +647,7 @@ export function createProjectManager(options: {
           description,
           slug,
           kind: "github",
-          remote: input.url,
+          remote: github.cloneUrl,
           localPath: repoPath,
           addedAt: timestamp,
           updatedAt: timestamp,
@@ -803,24 +815,8 @@ export function createProjectManager(options: {
       return { ok: true };
     },
 
-    async getGithubStatus(): Promise<{ installed: boolean; authenticated: boolean; user: string | null; errorCode: string | null }> {
-      try {
-        await runCommand("gh", ["--version"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
-      } catch (err: unknown) {
-        if (err instanceof Error) console.warn("[project-manager] gh not available:", err.message);
-        return { installed: false, authenticated: false, user: null, errorCode: "gh_missing" };
-      }
-      try {
-        await runCommand("gh", ["auth", "status"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
-        const user = await runCommand("gh", ["api", "user", "--jq", ".login"], {
-          cwd: homePath,
-          timeout: DEFAULT_TIMEOUT_MS,
-        });
-        return { installed: true, authenticated: true, user: user.stdout.trim() || null, errorCode: null };
-      } catch (err: unknown) {
-        if (err instanceof Error) console.warn("[project-manager] gh auth status failed:", err.message);
-        return { installed: true, authenticated: false, user: null, errorCode: "github_auth_required" };
-      }
+    async getGithubStatus() {
+      return getGithubDeveloperStatus({ homePath, runCommand });
     },
 
     async listPullRequests(slug: string, ownerScope?: OwnerScope): Promise<Result<{ prs: PullRequestSummary[]; refreshedAt: string }> | Failure> {

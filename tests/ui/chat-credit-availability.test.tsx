@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource } from "@matrix-os/contracts";
 import { GatewayPanel, isMatrixGatewaySourceReady } from "../../packages/ui/src/agents-providers/GatewayPanel";
-import { gatewayCreditLines } from "../../packages/ui/src/agents-providers/utils";
+import { gatewayCreditLines, localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils";
 
 const now = "2026-10-05T09:00:00.000Z";
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -31,6 +31,26 @@ it("shows zero ordinary Chat credit with a positive speech-inclusive total", () 
   expect(screen.queryByText("$1.00")).toBeNull();
   expect(screen.queryByText(/voice credit/i)).toBeNull();
 });
+it("separates Preview Chat and dictation allowances from dollar credit", () => {
+  freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
+  s.usage.previewQuota = { mode: "preview", requestLimit: 25, requestsUsed: 2, requestsRemaining: 23, maxConcurrency: 1,
+    expiresAt: "2026-10-20T16:45:00.000Z" };
+  render(<GatewayPanel source={s} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false}
+    canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()}
+    speechPreviewQuota={{ mode: "preview", requestLimit: 25, requestsUsed: 1, requestsRemaining: 24, maxConcurrency: 1,
+      expiresAt: "2026-10-20T16:45:00.000Z" }} />);
+  const expiry = localDateTimeWithZone("2026-10-20T16:45:00.000Z");
+  expect(expiry).toMatch(/\d{1,2}:\d{2}/);
+  expect(expiry).toMatch(/(?:GMT|UTC|[A-Z]{2,})/);
+  const allowances = screen.getByRole("group", { name: "Preview allowances" });
+  expect(allowances).toHaveTextContent("Preview Chat");
+  expect(allowances).toHaveTextContent("23 of 25 requests remaining");
+  expect(allowances).toHaveTextContent("Preview dictation");
+  expect(allowances).toHaveTextContent("24 of 25 requests remaining");
+  expect(allowances).toHaveTextContent(`Available until ${expiry}`);
+  expect(screen.getByText("Chat credit", { exact: true })).toBeVisible();
+  expect(screen.getByText("$0.00")).toBeVisible();
+});
 it.each([1, 4_999, 9_999, 10_000])("caps source credit by monthly budget and preserves precision: %s", amount => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
   Object.assign(s.usage.chatAvailability!, { eligibleBalanceMicrousd: 1_000_000, availableBalanceMicrousd: 1_000_000 });
@@ -41,9 +61,15 @@ it.each(["missing", "stale", "future", "mismatch"])("never substitutes aggregate
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
   if (state === "missing") delete s.usage.chatAvailability;
   else if (state === "stale") { s.usage.asOf = "2026-10-05T08:54:59.999Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
-  else if (state === "future") { s.usage.asOf = "2026-10-05T09:00:00.001Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
+  else if (state === "future") { s.usage.asOf = "2026-10-05T09:01:00.001Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
   else s.usage.chatAvailability!.asOf = "2026-10-05T08:59:59.000Z";
   expect(gatewayCreditLines(s).primary).toBe("Chat credit unavailable");
+});
+it.each([2_650, 60_000])("preserves zero Chat credit within the future tolerance (%dms) without substituting aggregate credit", skewMs => {
+  freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
+  s.usage.asOf = new Date(Date.parse(now) + skewMs).toISOString();
+  s.usage.chatAvailability!.asOf = s.usage.asOf;
+  expect(gatewayCreditLines(s)).toEqual({ primary: "$0.00", secondary: null, stale: false });
 });
 it.each(["missing", "stale", "zero", "budget_zero", "current"])("requires positive fresh Chat capacity before claiming Ready: %s", state => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

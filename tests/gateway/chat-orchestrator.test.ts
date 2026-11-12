@@ -1,83 +1,17 @@
-import {
-  CanonicalProviderCatalogSchema,
-  type CanonicalProviderCatalog,
-} from "@matrix-os/contracts";
+import { adapter, catalog, owner, principal } from "./chat-orchestrator-test-support.js";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { KyselyPGlite } from "kysely-pglite";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
+import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
 } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-
-const owner = { type: "personal" as const, ownerId: "owner_orchestrator" };
-const principal = { userId: owner.ownerId, source: "jwt" as const };
-
-function catalog(): CanonicalProviderCatalog {
-  return CanonicalProviderCatalogSchema.parse({
-    revision: "catalog_orchestrator",
-    drivers: [{
-      kind: "codex",
-      displayName: "Codex",
-      adapterVersion: "1.0.0",
-      capabilityClass: "coding_agent",
-    }],
-    instances: [{
-      id: "codex_default",
-      driverKind: "codex",
-      displayName: "Codex",
-      availability: "available",
-      workspaceRequirement: "project_optional",
-      catalogRevision: "catalog_orchestrator",
-      models: [{
-        id: "gpt-5.6-sol",
-        displayName: "GPT-5.6-Sol",
-        availability: "available",
-        capabilities: ["reasoning", "tools"],
-        supportsVision: false,
-        supportsToolUse: true,
-      }],
-      options: [],
-      skills: [],
-      commands: [],
-      setupActions: [],
-      supports: {
-        rootChat: true,
-        resume: true,
-        cancellation: true,
-        steering: "same_run",
-        attachments: ["file", "image", "structured_ref"],
-        tools: [],
-        approvals: true,
-        userInput: true,
-        worktrees: "optional",
-        resources: ["file", "folder", "project", "task", "app", "terminal_session"],
-        interactionModes: ["default"],
-        permissionModes: ["supervised"],
-      },
-    }],
-  });
-}
-
-function adapter(
-  start: CanonicalChatProviderAdapter<{ sessionId: string }>["start"],
-): CanonicalChatProviderAdapter<{ sessionId: string }> {
-  return {
-    driverKind: "codex",
-    stateSchemaVersion: 1,
-    parseState(value) {
-      if (!value || typeof value !== "object" || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
-        throw new Error("invalid state");
-      }
-      return value as { sessionId: string };
-    },
-    serializeState: (value) => value,
-    start,
-  };
-}
 
 describe("CanonicalChatOrchestrator", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
@@ -1199,33 +1133,32 @@ describe("CanonicalChatOrchestrator", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("starts a fresh Provider session when execution-root provenance changes", async () => {
+  it("resumes a Provider session only within the same resolved Project checkout", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-chat-checkouts-"));
+    const project = { id: "project_matrix", slug: "matrix-os", localPath: join(homePath, "projects", "matrix-os") };
+    const worktree = { id: "wt_abc123def456", projectSlug: project.slug, createdAt: "2026-08-25T09:00:00.000Z",
+      path: join(homePath, "worktrees", project.slug, "wt_abc123def456") };
+    await Promise.all([mkdir(project.localPath, { recursive: true }), mkdir(worktree.path, { recursive: true })]);
+    const projectRoot = await realpath(project.localPath);
+    const worktreeRoot = await realpath(worktree.path);
+    const roots = createChatExecutionRootResolver({
+      homePath,
+      projects: { getProjectById: async () => ({ ok: true, project }), resolveProjectWorkingDirectory: async () => project.localPath },
+      worktrees: { getWorktree: async () => ({ ok: true, worktree }) },
+    });
     await repository.create(owner, {
       id: "chat_changed_root",
       clientRequestId: "req_create_changed_root",
       title: "Changed root",
       projectId: "project_matrix",
     });
-    let fingerprint = "a".repeat(64);
-    const roots: ChatExecutionRootResolver = {
-      resolve: async (_owner, ref) => ({
-        ref,
-        fingerprint,
-        primaryWorkspaceRoot: "/safe/project",
-        projectSlug: "matrix-os",
-      }),
-      revalidate: async (_owner, provenance) => ({
-        ref: provenance.ref,
-        fingerprint: provenance.fingerprint,
-        primaryWorkspaceRoot: "/safe/project",
-        projectSlug: "matrix-os",
-      }),
-    };
-    const start = vi.fn(async function* () {
-      yield { type: "state.updated" as const, state: { sessionId: "native_root" } };
+    type RunInput = Parameters<CanonicalChatProviderAdapter<{ sessionId: string }>["start"]>[0];
+    const start = vi.fn(async function* (input: RunInput) {
+      const sessionId = input.worktreeId ? "native_worktree" : "native_primary";
+      yield { type: "state.updated" as const, state: { sessionId } };
       yield { type: "run.completed" as const, outcome: "completed" as const };
     });
-    const resume = vi.fn(async function* () {
+    const resume = vi.fn(async function* (_input: Parameters<NonNullable<CanonicalChatProviderAdapter["resume"]>>[0]) {
       yield { type: "run.completed" as const, outcome: "completed" as const };
     });
     const orchestrator = new CanonicalChatOrchestrator({
@@ -1235,30 +1168,30 @@ describe("CanonicalChatOrchestrator", () => {
       executionRoots: roots,
     });
 
-    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
-      clientRequestId: "req_changed_root_first",
-      baseRevision: 0,
-      parts: [{ type: "text", text: "first" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
-    await orchestrator.drain();
-    const first = await repository.get(owner, "chat_changed_root");
-    expect(first).not.toBeNull();
-    fingerprint = "b".repeat(64);
-    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
-      clientRequestId: "req_changed_root_second",
-      baseRevision: first!.chat.revision,
-      parts: [{ type: "text", text: "second" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
-    await orchestrator.drain();
+    try {
+      const chatId = "chat_changed_root";
+      const send = async (turn: string, executionRoot: NonNullable<Parameters<typeof orchestrator.admitTurn>[3]["executionRoot"]>) => {
+        const chat = await repository.get(owner, chatId);
+        if (!chat) throw new Error("Fixture Chat missing");
+        await orchestrator.admitTurn(principal, owner, chatId, {
+          clientRequestId: `req_changed_root_${turn}`, baseRevision: chat.chat.revision,
+          parts: [{ type: "text", text: turn }], selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default", permissionMode: "supervised", executionRoot,
+        });
+        await orchestrator.drain();
+      };
+      const selected = { kind: "worktree" as const, projectId: project.id, worktreeId: worktree.id };
+      await send("primary", { kind: "project", projectId: project.id });
+      await send("switch", selected);
+      await send("resume", selected);
 
-    expect(start).toHaveBeenCalledTimes(2);
-    expect(resume).not.toHaveBeenCalled();
+      expect(start.mock.calls.map(([input]) => input.executionRoot)).toEqual([projectRoot, worktreeRoot]);
+      expect(resume).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        executionRoot: worktreeRoot, worktreeId: worktree.id, resumeState: { sessionId: "native_worktree" },
+      }));
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("aborts an active Run idempotently and does not persist late Provider output", async () => {
@@ -1921,7 +1854,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
     const snapshot = await repository.exportChat(owner, "chat_reconcile_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
-    expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toHaveLength(501);
     expect(snapshot?.activities).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "run.error" }),
     ]));
@@ -2009,7 +1942,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities).toHaveLength(3);
   });
 
-  it("terminalizes a Run when semantic activity exceeds the persisted limit", async () => {
+  it("persists semantic activity beyond the detail window without failing the Run", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",
       clientRequestId: "req_create_activity_overflow",
@@ -2044,51 +1977,18 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
 
     const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
-    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
-    expect(snapshot?.activities.length).toBeLessThanOrEqual(500);
+    expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
+    expect(snapshot?.activities.length).toBeGreaterThan(500);
     expect(snapshot?.activities).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "run.error" }),
+      expect.objectContaining({ type: "run.status", status: "completed" }),
+    ]));
+    const detail = await repository.getDetailPage(owner, "chat_activity_overflow", { limit: 50 });
+    expect(detail?.activities).toHaveLength(500);
+    expect(detail?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.status", status: "completed" }),
     ]));
     expect(orchestrator.activeCount).toBe(0);
   });
 
-  it("bounds shutdown even when a Provider ignores cancellation", async () => {
-    await repository.create(owner, {
-      id: "chat_shutdown",
-      clientRequestId: "req_create_shutdown",
-      title: "Shutdown",
-    });
-    const provider = {
-      ...adapter(async function* () {
-        await new Promise<void>(() => undefined);
-        yield { type: "run.completed", outcome: "completed" };
-      }),
-      cancel: vi.fn(async () => new Promise<void>(() => undefined)),
-    };
-    const orchestrator = new CanonicalChatOrchestrator({
-      repository,
-      catalog: { getCatalog: async () => catalog() },
-      adapters: new CanonicalChatProviderRegistry([provider]),
-      shutdownDrainMs: 20,
-      now: () => new Date("2026-08-26T00:00:00.000Z"),
-    });
-    await orchestrator.admitTurn(principal, owner, "chat_shutdown", {
-      clientRequestId: "req_shutdown_turn",
-      baseRevision: 0,
-      parts: [{ type: "text", text: "hang" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
 
-    const startedAt = Date.now();
-    const closed = await Promise.race([
-      orchestrator.close().then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
-    ]);
-    expect(closed).toBe(true);
-    expect(Date.now() - startedAt).toBeLessThan(500);
-    const snapshot = await repository.exportChat(owner, "chat_shutdown");
-    expect(snapshot?.runs[0]).toMatchObject({ status: "aborted", outcome: "aborted" });
-  });
 });

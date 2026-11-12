@@ -1,11 +1,12 @@
 import {BotUseAuthorizationPanel} from "./BotUseAuthorizationPanel.js";
 import type { ProviderWorkflowUICapability } from "./types.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
+import { ReadOnlyNotice } from "./ReadOnlyNotice.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { type ProviderSettingsSnapshot, type SpeechCapabilitiesResponse } from "@matrix-os/contracts";
 import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
@@ -26,7 +27,9 @@ import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
-import { selectedHarness, titleCase } from "./utils.js";
+import { selectedHarness } from "./utils.js";
+import {legacyClaudeNativeConnection} from "./legacy-claude-connection.js";
+import {useNativeObservationClock} from "./use-native-observation-clock.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -38,6 +41,7 @@ function supportedActions(snapshot: ProviderSettingsSnapshot): readonly Supporte
 
 export function AgentsProvidersView({
   snapshot,
+  capabilityRefreshRevision,
   selectedHarnessId,
   connectionAttempt = null,
   busy = false,
@@ -52,11 +56,15 @@ export function AgentsProvidersView({
   onSetupHarness,
   workflowClient,
   localChatgptClient,
+  onLocalChatgptChanged,
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
+  speechClient,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
+  const capabilityRefreshKey = capabilityRefreshRevision ?? snapshot.refreshedAt;
+  const nativeObservationTime = useNativeObservationClock(snapshot.refreshedAt, snapshot.accounts);
   const [localChatgptRefreshRevision, setLocalChatgptRefreshRevision] = useState(0);
   const [subscriptionTarget, setSubscriptionTarget] = useState<string | null>(null);
   const [historyLoader, setHistoryLoader] = useState<AgentsProvidersViewProps["onLoadUsageHistory"]>(undefined);
@@ -65,6 +73,22 @@ export function AgentsProvidersView({
   const [workflowStatus, setWorkflowStatus] = useState<Record<string, string>>({});
   const [workflowPermission, setWorkflowPermission] = useState<"unknown" | "available" | "forbidden">("unknown");
   const [stateClient, setStateClient] = useState(workflowClient);
+  const [speechPreviewQuota, setSpeechPreviewQuota] = useState<SpeechCapabilitiesResponse["previewQuota"]>();
+  const [speechRefreshRevision, setSpeechRefreshRevision] = useState(0);
+  useEffect(() => {
+    if (!speechClient) return;
+    const controller = new AbortController();
+    setSpeechPreviewQuota(undefined);
+    void speechClient.capabilities(controller.signal).then((capabilities) => {
+      if (!controller.signal.aborted) setSpeechPreviewQuota(capabilities.previewQuota);
+    }).catch((caught: unknown) => {
+      if (!controller.signal.aborted) {
+        console.warn("[provider-settings] Speech capabilities unavailable:", caught instanceof Error ? caught.name : typeof caught);
+        setSpeechPreviewQuota(undefined);
+      }
+    });
+    return () => controller.abort();
+  }, [speechClient, speechRefreshRevision]);
   useEffect(() => {
     if (!workflowClient) return;
     const controller = new AbortController();
@@ -79,7 +103,7 @@ export function AgentsProvidersView({
       if (caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden") return;
     });
     return () => controller.abort();
-  }, [workflowClient, snapshot.refreshedAt]);
+  }, [workflowClient, capabilityRefreshKey]);
   const rememberOperation = (id: string, operation: string | null) => setOperationIds(current => {
     const next = { ...current };
     if (operation === null) delete next[id];
@@ -138,7 +162,12 @@ export function AgentsProvidersView({
       selectedId, disabled: busy || readOnly, supports, onMutate});
   const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate, scope: workflowClient });
   const visibleError = error ?? enablement.error;
-  const refreshSettings = () => { enablement.clearError(); setLocalChatgptRefreshRevision(value => value + 1); onRefresh(); };
+  const refreshSettings = () => {
+    enablement.clearError();
+    setLocalChatgptRefreshRevision(value => value + 1);
+    setSpeechRefreshRevision(value => value + 1);
+    onRefresh();
+  };
   const mutationsDisabled = busy || readOnly || gatewayPending || enablement.pending;
   const errorPresentation = settingsErrorPresentation(gatewayError ? null : visibleError);
 
@@ -159,12 +188,7 @@ export function AgentsProvidersView({
         </div>
       </header>
 
-      {snapshot.access.mode === "read_only" ? (
-        <div className="matrix-ap-notice" data-tone="neutral" role="status">
-          <strong>Read only</strong>
-          <span>{snapshot.access.reason === "remote_policy" ? "Your organization controls these settings." : `Changes are unavailable: ${titleCase(snapshot.access.reason).toLowerCase()}.`}</span>
-        </div>
-      ) : null}
+      {snapshot.access.mode === "read_only" ? <ReadOnlyNotice access={snapshot.access} /> : null}
       {visibleError || gatewayError ? (
         <div className="matrix-ap-notice" data-tone="danger" role="alert">
           <strong>{errorPresentation.title}</strong>
@@ -178,6 +202,7 @@ export function AgentsProvidersView({
           key={gatewaySource?.id ?? "matrix-ai-unconfigured"}
           source={gatewaySource} policy={snapshot.gatewayPolicy} provider={gatewayProvider}
           modelInventory={snapshot.matrixModelInventory}
+          speechPreviewQuota={speechClient ? speechPreviewQuota : undefined}
           onUsageHistory={onLoadUsageHistory ? () => setHistoryLoader(() => onLoadUsageHistory) : undefined}
           disabled={mutationsDisabled} canSetBudget={supports("set_gateway_budget")}
           canSetAllowlist={supports("set_gateway_allowlist")} canAddCredit={supports("add_credit")}
@@ -191,7 +216,7 @@ export function AgentsProvidersView({
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
-            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
+            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision} onLocalChatgptChanged={onLocalChatgptChanged}
             matrixAnthropicClient={matrixAnthropicClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
@@ -235,6 +260,7 @@ export function AgentsProvidersView({
           }
           sources={snapshot.accessSources}
           accounts={snapshot.accounts}
+          nativeObservationTime={nativeObservationTime}
           statusOverride={workflowStatus}
           selectedId={resolvedExpandedId}
           disabled={mutationsDisabled}
@@ -257,6 +283,7 @@ export function AgentsProvidersView({
             );
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
+            const legacyNative = legacyClaudeNativeConnection(harness, snapshot.accounts, snapshot.accessSources, nativeObservationTime.now, nativeObservationTime.observedAt);
             const nativeSource = (harness.harness !== "claude" && harness.harness !== "codex") || isNativeAccountSource(harness.harness, source, selectedAccount);
             const nativeCodexReconnect = harness.harness === "codex" && source?.fundingKind === "owner_account";
             const allowedSavedConnection = nativeSource && (!nativeCodexReconnect || guided && Boolean(workflowClient?.startConnection) && capability?.connectionOptions?.some(isCodexNativeLoginOption));
@@ -267,10 +294,10 @@ export function AgentsProvidersView({
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
-            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
+            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
-                {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
+                {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={String(capabilityRefreshKey)} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
@@ -290,7 +317,7 @@ export function AgentsProvidersView({
                 {!guided && harness.installState === "missing" && harness.harness !== "codex" && harness.harness !== "claude" ? <CatalogSetupPanel
                   entry={catalog ?? { harness: harness.harness as "pi" | "opencode" | "hermes" | "openclaw", displayName: harness.displayName, installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_unavailable" }}
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
-                {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
+                {!guided ? <>{connected || legacyNative ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
                 {!guided && allowedSavedConnection && (!workflowClient || workflowPermission === "available")
                   && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false
                   && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ?
@@ -307,6 +334,7 @@ export function AgentsProvidersView({
                     canSelectSource={genericConfiguration && supports("select_access_source")} canSelectAccount={genericConfiguration && supports("select_account")}
                     onMutate={onMutate} onRefresh={refreshSettings} />
                   <AccountsPanel harness={harness} accounts={snapshot.accounts.filter(item => harness.accountIds.includes(item.id))}
+                    nativeObservationTime={nativeObservationTime}
                     sources={snapshot.accessSources} allHarnesses={snapshot.harnesses} gatewayPolicy={snapshot.gatewayPolicy}
                     attempt={connectionAttempt?.harnessInstanceId === harness.id ? connectionAttempt : null}
                     disabled={mutationsDisabled} canLogin={workflowPermission !== "forbidden" && supports("start_login")} canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
@@ -330,7 +358,8 @@ export function AgentsProvidersView({
                         canSelectSource={supports("select_access_source")} canSelectAccount={supports("select_account")}
                         onMutate={onMutate} onRefresh={refreshSettings} />
                     </> : undefined}
-                    renderConnection={connected ? connectionCard : undefined}
+                    renderConnection={connected || legacyNative ? connectionCard : undefined}
+                    availableClaudeAccount={Boolean(legacyNative)}
                     renderAccountActions={(operationDisabled) => harness.harness === "codex" ? <CodexAccountActions
                       account={nativeSource ? selectedAccount : undefined} harnessId={harness.id} scopeOwner={workflowClient}
                       disabled={operationDisabled || workflowPermission === "forbidden"}
@@ -361,9 +390,9 @@ export function AgentsProvidersView({
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
                     onRefresh={refreshSettings}
-                    onRefreshAfterLogin={async () => {
+                    onRefreshAfterLogin={async (receipt) => {
                       if (!onRefreshForConnection) { refreshSettings(); return; }
-                      const refreshed = await onRefreshForConnection();
+                      const refreshed = await onRefreshForConnection(receipt);
                       if (!refreshed) throw new Error("connection refresh unavailable");
                     }}
                     onOpenTerminal={onOpenTerminal}

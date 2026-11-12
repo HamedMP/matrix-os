@@ -55,7 +55,7 @@ export function MessageList({
       keyExtractor={keyExtractor}
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
-      ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : null}
+      ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : undefined}
       // In a chat that exists, a tap on the messages closes the keyboard. One
       // that is still being created shows only what was just sent, and a tap
       // there goes to whatever it lands on.
@@ -73,7 +73,7 @@ function Message({
 }: Pick<MessageListProps, "chatId" | "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
   // A message that was not sent offers what the chat it is shown in can do about it.
   const unsent = useUnsentMessageActions();
-  if (message.role === "user") {
+  if (message.role === "user" || message.scheduledMessage) {
     const failed = message.delivery === "failed" && unsent !== null;
     return (
       <UserMessage
@@ -82,6 +82,9 @@ function Message({
         chatId={chatId}
         renderComputerPhoto={renderComputerPhoto}
         delivery={message.delivery}
+        scheduled={message.scheduled}
+        scheduledMessage={message.scheduledMessage}
+        scheduleEvent={message.scheduleEvent}
         onRetry={failed ? () => unsent.onRetry(message.id) : undefined}
         onEdit={failed ? () => unsent.onEdit(message.id) : undefined}
         retryDisabled={message.retryBlocked}

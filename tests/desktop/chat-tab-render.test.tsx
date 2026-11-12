@@ -23,7 +23,7 @@ import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/c
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
-import { appendSharedComposerText, setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { appendSharedComposerText, mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 async function prewarmHermesCatalog(overrides: Record<string, unknown> = {}) {
   const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
@@ -90,6 +90,7 @@ function codingAgentSummaryFixture() {
 
 describe("ChatTab", () => {
   beforeEach(() => {
+    mockSharedComposerPopoverLayout();
     stopDesktopProviderCatalogCoordinator();
     useConnection.setState(useConnection.getInitialState(), true);
     class MockResizeObserver {

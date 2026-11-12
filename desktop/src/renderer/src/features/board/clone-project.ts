@@ -20,6 +20,8 @@ function cloneErrorMessage(code: string | null): string {
       return "A project with that name already exists. Choose a different folder name.";
     case "github_auth_required":
       return "GitHub isn't connected on this computer. Sign in from the terminal, then try again.";
+    case "github_ssh_setup_required":
+      return "Open Settings → Connect Apps → GitHub Developer to finish SSH setup, then try again.";
     case "invalid_repository_url":
       return "That doesn't look like a GitHub repository URL.";
     case "invalid_slug":

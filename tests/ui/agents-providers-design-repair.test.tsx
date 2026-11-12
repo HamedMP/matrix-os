@@ -72,7 +72,7 @@ it("keeps owner-only connections disabled without persistent prose and recovers 
   expect(await screen.findByText("Connection in Settings is unavailable on this computer. Refresh or update the computer to try again.")).toBeInTheDocument();
   expect(screen.queryByText("Only this computer’s owner can manage connections.")).not.toBeInTheDocument();
 });
-it("renders the connected card from source observation without a disabled connect chooser", () => {
+it("renders the configured card from source observation without a disabled connect chooser", () => {
   const p = props();
   const observed = { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" };
   p.snapshot.harnesses[0]!.selectedAccountId = "owner";
@@ -81,7 +81,7 @@ it("renders the connected card from source observation without a disabled connec
   p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", eligibleModelIds: [], providerId: "openai", displayName: "owner@example.com", localObservation: observed, readiness: { state: "unknown" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-  expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Codex.*Configured/ })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Connection" })).toBeVisible();
   expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
   expect(screen.getAllByText("owner@example.com").some(node => !node.closest("details"))).toBe(true);
@@ -121,7 +121,7 @@ it("wires source-linked native profile identity and quota into the connected pag
     { id: "unrelated", providerId: "openai", accessSourceId: "other", displayName: "other@example.com", authMethod: "terminal", authState: "authenticated", connectionDetails: { email: "other@example.com", planName: "ChatGPT Plus" }, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 } }] as never;
   p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", providerId: "openai", accountId: "native-owner", displayName: "Codex account", localObservation: { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" }, readiness: { state: "unknown" }, eligibleModelIds: [], usage: { kind: "subscription_allowance", authority: "provider_allowance", state: "current", scope: "account", usedBasisPoints: 2500, resetsAt: "2026-10-04T00:00:00Z", asOf: "2026-10-03T00:00:00Z" } }] as never;
   render(<AgentsProvidersView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: /^Codex.*Connected/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Codex.*Configured/ }));
   const card = within(screen.getByRole("region", { name: "Codex connection" }));
   expect(card.getByText("ChatGPT Pro")).toBeVisible();
   expect(card.getByText("native@example.com")).toBeVisible();

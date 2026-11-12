@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 const root = process.cwd();
 
@@ -74,7 +75,7 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('-name "Matrix-OS-*-mac-*.dmg"');
     expect(workflow).toContain('! -name "${ARTIFACT_BASE}.zip.blockmap"');
     expect(workflow).not.toContain('other_arch="x64"');
-    expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
+    expect(workflow).toContain('find desktop/dist -path "*/${DESKTOP_APP_NAME}.app/Contents/Resources/app-update.yml"');
     expect(workflow).toContain("Smoke test macOS DMG mount");
     expect(workflow).toContain("desktop-update-fixture-server.mjs");
     expect(workflow).toContain('OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/"');
@@ -92,7 +93,7 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('[ ! -L "$mount_dir/Applications" ]');
     expect(workflow).toContain('applications_target="$(readlink "$mount_dir/Applications")"');
     expect(workflow).toContain('[ "$applications_target" != "/Applications" ]');
-    expect(workflow).toContain('ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"');
+    expect(workflow).toContain('ditto "$mount_dir/${DESKTOP_APP_NAME}.app" "$copy_dir/${DESKTOP_APP_NAME}.app"');
     expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit');
     expect(workflow).toContain("[ ! -f desktop/dist/latest-linux.yml ]");
     expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
@@ -219,14 +220,14 @@ describe("desktop release workflows", () => {
     expect(windowsJob).toContain(
       'Registry::HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
     );
-    expect(windowsJob).toContain('$_.DisplayName -eq "Matrix OS"');
+    expect(windowsJob).toContain('$_.DisplayName -eq $env:DESKTOP_APP_NAME');
     expect(windowsJob).toContain('$_.DisplayVersion -eq $env:PACKAGE_VERSION');
     expect(windowsJob).toContain('$uninstallEntry.QuietUninstallString');
     expect(windowsJob).toContain(`$uninstallCommand -notmatch '^"([^"]+)"'`);
     expect(windowsJob).not.toContain('Programs/Matrix OS');
     expect(windowsJob).toContain('$appProcess = Start-Process -FilePath $installedAppPath');
-    expect(windowsJob).toContain('foreach ($scheme in @("matrixos", "matrix-os"))');
-    expect(windowsJob.indexOf('foreach ($scheme in @("matrixos", "matrix-os"))')).toBeGreaterThan(
+    expect(windowsJob).toContain('foreach ($scheme in ($env:DESKTOP_PROTOCOL_SCHEMES -split ","))');
+    expect(windowsJob.indexOf('foreach ($scheme in ($env:DESKTOP_PROTOCOL_SCHEMES -split ","))')).toBeGreaterThan(
       windowsJob.indexOf('$appProcess = Start-Process -FilePath $installedAppPath'),
     );
     expect(windowsJob).toContain("Registry::HKEY_CURRENT_USER\\Software\\Classes\\$scheme");
@@ -282,7 +283,8 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain('"app-bridge": resolve(');
     expect(preload).toContain('const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge"');
     expect(preload).toContain("process.argv.includes(NATIVE_APP_BRIDGE_ARG)");
-    expect(preload).toContain('contextBridge.exposeInMainWorld("MatrixOS"');
+    expect(preload).toContain('contextBridge.exposeInMainWorld("__matrixNativeBridge"');
+    expect(preload).toContain('contextBridge.executeInMainWorld({');
     expect(main).toContain('appPreloadPath: join(__dirname, "../preload/index.cjs")');
   });
 
@@ -538,6 +540,93 @@ describe("desktop release workflows", () => {
       expect(dev).toContain("url: dev-x64.zip");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Matrix OS Canary release pipeline", () => {
+  const readWorkflow = (name: string) => parse(readFileSync(join(root, ".github/workflows", name), "utf8"));
+  const rank = { none: 0, read: 1, write: 2 } as Record<string, number>;
+
+  it.each(["desktop-release.yml", "desktop-release-canary.yml"])(
+    "%s grants every permission the reusable desktop build requests",
+    (caller) => {
+      // A reusable job asking for more than its caller grants fails the run at startup.
+      const build = readWorkflow("desktop-build.yml");
+      const granted = readWorkflow(caller).jobs.build.permissions as Record<string, string>;
+      for (const [job, definition] of Object.entries(build.jobs as Record<string, { permissions?: Record<string, string> }>)) {
+        for (const [scope, level] of Object.entries(definition.permissions ?? {})) {
+          expect(rank[granted[scope] ?? "none"], `${caller} build -> ${job}.${scope}`).toBeGreaterThanOrEqual(rank[level]);
+        }
+      }
+    },
+  );
+
+  it("publishes Canary on merges that change desktop inputs instead of on a timer", () => {
+    const workflow = readWorkflow("desktop-release-canary.yml");
+    expect(workflow.on.schedule).toBeUndefined();
+    expect(workflow.on.workflow_dispatch).toBeDefined();
+    expect(workflow.on.push.branches).toEqual(["main"]);
+    expect(workflow.on.push.paths).toEqual(expect.arrayContaining([
+      "desktop/**", "packages/contracts/**", "packages/ui/**", "packages/brand/**", "pnpm-lock.yaml",
+      "package.json", "pnpm-workspace.yaml",
+    ]));
+    expect(workflow.on.push.paths).not.toContain("shell/**");
+    // The renderer compiles these shell and home files directly.
+    const renderer = execFileSync("git", ["grep", "-hoE", String.raw`(\.\./)+(shell|home)/[A-Za-z0-9_./-]+`, "--", "desktop/src"], { cwd: root, encoding: "utf8" });
+    const imported = [...new Set(renderer.split("\n").filter(Boolean).map((path) => path.replace(/^(\.\.\/)+/, "")))];
+    expect(imported.length).toBeGreaterThan(0);
+    for (const path of imported) {
+      const covered = (workflow.on.push.paths as string[]).some((pattern) => {
+        const prefix = pattern.replace(/\*\*$/, "").replace(/\*$/, "");
+        return pattern.endsWith("*") ? path.startsWith(prefix) : path === pattern;
+      });
+      expect(covered, `${path} is built into the desktop app`).toBe(true);
+    }
+    expect(workflow.concurrency).toEqual({ group: "desktop-release-canary", "cancel-in-progress": false });
+  });
+
+  it("packages and verifies the Canary app under its own name and URL scheme", () => {
+    const text = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+    const build = parse(text);
+    for (const job of ["mac", "linux"]) {
+      expect(build.jobs[job].env.DESKTOP_BUILDER_CONFIG).toBe(
+        "${{ inputs.channel == 'canary' && 'electron-builder.canary.mjs' || 'electron-builder.yml' }}",
+      );
+    }
+    for (const job of ["mac", "linux", "windows"]) {
+      expect(build.jobs[job].env.DESKTOP_APP_NAME).toBe("${{ inputs.channel == 'canary' && 'Matrix OS Canary' || 'Matrix OS' }}");
+    }
+    expect(build.jobs.windows.env.DESKTOP_PROTOCOL_SCHEMES).toBe(
+      "${{ inputs.channel == 'canary' && 'matrixos-canary' || 'matrixos,matrix-os' }}",
+    );
+    const releaseJobs = text.slice(text.indexOf("\n  mac:\n"));
+    expect(releaseJobs).not.toContain("Matrix OS.app");
+    expect(releaseJobs).not.toContain("Matrix OS.exe");
+    expect(releaseJobs).not.toContain("--config electron-builder.yml");
+    expect(releaseJobs).not.toContain('@("matrixos", "matrix-os")');
+  });
+
+  it("selects the Canary identity for Windows packaging only on the canary channel", async () => {
+    vi.stubEnv("MATRIX_DESKTOP_WINDOWS_SIGNING_MODE", "certificate");
+    vi.stubEnv("MATRIX_DESKTOP_WINDOWS_PUBLISHER_NAME", "CN=Matrix OS Test");
+    vi.stubEnv("WIN_CSC_LINK", "fixture");
+    vi.stubEnv("WIN_CSC_KEY_PASSWORD", "fixture");
+    try {
+      const load = async (channel: string) => {
+        vi.stubEnv("MATRIX_DESKTOP_UPDATE_CHANNEL", channel);
+        const url = new URL(`../../desktop/electron-builder.windows.mjs?channel=${channel}`, import.meta.url);
+        return (await import(url.href)).default;
+      };
+      const canary = await load("canary");
+      expect(canary).toMatchObject({ appId: "com.matrix-os.operator.canary", productName: "Matrix OS Canary", forceCodeSigning: true });
+      expect(canary.win).toMatchObject({ icon: "build/icon-canary.png", verifyUpdateCodeSignature: true, signtoolOptions: { publisherName: "CN=Matrix OS Test" } });
+      expect(canary.protocols).toEqual([{ name: "Matrix OS Canary", schemes: ["matrixos-canary"] }]);
+      const stable = await load("stable");
+      expect(stable.extends).toBe("./electron-builder.yml");
+      expect(stable.appId).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 });

@@ -5,7 +5,7 @@ import {
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import {
-  createGithubDeveloperSetupSession as createGithubDeveloperSetupSessionRequest,
+  githubDeveloperSetup,
   getGithubDeveloperStatus as getGithubDeveloperStatusRequest,
   type GithubDeveloperStatusResult,
 } from "@/lib/github-developer-access";
@@ -1531,12 +1531,16 @@ export class GatewayClient {
     return getGithubDeveloperStatusRequest((path, init) => this.fetchGateway(path, init));
   }
 
-  /**
-   * Create a workspace tab that runs the fixed GitHub developer login flow and
-   * return its validated serialized TerminalRef for handoff, or null on failure.
-   */
-  async createGithubDeveloperSetupSession(): Promise<string | null> {
-    return createGithubDeveloperSetupSessionRequest((path, init) => this.fetchGateway(path, init));
+  async startGithubDeveloperSetup() {
+    return githubDeveloperSetup((path, init) => this.fetchGateway(path, init), "start");
+  }
+
+  async getGithubDeveloperSetup(id: string, signal?: AbortSignal) {
+    return githubDeveloperSetup((path, init) => this.fetchGateway(path, init), "get", id, signal);
+  }
+
+  async cancelGithubDeveloperSetup(id: string) {
+    return githubDeveloperSetup((path, init) => this.fetchGateway(path, init), "cancel", id);
   }
 
   async deleteTerminalSession(refKey: string): Promise<boolean> {

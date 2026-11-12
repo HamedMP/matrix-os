@@ -26,6 +26,18 @@ export type { TooltipProps } from "./Tooltip.js";
 export { cn } from "./cn.js";
 
 export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
+export {
+  GITHUB_DEVELOPER_SERVICE_ID,
+  GithubDeveloperAccess,
+  githubDeveloperDisconnectCommand,
+  withGithubDeveloperCatalogEntry,
+  parseGithubDeveloperAccessStatus,
+} from "./integrations/GithubDeveloperAccess.js";
+export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
+export type {
+  GithubDeveloperAccessClient,
+  GithubDeveloperAccessStatus,
+} from "./integrations/GithubDeveloperAccess.js";
 export type {
   AgentsProvidersViewProps,
   ProviderSettingsMutationIntent,
@@ -80,12 +92,20 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
+export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "./canonical-chat-admission.js";
+export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
+export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
-export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  usePlatformSpeechDraft,
+} from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
+  PlatformSpeechControlState,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
   PlatformSpeechRecording,
@@ -108,6 +128,8 @@ export {
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";
+export { chatStartTitle, compactChatStartLabel } from "./chat/chat-start-label.js";
+export { useMinuteClock } from "./chat/use-minute-clock.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, AttachmentImage, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
@@ -136,6 +158,15 @@ export {
   type ProjectSharingController,
 } from "./collaboration/useProjectSharing.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
+export { useCollaborativeAppSharing } from "./collaboration/useCollaborativeAppSharing.js";
+export { CollaborativeAppShareButton } from "./collaboration/CollaborativeAppShareButton.js";
+export { CollaborativeAppShareDialog } from "./collaboration/CollaborativeAppShareDialog.js";
+export { SharedAppViewer } from "./collaboration/SharedAppViewer.js";
+export type {
+  CollaborativeAppReadinessApi,
+  CollaborativeAppSharingActionState,
+  CollaborativeAppSharingState,
+} from "./collaboration/useCollaborativeAppSharing.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
   deriveProjectPresentation,
@@ -175,8 +206,16 @@ export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgents
 export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
+export {RoutineMessageMeta, RoutineOccurrenceMessage, RoutineMessageReadNotice, useRoutineMessageState} from "./chat-agents/bots/RoutineMessage.js";
+export {routineMessageTimeline, routineRequestFireId, routineOccurrenceTime, routineOccurrenceOutcome} from "./chat-agents/bots/routine-transcript.js";
+export type {RoutineOccurrence} from "./chat-agents/bots/routine-transcript.js";
+export { ScheduledMessageMeta } from "./chat/ScheduledMessageMeta.js";
+export { nativeScheduledMessage, scheduledMessageTime } from "./chat/scheduled-message.js";
+export type { ScheduledMessagePresentation } from "./chat/scheduled-message.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
-export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
+export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
+export type { AgentProviderCatalogSource } from "./chat-agents/use-agent-provider-catalog.js";
+export { AGENT_PROVIDER_CATALOG_REFRESH_ERROR, createAgentProviderCatalogSource } from "./chat-agents/agent-provider-catalog-source.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 
@@ -243,7 +282,7 @@ export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
 
-export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
+export { IntegrationMarketplace, type IntegrationRowPresentation } from "./integrations/IntegrationMarketplace.js";
 export {
   DEFAULT_CONNECT_POLL_INTERVALS_MS,
   activeConnectionIds,
@@ -257,7 +296,7 @@ export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionCl
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
-export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry, type ProjectChatSkillCatalog } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
@@ -276,6 +315,8 @@ export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 export * from "./onboarding-widget/index.js";
+export * from "./get-started/index.js";
+export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
@@ -289,4 +330,20 @@ export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./c
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
 
 export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
+export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
 export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";
+export { ChatPromptInput, ChatPromptStopButton } from "./chat/composer/ChatPromptInput.js";
+export { ChatComposerSelect, type ChatComposerSelectOption } from "./chat/composer/ChatComposerSelect.js";
+export { ChatComposerOptionControls, ChatComposerAttachButton, type ChatComposerOptionControl } from "./chat/composer/ChatComposerOptionControls.js";
+export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.js";
+export { ChatModelPicker } from "./chat/composer/ChatModelPicker.js";
+export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "./chat/composer/ChatProjectContextPicker.js";
+export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
+export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
+export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
+
+export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
+
+export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
+
+export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";

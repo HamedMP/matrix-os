@@ -9,6 +9,8 @@ import type {
 import { publishProjectChatRoutes } from "./project-chat-routes.js";
 import { revokeProjectSharedChatCredentials } from "./project-membership-transition.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
+import type { SharedChatExecutionCapability } from "./chat-scope.js";
+import { jsonb } from "./repository-shared.js";
 
 const BindingIdSchema = z.uuid();
 const ScopeIdSchema = z.uuid();
@@ -108,6 +110,7 @@ async function inheritedResourceScope(
     authorityGeneration: number;
     revision: number;
     lifecycle: "preparing" | "shared";
+    executionCapability?: SharedChatExecutionCapability | null;
     now: Date;
     createScopeId: () => string;
   },
@@ -165,8 +168,12 @@ async function inheritedResourceScope(
     auth_epoch: 0,
     authority_runtime_id: input.authorityRuntimeId,
     authority_generation: input.authorityGeneration,
-    execution_generation: null,
-    execution_eligibility: null,
+    execution_generation: input.kind === "chat"
+      ? input.executionCapability?.executionGeneration ?? null
+      : null,
+    execution_eligibility: input.kind === "chat" && input.executionCapability
+      ? jsonb(input.executionCapability.eligibility)
+      : null,
     created_at: input.now,
     updated_at: input.now,
     deleted_at: null,
@@ -209,9 +216,11 @@ export function createProjectInheritanceResolver(options: {
     readiness: "ready" | "blocked";
     blocker?: string;
     incarnation?: string;
+    executionCapability?: SharedChatExecutionCapability | null;
   };
 
   function parseBindingInput(raw: BindingInput) {
+    const { executionCapability, ...resource } = raw;
     const parsed = z.object({
       projectScopeId: ScopeIdSchema,
       ownerId: ActorIdSchema,
@@ -223,7 +232,7 @@ export function createProjectInheritanceResolver(options: {
       readiness: z.enum(["ready", "blocked"]),
       blocker: BlockerSchema.optional(),
       incarnation: IncarnationSchema.optional(),
-    }).strict().safeParse(raw);
+    }).strict().safeParse(resource);
     if (!parsed.success
       || (parsed.data.kind === "terminal" && !parsed.data.incarnation)
       || (parsed.data.kind === "file" && !safeRelativeFilePath(parsed.data.resourceId))
@@ -232,7 +241,7 @@ export function createProjectInheritanceResolver(options: {
       || (parsed.data.readiness === "blocked" && !parsed.data.blocker)) {
       throw new ProjectInheritanceError("invalid_resource");
     }
-    return parsed.data;
+    return { ...parsed.data, executionCapability };
   }
 
   /** Same-transaction variant used when the resource itself is being created or moved. */

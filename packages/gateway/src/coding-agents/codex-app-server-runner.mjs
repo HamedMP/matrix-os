@@ -17,9 +17,9 @@ import { createInterface } from "node:readline";
 import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
-import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createCodexSessionApprovalGrants, isSupportedCodexCommandApprovalKind } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
-import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { CodexHibernateControlSchema, CodexExecutionIdleControlSchema, createCodexIdleHibernation, createCodexExecutionObservation } from "./codex-idle-hibernation.mjs";
 import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
@@ -277,6 +277,7 @@ const SteerControlSchema = z.object({
   clientRequestId: ApprovalControlSchema.shape.clientRequestId,
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
+  CodexExecutionIdleControlSchema,
   CodexHibernateControlSchema,
   CodexBrowserBindSchema,
   CodexBrowserStartSchema,
@@ -387,6 +388,12 @@ const mcpElicitations = createCodexMcpElicitations({ send: sendProvider, persist
 const idleHibernation = createCodexIdleHibernation(() => ({
   providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
   active: activeTurn || stopping,
+  pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
+  otherControls: controlSockets.size > 1,
+}));
+const executionObservation = createCodexExecutionObservation(() => ({
+  providerThreadId: nativeThreadId, completedTurns: terminalEventCount,
+  active: activeTurn || stopping || pendingAdmittedTurn || renewingNativeTurn,
   pending: pendingTurns.length + pendingApprovals.size + pendingInputs.size + pendingRpc.size + mcpElicitations.size,
   otherControls: controlSockets.size > 1,
 }));
@@ -660,6 +667,10 @@ function decisionMapping(request) {
 async function handleApproval(raw) {
   const parsed = ApprovalRequestSchema.safeParse(raw);
   if (!parsed.success) return false;
+  if (parsed.data.method === "item/commandExecution/requestApproval"
+    && !isSupportedCodexCommandApprovalKind(parsed.data.params.kind)) {
+    return rejectCodexServerRequest(parsed.data, sendProvider);
+  }
   if (parsed.data.method === "item/permissions/requestApproval") {
     sendProvider({
       id: parsed.data.id,
@@ -1096,6 +1107,7 @@ async function steerActiveTurn(control) {
 }
 
 async function applyControl(control) {
+  if (control.type === "execution_idle") return { ok: executionObservation.isIdle(control.providerThreadId, control.requestId) };
   if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
   if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
@@ -1111,6 +1123,7 @@ async function applyControl(control) {
     if (!browserBootstrap.release(control.attemptId)) return { ok: false };
   } else if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
+    executionObservation.admitted(control.clientRequestId);
   } else if (control.type === "steer") {
     if (!await steerActiveTurn(control)) return { ok: false };
   } else if (control.type === "interrupt") {

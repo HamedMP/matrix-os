@@ -13,7 +13,10 @@ for await (const line of input) {
     else send({ id: message.id, result: { thread: { id: threadId } } });
   } else if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
-    if (mode === "watchdog") continue;
+    if (mode === "watchdog") {
+      send({ method: "item/started", params: { turnId, item: { id: "stuck-tool", type: "mcpToolCall", server: "fixture", tool: "read" } } });
+      continue;
+    }
     const typed = {
       usage: "usageLimitExceeded", notification: "usageLimitExceeded",
       context: "contextWindowExceeded", session_budget: "sessionBudgetExceeded",

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
 import type { ConversationPresentationCallbacks } from "./presentation";
 import { normalizeDesktopEditorPath } from "../../features/editor/desktop-editor-store";
+import { MermaidDiagram } from "../markdown/MermaidDiagram";
 
 function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="message-group" className={cn("flex min-w-0 flex-col gap-2", className)} {...props} />;
@@ -157,7 +158,7 @@ export function MessageMetadata({
 }: {
   content: string;
   timestamp: number;
-  role: "Assistant" | "User";
+  role: "Assistant" | "User" | "Scheduled task";
   copyText: ConversationPresentationCallbacks["copyText"];
 }) {
   const date = Number.isFinite(timestamp) ? new Date(timestamp) : null;
@@ -492,6 +493,7 @@ export function MessageResponse({
         const displayContent = renderCredential
           ? codeCredentialContent(markdownSourceRef.current, value, (codeNode as InlineMarkdownNode | undefined)?.position, renderCredential)
           : undefined;
+        if (blockLanguage?.toLowerCase() === "mermaid" && !displayContent) return <MermaidDiagram source={value} copyText={copy} />;
         return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} displayContent={displayContent} />;
       }
       const app = resolveApp?.(value);

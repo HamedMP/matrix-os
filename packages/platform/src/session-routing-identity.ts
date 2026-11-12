@@ -1,4 +1,4 @@
-import type { ClerkAuth } from './clerk-auth.js';
+import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import {
   type PlatformDB,
   getAccessibleActiveUserMachineByClerkId,
@@ -45,6 +45,8 @@ export interface AppDomainIdentity {
   sessionProvenance?: UserSessionProvenance;
   /** Epoch seconds of the verified source JWT; absent for fresh Clerk authentication. */
   sessionExpiresAt?: number;
+  /** Server-only positive human evidence; separate from ordinary routing lifetime. */
+  verifiedHumanBrowserExpiresAt?: number;
 }
 
 export interface SyncBearerIdentity {
@@ -289,6 +291,8 @@ export async function resolveAppDomainIdentity(opts: {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
       // Ordinary auth retains its clock tolerance; expired sessions gain no new personal authority.
       const sessionProvenance = claims.exp > Math.floor(Date.now() / 1000) ? claims.session_provenance : undefined;
+      const verifiedHumanBrowser = claims.verified_human_browser === true && sessionProvenance === 'clerk-browser'
+        ? { verifiedHumanBrowserExpiresAt: claims.exp } : {};
       const verifiedSyncBearer = opts.authHeader?.startsWith('Bearer ') === true;
       if (bearerToken === appSessionToken && opts.clerkAuth) {
         const clerkToken = opts.clerkAuth.extractToken(undefined, opts.cookieHeader);
@@ -322,6 +326,7 @@ export async function resolveAppDomainIdentity(opts: {
             verifiedSyncBearer,
             sessionProvenance,
             sessionExpiresAt: claims.exp,
+            ...verifiedHumanBrowser,
           };
         }
       }
@@ -334,6 +339,7 @@ export async function resolveAppDomainIdentity(opts: {
           verifiedSyncBearer,
           sessionProvenance,
           sessionExpiresAt: claims.exp,
+          ...verifiedHumanBrowser,
         };
       }
       const record = opts.legacyContainerRoutingEnabled === false
@@ -347,6 +353,7 @@ export async function resolveAppDomainIdentity(opts: {
           verifiedSyncBearer,
           sessionProvenance,
           sessionExpiresAt: claims.exp,
+          ...verifiedHumanBrowser,
         };
       }
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -359,6 +366,7 @@ export async function resolveAppDomainIdentity(opts: {
           verifiedSyncBearer,
           sessionProvenance,
           sessionExpiresAt: claims.exp,
+          ...verifiedHumanBrowser,
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -373,6 +381,7 @@ export async function resolveAppDomainIdentity(opts: {
         verifiedSyncBearer,
         sessionProvenance,
         sessionExpiresAt: claims.exp,
+        ...verifiedHumanBrowser,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -395,6 +404,8 @@ export async function resolveAppDomainIdentity(opts: {
   if (!result.authenticated || !result.userId) {
     return null;
   }
+  const verifiedHumanBrowser = hasVerifiedClerkBrowserSession(result, result.userId)
+    ? { verifiedHumanBrowserExpiresAt: result.tokenExpiresAt } : {};
 
   if (opts.clerkPrincipalOnly) {
     return {
@@ -402,6 +413,7 @@ export async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
       source: 'auth',
       sessionProvenance: 'clerk-browser',
+      ...verifiedHumanBrowser,
     };
   }
 
@@ -421,6 +433,7 @@ export async function resolveAppDomainIdentity(opts: {
         runtimeSlot: requestedMachine.runtimeSlot,
         source: 'auth',
         sessionProvenance: 'clerk-browser',
+        ...verifiedHumanBrowser,
       };
     }
   }
@@ -434,6 +447,7 @@ export async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
       source: 'auth',
       sessionProvenance: 'clerk-browser',
+      ...verifiedHumanBrowser,
     };
   }
   let machine = opts.runtimeSlot !== 'primary'
@@ -449,6 +463,7 @@ export async function resolveAppDomainIdentity(opts: {
         userId: result.userId,
         source: 'auth',
         sessionProvenance: 'clerk-browser',
+        ...verifiedHumanBrowser,
       };
     }
     return null;
@@ -460,6 +475,7 @@ export async function resolveAppDomainIdentity(opts: {
     runtimeSlot: machine.runtimeSlot,
     source: 'auth',
     sessionProvenance: 'clerk-browser',
+    ...verifiedHumanBrowser,
   };
 }
 

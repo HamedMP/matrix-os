@@ -161,6 +161,8 @@ it.each([false, true])("does not present legacy Matrix-funded Claude as a native
  await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
  expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
  fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+ expect(screen.getByRole("button", { name: /^Claude Code.*Not connected/ })).toBeVisible();
+ expect(screen.queryByRole("button", { name: "Change account" })).toBeNull();
  expect(within(subscriptions).getAllByText("Not connected")[0]).toBeVisible();
  expect(within(subscriptions).queryByText("Saved connection")).toBeNull();
  expect(within(subscriptions).queryByText("Connected")).toBeNull();

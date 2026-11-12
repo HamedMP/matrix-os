@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -18,8 +18,15 @@ import {
 } from "@/hooks/useWindowManager";
 
 const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown;visible?: boolean}}));
+const publishingProps=vi.hoisted(()=>({current: null as null | {appSlug: string;portalContainer?: HTMLElement | null;portalContainerRef?: React.RefObject<HTMLElement | null>}}));
 vi.mock("@/components/AppViewer", () => ({
   AppViewer: (props: {onOpenApp: unknown;visible?: boolean}) => { viewerProps.current=props; return <div data-testid="app-viewer" />; },
+}));
+vi.mock("@/components/app-sites/AppSiteButton", () => ({
+  AppSiteButton: (props: {appSlug: string;portalContainer?: HTMLElement | null;portalContainerRef?: React.RefObject<HTMLElement | null>}) => {
+    publishingProps.current=props;
+    return <button type="button">Publish app</button>;
+  },
 }));
 
 describe("web desktop window controls", () => {
@@ -81,7 +88,7 @@ describe("web desktop window controls", () => {
     }
   });
 
-  it("reserves the visible launch bar below a maximized Web Desktop app", () => {
+  it("fills a maximized Web Desktop app to the bottom edge, like Electron Desktop", () => {
     const win: AppWindow = {
       id: "maximized-demo", title: "Demo", path: "apps/demo/dist/index.html",
       x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
@@ -108,13 +115,34 @@ describe("web desktop window controls", () => {
     );
     const frame = container.querySelector<HTMLElement>("[data-window-id]")!;
     expect(frame.style.top).toBe("38px");
-    // Tailwind inset-0 supplies bottom:0 unless the maximized frame overrides it.
-    // The visible bar occupies 66px plus its 12px bottom offset.
-    expect(Number.parseFloat(frame.style.bottom || "0")).toBeGreaterThanOrEqual(78);
+    // The launch bar hides while an app is maximized, so the frame keeps inset-0's bottom edge.
+    expect(Number.parseFloat(frame.style.bottom || "0")).toBe(0);
   });
 
   it("keeps floating windows below the desktop header", () => {
     expect(desktopWindowTop(20, 38)).toBe("58px");
+  });
+
+  it("places created-app publishing in the existing white title bar without an extra content row", () => {
+    const win: AppWindow = {
+      id: "window-publishing", title: "Demo", path: "apps/demo/index.html",
+      x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
+    };
+    const noop = vi.fn();
+    const { container } = render(
+      <DesktopWindow win={win} dockPosition="bottom" fullscreenWindowId={null}
+        interacting={false} minimizingIds={new Set()} onAnimateMinimize={noop}
+        onCloseWindow={noop} onDragEnd={noop} onDragMove={noop} onDragStart={noop}
+        onFocusWindow={noop} onOpenWindow={noop} onResizeInteractionChange={noop}
+        onToggleFullscreen={noop} />,
+    );
+
+    const frame = container.querySelector<HTMLElement>("[data-window-id]")!;
+    const titleBar = within(frame.querySelector<HTMLElement>('[data-slot="card-header"]')!);
+    expect(titleBar.getByRole("button", { name: "Publish app" })).toBeTruthy();
+    expect(frame.querySelector('[data-testid="app-publishing-bar"]')).toBeNull();
+    expect(publishingProps.current?.appSlug).toBe("demo");
+    expect(publishingProps.current?.portalContainerRef?.current).toBe(frame);
   });
 
   it("hides portal-backed app controls throughout minimize and restores them with the window", () => {

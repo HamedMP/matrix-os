@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState, type CSSProperties } from "react";
+import { useId, useState, type CSSProperties, type ReactNode } from "react";
 import { desktopPalette, desktopFonts } from "@matrix-os/brand/tokens";
 import { SiteSlugSchema, type SitePublishing, type SiteRecord } from "@matrix-os/contracts";
 import { Button, Input } from "@matrix-os/ui";
@@ -7,27 +7,32 @@ import type { SiteClient } from "../../lib/site-client";
 import { useAppSite } from "./use-app-site";
 import { formatSiteDate } from "./format-site-date";
 import { SiteSubmissions } from "./SiteSubmissions";
+import { SiteAccessLinks } from "./SiteAccessLinks";
 
-export function AppSitePanel(props: { appSlug: string; client: SiteClient }) {
+export function AppSitePanel(props: { appSlug: string; client: SiteClient; variant?: "default" | "share"; ownerIdentity?: string }) {
   return <AppSitePanelSession key={props.appSlug} {...props} />;
 }
-function AppSitePanelSession({ appSlug, client }: { appSlug: string; client: SiteClient }) {
+function AppSitePanelSession({ appSlug, client, variant = "default", ownerIdentity = "local-user" }: { appSlug: string; client: SiteClient; variant?: "default" | "share"; ownerIdentity?: string }) {
   const state = useAppSite(appSlug, client);
   const formKey = `${state.loading ? "loading" : "ready"}:${state.metadataEpoch}`;
-  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} />;
+  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} variant={variant} ownerIdentity={ownerIdentity} />;
 }
-function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite> }) {
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This form coordinates one publishing draft and delegates invite, access, version, submission, and deployment workflows to focused sections below.
+function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite>; variant: "default" | "share"; ownerIdentity: string }) {
   const fieldId = useId();
   const { site, loading, pending, loadFailed, action } = state;
   const [title, setTitle] = useState(site?.title ?? appSlug);
   const [description, setDescription] = useState(site?.description ?? "");
   const [slug, setSlug] = useState(site?.slug ?? "");
+  const [accessModeOverride, setAccessModeOverride] = useState<"public" | "private_link" | null>(null);
+  const accessMode = accessModeOverride ?? site?.accessMode ?? "public";
+  const setAccessMode = (value: "public" | "private_link") => setAccessModeOverride(value);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [config, setConfig] = useState<SitePublishing | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
   const invalidateReview = () => { setReviewed(false); setReviewOpen(false); setPreviewReady(false); setConfig(null); };
-  const metadata = { title: title.trim(), description: description.trim(), slug: slug.trim() || null, baseRevision: site?.revision ?? 0 };
+  const metadata = { title: title.trim(), description: description.trim(), slug: slug.trim() || null, accessMode, baseRevision: site?.revision ?? 0 };
   const invalid = !metadata.title || (metadata.slug !== null && !SiteSlugSchema.safeParse(metadata.slug).success);
   const disabled = pending || loading || loadFailed;
   async function review() {
@@ -37,10 +42,19 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
       setConfig(declaration); setPreviewReady(true); setReviewOpen(true);
     });
   }
-  return <section className="space-y-4" aria-label="App publishing" style={{
+  const share = variant === "share";
+  const publishingControls = <>
+    {!share ? <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p> : null}
+    <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} />
+    <SitePublicLinks {...{ site, disabled, action }} />
+    <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
+    {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
+    <SitePublicationManagement {...{ appSlug, client, state, disabled }} showAccessLinks={!share} />
+  </>;
+  return <section className={share ? "space-y-2 text-[13px] [&_div.border]:border-[var(--matrix-border)] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[var(--matrix-border)] [&_fieldset]:bg-[var(--matrix-card)] [&_fieldset]:p-3 [&_details]:border-[var(--matrix-border)] [&_details]:bg-[var(--matrix-card)] [&_li.border]:border-[var(--matrix-border)] [&_pre]:border-[var(--matrix-border)] [&_select]:border-[var(--matrix-border)] [&_select]:bg-[var(--matrix-card)] [&_select]:text-[var(--matrix-fg)]" : "space-y-4"} aria-label="App publishing" style={{
       "--matrix-fg": `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
-      "--matrix-card": `var(--background, var(--bg-surface, ${desktopPalette.paper}))`,
-      "--matrix-input": "var(--border, var(--border-default))",
+      "--matrix-card": `var(--card, var(--bg-surface, var(--background, ${desktopPalette.paper})))`,
+      "--matrix-input": "var(--input, var(--border, var(--border-default)))",
       "--matrix-border": "var(--border, var(--border-default))",
       "--matrix-primary": `var(--primary, var(--accent, ${desktopPalette.forest}))`,
       "--matrix-primary-fg": `var(--primary-foreground, var(--text-on-accent, ${desktopPalette.paper}))`,
@@ -48,24 +62,70 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
       "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
       color: "var(--matrix-fg)",
     } as CSSProperties}>
-    <p className="text-sm">Deploy this app to a public URL. Draft changes stay private until you publish an update.</p>
+    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled, ownerIdentity }} onPublicationChange={(publication) => {
+      setAccessMode("private_link");
+      state.syncSite(publication);
+    }} /> : null}
     <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
-    <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, invalid, setTitle, setDescription, setSlug, invalidateReview }} />
-    <SitePublicLinks {...{ site, disabled, action }} />
-    <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
-    {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
-    <SitePublicationManagement {...{ appSlug, client, state, disabled }} />
+    {share ? <SharePublishingDisclosure>{publishingControls}</SharePublishingDisclosure> : publishingControls}
   </section>;
 }
 
-function SiteMetadataFields({ fieldId, disabled, title, description, slug, invalid, setTitle, setDescription, setSlug, invalidateReview }: {
-  fieldId: string; disabled: boolean; title: string; description: string; slug: string; invalid: boolean;
-  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; invalidateReview: () => void;
+function SharePublishingDisclosure({ children }: { children: ReactNode }) {
+  const contentId = useId();
+  const [open, setOpen] = useState(false);
+  return <section className="overflow-hidden rounded-lg border bg-[var(--matrix-card)]" aria-label="Permanent app publishing">
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={contentId}
+      onClick={() => setOpen(value => !value)}
+      className="flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">Publish app to a permanent URL</span>
+        <span className="mt-0.5 block text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Host the whole app at a stable Matrix.page URL.</span>
+      </span>
+      <span aria-hidden="true" className="shrink-0 text-base">{open ? "⌃" : "⌄"}</span>
+    </button>
+    {open ? <div id={contentId} className="space-y-3 border-t p-3" style={{ borderColor: "var(--matrix-border)" }}>
+      <p className="text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Public access gives anyone the stable URL. Private access enables the one-time invite links above.</p>
+      {children}
+    </div> : null}
+  </section>;
+}
+
+function ShareInviteSection({ appSlug, client, state, disabled, ownerIdentity, onPublicationChange }: SiteSectionProps & { ownerIdentity: string; onPublicationChange: (site: SiteRecord) => void }) {
+  return <section aria-label="Invite" className="space-y-2 rounded-lg border bg-[var(--matrix-card)] p-2.5" style={{ borderColor: "var(--matrix-border)" }}>
+    <div className="space-y-1">
+      <h3 className="text-sm font-semibold">Invite</h3>
+      <p className="text-xs leading-4" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Invite collaborators to use this app. Email invitations are not available yet.</p>
+    </div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-8 min-w-0 rounded-md border px-3 text-sm disabled:cursor-not-allowed" style={{ borderColor: "var(--matrix-border)", background: "var(--muted, var(--matrix-card))", color: "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
+      <Button disabled size="sm">Invite</Button>
+    </div>
+    <div className="flex items-center gap-3">
+      <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold" style={{ background: "var(--matrix-primary)", color: "var(--matrix-primary-fg)" }}>Y</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium" title={`You (${ownerIdentity})`}>You ({ownerIdentity})</p>
+        <p className="text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>App owner</p>
+      </div>
+      <span className="text-sm font-medium" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Owner</span>
+    </div>
+    <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} variant="invite" onPublicationChange={onPublicationChange} />
+  </section>;
+}
+
+function SiteMetadataFields({ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }: {
+  fieldId: string; disabled: boolean; title: string; description: string; slug: string; accessMode: "public" | "private_link"; invalid: boolean;
+  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; setAccessMode: (value: "public" | "private_link") => void; invalidateReview: () => void;
 }) { return <fieldset disabled={disabled} className="space-y-3">
       <Input label="Title" id={`${fieldId}-title`} maxLength={200} value={title} onChange={event => { setTitle(event.target.value); invalidateReview(); }} />
       <Input label="Description" id={`${fieldId}-description`} maxLength={1000} value={description} onChange={event => { setDescription(event.target.value); invalidateReview(); }} />
       <Input label="Friendly path (optional)" id={`${fieldId}-slug`} maxLength={63} placeholder="matrix-launch" value={slug} onChange={event => { setSlug(event.target.value); invalidateReview(); }} />
       <p className="text-xs">matrix.page/{slug || "your-permanent-id"}</p>
+      <label className="block space-y-1 text-sm" htmlFor={`${fieldId}-access`}><span className="font-medium">Access</span><select id={`${fieldId}-access`} className="block w-full rounded border bg-transparent p-2" value={accessMode} onChange={event => { setAccessMode(event.target.value as "public" | "private_link"); invalidateReview(); }}><option value="public">Public</option><option value="private_link">Private — one-time links</option></select></label>
       {invalid && slug ? <p className="text-xs">Use 2–63 lowercase letters, numbers, or hyphens, starting with a letter. Some paths are reserved.</p> : null}
     </fieldset>; }
 function SiteDeploymentReview({ config, reviewed, setReviewed }: { config: SitePublishing | null; reviewed: boolean; setReviewed: (value: boolean) => void }) {
@@ -95,14 +155,14 @@ function SiteUnpublish({ appSlug, client, state, disabled }: SiteSectionProps) {
 function SitePublicationStatus({ state, onRefreshPublication }: { state: ReturnType<typeof useAppSite>; onRefreshPublication: () => void }) {
   const { site, loading, loadFailed, error, message } = state;
   const published = site?.status === "published";
-  return <>{loading ? <p role="status">Loading publication…</p> : loadFailed ? null : <p role="status">{published ? "Your app is public." : "This app is private."}</p>}
+  return <>{loading ? <p role="status">Loading publication…</p> : loadFailed ? null : <p role="status">{published ? site?.accessMode === "private_link" ? "Your app uses one-time links." : "Your app is public." : "This app is private."}</p>}
     {error ? <p role="alert" className="text-sm">{error}</p> : null}
     {loadFailed ? <Button variant="secondary" onClick={state.refresh}>Retry</Button> : null}
     {state.conflict ? <Button variant="secondary" disabled={state.pending || loading} onClick={onRefreshPublication}>Refresh publication</Button> : null}
     {message ? <p role="status" className="text-sm">{message}</p> : null}</>;
 }
 function SitePublicLinks({ site, disabled, action }: { site: SiteRecord | null; disabled: boolean; action: ReturnType<typeof useAppSite>["action"] }) {
-  if (!site) return null;
+  if (!site || site.accessMode === "private_link") return null;
   const permanentUrl = `https://matrix.page/${site.id}`;
   const friendlyUrl = site.slug ? `https://matrix.page/${site.slug}` : null;
   return <div className="space-y-2 rounded-lg border p-3">
@@ -114,7 +174,7 @@ function SitePublicLinks({ site, disabled, action }: { site: SiteRecord | null; 
 }
 function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }: SiteSectionProps & {
   invalid: boolean; reviewed: boolean; previewReady: boolean; config: SitePublishing | null;
-  metadata: { title: string; description: string; slug: string | null; baseRevision?: number }; review: () => Promise<void>;
+  metadata: { title: string; description: string; slug: string | null; accessMode: "public" | "private_link"; baseRevision?: number }; review: () => Promise<void>;
 }) {
   const { site, pending, mutate } = state;
   const published = site?.status === "published";
@@ -126,12 +186,13 @@ function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, revi
     </div>;
 }
 
-function SitePublicationManagement({ appSlug, client, state, disabled }: SiteSectionProps) {
+function SitePublicationManagement({ appSlug, client, state, disabled, showAccessLinks }: SiteSectionProps & { showAccessLinks: boolean }) {
   const submissionsId = useId();
   const [showSubmissions, setShowSubmissions] = useState(false);
   if (!state.site) return null;
   const published = state.site.status === "published";
   return <>
+      {showAccessLinks ? <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} /> : null}
       <SiteVersionHistory {...{ appSlug, client, state }} disabled={disabled || state.conflict} />
       <Button variant="secondary" disabled={disabled} aria-expanded={showSubmissions} aria-controls={submissionsId} onClick={() => { setShowSubmissions(!showSubmissions); if (!showSubmissions) void state.loadSubmissions(); }}>Visitor submissions</Button>
       {showSubmissions ? <SiteSubmissions id={submissionsId} appSlug={appSlug} client={client} state={state} /> : null}

@@ -6,9 +6,10 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {CanonicalChatWorkspace} from '@desktop/renderer/src/features/chat/CanonicalChatWorkspace';
 import {useConnection} from '@desktop/renderer/src/stores/connection';
 import {createCanonicalChatWorkspaceClient,canonicalChatRecord,providerCatalog} from './canonical-chat-workspace-test-utils';
-import {setSharedComposerText} from './shared-chat-composer-test-utils';
+import {mockSharedComposerPopoverLayout,setSharedComposerText} from './shared-chat-composer-test-utils';
 import {clientFixture,saved} from './chat-agents-fixture';
 afterEach(cleanup);
+beforeEach(mockSharedComposerPopoverLayout);
 beforeEach(()=>{vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});useConnection.setState(useConnection.getInitialState(),true);});
 it.each([[undefined,null],['chat_original',null],[undefined,'project_alpha']] as const)('returns a conflicting Bot handoff to Electron source %s in Project %s without resetting its draft',async(sourceId,projectId)=>{
  const client=createCanonicalChatWorkspaceClient();const agents=clientFixture();const bot={...saved,recipeRef:{recipeId:'writer',version:'1'},selection:{instanceId:'matrix_bot_default',model:'automatic'}};

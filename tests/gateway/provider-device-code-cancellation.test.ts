@@ -28,12 +28,13 @@ async function fixture() {
   const getSnapshot = vi.fn(async () => snapshot);
   const complete = vi.fn(async () => ({ kind: "snapshot", snapshot }));
   const mutate = vi.fn(), releaseProfile = vi.fn(), proof = vi.fn(async () => true);
+  const onLoginSucceeded = vi.fn();
   const start = createCodexSettingsLogin({ command: "fake-codex", cwd: "/fake", env: {},
     acquire: async () => releaseProfile, captureAccountProof: async () => proof });
   const [adapter] = await createNativeProviderWorkflowAdapters({
     store: { getSnapshot, mutate, completeCodexNativeLogin: complete } as unknown as ProviderSettingsStoreWriter,
     terminal: {} as never, hostControl: { available: false, run: vi.fn() },
-    codexSettingsConnection: { available: async () => true, start },
+    codexSettingsConnection: { available: async () => true, start }, onLoginSucceeded,
   });
   const publish = vi.fn();
   const running = await adapter!.start({ request: {
@@ -48,7 +49,7 @@ async function fixture() {
     respond({ method: "account/login/completed", params: { loginId, success: true } });
     child.emit("close", 0);
   };
-  return { getSnapshot, complete, mutate, snapshot, publish, running, authenticate, releaseProfile, proof };
+  return { getSnapshot, complete, mutate, snapshot, publish, running, authenticate, releaseProfile, proof, onLoginSucceeded };
 }
 
 it("does not connect or enable Codex when cancellation wins during the fresh account read", async () => {
@@ -61,6 +62,7 @@ it("does not connect or enable Codex when cancellation wins during the fresh acc
   read.release();
   await cancelled;
   expect(f.complete).not.toHaveBeenCalled();
+  expect(f.onLoginSucceeded).not.toHaveBeenCalled();
   expect(f.mutate).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }));
   expect(f.releaseProfile).toHaveBeenCalledOnce();
@@ -86,7 +88,14 @@ it.each([true, false])("waits for private completion already dispatched and repo
   expect(f.complete).toHaveBeenCalledWith(expect.objectContaining({
     harnessInstanceId: "harness_codex", expectedRevision: 0, verifyNativeAccount: f.proof,
   }));
-  if (success) expect(f.publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null });
-  else expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }));
+  if (success) {
+    expect(f.publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null });
+    expect(f.onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("codex");
+    expect(f.complete.mock.invocationCallOrder[0]).toBeLessThan(f.onLoginSucceeded.mock.invocationCallOrder[0]!);
+    expect(f.onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(f.publish.mock.invocationCallOrder.at(-1)!);
+  } else {
+    expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }));
+    expect(f.onLoginSucceeded).not.toHaveBeenCalled();
+  }
   expect(f.releaseProfile).toHaveBeenCalledOnce();
 });

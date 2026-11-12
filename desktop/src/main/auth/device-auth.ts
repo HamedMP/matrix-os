@@ -71,10 +71,12 @@ async function parseJson(response: Response): Promise<Record<string, unknown>> {
 export async function requestDeviceCode(options: {
   fetchFn: FetchFn;
   baseUrl: string;
+  nativeRedirect?: boolean;
+  redirectUri?: string;
 }): Promise<DeviceCodeResponse> {
   const response = await postJson(options.fetchFn, `${options.baseUrl}/api/auth/device/code`, {
     clientId: DEVICE_CLIENT_ID,
-    redirectUri: DEVICE_REDIRECT_URI,
+    ...(options.nativeRedirect === false ? {} : { redirectUri: options.redirectUri ?? DEVICE_REDIRECT_URI }),
   });
   if (!response.ok) {
     throw new AppError(classifyHttpStatus(response.status));

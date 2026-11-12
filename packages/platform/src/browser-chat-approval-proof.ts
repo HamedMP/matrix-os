@@ -1,8 +1,11 @@
+import { RoutineBrowserProofSchema, ROUTINE_ORIGIN_PROOF_HEADER, ROUTINE_CREATION_PROOF_HEADER } from "@matrix-os/contracts";
+import { RoutineActionProofSchema, ROUTINE_ACTION_PROOF_HEADER, RoutineFullAccessProofSchema, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { BrowserDecisionProofSchema, BrowserDecisionTupleSchema, BrowserGrantRevokeRequestSchema,
   BrowserGrantRevokeTupleSchema, BrowserRevokeProofSchema, CanonicalSubmitChatApprovalRequestSchema,
-  type BrowserDecisionTuple, type BrowserGrantRevokeTuple } from "@matrix-os/contracts";
+  type BrowserDecisionTuple, type BrowserGrantRevokeTuple, type SupervisedBrowserDevScope } from "@matrix-os/contracts";
 import { hasVerifiedPreviewUserSession } from "./preview-drive-turn-proof.js";
+import { devBrowserProofKey, matchesDevBrowserDecision } from "./browser-dev-approval-policy.js";
 
 export const BROWSER_APPROVAL_PROOF_HEADER = "x-matrix-browser-approval-proof";
 const TTL = 60_000;
@@ -24,6 +27,33 @@ function decoded(proof: string | undefined, secret: string, domain: string): unk
   try { return JSON.parse(Buffer.from(match[1]!, "base64url").toString("utf8")); }
   catch (error: unknown) { if (error instanceof SyntaxError) return null; throw error; }
 }
+type BrowserPrincipal = Pick<BrowserDecisionTuple, "handle" | "actorId" | "runtimeSlot">;
+function decisionTuple(match: RegExpExecArray, raw: unknown, common: BrowserPrincipal): BrowserDecisionTuple | null {
+  const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(raw);
+  if (!parsed.success || !parsed.data.browserApproval || !parsed.data.actionDigest) return null;
+  const browser = parsed.data.browserApproval;
+  const tuple = BrowserDecisionTupleSchema.safeParse({ ...common, chatId: match[1], runId: match[2], approvalId: match[3],
+    clientRequestId: parsed.data.clientRequestId, browserDecision: browser.decision, actionDigest: parsed.data.actionDigest,
+    leaseEpoch: browser.leaseEpoch, challengeRevision: browser.challengeRevision, scopeVersion: browser.scopeVersion });
+  return tuple.success ? tuple.data : null;
+}
+function signDecision(tuple: BrowserDecisionTuple, secret: string, expiresAt: number): string {
+  return signed({ ...tuple, version: 1, expiresAt, nonce: randomBytes(16).toString("hex"), bodyDigest: bodyDigest(tuple) }, secret, DOMAIN);
+}
+export function readDevBrowserDecision(method: string, path: string, body: string, principal: BrowserPrincipal): BrowserDecisionTuple | null {
+  const match = method === "POST" ? DECISION_PATH.exec(path) : null;
+  if (!match || Buffer.byteLength(body) > 4000) return null;
+  try { return decisionTuple(match, JSON.parse(body), principal); }
+  catch (error: unknown) { if (error instanceof SyntaxError) return null; throw error; }
+}
+export function mintDevBrowserDecisionProof(input: { tuple: BrowserDecisionTuple; scope: SupervisedBrowserDevScope;
+  secret: string; humanSessionExpiresAt: number }): string | null {
+  const now = Date.now();
+  const expiresAt = Math.min(now + TTL, input.humanSessionExpiresAt, input.scope.expiresAt);
+  if (!input.secret || !Number.isSafeInteger(expiresAt) || expiresAt <= now || !matchesDevBrowserDecision(input.scope, input.tuple, now)) return null;
+  return signDecision(input.tuple, devBrowserProofKey(input.secret, input.scope), expiresAt);
+}
+
 export function mintBrowserApprovalProof(input: {
   method: string; path: string; identity: Parameters<typeof hasVerifiedPreviewUserSession>[0] & { userId: string; handle: string; runtimeSlot: string };
   body: string; secret: string; now?: number;
@@ -35,23 +65,17 @@ export function mintBrowserApprovalProof(input: {
   const now = input.now ?? Date.now();
   const expiresAt = Math.min(now + TTL, input.identity.sessionExpiresAt === undefined ? Infinity : input.identity.sessionExpiresAt * 1000);
   if (expiresAt <= now) return null;
-  const nonce = randomBytes(16).toString("hex");
   const match = DECISION_PATH.exec(input.path);
   if (input.method === "POST" && match) {
-    const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(raw);
-    if (!parsed.success || !parsed.data.browserApproval || !parsed.data.actionDigest) return null;
-    const browser = parsed.data.browserApproval;
-    const tuple = BrowserDecisionTupleSchema.safeParse({ ...common, chatId: match[1], runId: match[2], approvalId: match[3],
-      clientRequestId: parsed.data.clientRequestId, browserDecision: browser.decision, actionDigest: parsed.data.actionDigest,
-      leaseEpoch: browser.leaseEpoch, challengeRevision: browser.challengeRevision, scopeVersion: browser.scopeVersion });
-    return tuple.success ? signed({ ...tuple.data, version: 1, expiresAt, nonce, bodyDigest: bodyDigest(tuple.data) }, input.secret, DOMAIN) : null;
+    const tuple = decisionTuple(match, raw, common);
+    return tuple ? signDecision(tuple, input.secret, expiresAt) : null;
   }
   const revoke = REVOKE_PATH.exec(input.path);
   if (input.method !== "DELETE" || !revoke) return null;
   const parsed = BrowserGrantRevokeRequestSchema.safeParse(raw);
   if (!parsed.success) return null;
   const tuple = BrowserGrantRevokeTupleSchema.safeParse({ ...common, chatId: revoke[1], grantId: revoke[2], ...parsed.data });
-  return tuple.success ? signed({ ...tuple.data, version: 1, operation: "revoke_grant", expiresAt, nonce,
+  return tuple.success ? signed({ ...tuple.data, version: 1, operation: "revoke_grant", expiresAt, nonce: randomBytes(16).toString("hex"),
     bodyDigest: bodyDigest(tuple.data) }, input.secret, REVOKE_DOMAIN) : null;
 }
 export function verifyBrowserDecisionProof(proof: string | undefined, expected: BrowserDecisionTuple, secret: string, now = Date.now()) {
@@ -73,6 +97,10 @@ export function verifyBrowserRevokeProof(proof: string | undefined, expected: Br
 /** Only classifies a proof just minted by this process; never verifies caller authority. */
 export function browserApprovalProofHeader(proof: string): string {
   try { const value = JSON.parse(Buffer.from(proof.split(".")[0]!, "base64url").toString("utf8"));
+    const routine = RoutineBrowserProofSchema.safeParse(value);
+    if (routine.success) return routine.data.purpose === "routine_origin_approval" ? ROUTINE_ORIGIN_PROOF_HEADER : ROUTINE_CREATION_PROOF_HEADER;
+    if (RoutineFullAccessProofSchema.safeParse(value).success) return ROUTINE_FULL_ACCESS_PROOF_HEADER;
+    if (RoutineActionProofSchema.safeParse(value).success) return ROUTINE_ACTION_PROOF_HEADER;
     return BrowserDecisionProofSchema.safeParse(value).success || BrowserRevokeProofSchema.safeParse(value).success
       ? BROWSER_APPROVAL_PROOF_HEADER : "x-matrix-custom-mcp-approval-proof";
   } catch (error: unknown) { if (error instanceof SyntaxError) throw new Error("Approval proof unavailable"); throw error; }

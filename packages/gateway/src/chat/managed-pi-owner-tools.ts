@@ -28,7 +28,7 @@ interface Run {
   controller: AbortController;
   prepared: Map<string, Prepared>; // <=60 actions, erased on close.
   seen: Set<string>; // <=60 actions, erased on close.
-  pending?: { id: string; resolve(decision: CanonicalChatApprovalDecision): void };
+  pending?: { id: string; expiresAt: number; resolve(decision: CanonicalChatApprovalDecision): void };
   mcp?: McpControl;
   mcpInitialization?: Promise<McpControl>;
   revoking?: Promise<boolean>;
@@ -51,9 +51,11 @@ export function createManagedPiOwnerTools(deps: {
   mcp?: ManagedPiMcpClient;
   approvals?: CustomMcpApprovalClient;
   sharedBrowser?: SharedBrowserBroker;
+  githubDeveloper?: boolean;
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
+    ...(deps.githubDeveloper ? ["github.developer"] as const : []),
     ...(deps.sharedBrowser ? ["browser.action"] as const : []),
     ...(deps.integrations ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(deps.mcp && deps.approvals ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
@@ -113,7 +115,7 @@ export function createManagedPiOwnerTools(deps: {
       || Object.keys(args.params).some(key => !Object.hasOwn(matches[0]!.params, key))) throw new BotBrokerActionError("invalid_arguments");
     return reviewed;
   }
-  async function ask(run: Run, request: BotToolRequest, selected: BotIntegrationConnection, signal: AbortSignal): Promise<void> {
+  async function ask(run: Run, request: BotToolRequest, selected: Pick<BotIntegrationConnection, "label" | "connectionId">, signal: AbortSignal, title = "Allow this connected service action?"): Promise<void> {
     const description = `Account ${selected.label} (${selected.connectionId})\n${JSON.stringify(request.args)}`;
     if (description.length > 4000 || run.pending) throw new BotBrokerActionError("invalid_arguments");
     const id = randomUUID();
@@ -125,12 +127,13 @@ export function createManagedPiOwnerTools(deps: {
         if (approved) resolve(); else reject(new BotBrokerActionError("denied"));
       };
       const abort = () => finish(false, "cancel");
+      const expiresAt = Date.now() + HUMAN_WAIT_MS;
       const timer = setTimeout(abort, HUMAN_WAIT_MS); timer.unref?.();
-      run.pending = { id, resolve: decision => finish(decision === "approve", decision) };
+      run.pending = { id, expiresAt, resolve: decision => finish(decision === "approve", decision) };
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) { abort(); return; }
       run.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
-        title: "Allow this connected service action?", safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
+        title, safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
     });
   }
   async function prepare(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<void> {
@@ -167,6 +170,14 @@ export function createManagedPiOwnerTools(deps: {
   }
   return {
     capabilities,
+    async authorizeGithub(binding: ManagedPiRuntimeBinding, request: Extract<BotToolRequest, { capability: "github.developer" }>, plan: import("../bots/github-developer-service.js").GithubDeveloperPlan, callerSignal: AbortSignal) {
+      const { run, permissionMode, signal } = await live(binding, callerSignal);
+      if (!deps.githubDeveloper || !binding.capabilities.includes("github.developer") || permissionMode !== "full_access") throw new BotBrokerActionError("not_granted");
+      if (run.seen.has(request.toolCallId) || run.seen.size >= MAX_ACTIONS) throw new BotBrokerActionError("denied");
+      run.seen.add(request.toolCallId);
+      if (request.args.action !== "status") await ask(run, request, { label: `${plan.account} (${plan.repository ?? "none"}; ${plan.branch ?? "clone"})${plan.author ? `; author ${plan.author.name} <${plan.author.email}>` : ""}`, connectionId: "owner-local GitHub" }, signal, "Allow this GitHub developer action?");
+      await live(binding, signal);
+    },
     async open(binding: ManagedPiRuntimeBinding, emit: Run["emit"]) {
       if (runs.has(binding.runId) || runs.size >= MAX_RUNS) throw new BotBrokerActionError("unavailable");
       const run: Run = { binding, emit, controller: new AbortController(), prepared: new Map(), seen: new Set() };
@@ -177,7 +188,14 @@ export function createManagedPiOwnerTools(deps: {
           if (!deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
           if (current.permissionMode === "supervised") {
             if (!deps.sharedBrowser.authorizeAction) throw new BotBrokerActionError("not_granted");
-            deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            // The trial may expire after capability discovery but before setup.
+            if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+            try {
+              deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            } catch (error: unknown) {
+              if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+              throw error;
+            }
           } else {
             deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
           }
@@ -204,6 +222,9 @@ export function createManagedPiOwnerTools(deps: {
         if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
         try { return text(await deps.sharedBrowser.execute(browserBinding(binding), request.args, signal)); }
         catch (error: unknown) {
+          if (error instanceof SharedBrowserError && !error.dispatched && error.code === "tab_limit") {
+            return text({ success: false, content: error.message, automation: deps.sharedBrowser.status() });
+          }
           if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy"].includes(error.code)) {
             return text({ success: false, content: "Browser control changed. Wait for the owner to resume, then take a fresh snapshot; never replay the refused action.", automation: deps.sharedBrowser.status() });
           }
@@ -251,7 +272,13 @@ export function createManagedPiOwnerTools(deps: {
       if (!run || input.owner.type !== "personal" || input.owner.ownerId !== run.binding.ownerId || input.chatId !== run.binding.chatId
         || !["approve", "decline", "cancel"].includes(input.decision)) throw new BotBrokerActionError("denied");
       await live(run.binding, run.controller.signal);
-      if (run.pending?.id === input.approvalId) { run.pending.resolve(input.decision); return; }
+      if (run.pending?.id === input.approvalId) {
+        if (Date.now() >= run.pending.expiresAt) {
+          run.pending.resolve("cancel");
+          throw new BotBrokerActionError("denied");
+        }
+        run.pending.resolve(input.decision); return;
+      }
       if (!run.mcp) throw new BotBrokerActionError("denied");
       await run.mcp.submit(input.approvalId, input.decision, { chatId: input.chatId, clientRequestId: input.clientRequestId, platformApprovalProof: input.platformApprovalProof });
     },

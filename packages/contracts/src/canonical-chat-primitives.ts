@@ -21,6 +21,9 @@ export function canonicalBoundedText(maxChars: number, maxBytes: number) {
   return z.string()
     .min(1)
     .max(maxChars)
+    // Wire/display budgets use JavaScript UTF-16 units. Newer Zod releases
+    // count Unicode code points in .max(), so retain the existing bound here.
+    .refine((value) => value.length <= maxChars, { message: "Text exceeds character limit" })
     .refine((value) => value.trim().length > 0, { message: "Text cannot be blank" })
     .refine((value) => textEncoder.encode(value).byteLength <= maxBytes, {
       message: "Text exceeds byte limit",

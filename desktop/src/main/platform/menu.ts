@@ -1,27 +1,20 @@
 // macOS application menu (US6): standard roles so copy/paste, window
 // management, and full-screen behave like a first-class Mac app.
 import { app, Menu, shell, type BrowserWindow } from "electron";
+import { createMenuRouter } from "./menu-routing";
 import { createAppMenuTemplate } from "./menu-template";
-import { nextZoomFactor, type ZoomAction } from "./zoom";
 
-export function installAppMenu(
-  getWindow: () => BrowserWindow | null,
-  checkForUpdates: () => void,
-): void {
-  const send = (channel: string, payload: unknown) => {
-    getWindow()?.webContents.send(channel, payload);
-  };
-
-  // Menu zoom steps apply immediately, then notify the renderer so its
-  // appearance store can mirror and persist the new factor.
-  const adjustZoom = (action: ZoomAction) => {
-    const win = getWindow();
-    if (!win || win.isDestroyed()) return;
-    const factor = nextZoomFactor(win.webContents.getZoomFactor(), action);
-    win.webContents.setZoomFactor(factor);
-    send("app:zoom-changed", { factor });
-  };
-
+export function installAppMenu(options: {
+  mainWindow(): BrowserWindow | null;
+  terminalWindow(): BrowserWindow | null;
+  focusMain(): void;
+  restoreMain(): void;
+  checkForUpdates(): void;
+  openTerminalWindow(): void;
+  /** The bundled notices file, or null when this build ships no third-party binary. */
+  thirdPartyNoticesPath: string | null;
+}): void {
+  const router = createMenuRouter(options);
   const template = createAppMenuTemplate({
     appName: app.name,
     isPackaged: app.isPackaged,
@@ -29,10 +22,20 @@ export function installAppMenu(
     openExternal: (url) => {
       void shell.openExternal(url);
     },
-    send,
-    adjustZoom,
-    checkForUpdates,
+    send: router.send,
+    adjustZoom: router.adjustZoom,
+    checkForUpdates: options.checkForUpdates,
     quitApp: () => app.quit(),
+    reloadWindow: router.reload,
+    openTerminalWindow: options.openTerminalWindow,
+    ...(options.thirdPartyNoticesPath ? {
+      openThirdPartyNotices: () => {
+        // openPath resolves to an error string instead of rejecting.
+        void shell.openPath(options.thirdPartyNoticesPath!).then((failure) => {
+          if (failure) console.warn("[menu] could not open third-party notices");
+        });
+      },
+    } : {}),
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

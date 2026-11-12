@@ -2,6 +2,7 @@ import { WebCache } from "./web-cache.js";
 import { extractWithReadability, extractRawText } from "./web-utils.js";
 import { wrapExternalContent } from "../security/external-content.js";
 import { validateUrl } from "../security/ssrf-guard.js";
+import { createPinnedFetch, publicPinnedFetch, type PinnedResolver } from "../security/pinned-fetch.js";
 import {
   boundedWebFetchLimit, cancelWebBody, MAX_WEB_FETCH_TIMEOUT_MS,
   MAX_WEB_RESPONSE_BYTES, readBoundedWebBody, WebFetchBudget, WebFetchLimitError,
@@ -30,6 +31,8 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<FetchResponse>;
 export interface WebFetchToolOptions {
   cache: WebCache;
   fetcher?: Fetcher;
+  /** DNS resolver for the default pinned transport; ignored with a custom fetcher. */
+  resolveHost?: PinnedResolver;
   wrapContent?: boolean;
   maxChars?: number;
   firecrawlApiKey?: string;
@@ -58,7 +61,7 @@ function validateWebUrl(url: string): void {
 export function createWebFetchTool(opts: WebFetchToolOptions) {
   const {
     cache,
-    fetcher = globalThis.fetch,
+    fetcher = opts.resolveHost ? createPinnedFetch({ resolve: opts.resolveHost }) : publicPinnedFetch,
     wrapContent = false,
     maxChars: defaultMaxChars = DEFAULT_MAX_CHARS,
     firecrawlApiKey,

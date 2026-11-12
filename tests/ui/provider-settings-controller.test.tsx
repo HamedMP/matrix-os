@@ -575,3 +575,43 @@ it("retains login handoff recovery feedback after accepting negotiated native id
   expect(controller.getState().error).toBe("Sign-in started. Use Continue to open it again.");
   controller.dispose();
 });
+
+
+it("separates capability discovery refreshes from native observation timestamps", async () => {
+  const gateway = transport();
+  const controller = new ProviderSettingsController({ identityKey: "owner:primary", transport: gateway });
+  await controller.refresh({ refresh: false });
+  expect(controller.getState().capabilityRefreshRevision).toBe(1);
+  const renewed = { ...snapshot(1), refreshedAt: "2026-08-30T10:00:20.000Z" };
+  gateway.getSnapshot.mockResolvedValue(renewed);
+  await controller.refreshNativeAuthentication(new AbortController().signal);
+  expect(controller.getState().snapshot?.refreshedAt).toBe(renewed.refreshedAt);
+  expect(controller.getState().capabilityRefreshRevision).toBe(1);
+  await controller.refresh();
+  expect(controller.getState().capabilityRefreshRevision).toBe(2);
+  // Mutations refresh discovery even when the service's clock has not advanced.
+  expect(await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: false })).toBe(true);
+  expect(controller.getState().capabilityRefreshRevision).toBe(3);
+  gateway.getSnapshot.mockResolvedValue(snapshot(2));
+  await controller.refreshForConnection({ id: "login-receipt", harnessInstanceId: "harness_one", kind: "login", state: "succeeded",
+    expiresAt: "2026-08-30T10:10:00.000Z", deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null });
+  expect(gateway.getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: false });
+  expect(controller.getState().capabilityRefreshRevision).toBe(4);
+  // Installation workflows use the same connection refresh without a login receipt.
+  await controller.refreshForConnection();
+  expect(controller.getState().capabilityRefreshRevision).toBe(5);
+  gateway.getSnapshot.mockRejectedValueOnce(new Error("synthetic unavailable"));
+  await controller.refresh();
+  expect(controller.getState().capabilityRefreshRevision).toBe(5);
+  controller.dispose();
+});
+
+it("refreshes capabilities after a native observation discovers an owner configuration revision", async () => {
+  const gateway = transport();
+  const controller = new ProviderSettingsController({ identityKey: "owner:primary", transport: gateway });
+  await controller.refresh({ refresh: false });
+  gateway.getSnapshot.mockResolvedValue(snapshot(2));
+  await controller.refreshNativeAuthentication(new AbortController().signal);
+  expect(controller.getState().capabilityRefreshRevision).toBe(2);
+  controller.dispose();
+});

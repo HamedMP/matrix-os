@@ -96,6 +96,14 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Free runner disk before Docker build
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - name: Set up Docker Buildx
         if: needs.changes.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v4
@@ -106,8 +114,10 @@ jobs:
         with:
           context: .
           file: Dockerfile.dev
+          secrets: |
+            github_token=${{ github.token }}
           tags: matrix-os-dev:ci
-          outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar
+          outputs: type=docker,dest=${{ runner.temp }}/matrix-os-dev-ci.tar
           cache-from: type=gha,scope=dev-image
           cache-to: type=gha,mode=max,scope=dev-image
 
@@ -115,17 +125,20 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: |
           set -euo pipefail
-          gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz
-          rm /tmp/matrix-os-dev-ci.tar
-          gzip -t /tmp/matrix-os-dev-ci.tar.gz
-          test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000
+          # The image tar and remote cache are exported; reclaim this job's build cache.
+          docker buildx prune --all --force
+          df -h "$RUNNER_TEMP"
+          gzip -1 < "$RUNNER_TEMP/matrix-os-dev-ci.tar" > "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"
+          rm "$RUNNER_TEMP/matrix-os-dev-ci.tar"
+          gzip -t "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"
+          test "$(stat -c%s "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz")" -gt 1000000
 
       - name: Upload Docker image artifact
         if: needs.changes.outputs.should_run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: matrix-os-dev-image
-          path: /tmp/matrix-os-dev-ci.tar.gz
+          path: ${{ runner.temp }}/matrix-os-dev-ci.tar.gz
           retention-days: 1
           if-no-files-found: error
 
@@ -157,14 +170,14 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: matrix-os-dev-image
-          path: /tmp/docker-image
+          path: ${{ runner.temp }}/matrix-docker-image
 
       - name: Load Docker image artifact
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz
-          gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
+          gzip -t "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz"
+          gzip -dc "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz" | docker load
 
       - name: Create CI env file
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
@@ -253,13 +266,13 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: matrix-os-dev-image
-          path: /tmp/docker-image
+          path: ${{ runner.temp }}/matrix-docker-image
 
       - name: Load Docker image artifact
         run: |
           set -euo pipefail
-          gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz
-          gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
+          gzip -t "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz"
+          gzip -dc "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz" | docker load
 
       - name: Create CI env file
         run: |

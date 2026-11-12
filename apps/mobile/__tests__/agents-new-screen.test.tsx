@@ -14,11 +14,6 @@ const mockStartDraftChat = jest.fn();
 const mockInvalidateChats = jest.fn(() => Promise.resolve());
 const mockShowChatScreen = jest.fn();
 const mockGoBack = jest.fn();
-// Asks the Agents tab's layout for the chat screen once this screen has closed,
-// and returns the way to take the request back.
-const mockStopWaitingForChat = jest.fn();
-const mockShowChatAfterClosing = jest.fn(() => mockStopWaitingForChat);
-let mockInsideAgentsTab = true;
 // The options the screen last gave its own entry in the stack.
 let mockScreenOptions: { animation?: string } | undefined;
 const mockReplace = jest.fn();
@@ -61,9 +56,6 @@ jest.mock("expo-router", () => ({
     getState: () => ({ routes: mockStackRoutes }),
   }),
   useRouter: () => ({ replace: mockReplace, push: mockPush }),
-}));
-jest.mock("@/components/agents/chat-handoff", () => ({
-  useShowChatAfterClosing: () => (mockInsideAgentsTab ? mockShowChatAfterClosing : null),
 }));
 jest.mock("@/lib/queries/use-agents", () => ({ useAgents: () => ({ refetch: mockRefetchAgents }) }));
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ userId: "user_a" }) }));
@@ -137,12 +129,10 @@ describe("new agent route", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFocused = true;
-    mockInsideAgentsTab = true;
     // Going back closes this screen: the stack is left with what was behind it.
     mockGoBack.mockImplementation(() => {
       mockStackRoutes = mockStackRoutes.slice(0, -1);
     });
-    mockShowChatAfterClosing.mockImplementation(() => mockStopWaitingForChat);
     mockScreenOptions = undefined;
     mockStackRoutes = [{ name: "index" }, { name: "new" }];
     mockChatsError = false;
@@ -329,39 +319,21 @@ describe("new agent route", () => {
     expect(mockSelectChat).not.toHaveBeenCalled();
     expect(pendingDraft()?.text).toBe(inspirationSetupPrompt(adSpendWatch));
     expect(pendingDraft()?.text).toContain("Suggested capabilities: Answer a spend question, Check budget pace");
-    expect(mockShowChatAfterClosing).toHaveBeenCalledTimes(1);
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it("closes itself and leaves showing the chat to the tab's layout, which waits until the tabs have taken the closing in", () => {
+  it("closes itself before showing the chat, so the Agents tab is left on its list", () => {
     render(<NewAgentRoute />);
     fireEvent.press(screen.getByTestId("template-row-fuse"));
 
     fireEvent.press(screen.getByRole("button", { name: "Build in chat" }));
 
-    // The Agents tab is left on its list. A switch asked for in the same step
-    // as the closing is dropped by the navigator, so this screen does not ask.
-    expect(mockShowChatAfterClosing).toHaveBeenCalledTimes(1);
     expect(mockGoBack).toHaveBeenCalledTimes(1);
-    expect(mockShowChatAfterClosing.mock.invocationCallOrder[0]).toBeLessThan(mockGoBack.mock.invocationCallOrder[0]);
-    expect(mockStartDraftChat.mock.invocationCallOrder[0]).toBeLessThan(mockGoBack.mock.invocationCallOrder[0]);
-    expect(mockShowChatScreen).not.toHaveBeenCalled();
-    expect(mockStopWaitingForChat).not.toHaveBeenCalled();
-  });
-
-  it("takes the request back and shows the chat itself when going back closed nothing", () => {
-    mockGoBack.mockImplementation(() => {});
-    render(<NewAgentRoute />);
-    fireEvent.press(screen.getByTestId("template-row-fuse"));
-
-    fireEvent.press(screen.getByRole("button", { name: "Build in chat" }));
-
-    // No change is coming for the layout to wait for; left waiting, it would
-    // show the chat on the next unrelated change of the tabs.
-    expect(mockStopWaitingForChat).toHaveBeenCalledTimes(1);
     expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
-    expect(mockStopWaitingForChat.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
+    expect(mockStartDraftChat.mock.invocationCallOrder[0]).toBeLessThan(mockGoBack.mock.invocationCallOrder[0]);
+    expect(mockGoBack.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
   });
 
   it("asks for nothing when a sheet is only closed", () => {
@@ -369,7 +341,6 @@ describe("new agent route", () => {
     fireEvent.press(screen.getByTestId("template-row-fuse"));
     fireEvent.press(screen.getByRole("button", { name: "Close" }));
 
-    expect(mockShowChatAfterClosing).not.toHaveBeenCalled();
     expect(mockShowChatScreen).not.toHaveBeenCalled();
     expect(mockGoBack).not.toHaveBeenCalled();
   });
@@ -412,7 +383,7 @@ describe("new agent route", () => {
     fireEvent.press(screen.getByRole("button", { name: "Build in chat" }));
 
     expect(pendingDraft()?.text).toBe(inspirationSetupPrompt(adSpendWatch));
-    expect(mockShowChatAfterClosing).toHaveBeenCalledTimes(1);
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockGoBack).toHaveBeenCalledTimes(1);
   });
 
@@ -564,11 +535,11 @@ describe("new agent route", () => {
     expect(mockStartDraftChat).toHaveBeenCalledTimes(1);
     expect(mockSelectChat).not.toHaveBeenCalled();
     expect(pendingDraft()?.text).toBe(templateSetupPrompt(research));
-    // This screen closes, and the tab's layout shows the chat once the tabs have taken that in.
-    expect(mockShowChatAfterClosing).toHaveBeenCalledTimes(1);
+    // This screen closes, then the chat screen is shown.
     expect(mockGoBack).toHaveBeenCalledTimes(1);
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockStartDraftChat.mock.invocationCallOrder[0]).toBeLessThan(mockGoBack.mock.invocationCallOrder[0]);
-    expect(mockShowChatScreen).not.toHaveBeenCalled();
+    expect(mockGoBack.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -586,19 +557,6 @@ describe("new agent route", () => {
     expect(mockStartDraftChat).toHaveBeenCalledTimes(1);
     expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockStartDraftChat.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
-    expect(mockGoBack).not.toHaveBeenCalled();
-    // Nothing is left waiting for a change that will not come.
-    expect(mockShowChatAfterClosing).not.toHaveBeenCalled();
-  });
-
-  it("shows the chat at once when it is drawn outside the Agents tab, where nothing would wait for it", () => {
-    mockInsideAgentsTab = false;
-    render(<NewAgentRoute />);
-    openSetup();
-
-    fireEvent.press(screen.getByRole("button", { name: "Set up in chat instead" }));
-
-    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockGoBack).not.toHaveBeenCalled();
   });
 

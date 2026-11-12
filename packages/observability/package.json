@@ -34,7 +34,7 @@
     "build": "node ../../scripts/build-typescript.mjs"
   },
   "dependencies": {
-    "hono": "^4.11.9",
+    "hono": "^4.12.25",
     "posthog-node": "^5.24.15"
   },
   "peerDependencies": {
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "@types/react": "~19.2.14",
     "typescript": "^5.9.3"
   }
 }

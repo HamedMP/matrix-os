@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IntegrationMarketplace } from "../../packages/ui/src/integrations/IntegrationMarketplace.js";
 import { buildIntegrationSections, integrationDescription } from "../../packages/contracts/src/integration-marketplace.js";
@@ -24,6 +24,38 @@ describe("integration marketplace", () => {
   it("filters OAuth and connected apps without duplicate category rows", () => {
     expect(buildIntegrationSections(services, { oauthOnly: true }).flatMap(s => s.services).map(s => s.id)).not.toContain("stripe");
     expect(buildIntegrationSections(services, { connectedOnly: true, connectedIds: ["gmail"] }).flatMap(s => s.services).map(s => s.id)).toEqual(["gmail"]);
+  });
+  it("can lead with a section of chosen apps, in that order, without repeating them", () => {
+    const sections = buildIntegrationSections(services, { leading: { title: "Suggested for your goals", ids: ["stripe", "gmail", "missing"] } });
+    expect(sections.map((section) => [section.title, section.services.map((service) => service.id)]))
+      .toEqual([["Suggested for your goals", ["stripe", "gmail"]], ["Productivity", ["asana"]]]);
+    expect(buildIntegrationSections(services, { query: "asana", leading: { title: "Suggested for your goals", ids: ["gmail"] } })
+      .map((section) => section.title)).toEqual(["Productivity"]);
+  });
+  it("shows the leading section in full and explains a sign-in that did not finish", () => {
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={services} connectedIds={[]} failedIds={["gmail"]} onConnect={onConnect}
+      leadingSection={{ title: "Suggested for your goals", ids: ["gmail"] }} />);
+    expect(screen.getByRole("region", { name: "Suggested for your goals" })).toBeTruthy();
+    expect(screen.getByText("Sign-in didn't finish")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try connecting Gmail again" }));
+    expect(onConnect).toHaveBeenCalledWith("gmail");
+  });
+  it("can show a connected app as just Connected, without adding another account", () => {
+    const view = render(<IntegrationMarketplace services={services} connectedIds={["gmail"]} addAccounts={false} onConnect={vi.fn()} />);
+    expect(within(screen.getByTestId("integration-card-gmail")).getByText("Connected")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add another Gmail account" })).toBeNull();
+    view.rerender(<IntegrationMarketplace services={services} connectedIds={["gmail"]} onConnect={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Add another Gmail account" })).toBeTruthy();
+  });
+  it("can keep every app connectable while one sign-in is pending", () => {
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={services} connectedIds={[]} connectingId="gmail" lockWhileConnecting={false} onConnect={onConnect} />);
+    expect((screen.getByRole("button", { name: "Connect Asana" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Connect Asana" }));
+    expect(onConnect).toHaveBeenCalledWith("asana");
+    // The pending one can be started again, e.g. after its window was closed.
+    expect((screen.getByRole("button", { name: "Connect Gmail" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("connects in one click with no label form and disables all actions while connecting", () => {
     const onConnect = vi.fn();

@@ -20,6 +20,7 @@ import {
 import { useEffect, useRef } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import { Button, IconButton } from "../../design/primitives";
+import { CreateItemMenu } from "./CreateItemMenu";
 import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
 import type { FileUploadRow } from "./file-upload-controller";
@@ -288,6 +289,8 @@ export function BrowserToolbar({
   onNavigate,
   onRefresh,
   onUpload,
+  onCreateFolder,
+  onCreateFile,
   searchOpen,
   searchQuery,
   onSearchOpen,
@@ -309,6 +312,8 @@ export function BrowserToolbar({
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   onUpload?: () => void;
+  onCreateFolder?: () => void;
+  onCreateFile?: () => void;
   searchOpen: boolean;
   searchQuery: string;
   onSearchOpen: () => void;
@@ -402,6 +407,7 @@ export function BrowserToolbar({
           <Search size={16} />
         </IconButton>
       )}
+      <CreateItemMenu onCreateFolder={onCreateFolder} onCreateFile={onCreateFile} />
       {onUpload ? (
         <IconButton label="Upload files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onUpload}>
           <Upload size={16} />

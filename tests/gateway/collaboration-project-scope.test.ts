@@ -125,6 +125,24 @@ describe("project collaboration scope preparation", () => {
     });
   });
 
+  it.each(["private", "shared"] as const)("refuses a %s project scope from another organization without changing it", async (lifecycle) => {
+    const service = projectScopeService(fixture, () => revision);
+    const initial = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_original", projectId: PROJECT_ID });
+    await service.prepare({ ownerId: OWNER_ID, organizationId: "org_original", projectId: PROJECT_ID,
+      clientRequestId: REQUEST_ID, payloadHash: "a".repeat(64), expectedProjectRevision: initial.projectRevision,
+      confirmationToken: initial.confirmationToken });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle }).where("id", "=", SCOPE_ID).execute();
+    const before = await fixture.db.selectFrom("collaboration_scopes").selectAll().execute();
+
+    await expect(service.preflight({ ownerId: OWNER_ID, organizationId: "org_other", projectId: PROJECT_ID })).resolves.toEqual({
+      eligible: false, reason: "organization_mismatch", projectRevision: revision,
+    });
+
+    await expect(fixture.db.selectFrom("collaboration_scopes").selectAll().execute()).resolves.toEqual(before);
+    await expect(fixture.db.selectFrom("collaboration_grants").selectAll().execute()).resolves.toEqual([]);
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox").selectAll().execute()).resolves.toEqual([]);
+  });
+
   it("rejects stale or cross-owner confirmation without creating a scope", async () => {
     const service = projectScopeService(fixture, () => revision);
     const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });

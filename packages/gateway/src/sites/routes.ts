@@ -5,7 +5,7 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -63,7 +63,7 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   try{const site=await (signal?options.platform!.request(c.req.param('slug')!,method,body,child,signal,deadlineAt):options.platform!.request(c.req.param('slug')!,method,body,child));return site?c.json(site):c.json({error:'Site not found'},404);}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
  }
- async function body(c:Context,schema:z.ZodType){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
+ async function body<T>(c:Context,schema:z.ZodType<T>){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
  app.get(base,c=>call(c,'GET'));
  app.post(base,bodyLimit({maxSize:80*1024,onError:c=>c.json({error:'Too many requests'},413)}),async c=>{
   const parsed=await body(c,SitePublishRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
@@ -116,6 +116,21 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  app.patch(base,limit,async c=>{const parsed=await body(c,SiteMetadataSchema);return parsed.success?call(c,'PATCH',parsed.data):c.json({error:'Invalid request'},400);});
  app.delete(base,limit,async c=>{const parsed=await body(c,z.object({baseRevision:z.number().int().min(0)}));return parsed.success?call(c,'DELETE',parsed.data):c.json({error:'Invalid request'},400);});
  app.post(base+'/rollback',limit,async c=>{const parsed=await body(c,SiteRollbackSchema);return parsed.success?call(c,'POST',parsed.data,'/rollback'):c.json({error:'Invalid request'},400);});
+ app.get(base+'/access-links',async c=>{
+  const parsed=SiteAccessLinksQuerySchema.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);
+  try{return c.json(await options.platform!.accessLinks(c.req.param('slug')!,parsed.data));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ });
+ app.post(base+'/access-links',limit,async c=>{
+  const parsed=await body(c,SiteAccessLinkCreateRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
+  try{return c.json(await options.platform!.createAccessLink(c.req.param('slug')!,parsed.data));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ });
+ app.delete(base+'/access-links/:linkId',limit,async c=>{
+  const linkId=SiteIdSchema.safeParse(c.req.param('linkId'));if(!linkId.success)return c.json({error:'Invalid request'},400);
+  try{await options.platform!.revokeAccessLink(c.req.param('slug')!,linkId.data);return c.json({ok:true});}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ });
  async function publication(c:Context):Promise<SiteRecord|null>{return options.platform!.request(c.req.param('slug')!,'GET');}
  app.get(base+'/submissions',async c=>{
   const parsed=Paging.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);

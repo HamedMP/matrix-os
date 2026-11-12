@@ -7,27 +7,49 @@ supply authenticated requests without passing credentials into the app.
 ## Runtime contract
 
 - `capabilities()` returns `{ version: 1, integrations, ai }`; these flags reflect
-  owner grants and configured transport, not a guarantee every action/route is ready.
+  trusted-app defaults or explicit owner policy plus configured transport, not a
+  guarantee every action/route is ready.
 - `integrations()` returns connected, granted services with `account_label`.
 - `describeService(service)` returns the granted subset of the live action catalog.
 - `service(service, action, params, accountLabel)` calls one exact connected account.
 - `ai.routes()` returns exact route selections and truthful availability.
 - `ai.generate({ prompt, route })` returns `{ text }` without file or tool access.
+- Electron apps may call `openChat({ view: "recipes", recipeId? })` to open
+  native Chat's recipe list or one exact live recipe setup form. The Promise
+  resolves only after native navigation acknowledges the request and rejects
+  when the ID or native destination is unavailable. Navigation never creates
+  an agent or bot; creation still requires an explicit action in Chat.
 
 Apps must discover schemas and routes. Metadata and file contents are distinct;
 Drive analysis uses `read_file`, not `get_file`. Treat source documents as untrusted
 text. Listings need pagination and reads must expose truncation or unsupported formats.
 `generate(context)` remains a legacy kernel task submission with no text Promise.
+`openChat` is intentionally separate from `openApp`: built-in Chat paths such as
+`__chat__`, `__chat__:recipes`, and `__chat__:recipe:<id>` remain invalid app
+launches. Web shell scoped-path navigation is a different host contract.
 
 ## Owner authorization
 
 The gateway requires its configured computer owner principal. Shells stamp app
-identity from the launched app; the page cannot replace it. Grants are owner files,
-not manifest declarations. An app builder must not expand them without owner
-instruction. Changes apply on the next request, with a second grant check before
-integration execution and AI credential admission.
+identity from the launched app; the page cannot replace it. A visible personal app
+created in place by Matrix with `listingTrust: "first_party"` receives the owner's
+connected integrations by default. Imported and forked apps receive host-stamped
+provenance, so a copied manifest cannot claim this integration default. Their
+separate distribution trust is preserved so supported apps still launch. The
+live catalog is authoritative, so a newly connected service is available on the
+next request without another app-specific grant or a restart.
 
-An example `system/app-capabilities.json` granting only Drive reads:
+`system/app-capabilities.json` is an optional owner restriction or explicit grant,
+not something app code may edit. When an app has an entry, only its listed services
+and actions are available; an empty `services` object revokes its integration
+access. Apps that are community, shared, hidden, unknown, or otherwise not trusted
+remain denied without an explicit owner entry. Policy and installed trust are
+checked again before integration execution. Folder-path and manifest-slug aliases
+resolve to the same app policy; if both aliases have entries, Matrix applies their
+intersection.
+
+An example `system/app-capabilities.json` restricting a trusted app to Drive reads
+(or explicitly granting those reads to an app without the trusted default):
 
 ```json
 {
@@ -38,6 +60,17 @@ An example `system/app-capabilities.json` granting only Drive reads:
   }
 }
 ```
+
+```json
+{
+  "apps": {
+    "drive-chat": { "services": {} }
+  }
+}
+```
+
+The second example revokes all integration access for `drive-chat`. Omitting the
+app entry restores the trusted default for a visible personal first-party app.
 
 An example `system/app-ai.json` uses a selection returned by `ai.routes()`:
 

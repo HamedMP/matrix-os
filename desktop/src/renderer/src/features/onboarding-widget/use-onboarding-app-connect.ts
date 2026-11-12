@@ -48,11 +48,12 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
       if (!url) { fail(); return; }
       await invoke("shell:open-external", { url });
       if (!isCurrent()) return;
-      cancelPollRef.current = startConnectPoll({
+      // Each attempt stops only its own poll: a newer attempt owns cancelPollRef by then.
+      const cancelPoll = startConnectPoll({
         tick: async () => {
-          if (!isCurrent()) { cancelPollRef.current?.(); return; }
+          if (!isCurrent()) { cancelPoll(); return; }
           const result = await useIntegrations.getState().syncNow(api);
-          if (result === "superseded") cancelPollRef.current?.();
+          if (!isCurrent() || result === "superseded") cancelPoll();
         },
         isDone: () => hasNewActiveConnection(useIntegrations.getState().connections, serviceId, previouslyActive),
         onSettled: (found) => {
@@ -63,6 +64,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
           dispatch({ type: "connect.succeeded", service: serviceId });
         },
       });
+      cancelPollRef.current = cancelPoll;
     })().catch((error: unknown) => {
       console.warn("[onboarding-widget] app connect failed:", error instanceof Error ? error.name : typeof error);
       fail();

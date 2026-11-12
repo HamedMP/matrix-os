@@ -1,3 +1,4 @@
+import { isSpeechAuthorization, readSpeechAuthorization } from "./speech/reservation-policy.js";
 import { FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS, FundedAiAuthorizationResponseSchema, FundedAiExecutionRecoveryRequestSchema, FundedAiExecutionRecoveryResponseSchema, FundedAiExecutionRecoveryBatchRequestSchema, FundedAiExecutionRecoveryBatchResponseSchema, FundedAiTerminalOutcomeRequestSchema, } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
 import { readTerminalOutcome, readTerminalStart } from "./ai-funded-terminal-outcome.js";
@@ -55,11 +56,9 @@ export function readFundedRecoveryLiability(row: Reservation) {
       throw new AiFundedPolicyError("idempotency_conflict");
     throw error;
   }
-  if (SpeechAuthorizationSchema.safeParse(value).success) {
-    if (!/^speech_[a-f0-9]{48}$/.test(row.token_id) || !Number.isSafeInteger(Number(row.reserved_microusd))
-      || Number(row.reserved_microusd) <= 0)
-      throw new AiFundedPolicyError("idempotency_conflict");
-    return { fundingKind: "speech" as const, maximumLiabilityMicrousd: Number(row.reserved_microusd) };
+  if (isSpeechAuthorization(row.authorization_response)) {
+    if (!/^speech_[a-f0-9]{48}$/.test(row.token_id)) throw new AiFundedPolicyError("idempotency_conflict");
+    return { fundingKind: "speech" as const, maximumLiabilityMicrousd: readSpeechAuthorization(row).maximumCostMicrousd };
   }
   return { fundingKind: "usage" as const, maximumLiabilityMicrousd: readFundedUsageAuthorization(row).reservation.maxCostMicrousd! };
 }

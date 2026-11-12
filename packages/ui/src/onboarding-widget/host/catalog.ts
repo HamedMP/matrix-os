@@ -5,7 +5,7 @@ import type {
   OnboardingAiChoice,
   OnboardingAiProvider,
 } from "@matrix-os/contracts";
-import { createCanonicalComposerSelection, type CanonicalComposerSelection } from "../../canonical-composer-selection.js";
+import { canonicalComposerSelectionIsAvailable, createCanonicalComposerSelection, type CanonicalComposerSelection } from "../../canonical-composer-selection.js";
 import type { OnboardingAppCategory, OnboardingWidgetApp } from "../types.js";
 
 export const ONBOARDING_MAX_APPS = 50;
@@ -21,7 +21,9 @@ export function onboardingSelection(catalog: CanonicalProviderCatalog, choice: O
     : catalog.instances.filter((instance) => instance.driverKind === DRIVER_FOR_PROVIDER[choice]).map((instance) => instance.id);
   for (const id of ids) {
     const selection = createCanonicalComposerSelection(catalog, id);
-    if (selection?.instanceId === id) return selection;
+    // Unlike an explicit Chat picker choice, this route may start a task
+    // automatically. Selection intent alone must not count as readiness.
+    if (selection?.instanceId === id && canonicalComposerSelectionIsAvailable(catalog, selection)) return selection;
   }
   return null;
 }

@@ -2,9 +2,11 @@ import { registerFundedHostConfigRoutes } from "./funded-host-config-registratio
 import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
 import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
+import { createPreviewPairRoutes, type PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
+import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -82,8 +84,7 @@ import {
   createPlatformLaunchEvidenceLoader,
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
-import { createHostBundleRoutes } from './host-bundle-routes.js';
-import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
+import { mountHostBundleRoutes } from './host-bundle-composition.js';
 import { createPrivatePreviewRoutes } from './private-preview-routes.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import type { PrivatePreviewMembershipCheck } from './private-preview-access.js';
@@ -141,6 +142,7 @@ import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
@@ -153,6 +155,7 @@ export {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
 } from './platform-startup-env.js';
 export {
@@ -266,6 +269,7 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   previewDriveIntegration?: PreviewDriveIntegration;
+  previewPairs?: PreviewPairRoutesDeps;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -291,6 +295,7 @@ export function createApp(deps: {
   hostBundleObjectStore?: CustomerVpsObjectStore;
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -442,7 +447,7 @@ export function createApp(deps: {
       operatorSecret: goldenSnapshotOperatorSecret,
     }));
   }
-  const hostBundleRoutes = createHostBundleRoutes({
+  mountHostBundleRoutes(app, {
     db,
     platformSecret,
     adminBodyLimit: ADMIN_BODY_LIMIT,
@@ -452,10 +457,6 @@ export function createApp(deps: {
     goldenSnapshotCompatibility: deps.goldenSnapshotConfig?.compatibility,
     goldenSnapshotFreshnessMaxAgeMs: deps.goldenSnapshotConfig?.freshnessMaxAgeMs,
   });
-  app.route('/system-bundles', hostBundleRoutes);
-  app.route('/private-preview-updates', createPrivatePreviewUpdateRoutes({
-    db, hostBundleRoutes, logRouteError: logPlatformRouteError,
-  }));
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
   // so the CLI's poll/code endpoints work regardless of which subdomain hits
@@ -489,6 +490,9 @@ export function createApp(deps: {
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
+    enabled: (appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' || appEnv.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true')
+      && deps.previewPairs?.enabled === true }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,
@@ -671,7 +675,8 @@ export function createApp(deps: {
   deps.collaboration?.register(app);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
-  app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
+  const browserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
+  app.shutdownBrowserApprovals = browserApprovals.close;
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
@@ -693,7 +698,15 @@ export function createApp(deps: {
   }
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
-    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
+    edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
+    dispatcher: customerVpsProxyDispatcher, env: appEnv, captureEvent: capturePlatformEvent });
+
+  // Sync object uploads authenticate with their own machine credential and
+  // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
+  // guard so the route-specific limits remain authoritative.
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
@@ -704,6 +717,7 @@ export function createApp(deps: {
     orchestrator,
     clerkAuth,
     appEnv,
+    browserApprovals,
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
@@ -741,10 +755,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
-
-  if (deps.internalSyncRoutes) {
-    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
-  }
+  registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'VPS tracking not configured' }, 503);
@@ -807,6 +818,7 @@ export function createApp(deps: {
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
       assertPrimaryStorageReady: deps.assertPrimaryStorageReady,
+      assertSitesStorageReady: deps.assertSitesStorageReady,
     }));
   }
 
@@ -1009,6 +1021,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
+    checkPublicSitesEnv,
     collectTenantPublicTelemetryEnv,
     stripeBillingEntitlementsEnabled,
     resolveEffectiveBillingEntitlement,

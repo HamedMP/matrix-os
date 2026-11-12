@@ -13,6 +13,23 @@ const record = {
     createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" },
 };
 const options = { instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "full_access", clientRequestId: "req_agent_fixed", resources: [{ kind: "chat" as const, id: "chat_notes", label: "Notes" }] };
+it("retains ordinary text admission identity across an ambiguous manual retry", async () => {
+  const requests: Array<{ clientRequestId: string }> = [];
+  stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/events?")) return new Response(new ReadableStream());
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
+    if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
+    if (url.includes("/turns?")) { requests.push(JSON.parse(init!.body as string)); throw new TypeError("offline"); }
+    throw new Error("UnexpectedRequest");
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.sessionId).toBe("chat_agent"));
+  const { resources: _resources, clientRequestId: _id, ...plainOptions } = options;
+  await act(async () => { await result.current.submitMessage("Send once", undefined, plainOptions); });
+  await act(async () => { await result.current.submitMessage("Send once", undefined, plainOptions); });
+  expect(requests).toHaveLength(2);
+  expect(requests[1].clientRequestId).toBe(requests[0].clientRequestId);
+});
 it("hydrates a recipe draft without restoring a previous Chat or sending a request", async () => {
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());

@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import ComputerSettingsIcon from "@hugeicons/core-free-icons/ComputerSettingsIcon";
 import CreditCardIcon from "@hugeicons/core-free-icons/CreditCardIcon";
 import HelpCircleIcon from "@hugeicons/core-free-icons/HelpCircleIcon";
-import GithubIcon from "@hugeicons/core-free-icons/GithubIcon";
 import Logout01Icon from "@hugeicons/core-free-icons/Logout01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import UserIcon from "@hugeicons/core-free-icons/UserIcon";
@@ -78,13 +77,6 @@ function SettingsScreen() {
           detail="Accounts and tools Matrix can use"
           icon={ConnectAppsIcon}
           onPress={() => router.push("/settings-detail/connect-apps" as never)}
-        />
-        <SettingsRow
-          card
-          title="Developer access"
-          detail="GitHub account, SSH, and commit identity"
-          icon={GithubIcon}
-          onPress={() => router.push("/settings-detail/developer-access" as never)}
         />
         <SettingsRow
           card

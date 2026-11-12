@@ -11,6 +11,30 @@ import {
 } from "#collaboration";
 import { IsoTimestampSchema } from "#contract-primitives";
 
+const CollaborativeAppDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const CollaborativeAppVersionSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+
+export const CollaborativeAppCapabilityDeclarationSchema = z.object({
+  version: z.literal(1),
+  storage: z.literal("owner_postgres"),
+  audience: z.literal("current_organization_members"),
+  participantIdentity: z.literal("authenticated_actor"),
+  mutations: z.literal("transactional_revisioned"),
+  updates: z.literal("content_free_signal"),
+  providerPolicy: z.literal("existing_authority"),
+}).strict();
+
+export const CollaborativeAppCompatibilityDeclarationSchema = z.object({
+  bridgeContractVersion: CollaborativeAppVersionSchema,
+  runtimeAbi: CollaborativeAppVersionSchema,
+  schemaDigest: CollaborativeAppDigestSchema,
+}).strict();
+
+export const CollaborativeAppManifestDeclarationSchema = z.object({
+  capability: CollaborativeAppCapabilityDeclarationSchema,
+  compatibility: CollaborativeAppCompatibilityDeclarationSchema,
+}).strict();
+
 /**
  * S02 / T013: frozen capability vocabulary for organization collaboration V1.
  * Two presets, two audience kinds, six standalone-shareable resource kinds.
@@ -311,3 +335,6 @@ export type CollaborationEffectiveSubmitMode = z.infer<typeof CollaborationEffec
 export type CollaborationReadiness = z.infer<typeof CollaborationReadinessSchema>;
 export type CollaborationDirectErrorCode = z.infer<typeof CollaborationDirectErrorCodeSchema>;
 export type CollaborationDirectError = z.infer<typeof CollaborationDirectErrorSchema>;
+export type CollaborativeAppCapabilityDeclaration = z.infer<typeof CollaborativeAppCapabilityDeclarationSchema>;
+export type CollaborativeAppCompatibilityDeclaration = z.infer<typeof CollaborativeAppCompatibilityDeclarationSchema>;
+export type CollaborativeAppManifestDeclaration = z.infer<typeof CollaborativeAppManifestDeclarationSchema>;

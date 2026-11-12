@@ -1,8 +1,47 @@
 name: Desktop Build
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Preview desktop {0} g{1} {2}', inputs.pair_id, inputs.pair_generation, inputs.candidate_sha) || 'Desktop Build' }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact same-repository open PR source for unsigned pair artifacts.
+        required: true
+        type: string
+      pair_pr:
+        description: Pull request number.
+        required: true
+        type: string
+      pair_id:
+        description: Canonical pair UUID selected by the reviewed controller.
+        required: true
+        type: string
+      pair_generation:
+        description: Canonical generation.
+        required: true
+        type: string
   workflow_call:
     inputs:
+      candidate_sha:
+        description: Preview-only candidate SHA; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_pr:
+        description: Preview-only pull request number; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_id:
+        description: Preview-only canonical pair UUID; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_generation:
+        description: Preview-only canonical generation; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
       channel:
         description: Desktop update channel.
         required: true
@@ -36,7 +75,166 @@ permissions:
   contents: read
 
 jobs:
+
+  pair_admission:
+    name: Verify unsigned pair build request
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Verify reviewed controller and exact open PR
+        uses: actions/github-script@v8
+        env:
+          PAIR_PR: ${{ inputs.pair_pr }}
+          PAIR_ID: ${{ inputs.pair_id }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          REVIEWED_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+        with:
+          script: |
+            const {validatePreviewPairBuild} = await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/build-request.mjs`);
+            if (!/^[1-9][0-9]{0,8}$/.test(process.env.PAIR_PR)) throw new Error('Invalid pair request');
+            const {data:pull} = await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
+            validatePreviewPairBuild({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
+              {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA});
+
+  pair_artifacts:
+    needs: [pair_admission]
+    name: Unsigned pair ${{ matrix.platform }} ${{ matrix.arch }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
+    environment: collaboration-preview-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, arch: x64, runner: ubuntu-latest }
+          - { platform: darwin, arch: arm64, runner: macos-latest }
+          - { platform: darwin, arch: x64, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 257
+          path: candidate
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: candidate/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - name: Build candidate without operator or signing credentials
+        working-directory: candidate
+        env:
+          MATRIX_DESKTOP_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          MATRIX_DESKTOP_UPDATE_CHANNEL: dev
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter desktop build
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Package unsigned portable app
+        working-directory: candidate/desktop
+        env:
+          PAIR_PLATFORM: ${{ matrix.platform }}
+          PAIR_ARCH: ${{ matrix.arch }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$PAIR_PLATFORM" = darwin ]; then
+            pnpm exec electron-builder --config "$GITHUB_WORKSPACE/controller/desktop/preview-electron-builder.yml" --mac --dir --"$PAIR_ARCH" --publish never
+            app_dir=mac
+            if [ "$PAIR_ARCH" = arm64 ]; then app_dir=mac-arm64; fi
+            test -x "dist/$app_dir/Matrix OS.app/Contents/MacOS/Matrix OS"
+            tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C "dist/$app_dir" 'Matrix OS.app'
+          else
+            pnpm exec electron-builder --config "$GITHUB_WORKSPACE/controller/desktop/preview-electron-builder.yml" --linux --dir --x64 --publish never
+            test -x dist/linux-unpacked/desktop
+            tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C dist/linux-unpacked .
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-desktop-${{ inputs.candidate_sha }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/preview-pair-app.tar.gz
+          if-no-files-found: error
+          retention-days: 4
+
+  pair_provenance:
+    name: Verify pair artifact provenance on a fresh runner
+    needs: [pair_admission, pair_artifacts]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Verify reviewed controller and exact open PR
+        uses: actions/github-script@v8
+        env:
+          PAIR_PR: ${{ inputs.pair_pr }}
+          PAIR_ID: ${{ inputs.pair_id }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          REVIEWED_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+        with:
+          script: |
+            const {validatePreviewPairBuild} = await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/build-request.mjs`);
+            if (!/^[1-9][0-9]{0,8}$/.test(process.env.PAIR_PR)) throw new Error('Invalid pair request');
+            const {data:pull} = await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
+            validatePreviewPairBuild({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
+              {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA});
+      - name: Record trusted source and artifact receipts
+        uses: actions/github-script@v8
+        env:
+          PAIR_PR: ${{ inputs.pair_pr }}
+          PAIR_ID: ${{ inputs.pair_id }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          REVIEWED_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+        with:
+          script: |
+            const {createPreviewPairBuildReceipts}=await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/build-request.mjs`);
+            const {data:pull}=await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
+            const {data:page}=await github.rest.actions.listWorkflowRunArtifacts({...context.repo,run_id:context.runId,per_page:17,request:{timeout:10000}});
+            if(page.total_count!==page.artifacts.length||page.total_count>16) throw new Error('Preview artifacts unavailable');
+            const receipts=createPreviewPairBuildReceipts({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
+              {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA,runId:context.runId},page.artifacts);
+            const fs=await import('node:fs/promises');
+            await fs.mkdir(`${process.env.RUNNER_TEMP}/pair-receipts`,{recursive:true});
+            for(const receipt of receipts) await fs.writeFile(`${process.env.RUNNER_TEMP}/pair-receipts/${receipt.artifactId}.json`,JSON.stringify(receipt),{flag:'wx'});
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-source-receipts
+          path: ${{ runner.temp }}/pair-receipts/*.json
+          if-no-files-found: error
+          retention-days: 4
+
   mac:
+    if: ${{ inputs.candidate_sha == '' }}
     name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -50,6 +248,8 @@ jobs:
             runner: macos-15-intel
     env:
       MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      DESKTOP_BUILDER_CONFIG: ${{ inputs.channel == 'canary' && 'electron-builder.canary.mjs' || 'electron-builder.yml' }}
+      DESKTOP_APP_NAME: ${{ inputs.channel == 'canary' && 'Matrix OS Canary' || 'Matrix OS' }}
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-builder-cache
       VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
@@ -133,9 +333,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter desktop build
 
+      - name: Fetch pinned herdr-core
+        run: node scripts/release/fetch-herdr-core.mjs --platform darwin --arch ${{ matrix.arch }}
+
       - name: Package desktop app
         working-directory: desktop
-        run: pnpm exec electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
+        run: pnpm exec electron-builder --config "$DESKTOP_BUILDER_CONFIG" --mac --${{ matrix.arch }} --publish never
 
       - name: Resolve mac artifact metadata
         id: mac_artifact
@@ -187,7 +390,7 @@ jobs:
             echo "macOS ${{ matrix.arch }} build produced unexpected artifact: $unexpected_artifact" >&2
             exit 1
           fi
-          if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml" -type f -print -quit | grep -q .; then
+          if ! find desktop/dist -path "*/${DESKTOP_APP_NAME}.app/Contents/Resources/app-update.yml" -type f -print -quit | grep -q .; then
             echo "Missing packaged macOS app-update.yml" >&2
             exit 1
           fi
@@ -196,7 +399,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app_path="$(find desktop/dist -maxdepth 2 -type d -name "Matrix OS.app" -print -quit)"
+          app_path="$(find desktop/dist -maxdepth 2 -type d -name "${DESKTOP_APP_NAME}.app" -print -quit)"
           if [ -z "$app_path" ]; then
             echo "Missing unpacked macOS app for signature verification" >&2
             exit 1
@@ -206,6 +409,21 @@ jobs:
             | grep "Authority=Developer ID Application" >/dev/null
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
+          # Local terminals run this binary: it must be the pinned version and
+          # carry a valid Developer ID signature inside the notarized app.
+          hc_path="$app_path/Contents/Resources/herdr/hc"
+          codesign --verify --strict --verbose=2 "$hc_path"
+          codesign -dv --verbose=4 "$hc_path" 2>&1 \
+            | grep "Authority=Developer ID Application" >/dev/null
+          if [ ! -s "$app_path/Contents/Resources/herdr/NOTICES.txt" ]; then
+            echo "Packaged app is missing the herdr-core licence notices" >&2
+            exit 1
+          fi
+          expected_hc="hc $(node -p "require('./desktop/herdr-core.json').version")"
+          if [ "$("$hc_path" --version)" != "$expected_hc" ]; then
+            echo "Packaged herdr-core is not $expected_hc" >&2
+            exit 1
+          fi
           if pnpm exec asar list "$app_path/Contents/Resources/app.asar" \
             | grep "node_modules/@matrix-os/contracts" >/dev/null; then
             echo "Packaged app contains raw @matrix-os/contracts sources" >&2
@@ -374,8 +592,8 @@ jobs:
             exit 1
           fi
           close_finder_window
-          ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"
-          if [ ! -x "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" ]; then
+          ditto "$mount_dir/${DESKTOP_APP_NAME}.app" "$copy_dir/${DESKTOP_APP_NAME}.app"
+          if [ ! -x "$copy_dir/${DESKTOP_APP_NAME}.app/Contents/MacOS/${DESKTOP_APP_NAME}" ]; then
             echo "Copied macOS app is missing executable entrypoint" >&2
             exit 1
           fi
@@ -413,7 +631,7 @@ jobs:
           OPERATOR_USER_DATA_DIR="$copy_dir/user-data" \
             OPERATOR_UPDATE_CHANNEL="$CHANNEL" \
             OPERATOR_UPDATE_FEED="http://127.0.0.1:${update_port}/" \
-            "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" --disable-gpu >"$app_log" 2>&1 &
+            "$copy_dir/${DESKTOP_APP_NAME}.app/Contents/MacOS/${DESKTOP_APP_NAME}" --disable-gpu >"$app_log" 2>&1 &
           app_pid=$!
           launch_attempts=20
           for ((attempt = 1; attempt <= launch_attempts; attempt += 1)); do
@@ -474,11 +692,14 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
 
   linux:
+    if: ${{ inputs.candidate_sha == '' }}
     name: Linux x64
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      DESKTOP_BUILDER_CONFIG: ${{ inputs.channel == 'canary' && 'electron-builder.canary.mjs' || 'electron-builder.yml' }}
+      DESKTOP_APP_NAME: ${{ inputs.channel == 'canary' && 'Matrix OS Canary' || 'Matrix OS' }}
       VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
     steps:
@@ -519,9 +740,12 @@ jobs:
       - name: Build desktop app
         run: pnpm --filter desktop build
 
+      - name: Fetch pinned herdr-core
+        run: node scripts/release/fetch-herdr-core.mjs --platform linux --arch x64
+
       - name: Package desktop app
         working-directory: desktop
-        run: pnpm exec electron-builder --config electron-builder.yml --linux AppImage --x64 --publish never
+        run: pnpm exec electron-builder --config "$DESKTOP_BUILDER_CONFIG" --linux AppImage --x64 --publish never
 
       - name: Verify packaged update resources
         shell: bash
@@ -533,6 +757,11 @@ jobs:
           fi
           if [ ! -f desktop/dist/latest-linux.yml ]; then
             echo "Missing Linux update manifest: desktop/dist/latest-linux.yml" >&2
+            exit 1
+          fi
+          expected_hc="hc $(node -p "require('./desktop/herdr-core.json').version")"
+          if [ "$(desktop/dist/linux-unpacked/resources/herdr/hc --version)" != "$expected_hc" ]; then
+            echo "Packaged herdr-core is missing or is not $expected_hc" >&2
             exit 1
           fi
 
@@ -568,6 +797,8 @@ jobs:
       id-token: write
     env:
       MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      DESKTOP_APP_NAME: ${{ inputs.channel == 'canary' && 'Matrix OS Canary' || 'Matrix OS' }}
+      DESKTOP_PROTOCOL_SCHEMES: ${{ inputs.channel == 'canary' && 'matrixos-canary' || 'matrixos,matrix-os' }}
       VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       MATRIX_DESKTOP_WINDOWS_SIGNING_MODE: ${{ vars.MATRIX_DESKTOP_WINDOWS_SIGNING_MODE }}
@@ -664,7 +895,7 @@ jobs:
           $installerPath = Join-Path $PWD "desktop/dist/$env:ARTIFACT_BASE.exe"
           $blockmapPath = "$installerPath.blockmap"
           $manifestPath = Join-Path $PWD "desktop/dist/latest.yml"
-          $appPath = Join-Path $PWD "desktop/dist/win-unpacked/Matrix OS.exe"
+          $appPath = Join-Path $PWD "desktop/dist/win-unpacked/$env:DESKTOP_APP_NAME.exe"
           $appUpdatePath = Join-Path $PWD "desktop/dist/win-unpacked/resources/app-update.yml"
           foreach ($path in @($installerPath, $blockmapPath, $manifestPath, $appPath, $appUpdatePath)) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -718,12 +949,12 @@ jobs:
             $uninstallEntry = Get-ChildItem -LiteralPath $uninstallRoot |
               ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
               Where-Object {
-                $_.DisplayName -eq "Matrix OS" -and
+                $_.DisplayName -eq $env:DESKTOP_APP_NAME -and
                 $_.DisplayVersion -eq $env:PACKAGE_VERSION
               } |
               Select-Object -First 1
             if (-not $uninstallEntry) {
-              throw "Silent NSIS install did not register Matrix OS $env:PACKAGE_VERSION"
+              throw "Silent NSIS install did not register $env:DESKTOP_APP_NAME $env:PACKAGE_VERSION"
             }
             $uninstallCommand = $uninstallEntry.QuietUninstallString
             if ($uninstallCommand -notmatch '^"([^"]+)"') {
@@ -731,7 +962,7 @@ jobs:
             }
             $uninstallerPath = $Matches[1]
             $installDirectory = Split-Path -Parent $uninstallerPath
-            $installedAppPath = Join-Path $installDirectory "Matrix OS.exe"
+            $installedAppPath = Join-Path $installDirectory "$env:DESKTOP_APP_NAME.exe"
             foreach ($path in @($installedAppPath, $uninstallerPath)) {
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
                 throw "Silent NSIS install did not create $path"
@@ -768,13 +999,13 @@ jobs:
             $appErrorLog = Join-Path $smokeDirectory "matrix-os-launch-error.log"
             $appProcess = Start-Process -FilePath $installedAppPath -ArgumentList "--disable-gpu" `
               -PassThru -RedirectStandardOutput $appLog -RedirectStandardError $appErrorLog
-            foreach ($scheme in @("matrixos", "matrix-os")) {
+            foreach ($scheme in ($env:DESKTOP_PROTOCOL_SCHEMES -split ",")) {
               $protocolKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$scheme"
               for ($attempt = 1; $attempt -le 40 -and -not (Test-Path -LiteralPath $protocolKey); $attempt++) {
                 Start-Sleep -Milliseconds 250
               }
               if (-not (Test-Path -LiteralPath $protocolKey)) {
-                throw "Installed Matrix OS did not register protocol $scheme on first launch"
+                throw "Installed $env:DESKTOP_APP_NAME did not register protocol $scheme on first launch"
               }
             }
             $updateSucceeded = $false

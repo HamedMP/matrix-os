@@ -4,7 +4,9 @@ import {
   PREVIEW_TERMINAL_ACCESS_HEADER,
 } from "./preview-terminal-access.js";
 import { randomBytes } from 'node:crypto';
-import { authenticatedApprovalProxyProof } from './canonical-owner-approval-proxy.js';
+import { authenticatedApprovalProxyProofs } from './owner-approval-proofs.js';
+import type { BrowserApprovalMachineLookup } from './browser-approval-machine-lookup.js';
+import type { BrowserApprovalPolicy } from './browser-dev-approval-policy.js';
 export { authenticatedApprovalProxyProof } from './canonical-owner-approval-proxy.js';
 import { browserApprovalProofHeader } from './browser-chat-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
@@ -141,6 +143,7 @@ interface CreateSessionRoutingMiddlewareOpts {
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   appEnv: NodeJS.ProcessEnv;
+  browserApprovals: { policy: BrowserApprovalPolicy; lookup?: BrowserApprovalMachineLookup };
   platformSecret: string;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
@@ -234,6 +237,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     orchestrator,
     clerkAuth,
     appEnv,
+    browserApprovals,
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
@@ -249,6 +253,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     getGatewayUrlForHandle,
     logRouteError,
   } = opts;
+  const browserProofOptions = {
+    browserApprovalsEnabled: browserApprovals.policy.kind === 'global',
+    browserApprovalDevScope: browserApprovals.policy.kind === 'scoped' ? browserApprovals.policy.scope : undefined,
+    browserApprovalMachineLookup: browserApprovals.lookup,
+  };
 
   async function proxyAuthShell(
     c: Context,
@@ -743,10 +752,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
-      const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
+      const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
-        identity, platformSecret, machine, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
-      if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
+        identity, platformSecret, machine, clerkAuth, ...browserProofOptions });
+      if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
@@ -756,7 +765,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           headers.set(key, value);
         }
       }
-      if (typeof approvalProof === 'string') headers.set(browserApprovalProofHeader(approvalProof), approvalProof);
+      for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');
       if (rawCookie) {
@@ -913,9 +922,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (!targetUrl) {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
-      const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
-        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
-      if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
+      const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
+        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, ...browserProofOptions });
+      if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
@@ -933,7 +942,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             headers.set(key, value);
           }
         }
-        if (typeof approvalProof === 'string') headers.set(browserApprovalProofHeader(approvalProof), approvalProof);
+        for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
         if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
         const rawCookie = c.req.header('cookie');
         if (rawCookie) {
@@ -1003,14 +1012,18 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie(runningMachine.runtimeSlot));
         }
         if (isCodeDomain && platformJwtSecret) {
+          const issuedAt = Math.floor(Date.now() / 1000);
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
             clerkUserId: identity.userId,
             handle: runningMachine.handle,
             gatewayUrl: 'https://code.matrix-os.com',
             sessionProvenance: identity.sessionProvenance,
+            verifiedHumanBrowser: identity.source === 'auth' && identity.sessionProvenance === 'clerk-browser' && identity.verifiedHumanBrowserExpiresAt !== undefined
+              && identity.verifiedHumanBrowserExpiresAt > issuedAt ? true : undefined,
             runtimeSlot,
-            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC),
+            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC, issuedAt),
+            now: issuedAt,
           });
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }
@@ -1128,9 +1141,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const targetPort = isCodeDomain ? codeServerPort : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
-    const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
-      method: c.req.method, path, handle: record.handle, identity, platformSecret, machine: undefined, browserApprovalsEnabled: false });
-    if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
+    const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
+      method: c.req.method, path, handle: record.handle, identity, platformSecret, machine: undefined, clerkAuth, browserApprovalsEnabled: false });
+    if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
       ? buildCodeDomainProxyHeaders(
@@ -1145,7 +1158,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           headers.set(key, value);
         }
       }
-      if (typeof approvalProof === 'string') headers.set(browserApprovalProofHeader(approvalProof), approvalProof);
+      for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
     }
     // Forward only the app-session cookies (spec 063). Clerk and other
     // cookies are stripped because gateway auth goes via the bearer token
@@ -1218,13 +1231,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie('primary'));
         }
         if (isCodeDomain && platformJwtSecret) {
+          const issuedAt = Math.floor(Date.now() / 1000);
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
             clerkUserId: identity.userId,
             handle: record.handle,
             gatewayUrl: 'https://code.matrix-os.com',
             sessionProvenance: identity.sessionProvenance,
-            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC),
+            verifiedHumanBrowser: identity.source === 'auth' && identity.sessionProvenance === 'clerk-browser' && identity.verifiedHumanBrowserExpiresAt !== undefined
+              && identity.verifiedHumanBrowserExpiresAt > issuedAt ? true : undefined,
+            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC, issuedAt),
+            now: issuedAt,
           });
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }

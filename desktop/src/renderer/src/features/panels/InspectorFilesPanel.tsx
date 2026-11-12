@@ -10,6 +10,10 @@ import type { WorkFilesScope } from "../work/work-files-scope";
 import { ArrowUp, ChevronRight, Folder } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
 import { InspectorResourcePreview } from "./InspectorResourcePreview";
+import { useInspectorFileActions } from "../files/use-inspector-file-actions";
+import { FilePathSchema } from "@matrix-os/contracts";
+import { FileDownloadStatus } from "../files/FileDownloadStatus";
+import { inspectorFileViewKey } from "../../stores/files-navigation";
 
 export type InspectorFileTarget =
   | { kind: "home"; path: string; label: string }
@@ -32,11 +36,17 @@ async function browseProjectDirectory(
   scope: Extract<WorkFilesScope, { kind: "project" }>,
   path?: string,
 ): Promise<FileBrowseResponse> {
+  const captured = useConnection.getState();
+  const assertCurrent = () => {
+    const current = useConnection.getState();
+    if (current.runtimeSlot !== captured.runtimeSlot || current.authGeneration !== captured.authGeneration) throw new Error("FilesUnavailable");
+  };
   let cursor: string | undefined;
   let directory: FileBrowseResponse["directory"] | undefined;
   const entries: FileBrowseResponse["entries"]["items"] = [];
   const seen = new Set<string>();
   for (let page = 0; page < MAX_PROJECT_DIRECTORY_PAGES; page += 1) {
+    assertCurrent();
     const response = await invoke("runtime:browse-files", {
       projectId: scope.projectId,
       ...(scope.worktreeId ? { worktreeId: scope.worktreeId } : {}),
@@ -44,6 +54,7 @@ async function browseProjectDirectory(
       ...(cursor ? { cursor } : {}),
       limit: PROJECT_DIRECTORY_PAGE_SIZE,
     });
+    assertCurrent();
     directory ??= response.directory;
     for (const entry of response.entries.items) {
       if (seen.has(entry.path)) continue;
@@ -81,6 +92,8 @@ export function InspectorFilesPanel({
   browserOnly = false,
   forceList = false,
   selectedFile,
+  selectedDirectory = false,
+  revealKey,
   onOpenFile,
 }: {
   scopeLabel?: string;
@@ -88,6 +101,8 @@ export function InspectorFilesPanel({
   browserOnly?: boolean;
   forceList?: boolean;
   selectedFile?: InspectorFileTarget | null;
+  selectedDirectory?: boolean;
+  revealKey?: string;
   onOpenFile?: (target: InspectorFileTarget) => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -108,6 +123,8 @@ export function InspectorFilesPanel({
         scope={scope}
         selectedPath={selectedFile?.kind === "project" && selectedFile.projectId === scope.projectId && selectedFile.worktreeId === scope.worktreeId ? selectedFile.path : undefined}
         browserOnly={browserOnly}
+        selectedDirectory={selectedDirectory}
+        revealKey={revealKey}
         onOpenFile={onOpenFile}
       />
     );
@@ -115,6 +132,7 @@ export function InspectorFilesPanel({
   return (
     <HomeFilesPanel
       key={scopeKey}
+      viewKey={inspectorFileViewKey(scope)}
       scopeLabel={scopeLabel}
       selectedPath={selectedFile?.kind === "home" ? selectedFile.path : undefined}
       browserOnly={browserOnly}
@@ -125,17 +143,21 @@ export function InspectorFilesPanel({
 }
 
 function HomeFilesPanel({
+  viewKey,
   scopeLabel,
   browserOnly,
   forceList,
   onOpenFile,
   selectedPath,
 }: {
+  viewKey: string;
   scopeLabel: string;
   browserOnly: boolean;
   forceList: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
+  selectedDirectory?: boolean;
+  revealKey?: string;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -170,6 +192,17 @@ function HomeFilesPanel({
       kind: entry.type,
     }));
   }, [api]);
+  const searchEntries = useCallback(async (query: string, signal: AbortSignal): Promise<InspectorTreeEntry[]> => {
+    if (!api) throw new Error("FilesUnavailable");
+    const result = await api.forRuntime(runtimeSlot).get<{ results?: unknown }>(`/api/files/search?q=${encodeURIComponent(query)}&limit=100`, { signal });
+    if (!Array.isArray(result.results)) return [];
+    return result.results.slice(0, 100).flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const parsed = FilePathSchema.safeParse(entry.path);
+      return parsed.success && (entry.type === "file" || entry.type === "directory") ? [{ path: parsed.data, kind: entry.type }] : [];
+    });
+  }, [api, runtimeSlot]);
+  const actions = useInspectorFileActions({ kind: "home", chatId: "home" });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -185,12 +218,13 @@ function HomeFilesPanel({
         </div>
       ) : null}
       {browserOnly ? (
-        <ExpandableFileTree selectedPath={selectedPath} loadDirectory={loadDirectory} onOpenFile={handleOpenFile} />
+        <ExpandableFileTree viewKey={viewKey} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries} renderEntry={actions.renderEntry} onOpenFile={handleOpenFile} />
       ) : (
         <div className="shrink-0">
           <ComputerFileBrowser compact framed forceList={forceList} onOpenFile={handleOpenFile} />
         </div>
       )}
+      <FileDownloadStatus download={actions.download} />
       {!browserOnly ? <section
         aria-label="File preview"
         className="flex min-h-[180px] min-w-0 flex-1 flex-col overflow-hidden rounded-md border"
@@ -221,14 +255,18 @@ function ProjectFilesPanel({
   browserOnly,
   onOpenFile,
   selectedPath,
+  selectedDirectory,
+  revealKey,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   browserOnly: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
+  selectedDirectory?: boolean;
+  revealKey?: string;
 }) {
   if (browserOnly) {
-    return <ProjectFilesTree selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} />;
+    return <ProjectFilesTree revealKey={revealKey} selectedDirectory={selectedDirectory} selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} />;
   }
   return <ProjectNavigableFilesPanel scope={scope} onOpenFile={onOpenFile} />;
 }
@@ -237,10 +275,14 @@ function ProjectFilesTree({
   scope,
   onOpenFile,
   selectedPath,
+  selectedDirectory,
+  revealKey,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
+  selectedDirectory?: boolean;
+  revealKey?: string;
 }) {
   const loadDirectory = useCallback(async (path: string): Promise<InspectorTreeEntry[]> => {
     const response = await browseProjectDirectory(scope, path || undefined);
@@ -250,6 +292,13 @@ function ProjectFilesTree({
         : []
     ));
   }, [scope]);
+  const searchEntries = useCallback(async (query: string, signal: AbortSignal): Promise<InspectorTreeEntry[]> => {
+    signal.throwIfAborted();
+    const response = await invoke("runtime:search-files", { projectId: scope.projectId, worktreeId: scope.worktreeId, query, limit: 100 });
+    signal.throwIfAborted();
+    return response.matches.items.flatMap((entry) => entry.kind === "file" || entry.kind === "directory" ? [{ path: entry.path, kind: entry.kind }] : []);
+  }, [scope]);
+  const actions = useInspectorFileActions(scope);
   const openFile = useCallback((path: string) => {
     onOpenFile?.({
       kind: "project",
@@ -262,7 +311,7 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ExpandableFileTree selectedPath={selectedPath} loadDirectory={loadDirectory} onOpenFile={openFile} />
+      <ExpandableFileTree revealKey={revealKey} viewKey={inspectorFileViewKey(scope)} selectedDirectory={selectedDirectory} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries} renderEntry={actions.renderEntry} onOpenFile={openFile} />
     </div>
   );
 }

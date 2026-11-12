@@ -20,7 +20,8 @@ export function useWorkRailOrder(records: readonly ChatNavigationRecord[], proje
     setStored(current);
   }
   const preference = current.preference;
-  const chats = useMemo(()=>orderRailItems(records.map(record=>({id:record.chat.id,updatedAt:record.chat.updatedAt,createdAt:record.chat.createdAt,record})),preference.mode,preference.chatIds).map(item=>item.record),[records,preference]);
+  // Run progress changes updatedAt repeatedly; activityAt advances for new user work.
+  const chats = useMemo(()=>orderRailItems(records.map(record=>({id:record.chat.id,updatedAt:record.chat.activityAt ?? record.chat.createdAt,createdAt:record.chat.createdAt,record})),preference.mode,preference.chatIds).map(item=>item.record),[records,preference]);
   const orderedProjects = useMemo(()=>orderRailItems(projects.map(project=>({id:project.id ?? project.slug,updatedAt:project.updatedAt,project})),preference.mode,preference.projectIds).map(item=>item.project),[projects,preference]);
   const scopeKey = JSON.stringify([scope,generation]);
   const save = (next: RailOrderPreference) => {

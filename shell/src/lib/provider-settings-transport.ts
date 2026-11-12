@@ -162,6 +162,44 @@ export function createProviderSettingsTransport(
   };
 }
 
+export async function openWebProviderTerminalCommand(
+  command: string[],
+  name: string,
+  onOpenTerminal: (sessionId: string) => void,
+  isIdentityCurrent: () => boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const isCurrent = () => !signal?.aborted && isIdentityCurrent();
+  if (!isCurrent()) return false;
+  const ensured = await fetchJson(fetch, "/api/terminal/workspaces/ensure", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}), signal: requestSignal(signal),
+  });
+  const workspaceId = TerminalWorkspaceIdSchema.safeParse(
+    ensured && typeof ensured === "object"
+      ? (ensured as { workspace?: { id?: unknown } }).workspace?.id
+      : null,
+  );
+  if (!isCurrent() || !workspaceId.success) return false;
+  const created = await fetchJson(
+    fetch,
+    `/api/terminal/workspaces/${encodeURIComponent(workspaceId.data)}/tabs`,
+    {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, cwd: "projects", command }),
+      signal: requestSignal(signal),
+    },
+  );
+  const tabId = TerminalTabIdSchema.safeParse(
+    created && typeof created === "object"
+      ? (created as { tab?: { id?: unknown } }).tab?.id
+      : null,
+  );
+  if (!isCurrent() || !tabId.success) return false;
+  onOpenTerminal(terminalRefKey({ workspaceId: workspaceId.data, tabId: tabId.data }));
+  return true;
+}
+
 export async function openWebProviderAgentSetup(
   harness: ProviderHarnessKind,
   onOpenTerminal: (sessionId: string) => void,
@@ -172,37 +210,7 @@ export async function openWebProviderAgentSetup(
     getCatalog: () => fetchJson(fetch, canonicalChatProviderCatalogPath(true, true), {
       signal: requestSignal(undefined, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs), cache: "no-store",
     }),
-    openCommand: async (cmd) => {
-      if (getGatewayUrl() !== runtimeUrl) return false;
-      const name = `setup-${harness}-${crypto.randomUUID().slice(0, 8)}`;
-      const ensured = await fetchJson(fetch, "/api/terminal/workspaces/ensure", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}), signal: requestSignal(),
-      });
-      const workspaceId = TerminalWorkspaceIdSchema.safeParse(
-        ensured && typeof ensured === "object"
-          ? (ensured as { workspace?: { id?: unknown } }).workspace?.id
-          : null,
-      );
-      if (getGatewayUrl() !== runtimeUrl || !workspaceId.success) return false;
-      const created = await fetchJson(
-        fetch,
-        `/api/terminal/workspaces/${encodeURIComponent(workspaceId.data)}/tabs`,
-        {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, cwd: "projects", command: ["sh", "-lc", cmd] }),
-          signal: requestSignal(),
-        },
-      );
-      const tabId = TerminalTabIdSchema.safeParse(
-        created && typeof created === "object"
-          ? (created as { tab?: { id?: unknown } }).tab?.id
-          : null,
-      );
-      if (getGatewayUrl() !== runtimeUrl || !tabId.success) return false;
-      const sessionId = terminalRefKey({ workspaceId: workspaceId.data, tabId: tabId.data });
-      onOpenTerminal(sessionId);
-      return true;
-    },
+    openCommand: (cmd) => openWebProviderTerminalCommand(["sh", "-lc", cmd], `setup-${harness}-${crypto.randomUUID().slice(0, 8)}`,
+      onOpenTerminal, () => getGatewayUrl() === runtimeUrl),
   });
 }

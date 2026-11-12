@@ -4,7 +4,7 @@ import { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives"
 
 import {
   CanonicalChatApprovalDecisionSchema,
-  CanonicalChatMessagePartSchema,
+  CanonicalChatStoredMessagePartSchema,
   CanonicalChatModelSelectionSchema,
 } from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
@@ -115,7 +115,7 @@ export const CollaborationScopePreflightRequestSchema = z.object({
 
 export const CollaborationScopePreflightResponseSchema = z.object({
   eligible: z.boolean(),
-  reason: z.enum(["active_work", "unsupported", "unavailable"]).optional(),
+  reason: z.enum(["active_work", "unsupported", "unavailable", "organization_mismatch"]).optional(),
   resourceRevision: CollaborationRevisionSchema,
   confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/).optional(),
   existingScopeId: CollaborationIdSchema.optional(),
@@ -382,7 +382,7 @@ const CollaborationExportChatMessageSchema = z.object({
   state: z.enum(["pending", "committed", "failed"]),
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
   actorId: CollaborationActorIdSchema.optional(),
-  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatStoredMessagePartSchema).min(1).max(64),
   createdAt: z.iso.datetime(),
 }).strict().superRefine((message, context) => {
   message.parts.forEach((part, index) => {
@@ -520,7 +520,7 @@ export const CollaborationSharedChatMessageSchema = z.object({
   state: z.enum(["pending", "committed", "failed"]),
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
   actor: CollaborationParticipantSchema,
-  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatStoredMessagePartSchema).min(1).max(64),
   createdAt: z.iso.datetime(),
 }).strict().superRefine((message, context) => {
   message.parts.forEach((part, index) => {
@@ -826,9 +826,20 @@ export const CollaborationDirectoryEventSchema = z.object({
   /** S05: the scope's owning organization so the platform can bind tickets to it; absent only for pre-organization rows. */
   organizationId: CollaborationOrganizationIdSchema.optional(),
   /** S06: `organization` when an active organization-wide grant exists on the home, so the platform can list the share as pending for members. */
-  audience: z.enum(["members", "organization"]).optional(),
+  /** `current_membership` is app-only discovery derived directly from fresh organization membership. */
+  audience: z.enum(["members", "organization", "current_membership"]).optional(),
   /** Opaque owner-home grant pointer for explicit organization activation; never an authorization claim. */
   organizationGrantId: CollaborationIdSchema.optional(),
+  /** Exact app routing metadata only; owner records and credentials never enter the directory. */
+  app: z.object({
+    appId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
+    catalogId: CollaborationIdSchema,
+    readinessId: CollaborationIdSchema,
+    registrationIncarnation: z.string().regex(/^[a-f0-9]{64}$/),
+    buildId: z.string().regex(/^[a-f0-9]{64}$/),
+    shareRevision: z.number().int().positive(),
+    state: z.enum(["active", "needs_recheck", "stopped"]),
+  }).strict().optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
   recipients: z.array(z.object({
@@ -846,10 +857,19 @@ export const CollaborationDirectoryEventSchema = z.object({
    * the parent project's membership, so it carries no recipients or audience of its own.
    */
   parentScopeId: CollaborationIdSchema.optional(),
-}).strict().refine((event) => !event.parentScopeId
-  || (event.kind === "chat" && event.recipients.length === 0 && !event.audience && !event.organizationGrantId
-    && event.organizationId !== undefined && event.parentScopeId !== event.scopeId), {
-  message: "A project Chat route carries only its parent project",
+}).strict().superRefine((event, context) => {
+  if (event.parentScopeId
+    && !(event.kind === "chat" && event.recipients.length === 0 && !event.audience && !event.organizationGrantId
+      && event.organizationId !== undefined && event.parentScopeId !== event.scopeId)) {
+    context.addIssue({ code: "custom", path: ["parentScopeId"], message: "A project Chat route carries only its parent project" });
+  }
+  if (event.app && event.kind !== "app") {
+    context.addIssue({ code: "custom", path: ["app"], message: "App metadata requires an app scope" });
+  }
+  if (event.audience === "current_membership"
+    && (event.kind !== "app" || !event.app || !event.organizationId || event.organizationGrantId)) {
+    context.addIssue({ code: "custom", path: ["audience"], message: "Current membership is exact app discovery without a grant" });
+  }
 });
 
 const CollaborationEventBaseSchema = z.object({

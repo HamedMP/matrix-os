@@ -1,3 +1,4 @@
+export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
 export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
@@ -19,6 +20,7 @@ export * from "#chat-event-wire";
 export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
+export * from "#project-agent-context";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {
@@ -70,6 +72,7 @@ export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
 export * from "#collaboration";
 export * from "#collaboration-capabilities";
+export * from "#collaborative-app-sharing";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
@@ -87,7 +90,15 @@ export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
+export * from "#get-started";
+export * from "#get-started-arrival";
+export * from "#get-started-bot";
+export * from "#get-started-bot-names";
+export * from "#get-started-recipe-bots";
+export * from "#get-started-connect";
+export * from "#get-started-wizard";
 export * from "#getting-started";
+export * from "#github-developer-access";
 export * from "#integration-connections";
 export * from "#onboarding-widget";
 export * from "#onboarding-widget-catalog";
@@ -1108,6 +1119,7 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
 }
 
 export const FilePathSchema = safeRelativePath();
+export { FileLeafNameSchema } from "#legacy-contract-primitives";
 export const FileMetadataSchema = z.object({
   path: FilePathSchema,
   kind: z.enum(["file", "directory", "symlink", "unknown"]),
@@ -1469,6 +1481,8 @@ export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistory
 
 export * from "#provider-workflows";
 export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-poll-delivery';
+export * from '#inference-response-limits';
 export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
@@ -1478,3 +1492,8 @@ export * from "#remote-browser";
 export * from "#shared-browser";
 export { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
 export * from "#funded-host-activation";
+export * from "#routine-action";
+export * from "#routine-full-access";
+export * from "#routine-full-access-view";
+
+export * from "#routine-origin-proof";

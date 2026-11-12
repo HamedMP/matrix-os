@@ -102,7 +102,7 @@ describe("usage-based funded AI admission", () => {
     });
   });
 
-  it("keeps stale usage holds until exact provider usage arrives", async () => {
+  it("releases unknown usage credit while retaining late provider expense", async () => {
     const auth = await repo.authorize(request(credential.token));
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
     await repo.startReservation(key);
@@ -111,21 +111,21 @@ describe("usage-based funded AI admission", () => {
     clock = new Date(clock.getTime() + 61_000);
     expect(await repo.cleanupExpiredReservations({ limit: 10 })).toBe(0);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      reservedMicrousd: 1_000_000, settledThisMonthMicrousd: 0,
-      remainingBalanceMicrousd: 0, remainingBudgetMicrousd: 0,
+      reservedMicrousd: 0, settledThisMonthMicrousd: 0,
+      remainingBalanceMicrousd: 1_000_000, remainingBudgetMicrousd: 1_000_000,
     });
     const stale = await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "settlement_response"])
       .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
-    expect(stale).toEqual({ status: "in_flight", actual_microusd: null, settlement_response: null });
+    expect(stale).toEqual({ status: "expired", actual_microusd: null, settlement_response: null });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
-    await expect(repo.authorize(request(credential.token, "blocked_while_unresolved")))
-      .rejects.toMatchObject({ code: "rate_limited" });
+    const next = await repo.authorize(request(credential.token, "unblocked_while_unknown"));
+    await repo.releaseReservation({ reservationId: next.reservation.reservationId, tokenId: credential.tokenId, reason: "pre_upstream_failure" });
     await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 100 }))
       .resolves.toMatchObject({
-        status: "settled", actualCostMicrousd: 100, chargedCostMicrousd: 100,
-        releasedMicrousd: 999_900,
+        status: "settled", actualCostMicrousd: 100, chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 100,
+        releasedMicrousd: 0,
       });
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "finalization_mode"])
@@ -133,11 +133,11 @@ describe("usage-based funded AI admission", () => {
       .toEqual({ status: "settled", actual_microusd: 100, finalization_mode: "exact" });
     expect((await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
       .where("reservation_id", "=", key.reservationId).execute())
-      .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(-100);
+      .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(0);
     expect((await repo.authorize(request(credential.token, "reconciled"))).authorized).toBe(true);
   });
 
-  it("requires evidence before manually releasing an expired Jev hold", async () => {
+  it("retains evidence-bound Jev actual reconciliation after policy hold release", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
     await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
       allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
@@ -149,11 +149,11 @@ describe("usage-based funded AI admission", () => {
       evidenceRef: "ENG-11/provider-no-charge", reviewer: "operator_1" };
     await expect(repo.reconcileUnknownJevUsage(review)).rejects.toMatchObject({ code: "rate_limited" });
     clock = new Date(clock.getTime() + 61_000 + 10 * 60_000);
-    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
     await expect(repo.reconcileUnknownJevUsage({ ...review, expectedRequestId: "wrong_request" }))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
     const settled = await repo.reconcileUnknownJevUsage(review);
-    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, releasedMicrousd: 5_000 });
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, releasedMicrousd: 0 });
     await expect(repo.reconcileUnknownJevUsage(review)).resolves.toEqual(settled);
     await expect(repo.reconcileUnknownJevUsage({ ...review, evidenceRef: "ENG-11/different" }))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
@@ -185,10 +185,10 @@ describe("usage-based funded AI admission", () => {
     await expect(repo.finalizeReservation({ ...attestation, tokenId: "another_token" }))
       .rejects.toMatchObject({ code: "unauthorized" });
     await expect(repo.finalizeReservation({ ...key, mode: "conservative" })).rejects.toMatchObject({ code: "unavailable" });
-    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 5_000 });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0 });
     const settled = await repo.finalizeReservation(attestation);
     expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, chargedCostMicrousd: 0,
-      releasedMicrousd: 5_000, finalizationMode: "exact", funding: { reservedMicrousd: 0, settledThisMonthMicrousd: 0 } });
+      releasedMicrousd: 0, finalizationMode: "exact", funding: { reservedMicrousd: 0, settledThisMonthMicrousd: 0 } });
     expect(await repo.finalizeReservation(attestation)).toEqual(settled);
     await expect(repo.finalizeReservation({ ...attestation, expectedRequestId: "another_request" }))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
@@ -268,7 +268,7 @@ describe("usage-based funded AI admission", () => {
       .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
   });
 
-  it("keeps a versioned unknown Jev hold for evidence-bound manual reconciliation without invented provenance", async () => {
+  it("keeps versioned unknown Jev expense for evidence-bound manual reconciliation without owner holds", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
     await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
       allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
