@@ -211,6 +211,58 @@ paths:
         '429': { $ref: '#/components/responses/RetryLater' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /{siteId}/access/email/sign-out:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      operationId: signOutEmailViewerSession
+      summary: Revoke this browser's shared Matrix.page viewer authority
+      description: >-
+        The trusted same-origin gate calls this endpoint before shared Clerk
+        sign-out or account switch. The Worker forwards only the exact site
+        viewer cookie and, when present, a bounded Clerk bearer on this exact
+        route. Platform resolves the Clerk session from verified bearer and/or
+        active viewer cookie, requires them to agree if both are present, and
+        revokes that session's viewer authority across publications before
+        Clerk sign-out completes. A request with neither credential makes no
+        authority change and returns the same coarse success, so repeat
+        sign-out remains safe. Main Matrix sign-out
+        must await a trusted revocation hook before completing Clerk sign-out;
+        an asynchronous session event is only backup cleanup.
+        The exact Clerk-session binding and cross-origin propagation require
+        the production-domain compatibility spike to pass.
+      security:
+        - viewerSession: []
+        - clerkSessionToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              maxProperties: 0
+      responses:
+        '200':
+          description: Idempotent coarse result; expires the exact site viewer cookie
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: Expire the exact path-scoped viewer cookie with Max-Age=0
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [signedOut]
+                properties:
+                  signedOut: { const: true }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/ViewerDenied' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
 components:
   securitySchemes:
     ownerSession:
@@ -224,7 +276,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: short-lived Clerk session JWT
-      description: Forwarded by the Matrix.page Worker only on the exact exchange route.
+      description: Forwarded by the Matrix.page Worker only on exact exchange and sign-out routes.
+    viewerSession:
+      type: apiKey
+      in: cookie
+      name: __Secure-matrix_site_viewer_<site-id-without-dashes>
+      description: Exact path-scoped opaque viewer cookie for the canonical site ID.
 
   parameters:
     AppSlug:
@@ -283,18 +340,33 @@ components:
           minimum: 0
 
     InvitationInputResult:
-      type: object
-      additionalProperties: false
-      required: [inputIndex, outcome]
-      properties:
-        inputIndex:
-          type: integer
-          minimum: 0
-          maximum: 99
-        outcome:
-          enum: [queued, existing, invalid, duplicate_in_batch, policy_rejected]
-        invitation:
-          $ref: '#/components/schemas/InvitationSummary'
+      description: >-
+        One result per submitted address in input order. A queued/existing result
+        always includes the current invitation state (pending or accepted as
+        applicable); a rejected result reveals no invitation record.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [inputIndex, outcome, invitation]
+          properties:
+            inputIndex:
+              type: integer
+              minimum: 0
+              maximum: 99
+            outcome:
+              enum: [queued, existing]
+            invitation:
+              $ref: '#/components/schemas/InvitationSummary'
+        - type: object
+          additionalProperties: false
+          required: [inputIndex, outcome]
+          properties:
+            inputIndex:
+              type: integer
+              minimum: 0
+              maximum: 99
+            outcome:
+              enum: [invalid, duplicate_in_batch, policy_rejected]
 
     InvitationMutationRequest:
       type: object

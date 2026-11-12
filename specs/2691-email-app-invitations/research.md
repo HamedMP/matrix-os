@@ -6,10 +6,19 @@
 ## Decision 1 — Preserve the literal same-URL Clerk requirement as a spike gate
 
 **Decision**: The supported product journey remains an inline Clerk component
-on the canonical `https://matrix.page/<publication-id>` page. A production-
-domain spike must prove this using the existing Clerk identity instance before
-implementation can enable `private_email`. Failure blocks the feature and
-requires an explicit product decision.
+on the canonical `https://matrix.page/<publication-id>` page, using the existing
+Matrix Clerk identity and shared browser sign-in state. A person already signed
+in to Matrix enters an authorized app without a second login; a new viewer
+signs up at the app URL without Matrix onboarding or billing. A production-
+domain spike must prove this before implementation can enable `private_email`.
+It must also prove that sign-out on either origin ends the shared Matrix
+session in that browser, supplies a stable Clerk session ID, and reliably
+invalidates associated Matrix.page viewer sessions across sites on the next
+request. Main Matrix sign-out requires a trusted synchronous revocation hook
+before Clerk sign-out completes; a signed session event may provide backup
+cleanup but cannot alone prove next-request denial. The spike must establish
+the hook and its failure behavior. Failure blocks the
+feature and requires an explicit product decision.
 
 **Rationale**: The user explicitly rejected sending recipients into Matrix main
 onboarding or another Matrix funnel. Clerk's current satellite-domain guide says
@@ -18,6 +27,12 @@ redirecting to the primary domain and back. Matrix.page is a different
 registrable domain from matrix-os.com, and this repository currently contains
 no Matrix.page satellite configuration. The exact behavior of the repo's
 installed Clerk versions is therefore not something the design can assume.
+
+The main Matrix URL retains its existing onboarding and billing behavior for
+people explicitly entering the full Matrix product. The shared app URL never
+invokes that funnel. If the exact-URL Clerk flow needs custom callback state,
+use only a server-issued, site-bound, single-use context valid for at most ten
+minutes with a server-derived destination. If it does not, create none.
 
 **Evidence**:
 
@@ -96,8 +111,9 @@ verified emails without trusting the browser or inflating session cookies.
 
 ## Decision 4 — Exchange Clerk proof for an opaque site session
 
-**Decision**: Add exactly one same-origin canonical exchange route,
-`POST /:siteId/access/email`. Only this route may carry a bounded Clerk bearer
+**Decision**: Add one same-origin canonical exchange route,
+`POST /:siteId/access/email`. Only that route and the exact same-origin
+`POST /:siteId/access/email/sign-out` route may carry a bounded Clerk bearer
 through the Matrix.page Worker. Successful exchange mints an opaque,
 publication-path-scoped HttpOnly cookie using the existing strict cookie
 envelope. Content requests never forward Clerk cookies or bearer tokens.
@@ -220,8 +236,11 @@ only the wrapper would expose the frame or visitor mutation routes.
 **Decision**: Extend the existing signed Clerk user webhook and account-
 deletion cleanup. Idempotently revoke grants and viewer sessions for
 `user.deleted`; treat banned, locked, or deprovisioned `user.updated` states as
-inactive. Persist event ID/time so duplicate or out-of-order delivery cannot
-resurrect authority. Acceptance also uses account-deletion admission.
+inactive. Persist a keyed per-recipient state and verified event ID/time in a
+generation-3 PostgreSQL projection, updated atomically with revocation, so
+duplicate or out-of-order delivery cannot resurrect authority after restart.
+Deleted is terminal; a newer active update never restores an old grant.
+Acceptance also uses account-deletion and lifecycle admission.
 
 **Rationale**: A Matrix.page viewer cookie is separate from a Clerk session;
 Clerk revocation alone cannot clear it. Clerk documents webhooks as at-least-
