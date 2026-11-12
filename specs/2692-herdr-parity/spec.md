@@ -213,8 +213,7 @@ No route is public. No new credentials.
   stripped of control/escape sequences (reuse `agent-session-state`
   sanitizer), symlinks refused (`lstat`), session/pane from the path
   regex-checked.
-- Template files: frontmatter Zod schema, `command` an argv array (no shell
-  string), name `SAFE_SLUG`, ≤ 64 KiB, at most 200 templates.
+- Template files: frontmatter checked by a Zod schema. `command` is a command line, as in Herdr's own templates, run as `sh -lc <command>` in the new tab. Templates are owner-written files in the owner's home, so this is equivalent to the owner typing it. The task text is never part of the command. Name `SAFE_SLUG`, ≤ 64 KiB, at most 200 templates.
 
 ### Errors
 

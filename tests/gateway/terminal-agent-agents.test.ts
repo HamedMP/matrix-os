@@ -172,7 +172,7 @@ describe("terminal agents: labels, reports and children", () => {
     const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent: { workspaceId, tabId: parentId } });
     h.statuses.set(child.ref.tabId, "working");
     const parent = { workspaceId, tabId: parentId };
-    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout" });
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).resolves.toMatchObject({ reason: "timeout" });
     h.statuses.set(child.ref.tabId, "done");
     await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).resolves.toEqual({ reason: "idle" });
     await expect(h.agents.waitChildren({ workspaceId, tabId: child.ref.tabId }, { mode: "any", timeoutMs: 1_000 }))
@@ -321,7 +321,7 @@ describe("terminal agents: children after a send", () => {
       now: () => 2_000,
       sleep: async () => undefined,
     });
-    await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toEqual({ reason: "timeout" });
+    await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toMatchObject({ reason: "timeout" });
   });
 });
 
@@ -355,6 +355,35 @@ describe("terminal agents: launch deadline and wait limits", () => {
     const waits = Array.from({ length: 4 }, () => h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 }));
     await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).rejects.toMatchObject({ code: "capacity" });
     await Promise.all(waits);
-    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toEqual({ reason: "timeout" });
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toMatchObject({ reason: "timeout" });
+  });
+});
+
+// Fault detected (fifth review of #3298): a full registry silently evicted a live
+// helper's record, and a child's news between two check-ins was lost.
+describe("terminal agents: registry capacity and child baselines", () => {
+  it("refuses a new record when the registry is full instead of evicting a live one", async () => {
+    const h = await harness();
+    const tooMany = Array.from({ length: 10_240 }, (_, i) => ({
+      ref: { workspaceId, tabId: `tt_${i.toString(16).padStart(32, "0")}` }, labels: {}, outliveParent: false, createdAt: "2026-11-12T00:00:00.000Z",
+    }));
+    await mkdir(join(h.home, "system"), { recursive: true });
+    await writeFile(join(h.home, "system", "terminal-agents.json"), JSON.stringify({ version: 1, agents: tooMany }));
+    await expect(h.registry.upsert({ workspaceId, tabId: parentId }, (record) => record)).rejects.toMatchObject({ code: "capacity" });
+    await expect(h.registry.get(tooMany[0]!.ref)).resolves.toBeDefined();
+  });
+
+  it("carries the starting child states from one check-in to the next", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "working");
+    const first = await h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0 });
+    expect(first).toMatchObject({ reason: "timeout", baseline: [{ ref: child.ref, live: true, status: "working" }] });
+    // The child finishes between the two requests.
+    h.statuses.set(child.ref.tabId, "done");
+    const baseline = first.reason === "timeout" ? first.baseline : undefined;
+    await expect(h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0, ...(baseline ? { baseline } : {}) }))
+      .resolves.toEqual({ reason: "changed", child: child.ref, status: "done" });
   });
 });

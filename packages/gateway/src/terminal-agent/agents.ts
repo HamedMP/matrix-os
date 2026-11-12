@@ -71,7 +71,10 @@ export type TerminalChildrenWaitResult =
   | { reason: "changed"; child: TerminalRef; status?: TerminalAgentStatus; exited?: boolean }
   | { reason: "idle" }
   | { reason: "none" }
-  | { reason: "timeout" };
+  /** `baseline`: the children as the wait started, to pass back on the next check-in. */
+  | { reason: "timeout"; baseline?: TerminalChildFact[] };
+
+export interface TerminalChildFact { ref: TerminalRef; live: boolean; status?: TerminalAgentStatus }
 
 function sanitizeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9 _.:-]/g, "").slice(0, 80);
@@ -159,7 +162,9 @@ export function createTerminalAgents(options: {
   const childWaits = new Map<string, number>();
   let childWaitTotal = 0;
 
-  async function waitForChildren(parent: TerminalRef, input: { mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalChildrenWaitResult> {
+  async function waitForChildren(parent: TerminalRef, input: {
+    mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; baseline?: TerminalChildFact[];
+  }): Promise<TerminalChildrenWaitResult> {
     const deadline = now() + input.timeoutMs;
     const snapshot = async () => {
       const children = await options.registry.children(parent);
@@ -178,10 +183,15 @@ export function createTerminalAgents(options: {
       }
       return facts;
     };
-    const initial = await snapshot();
+    // A follow-up check-in continues from the caller's baseline, so news that arrived
+    // between two requests is still news.
+    const initial = input.baseline
+      ? new Map(input.baseline.map((fact) => [terminalRefKey(fact.ref), fact]))
+      : await snapshot();
     if (initial.size === 0) return { reason: "none" };
+    const timedOut = (): TerminalChildrenWaitResult => ({ reason: "timeout", baseline: [...initial.values()] });
     for (;;) {
-      if (input.signal?.aborted) return { reason: "timeout" };
+      if (input.signal?.aborted) return timedOut();
       const current = await snapshot();
       if (input.mode === "all") {
         // A child without status counts as working until it exits.
@@ -198,7 +208,7 @@ export function createTerminalAgents(options: {
           }
         }
       }
-      if (now() >= deadline) return { reason: "timeout" };
+      if (now() >= deadline) return timedOut();
       await sleep(Math.min(READY_POLL_MS * 2, Math.max(1, deadline - now())));
     }
   }
@@ -285,7 +295,9 @@ export function createTerminalAgents(options: {
     },
 
     /** Herdr's `wait --children any|all` for one parent. */
-    waitChildren(parent: TerminalRef, input: { mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalChildrenWaitResult> {
+    waitChildren(parent: TerminalRef, input: {
+      mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; baseline?: TerminalChildFact[];
+    }): Promise<TerminalChildrenWaitResult> {
       const key = terminalRefKey(parent);
       const forParent = childWaits.get(key) ?? 0;
       if (childWaitTotal >= MAX_CHILD_WAITS || forParent >= MAX_CHILD_WAITS_PER_PARENT) {
