@@ -12,9 +12,9 @@
  * content-free usage tables.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
-import type { OrgMcpServerMode, OrgMcpToolPolicy } from "@matrix-os/contracts";
+import { ORG_MCP_MAX_MEMBER_BLOCKS, type OrgMcpServerMode, type OrgMcpToolPolicy } from "@matrix-os/contracts";
 import { runPlatformMigration } from "../migration-runner.js";
-import type { McpUsageDatabase } from "../mcp-usage/database.js";
+import { MCP_USAGE_ROLLUP_SCOPE, type McpUsageDatabase } from "../mcp-usage/database.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
@@ -216,10 +216,27 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
         .where("organization_id", "=", organizationId).where("server_def_id", "=", serverDefId).execute();
     },
 
-    async blockMember(input: { organizationId: string; actorId: string; serverDefId: string; createdBy: string }): Promise<void> {
-      await db.insertInto("org_mcp_member_blocks").values({
-        organization_id: input.organizationId, actor_id: input.actorId, server_def_id: input.serverDefId, created_by: input.createdBy,
-      }).onConflict(conflict => conflict.columns(["organization_id", "actor_id", "server_def_id"]).doNothing()).execute();
+    /**
+     * Idempotent. Serialized on the organization row like definitions, so the
+     * per-member cap (shared with the connections response) cannot be overshot.
+     */
+    async blockMember(input: { organizationId: string; actorId: string; serverDefId: string; createdBy: string }): Promise<"saved" | "cap_reached" | "organization_missing"> {
+      return db.transaction().execute(async (trx) => {
+        const organization = await trx.selectFrom("organizations").select("organization_id")
+          .where("organization_id", "=", input.organizationId).forUpdate().executeTakeFirst();
+        if (!organization) return "organization_missing";
+        const existing = await trx.selectFrom("org_mcp_member_blocks").select("server_def_id")
+          .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId)
+          .where("server_def_id", "=", input.serverDefId).executeTakeFirst();
+        if (existing) return "saved";
+        const count = await trx.selectFrom("org_mcp_member_blocks").select(eb => eb.fn.countAll<number>().as("count"))
+          .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).executeTakeFirstOrThrow();
+        if (Number(count.count) >= ORG_MCP_MAX_MEMBER_BLOCKS) return "cap_reached";
+        await trx.insertInto("org_mcp_member_blocks").values({
+          organization_id: input.organizationId, actor_id: input.actorId, server_def_id: input.serverDefId, created_by: input.createdBy,
+        }).onConflict(conflict => conflict.columns(["organization_id", "actor_id", "server_def_id"]).doNothing()).execute();
+        return "saved";
+      });
     },
 
     async unblockMember(input: { organizationId: string; actorId: string; serverDefId: string }): Promise<void> {
@@ -266,15 +283,35 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
       return lastUsed;
     },
 
-    /** Daily aggregates for current members only, newest first, capped at `limit` rows. */
+    /**
+     * Daily totals for current members only, newest first, capped at `limit` rows.
+     * Days before the rollup marker come from `mcp_usage_daily`; days at or after
+     * it (still recomputed by the rollup) come from raw `mcp_usage_events`, so a
+     * recent call shows up at once and is never counted twice. Without a marker
+     * nothing is rolled up yet and every row comes from raw events.
+     */
     async usageAggregates(input: { organizationId: string; from: string; to: string; actorId?: string; limit: number }): Promise<OrgMcpUsageAggregate[]> {
       const result = await sql<{ day: string | Date; actor_id: string; server_key: string; tool_name: string; calls: string | number; failures: string | number }>`
+        WITH marker AS (
+          SELECT COALESCE((SELECT next_day FROM mcp_usage_rollup_state WHERE scope = ${MCP_USAGE_ROLLUP_SCOPE}), '-infinity'::date) AS next_day
+        ), combined AS (
+          SELECT d.day, d.actor_id, d.server_key, d.tool_name, d.outcome, d.call_count
+          FROM mcp_usage_daily d, marker
+          WHERE d.org_id = ${input.organizationId} AND d.day BETWEEN ${input.from}::date AND ${input.to}::date AND d.day < marker.next_day
+          UNION ALL
+          SELECT (e.occurred_at AT TIME ZONE 'UTC')::date, e.actor_id, e.server_key, e.tool_name, e.outcome, 1
+          FROM mcp_usage_events e, marker
+          WHERE e.org_id = ${input.organizationId}
+            AND e.occurred_at >= (${input.from}::date - 1)::timestamp AT TIME ZONE 'UTC'
+            AND (e.occurred_at AT TIME ZONE 'UTC')::date BETWEEN ${input.from}::date AND ${input.to}::date
+            AND (e.occurred_at AT TIME ZONE 'UTC')::date >= marker.next_day
+        )
         SELECT u.day, u.actor_id, u.server_key, u.tool_name,
           sum(u.call_count)::bigint AS calls,
           COALESCE(sum(u.call_count) FILTER (WHERE u.outcome <> 'ok'), 0)::bigint AS failures
-        FROM mcp_usage_daily u
-        JOIN organization_memberships m ON m.organization_id = u.org_id AND m.actor_id = u.actor_id AND m.state = 'active'
-        WHERE u.org_id = ${input.organizationId} AND u.day BETWEEN ${input.from}::date AND ${input.to}::date
+        FROM combined u
+        JOIN organization_memberships m ON m.organization_id = ${input.organizationId} AND m.actor_id = u.actor_id AND m.state = 'active'
+        WHERE TRUE
           ${input.actorId ? sql`AND u.actor_id = ${input.actorId}` : sql``}
         GROUP BY u.day, u.actor_id, u.server_key, u.tool_name
         ORDER BY u.day DESC, u.actor_id, u.server_key, u.tool_name

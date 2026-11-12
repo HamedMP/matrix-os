@@ -17,6 +17,7 @@ import { PlatformOrganizationRepository } from "../../packages/platform/src/orga
 import { bootstrapOrgMcpDatabase, createOrgMcpRepository, type OrgMcpDatabase } from "../../packages/platform/src/org-mcp/database.js";
 import { createOrgMcpPolicy } from "../../packages/platform/src/org-mcp/policy.js";
 import { createOrgMcpAdminRoutes } from "../../packages/platform/src/org-mcp/routes.js";
+import { ORG_MCP_MAX_MEMBER_BLOCKS } from "../../packages/contracts/src/organization-mcp.js";
 import { createCoreFixture, type CoreFixture, type FakeUpstream } from "./core-mcp-fixture.js";
 
 const ORG = "org_acme1";
@@ -123,6 +124,59 @@ describe("Matrix Core MCP org governance checkpoint", () => {
     expect(linear.calls.map(entry => entry.tool)).toEqual(["list_issues"]);
   });
 
+  // Fault: authorization uses the role read before the freshness check, so a just-demoted admin keeps access.
+  it("authorizes from the membership read after the freshness check, so a demoted admin gets 403", async () => {
+    const organizations = new PlatformOrganizationRepository(db);
+    const demoting = new Hono();
+    demoting.route("/", createOrgMcpAdminRoutes({
+      repository: createOrgMcpRepository(db),
+      organizations: { repository: organizations, projection: {
+        // The refresh observes Clerk's demotion and writes it to the projection.
+        isCurrentMember: async (input) => {
+          await organizations.applyMembership({ organizationId: input.organizationId, membershipId: `mem_${input.actorId}`, actorId: input.actorId,
+            role: "org:member", state: "active", sourceUpdatedAt: new Date("2026-11-02T00:00:00.000Z") });
+          return true;
+        },
+      } },
+      connectionsAvailable: true,
+      resolveActor: async () => ADMIN,
+    }));
+    const response = await demoting.request(blockPath, { method: "PUT" });
+    expect(response.status).toBe(403);
+    expect(await db.selectFrom("org_mcp_member_blocks").selectAll().execute()).toEqual([]);
+  });
+
+  // Fault: blocks beyond what the connections response accepts break the admin panel with a 503.
+  it("refuses a member's 501st block with 409 cap_reached while re-blocking stays idempotent", async () => {
+    await db.insertInto("org_mcp_member_blocks").values(Array.from({ length: ORG_MCP_MAX_MEMBER_BLOCKS }, (_, index) => ({
+      organization_id: ORG, actor_id: fixture.actorId, server_def_id: `host-${index}.example`, created_by: ADMIN }))).execute();
+    const refused = await admin("PUT", blockPath);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "cap_reached" });
+    expect((await admin("PUT", `/api/orgs/${ORG}/mcp/members/${fixture.actorId}/blocks/host-7.example`)).status).toBe(200);
+    expect((await admin("GET", `/api/orgs/${ORG}/mcp/connections?limit=10`)).status).toBe(200);
+  });
+
+  // Fault: usage reads only rolled-up aggregates, so calls since the last hourly rollup are missing (or counted twice).
+  it("counts a call recorded before the rollup exactly once, before and after the rollup", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const totals = async () => {
+      const body = await (await admin("GET", `/api/orgs/${ORG}/mcp/usage?from=${today}&to=${today}`)).json() as { rows: Array<{ calls: number }>; updatedAt: string };
+      expect(Date.parse(body.updatedAt)).not.toBeNaN();
+      return body.rows.map(row => row.calls);
+    };
+    expect((await call("list_issues")).status).toBe(200);
+    await writer.flush();
+    expect(await totals()).toEqual([1]);
+    await createMcpUsageRepository(db).rollupDaily();
+    expect(await totals()).toEqual([1]);
+    expect((await call("list_issues")).status).toBe(200);
+    await writer.flush();
+    expect(await totals()).toEqual([2]);
+    await createMcpUsageRepository(db).rollupDaily();
+    expect(await totals()).toEqual([2]);
+  });
+
   it("shows member connection metadata and call counts that match the usage rows, with no credential or payload", async () => {
     expect((await call("list_issues")).status).toBe(200);
     expect((await call("list_issues")).status).toBe(200);
@@ -142,7 +196,7 @@ describe("Matrix Core MCP org governance checkpoint", () => {
     })]);
     const today = new Date().toISOString().slice(0, 10);
     const usage = await admin("GET", `/api/orgs/${ORG}/mcp/usage?from=${today}&to=${today}`);
-    expect(await usage.json()).toEqual({ truncated: false, rows: [
+    expect(await usage.json()).toEqual({ truncated: false, updatedAt: expect.any(String), rows: [
       { day: today, actorId: fixture.actorId, serverKey: "mcp.linear.test", toolName: "list_issues", calls: 2, failures: 0 },
     ] });
     const everything = JSON.stringify(page) + JSON.stringify(await (await admin("GET", `/api/orgs/${ORG}/mcp/usage?from=${today}&to=${today}`)).json());

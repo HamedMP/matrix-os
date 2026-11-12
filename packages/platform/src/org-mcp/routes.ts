@@ -92,11 +92,13 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
     const { repository, organizations } = options;
     if (!repository || !organizations) return unavailable(c, "dependency check");
     try {
-      const membership = await organizations.repository.getMembership({ organizationId: organizationId.data, actorId: actorId.data });
-      if (!membership || membership.state !== "active"
-        || !(await organizations.projection.isCurrentMember({ organizationId: organizationId.data, actorId: actorId.data }))) {
+      // Freshness first: the check may refresh the projection (e.g. record a demotion),
+      // so authorize only from the membership read after it.
+      if (!(await organizations.projection.isCurrentMember({ organizationId: organizationId.data, actorId: actorId.data }))) {
         return safeJson(c, "Organization not found", 404);
       }
+      const membership = await organizations.repository.getMembership({ organizationId: organizationId.data, actorId: actorId.data });
+      if (!membership || membership.state !== "active") return safeJson(c, "Organization not found", 404);
       if (!hasOrganizationPermission(membership.role, "org:mcp_admin")) return safeJson(c, "Forbidden", 403);
       return { actorId: actorId.data, organizationId: organizationId.data, repository, organizations };
     } catch (error: unknown) {
@@ -175,7 +177,7 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
       });
       c.header("Cache-Control", "private, no-store");
       return c.json(OrgMcpUsageResponseSchema.parse({
-        rows: rows.slice(0, ORG_MCP_USAGE_MAX_ROWS), truncated: rows.length > ORG_MCP_USAGE_MAX_ROWS,
+        rows: rows.slice(0, ORG_MCP_USAGE_MAX_ROWS), truncated: rows.length > ORG_MCP_USAGE_MAX_ROWS, updatedAt: new Date().toISOString(),
       }));
     } catch (error: unknown) {
       return unavailable(c, "usage listing", error);
@@ -227,8 +229,13 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
     try {
       const target = await admin.organizations.repository.getMembership({ organizationId: admin.organizationId, actorId: memberId.data });
       if (!target || target.state !== "active") return safeJson(c, "Organization member not found", 404);
-      await admin.repository.blockMember({ organizationId: admin.organizationId, actorId: memberId.data, serverDefId: id, createdBy: admin.actorId });
-      return mutationResult(c);
+      const saved = await admin.repository.blockMember({ organizationId: admin.organizationId, actorId: memberId.data, serverDefId: id, createdBy: admin.actorId });
+      if (saved === "saved") return mutationResult(c);
+      if (saved === "cap_reached") {
+        c.header("Cache-Control", "no-store");
+        return c.json({ error: "Too many blocks for this member", code: "cap_reached" }, 409);
+      }
+      return unavailable(c, "member block");
     } catch (error: unknown) {
       return unavailable(c, "member block", error);
     }
