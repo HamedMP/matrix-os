@@ -218,14 +218,26 @@ describe("Matrix Core repo installer", () => {
     expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
   });
 
-  it("writes hourly timer units that run `core sync`", () => {
-    const linux = coreSyncTimerFiles({ platform: "linux", home: "/home/u", node: "/usr/bin/node", cli: "/opt/matrix/cli.mjs" });
+  // Fault: the timer runs the TS source without the tsx loader, or without the profile and settings the manual run used.
+  it("writes hourly timer units that run the published launcher with the same profile and settings", async () => {
+    const { resolveCoreSyncLauncher } = await import("../../packages/sync-client/src/cli/commands/core.js");
+    const launcher = resolveCoreSyncLauncher();
+    expect(launcher.endsWith(join("sync-client", "bin", "matrix.mjs"))).toBe(true);
+    expect(existsSync(launcher)).toBe(true);
+    const input = { home: "/home/u", node: "/usr/bin/node", launcher: "/opt/my tools/matrix.mjs", profile: "work",
+      env: { MATRIX_SKILLS_SYNC_SCRIPT: "/srv/50%$off/sync.sh", MATRIX_CORE_ROOT: '/data/core "x"' } };
+    const linux = coreSyncTimerFiles({ ...input, platform: "linux" });
     expect(linux.map(file => file.path)).toEqual(["/home/u/.config/systemd/user/matrix-core-sync.service", "/home/u/.config/systemd/user/matrix-core-sync.timer"]);
-    expect(linux[0]!.content).toContain('ExecStart="/usr/bin/node" "/opt/matrix/cli.mjs" core sync');
+    expect(linux[0]!.content).toContain('ExecStart="/usr/bin/node" "/opt/my tools/matrix.mjs" "core" "sync" "--profile" "work"');
+    expect(linux[0]!.content).toContain('Environment="MATRIX_SKILLS_SYNC_SCRIPT=/srv/50%%$off/sync.sh"');
+    expect(linux[0]!.content).toContain('Environment="MATRIX_CORE_ROOT=/data/core \\"x\\""');
     expect(linux[1]!.content).toContain("OnUnitActiveSec=1h");
-    const mac = coreSyncTimerFiles({ platform: "darwin", home: "/Users/u", node: "/usr/bin/node", cli: "/a&b/cli.mjs" });
+    const mac = coreSyncTimerFiles({ ...input, platform: "darwin", launcher: "/a&b/matrix.mjs" });
     expect(mac[0]!.content).toContain("<integer>3600</integer>");
-    expect(mac[0]!.content).toContain("/a&amp;b/cli.mjs");
-    expect(() => coreSyncTimerFiles({ platform: "linux", home: "/h", node: "/n", cli: "/x\"; rm -rf ~" })).toThrow();
+    expect(mac[0]!.content).toContain("<string>/a&amp;b/matrix.mjs</string><string>core</string><string>sync</string><string>--profile</string><string>work</string>");
+    expect(mac[0]!.content).toContain("<key>MATRIX_CORE_ROOT</key><string>/data/core &quot;x&quot;</string>");
+    expect(() => coreSyncTimerFiles({ ...input, platform: "linux", launcher: "/x\n; rm -rf ~" })).toThrow();
+    expect(() => coreSyncTimerFiles({ ...input, platform: "linux", profile: "../../etc" })).toThrow();
+    expect(JSON.stringify(linux)).not.toMatch(/UPGRADE_TOKEN|Bearer/);
   });
 });

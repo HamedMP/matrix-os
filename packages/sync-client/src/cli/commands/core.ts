@@ -11,6 +11,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { defineCommand } from "citty";
 import { requireCliAuthToken } from "../auth-state.js";
@@ -33,23 +34,62 @@ export function coreRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   return env.MATRIX_CORE_ROOT ?? join(env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "matrix-core");
 }
 
-function quote(value: string): string {
-  if (/[\x00-\x1f"\\]/.test(value)) throw Object.assign(new Error("timer_path_invalid"), { code: "timer_path_invalid" });
-  return `"${value}"`;
+const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+const ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+function invalidTimer(): Error {
+  return Object.assign(new Error("timer_path_invalid"), { code: "timer_path_invalid" });
+}
+
+function checked(value: string): string {
+  if (!value || value.length > 4_096 || /[\x00-\x1f\x7f]/.test(value)) throw invalidTimer();
+  return value;
+}
+
+/** One systemd word: quoted, with `\`, `"`, `%` (specifiers), and optionally `$` (expansion) escaped. */
+function systemdQuote(value: string, escapeDollar: boolean): string {
+  let escaped = checked(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%");
+  if (escapeDollar) escaped = escaped.replace(/\$/g, "$$$$");
+  return `"${escaped}"`;
 }
 
 function xml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return checked(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-/** Unit files for an hourly run of `<node> <cli> core sync`. Pure, so the content is testable. */
-export function coreSyncTimerFiles(input: { platform: NodeJS.Platform; home: string; node: string; cli: string }): Array<{ path: string; content: string }> {
+/**
+ * The published launcher (`bin/matrix.mjs`), which re-execs Node with the tsx
+ * loader. `process.argv[1]` is the TypeScript entry and cannot run alone.
+ */
+export function resolveCoreSyncLauncher(): string {
+  return fileURLToPath(new URL("../../../bin/matrix.mjs", import.meta.url));
+}
+
+export interface CoreSyncTimerInput {
+  platform: NodeJS.Platform;
+  home: string;
+  node: string;
+  launcher: string;
+  /** The CLI profile the manual run used; absent for the machine credential. */
+  profile?: string;
+  /** Non-secret settings only (paths and targets); tokens are never written to a unit. */
+  env: Record<string, string>;
+}
+
+/** Unit files for an hourly `matrix core sync`. Pure, so the content is testable. */
+export function coreSyncTimerFiles(input: CoreSyncTimerInput): Array<{ path: string; content: string }> {
+  if (input.profile !== undefined && !PROFILE_NAME.test(input.profile)) throw invalidTimer();
+  const env = Object.entries(input.env);
+  if (env.some(([key]) => !ENV_KEY.test(key))) throw invalidTimer();
+  const args = [input.node, input.launcher, "core", "sync", ...(input.profile ? ["--profile", input.profile] : [])];
   if (input.platform === "darwin") {
+    const environment = env.length === 0 ? "" : `
+  <key>EnvironmentVariables</key><dict>${env.map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`).join("")}</dict>`;
     return [{ path: join(input.home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`), content: `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${xml(input.node)}</string><string>${xml(input.cli)}</string><string>core</string><string>sync</string></array>
+  <key>ProgramArguments</key><array>${args.map(arg => `<string>${xml(arg)}</string>`).join("")}</array>${environment}
   <key>StartInterval</key><integer>3600</integer>
   <key>RunAtLoad</key><true/>
 </dict></plist>
@@ -62,7 +102,7 @@ Description=Matrix Core repo sync
 
 [Service]
 Type=oneshot
-ExecStart=${quote(input.node)} ${quote(input.cli)} core sync
+${env.map(([key, value]) => `Environment=${systemdQuote(`${key}=${value}`, false)}\n`).join("")}ExecStart=${args.map(arg => systemdQuote(arg, true)).join(" ")}
 TimeoutStartSec=600
 ` },
     { path: join(dir, `${TIMER_NAME}.timer`), content: `[Unit]
@@ -80,10 +120,9 @@ WantedBy=timers.target
   ];
 }
 
-async function installTimer(): Promise<string> {
-  const cli = process.argv[1];
-  if (!cli) throw Object.assign(new Error("timer_path_invalid"), { code: "timer_path_invalid" });
-  const files = coreSyncTimerFiles({ platform: process.platform, home: homedir(), node: process.execPath, cli });
+async function installTimer(settings: { profile?: string; env: Record<string, string> }): Promise<string> {
+  const files = coreSyncTimerFiles({ platform: process.platform, home: homedir(), node: process.execPath,
+    launcher: resolveCoreSyncLauncher(), ...settings });
   for (const file of files) {
     await mkdir(join(file.path, ".."), { recursive: true });
     await writeFile(file.path, file.content, { mode: 0o644 });
@@ -103,14 +142,15 @@ async function installTimer(): Promise<string> {
   return files.map(file => file.path).join(", ");
 }
 
-async function transportFor(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<CoreRepoTransport> {
+/** The transport, plus the CLI profile it used (none for the machine credential). */
+async function transportFor(args: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<{ transport: CoreRepoTransport; profile?: string }> {
   if (env.MATRIX_HANDLE && env.UPGRADE_TOKEN && env.PLATFORM_INTERNAL_URL) {
-    return createCoreRepoHttpTransport({ baseUrl: env.PLATFORM_INTERNAL_URL,
-      headers: { "x-matrix-handle": env.MATRIX_HANDLE, authorization: `Bearer ${env.UPGRADE_TOKEN}` } });
+    return { transport: createCoreRepoHttpTransport({ baseUrl: env.PLATFORM_INTERNAL_URL,
+      headers: { "x-matrix-handle": env.MATRIX_HANDLE, authorization: `Bearer ${env.UPGRADE_TOKEN}` } }) };
   }
   const profile = await resolveCliProfile(args);
   const token = await requireCliAuthToken(profile);
-  return createCoreRepoHttpTransport({ baseUrl: profile.platformUrl, headers: { authorization: `Bearer ${token}` } });
+  return { transport: createCoreRepoHttpTransport({ baseUrl: profile.platformUrl, headers: { authorization: `Bearer ${token}` } }), profile: profile.name };
 }
 
 function errorCode(error: unknown): string {
@@ -136,12 +176,14 @@ const syncCommand = defineCommand({
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         throw Object.assign(new Error("skill_sync_unavailable"), { code: "skill_sync_unavailable" });
       }
-      const results = await installCoreRepo({
-        transport: await transportFor(args, process.env),
-        root: coreRepoRoot(),
-        runSkillSync: createScriptSkillSync(script),
-      });
-      const timer = args["install-timer"] === true ? await installTimer() : undefined;
+      const { transport, profile } = await transportFor(args, process.env);
+      const root = coreRepoRoot();
+      const results = await installCoreRepo({ transport, root, runSkillSync: createScriptSkillSync(script) });
+      // The timer repeats this exact run: same profile, script, root, and targets (never a token).
+      const timer = args["install-timer"] === true ? await installTimer({ ...(profile ? { profile } : {}), env: {
+        MATRIX_SKILLS_SYNC_SCRIPT: script, MATRIX_CORE_ROOT: root,
+        ...(process.env.MATRIX_SKILL_TARGETS ? { MATRIX_SKILL_TARGETS: process.env.MATRIX_SKILL_TARGETS } : {}),
+      } }) : undefined;
       if (json) console.log(formatCliSuccess({ results, ...(timer ? { timer } : {}) }));
       else {
         if (results.length === 0) console.log("No organization publishes a Matrix Core repo for you yet.");
