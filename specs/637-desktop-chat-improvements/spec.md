@@ -18,6 +18,10 @@
 4. Search covers titles and committed message text across all owner chats and accepts an active or archived lifecycle filter. Archived browse orders by archive time. The response is bounded and paginated.
 5. Side-chat creation and turns validate owner and source chat. The server, rather than a client permission setting, enforces a read-only execution policy with no mutating tools. Side chats remain absent from ordinary navigation and search.
 
+## Repository extraction
+
+`packages/gateway/src/chat/repository.ts` already exceeds 1,000 lines. Keep the public repository facade stable while moving lifecycle, bulk archive, and navigation/search SQL into focused modules with the same transaction owner and database dependency. Move new archive/search assertions out of the existing oversized `tests/gateway/chat-repository.test.ts` into focused test files with shared fixtures. Finish this extraction before merge so ownership and review boundaries are clear.
+
 ## Security and wiring
 
 | Route | Method | Authentication and authorization | Public |
