@@ -47,7 +47,7 @@ const mutations = [
   })),
 ];
 
-it.each(["0.166.0", "0.167.0"])("rejects every changed routine payload in %s after a whole-schema digest refresh", version => {
+it.each(["0.166.0", "0.167.0", "0.167.1", "0.167.2"])("rejects every changed routine payload in %s after a whole-schema digest refresh", version => {
   const fixture = version === "0.166.0" ? "0166" : "0167";
   const schemaBytes = gunzipSync(readFileSync(new URL(
     `../fixtures/codex-${fixture}/app-server-schema-${fixture}.json.gz`, import.meta.url,

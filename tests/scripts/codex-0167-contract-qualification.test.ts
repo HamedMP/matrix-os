@@ -39,7 +39,16 @@ describe("exact published Codex 0.167.0 qualification", () => {
     expect(execContract.verifiedVersions["0.167.1"]).toEqual(execContract.verifiedVersions["0.167.0"]);
     expect(appServerContract.verifiedVersions["0.167.1"]).toEqual(appServerContract.verifiedVersions["0.167.0"]);
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.1", execContract, appServerContract,
+      version: "0.167.1",
+      execContract: { ...execContract, latestVerifiedVersion: "0.167.1" },
+      appServerContract: { ...appServerContract, latestVerifiedVersion: "0.167.1" },
+      execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
+    })).not.toThrow();
+  });
+
+  it.each(["linux-x64", "darwin-arm64"])("verifies published 0.167.2 schemas on %s", runtimeTarget => {
+    expect(() => verifyCodexProviderContracts({
+      version: "0.167.2", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
     })).not.toThrow();
   });
@@ -60,11 +69,11 @@ describe("exact published Codex 0.167.0 qualification", () => {
     expect(codexContractStatus("codex-cli 0.167.1", execContract)).toEqual({ status: "verified", version: "0.167.1" });
     expect(codexContractStatus("codex-cli 0.166.1", execContract)).toEqual({ status: "unverified_older", version: "0.166.1" });
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.2", execContract, appServerContract,
+      version: "0.167.99", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64",
-    })).toThrow("Codex 0.167.2 is not verified");
+    })).toThrow("Codex 0.167.99 is not verified");
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.1", execContract, appServerContract,
+      version: "0.167.2", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),
       runtimeTarget: "darwin-arm64",
     })).toThrow("Codex app-server schema digest changed");
