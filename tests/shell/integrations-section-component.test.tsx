@@ -87,6 +87,33 @@ describe("IntegrationsSection websocket lifecycle", () => {
 
 describe("Connect Apps partial loading", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it("explains unavailable app connections while MCP discovery and owner approvals remain usable", async () => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    let available = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/integrations/available") || url.endsWith("/api/integrations")) {
+        if (available) return Response.json(url.endsWith("/available") ? { services: [] } : { connections: [] });
+        return Response.json({ error: "integrations_unavailable" }, { status: 503 });
+      }
+      if (url.endsWith("/api/mcp-servers/catalog")) return Response.json({ presets: [{
+        id: "context7", name: "Context7", url: "https://mcp.context7.com/mcp", auth: "none",
+        category: "developer", departments: ["engineering"], description: "Library documentation",
+      }] });
+      if (url.endsWith("/api/mcp-servers")) return Response.json([]);
+      if (url.endsWith("/external-approvals")) return Response.json({ approvals: [] });
+      return Response.json({});
+    }));
+    render(<IntegrationsSection />);
+    expect(await screen.findByText("Some app connections are unavailable. You can still connect MCP servers and review external approvals below.")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Connect Context7" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(screen.queryByText("Failed to load integrations")).toBeNull();
+    available = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh", exact: true }));
+    await waitFor(() => expect(screen.queryByText("Some app connections are unavailable. You can still connect MCP servers and review external approvals below.")).toBeNull());
+    expect(screen.getByRole("button", { name: "Connect Context7" })).toBeTruthy();
+  });
   it.each(["http", "network", "json"])("keeps accounts removable when the catalog fails with %s", async (failure) => {
     buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

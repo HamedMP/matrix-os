@@ -226,9 +226,14 @@ function SettingsFrame({
     : canonicalLockedSection;
   const setupBackdrop = onboardingMode
     || (resolvedLockedSection === "billing" && billingMode !== "settings");
-  const openingSection = resolvedLockedSection ?? (showBillingSection && billingActive === false
-    ? "billing"
-    : resolvedDefaultSection);
+  // BillingGate uses lockedSection for setup admission. Inactive billing only
+  // redirects a generic opening; an explicit Settings link such as the owner
+  // write-approval pill must keep its destination.
+  const openingSection = resolvedLockedSection ?? (
+    showBillingSection && billingActive === false && resolvedDefaultSection === "agents-providers"
+      ? "billing"
+      : resolvedDefaultSection
+  );
   const [mobileDetail, setMobileDetail] = useState(openingSection !== "appearance");
   const showMobileAccountFooter = mobile && mobileDetail
     && (Boolean(resolvedLockedSection) || onboardingMode || closeDisabled);
