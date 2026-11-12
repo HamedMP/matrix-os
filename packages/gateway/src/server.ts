@@ -270,6 +270,7 @@ import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
 import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
@@ -341,6 +342,8 @@ export async function createGateway(config: GatewayConfig) {
   // Assigned once collaboration is known (project fences); a startup failure before
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
+  // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
+  let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
@@ -900,6 +903,12 @@ export async function createGateway(config: GatewayConfig) {
     }),
   });
   terminalAgentServices = terminalAgents;
+  try {
+    localTerminalAgentToken = await createLocalTerminalAgentToken({ homePath });
+  } catch (error) {
+    // In-terminal calls then fail with local_gateway_unavailable; everything else is unaffected.
+    console.warn("[terminal-agent] local terminal token unavailable:", error instanceof Error ? error.name : "unknown_error");
+  }
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
@@ -1278,6 +1287,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+    localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
@@ -1952,6 +1962,7 @@ export async function createGateway(config: GatewayConfig) {
       workspaceSessionRuntimeBridge.close();
       // Drain terminal event subscribers and waiters before the runtime client goes.
       await terminalAgentServices?.close();
+      await localTerminalAgentToken?.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();

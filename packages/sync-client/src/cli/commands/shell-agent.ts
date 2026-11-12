@@ -1,7 +1,6 @@
 import { defineCommand } from "citty";
-import { requireCliAuthToken } from "../auth-state.js";
 import { formatCliSuccess } from "../output.js";
-import { resolveCliProfile } from "../profiles.js";
+import { resolveTerminalAgentCliConnection } from "../local-terminal-connection.js";
 import { createShellClient } from "../shell-client.js";
 import {
   createTerminalAgentClient,
@@ -18,12 +17,11 @@ const tabArgs = {
 } as const;
 
 async function target(args: Record<string, unknown>) {
-  const profile = await resolveCliProfile(args);
-  const token = await requireCliAuthToken(profile);
-  const shell = createShellClient({ gatewayUrl: profile.gatewayUrl, token });
+  const { gatewayUrl, token } = await resolveTerminalAgentCliConnection(args);
+  const shell = createShellClient({ gatewayUrl, token });
   const { workspace } = await resolveWorkspace(shell, args.project);
   const tab = resolveTab(workspace, args.tab);
-  return { ref: refFor(workspace, tab), tab, client: createTerminalAgentClient({ gatewayUrl: profile.gatewayUrl, token }) };
+  return { ref: refFor(workspace, tab), tab, client: createTerminalAgentClient({ gatewayUrl, token }) };
 }
 
 function positionals(args: Record<string, unknown>): string[] {

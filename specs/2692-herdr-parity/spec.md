@@ -154,6 +154,31 @@ of a child is wrapped with `reach="matrix shell report when done or stuck"`,
 and `matrix shell report "…"` delivers the child's result to its parent.
 `matrix shell wait-children any|all` matches `hc wait --children`.
 
+**Calls from inside a terminal.** Agents call the gateway from their own
+terminal, as `hc` does in Herdr, without a cloud login:
+
+- The host bundle ships `matrix` in `/opt/matrix/bin`, which is already on the
+  terminal PATH (as `matrix-status` is). It runs the CLI of the installed release.
+- At start the gateway writes a fresh local token (32 random bytes) to
+  `~/.cache/matrix/terminal-agent.token`: owner-only (file 0600, directory
+  0700), written atomically, replaced on every start and removed on shutdown.
+  `.cache` is never synced.
+- Inside a Matrix pane (`ZELLIJ_SESSION_NAME` is `matrix-w-…` or
+  `matrix-rt_…`) and with no `--profile`, `--gateway`, `--token` or `--dev`,
+  the terminal-agent commands (`get`, `read`, `send`, `keys`, `interrupt`,
+  `wait`, `run`, `templates`, `label`, `report`, `wait-children`) call
+  `http://127.0.0.1:${PORT:-4000}` with that token instead of a profile.
+- The gateway accepts the token only from a direct loopback caller (no proxy or
+  platform headers) and only on the routes those commands use: the project
+  list, workspace list and ensure, tab get/read/send/keys/interrupt/wait,
+  agent facts and labels, `agents/*` and templates. It treats the caller as the
+  owner. Everything in a Matrix terminal already runs as the owner, so the token
+  adds no authority; it keeps `MATRIX_AUTH_TOKEN` out of panes and limits what
+  these calls reach.
+
+Global flags before the command (`matrix --profile x shell run -- cmd`) stay
+ahead of `--`; they never become part of the program's arguments.
+
 ### Shell surfaces (layer 5)
 
 One shared derivation (`packages/ui` or `shell/src/lib`) computes roll-up,
@@ -199,8 +224,9 @@ through the existing local-terminals IPC allowlist, with Zod-validated payloads.
 | `WS /ws/terminal/events` | Same principal; query-token allowlist entry for browsers | Filters out chat-bound tabs the principal cannot see |
 | `matrix-status` file writes | Unix permissions: owner home, mode 0600 | Gateway treats contents as untrusted input |
 | Kernel IPC tools | Kernel process principal = owner | Same service, same validation |
+| Terminal-agent routes with the local token | Direct loopback caller (no proxy or platform headers), constant-time match; principal = owner | The token on any other route, or from any other caller, is rejected as an invalid bearer |
 
-No route is public. No new credentials.
+No route is public. The only new credential is the local terminal-agent token: owner-only, loopback-only, replaced on every start.
 
 ### Input validation
 
@@ -246,6 +272,8 @@ error), `terminal_capacity_reached`. No paths, zellij output or stack traces.
 | Event subscriber slow | Bounded queue (512); overflow → `missed` + resnapshot |
 | Partition skips WS close | Stale subscriber sweep by `lastTouched` (60 s) |
 | Program exits while no viewer is attached | Exit sweep marks the tab `exited` with `exit_status` within about 2 s |
+| Local token missing, malformed or not owner-only inside a pane | CLI fails with `local_gateway_unavailable` and suggests `--profile`; it never falls back to a cloud call |
+| Local token write fails at gateway start | Logged; in-terminal calls fail as above, everything else is unaffected |
 
 ## Resource Management
 
