@@ -61,6 +61,7 @@ import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
+import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
@@ -189,6 +190,7 @@ interface GatewayCustomMcpModules {
   catalogPresets: {
     RegisteredMcpOAuthClients: { fromEnv(env: NodeJS.ProcessEnv): unknown };
   };
+  coreTools: GatewayCoreToolsModule;
 }
 
 interface GatewayPlatformDbModule {
@@ -662,7 +664,7 @@ async function startPlatformServerWithCleanup(
     ].some((secret) => Boolean(secret) && secret === encryptionKeyRaw)) {
       throw new Error('MCP_CREDENTIAL_ENCRYPTION_KEY is required and must not reuse another platform secret');
     }
-    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule, catalogPresetsModule] = await Promise.all([
+    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule, catalogPresetsModule, coreToolsModule] = await Promise.all([
       importRuntimeModule<GatewayCustomMcpModules['broker']>('../../gateway/dist/integrations/custom-mcp/broker.js'),
       importRuntimeModule<GatewayCustomMcpModules['oauth']>('../../gateway/dist/integrations/custom-mcp/oauth.js'),
       importRuntimeModule<GatewayCustomMcpModules['crypto']>('../../gateway/dist/integrations/custom-mcp/crypto.js'),
@@ -670,6 +672,7 @@ async function startPlatformServerWithCleanup(
       importRuntimeModule<GatewayCustomMcpModules['approvalRoutes']>('../../gateway/dist/integrations/custom-mcp/approval-routes.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
       importRuntimeModule<GatewayCustomMcpModules['catalogPresets']>('../../gateway/dist/integrations/custom-mcp/catalog-presets.js'),
+      importRuntimeModule<GatewayCustomMcpModules['coreTools']>('../../gateway/dist/integrations/custom-mcp/core-tools.js'),
     ]);
     const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
     // Spec 2691: Matrix-owned vendor apps are parsed once; a missing pair hides that preset.
@@ -720,6 +723,9 @@ async function startPlatformServerWithCleanup(
       revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
       removeManagedPreset: managedLifecycle.removeManagedPreset,
     });
+    // Matrix Core MCP (spec 2691): one tool service over this broker; usage rows go to platform Postgres.
+    const coreMcp = await createPlatformCoreMcp({ db: db.kysely as never, coreModule: coreToolsModule, broker,
+      approvals: customDb, maintenance: backgroundWorkersEnabled });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
       if (customMcpClosed) return;
@@ -727,6 +733,8 @@ async function startPlatformServerWithCleanup(
       try {
         await broker.shutdown();
         await projection.drain();
+        // After the broker settles in-flight calls, so their usage rows are drained too.
+        await coreMcp.shutdown();
       } finally {
         await closeCustomMcpDb();
       }
@@ -762,6 +770,7 @@ async function startPlatformServerWithCleanup(
       oauth: managedOAuthFlow,
       catalog: registeredMcpOAuthClients,
       allowToolCalls: true,
+      core: coreMcp.core,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('internalContainerClerkUserId') as string | undefined,
