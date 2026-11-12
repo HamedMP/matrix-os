@@ -45,3 +45,19 @@ it("retains expanded rows when the navigation refreshes", async () => {
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.rows).toHaveLength(30);
 });
+
+it("drops paged titles and ignores a late page when navigation authority is lost", async () => {
+  let finishNext!: (value: unknown) => void;
+  const next = new Promise(resolve => { finishNext = resolve; });
+  const navigationPage = vi.fn(async (query: { cursor?: string }) => query.cursor ? next
+    : { items: Array.from({ length: 10 }, (_, index) => ({ chat: { id: `chat_private_${index}`, title: "Private" } })), totalCount: 11, nextCursor: "next" });
+  const client = { navigationPage } as never;
+  const { result, rerender } = renderHook(({ allowed }) => useWorkRailPage(allowed ? client : null,
+    { group: "done" }, allowed ? "owner:0" : "owner:1", 0, 10), { initialProps: { allowed: true } });
+  await waitFor(() => expect(result.current.rows).toHaveLength(10));
+  act(() => result.current.loadMore());
+  rerender({ allowed: false });
+  expect(result.current.rows).toEqual([]);
+  await act(async () => finishNext({ items: [{ chat: { id: "chat_private_older", title: "Older" } }], totalCount: 2 }));
+  expect(result.current.rows).toEqual([]);
+});

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
 import { compactChatStartLabel } from "@matrix-os/ui";
@@ -33,21 +33,18 @@ const visibleChats = () => screen.queryAllByRole("button", { name: /^Chat \d+$/ 
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-it("shows project Chats six at a time with Show more", () => {
+it("shows five project Chats initially and expands with Show more", () => {
   renderGroup(14);
-  expect(visibleChats()).toEqual(["Chat 1", "Chat 2", "Chat 3", "Chat 4", "Chat 5", "Chat 6"]);
-
-  fireEvent.click(screen.getByRole("button", { name: "Show more Alpha chats" }));
-  expect(visibleChats()).toHaveLength(12);
+  expect(visibleChats()).toEqual(["Chat 1", "Chat 2", "Chat 3", "Chat 4", "Chat 5"]);
 
   fireEvent.click(screen.getByRole("button", { name: "Show more Alpha chats" }));
   expect(visibleChats()).toHaveLength(14);
   expect(screen.queryByRole("button", { name: "Show more Alpha chats" })).toBeNull();
 });
 
-it("has no Show more control for six or fewer Chats", () => {
-  renderGroup(6);
-  expect(visibleChats()).toHaveLength(6);
+it("has no Show more control for five or fewer Chats", () => {
+  renderGroup(5);
+  expect(visibleChats()).toHaveLength(5);
   expect(screen.queryByRole("button", { name: "Show more Alpha chats" })).toBeNull();
 });
 
@@ -94,4 +91,18 @@ it("refreshes Chat start ages when a long-collapsed Project expands", () => {
   vi.setSystemTime(NOW + 3 * 60 * 60 * 1000);
   rerender(<WorkRailProjectGroup {...props} expanded />);
   expect(within(screen.getByRole("button", { name: "Chat 1" })).getByText("4h")).toBeTruthy();
+});
+
+it("reveals the next project page with one Show more click", async () => {
+  const navigationPage = vi.fn(async ({ cursor }: { cursor?: string }) => cursor
+    ? { items: Array.from({ length: 20 }, (_, index) => chat(index + 6)), totalCount: 25 }
+    : { items: Array.from({ length: 5 }, (_, index) => chat(index + 1)), totalCount: 25, nextCursor: "next" });
+  const group = { id: alpha.id, slug: alpha.id, name: alpha.name, project: alpha, chats: [] };
+  render(<WorkRailProjectGroup group={group} expanded client={{ navigationPage } as never} pinning={{}}
+    onToggle={vi.fn()} onNewChat={vi.fn()} onDeleteProject={vi.fn()} onSelectChat={vi.fn()}
+    renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
+    onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()} />);
+  await waitFor(() => expect(visibleChats()).toHaveLength(5));
+  fireEvent.click(screen.getByRole("button", { name: "Show more Alpha chats" }));
+  await waitFor(() => expect(visibleChats()).toHaveLength(25));
 });

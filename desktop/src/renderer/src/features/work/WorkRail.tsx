@@ -97,7 +97,7 @@ export function WorkRail({
   onNewProjectChat: (project: Project) => void;
   onSelectProject?: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
-  onChatDeleted?: (record: ChatNavigationRecord, project?: Project) => void;
+  onChatDeleted?: (chatId: string, project?: Project) => void;
   onChatRenamed?: (record: CanonicalChatRecord, project?: Project) => void;
   onChatMoved?: (record: CanonicalChatRecord, project?: Project) => void;
   onCollapse: () => void;
@@ -378,7 +378,7 @@ export function WorkRail({
       setRecords((current) => current.filter((record) => record.chat.id !== target.chat.id));
       if (isCurrentScope(scope)) {
         setDeleteChatTarget(null);
-        onChatDeleted?.(target, targetProject);
+        onChatDeleted?.(target.chat.id, targetProject);
       }
     } catch (error: unknown) {
       console.warn(
@@ -407,7 +407,7 @@ export function WorkRail({
       setArchiveUndo({ chats: [{ chatId: record.chat.id, revision: updated.chat.revision }], label: `Archived ${record.chat.title}` });
       if (record.chat.id === activeChatId) {
         const project = projectGroups.find(group => group.id === record.projectId || group.slug === record.projectId)?.project;
-        onChatDeleted?.(record, project);
+        onChatDeleted?.(record.chat.id, project);
       }
     } catch (error: unknown) {
       console.warn("[work] Chat archive failed:", error instanceof Error ? error.name : "UnknownError");
@@ -440,9 +440,8 @@ export function WorkRail({
     try {
       const result = await client.archiveProjectChats(project.id ?? project.slug);
       if (!isCurrentAuthority(scope)) return;
-      const activeRecord = records.find(record => record.chat.id === activeChatId);
       setRecords(current => current.filter(record => !result.archivedIds.includes(record.chat.id)));
-      if (activeRecord && result.archivedIds.includes(activeRecord.chat.id)) onChatDeleted?.(activeRecord, project);
+      if (activeChatId && result.archivedIds.includes(activeChatId)) onChatDeleted?.(activeChatId, project);
       if (result.archivedCount) setArchiveUndo({ chats: result.archived,
         label: `Archived ${result.archivedCount} chats in ${project.name}${result.skippedCount ? `; ${result.skippedCount} running skipped` : ""}` });
       else if (result.skippedCount) setArchiveError(`${result.skippedCount} running chats were skipped.`);
@@ -583,13 +582,13 @@ export function WorkRail({
       {sourceFilter !== "all" && sourceRecords.length === 0 && status === "ready" ? <p className="px-3 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats match this source.</p> : null}
       <WorkRailScrollArea>
       {focusedGroup && focusedRecords ? <FocusedProjectRail group={focusedGroup} records={focusedRecords} sections={sections} onToggle={toggleSection}
-        client={client} scopeKey={authorityKey} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
         orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderChat={renderChatRow} onBack={() => setFocusedProjectId(null)} onNewChat={onNewProjectChat} /> : <>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
-        client={client} scopeKey={authorityKey} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
         orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
