@@ -7,12 +7,15 @@ export interface ConnectedService {
   connected_at: string;
 }
 
-/** Only the backend's fixed unavailable contract gets the partial-service notice. */
+/** Only fixed backend contracts get an explanatory partial-service notice. */
 export class IntegrationsUnavailableError extends Error {
-  constructor() { super("IntegrationsUnavailable"); this.name = "IntegrationsUnavailableError"; }
+  constructor(readonly reason: "service" | "preview" = "service") {
+    super("IntegrationsUnavailable"); this.name = "IntegrationsUnavailableError";
+  }
 }
 
 export const INTEGRATIONS_UNAVAILABLE_NOTICE = "Some app connections are unavailable. You can still connect MCP servers and review external approvals below.";
+export const PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE = "App connections are unavailable on this preview computer. You can still connect MCP servers and review external approvals below.";
 
 export function hasNewConnectionForService(
   previousIds: Set<string>,

@@ -8,6 +8,7 @@ import {
   shouldLogIntegrationWarning,
   IntegrationsUnavailableError,
   INTEGRATIONS_UNAVAILABLE_NOTICE,
+  PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE,
   type ConnectedService,
 } from "./integrations-helpers";
 import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
@@ -28,7 +29,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   const [connected, setConnected] = useState<ConnectedService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [appsUnavailable, setAppsUnavailable] = useState(false);
+  const [appsUnavailable, setAppsUnavailable] = useState<"service" | "preview" | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
@@ -50,8 +51,9 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       const readJson = async (url: string) => {
         const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
         if (!response.ok) {
-          const body = response.status === 503 ? await response.json() : null;
-          if (body?.error === "integrations_unavailable") throw new IntegrationsUnavailableError();
+          const body = response.status === 503 || response.status === 403 ? await response.json() : null;
+          if (response.status === 503 && body?.error === "integrations_unavailable") throw new IntegrationsUnavailableError();
+          if (response.status === 403 && body?.code === "preview_integrations_unavailable") throw new IntegrationsUnavailableError("preview");
           throw new Error("Integrations unavailable");
         }
         return response.json();
@@ -61,7 +63,8 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         readJson(`${GATEWAY}/api/integrations`),
       ]);
       const results = [availResult, connResult];
-      setAppsUnavailable(results.some(result => result.status === "rejected" && result.reason instanceof IntegrationsUnavailableError));
+      const unavailable = results.flatMap(result => result.status === "rejected" && result.reason instanceof IntegrationsUnavailableError ? [result.reason.reason] : []);
+      setAppsUnavailable(unavailable.includes("preview") ? "preview" : unavailable.includes("service") ? "service" : null);
       setError(results.some(result => result.status === "rejected" && !(result.reason instanceof IntegrationsUnavailableError)) ? "Failed to load integrations" : null);
       for (const result of [availResult, connResult]) {
         if (result.status === "rejected") console.warn("[integrations] Load failed", { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" });
@@ -436,7 +439,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
               ) : null}
               {!loading && appsUnavailable ? (
                 <p role="status" className="rounded-lg border border-border/60 px-4 py-3 text-sm text-muted-foreground">
-                  {INTEGRATIONS_UNAVAILABLE_NOTICE}
+                  {appsUnavailable === "preview" ? PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE : INTEGRATIONS_UNAVAILABLE_NOTICE}
                 </p>
               ) : null}
 

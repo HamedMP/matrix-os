@@ -167,6 +167,7 @@ describe("platform/internal-integration-routes", () => {
     });
 
     expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden", code: "preview_integrations_unavailable" });
   });
 
   it.each(["running", "provisioning"] as const)("does not select a customer owner when a %s preview shares its handle", async (previewStatus) => {

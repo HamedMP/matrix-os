@@ -85,3 +85,12 @@ product and integration-owner review is recommended for the final scope.
 Links: [ENG-458](https://linear.app/matrix-os/issue/ENG-458),
 [stack](https://github.com/HamedMP/matrix-os/pull/3309),
 [parent](https://github.com/HamedMP/matrix-os/pull/3314).
+
+
+### Shared-preview app availability
+
+Live qualification at `a5b969fbe1b1` found that app inventory also receives the existing 403 shared-preview denial while public discovery receives the unconfigured-service 503. This is an intentional personal-account boundary, independent of Pipedream configuration. Adding staging credentials alone does not enable personal app connections on a shared preview.
+
+The authenticated internal integration guard now identifies only that denial with fixed code `preview_integrations_unavailable`. The shell recognizes the fixed 403 contract and explains that app connections are unavailable on the preview computer while MCP services and account-owned approvals remain usable. Unknown 403 responses still show a real load error. Machine authentication, signed delegation, private-preview eligibility, account deletion admission, and all access decisions stay unchanged.
+
+Regression evidence exercises the real platform guard and rendered Connect Apps. Before the fix: the platform lacks the reason code and the shell shows a generic error beside its unavailable-service notice (two failing assertions). After the fix: the preview notice is shown, MCP discovery and approvals remain reachable, and Refresh does not dispatch a sync through the denied route. A plain Forbidden response remains an error.
