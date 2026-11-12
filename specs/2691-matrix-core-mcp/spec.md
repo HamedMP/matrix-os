@@ -222,6 +222,21 @@ It is capped at 40 tools per session.
   `org:admin`. An admin "revoke" **blocks** that member's use of the server in
   org context; it never reads, moves, or deletes the member's personal
   credential (constitution I). Only the member deletes their connection.
+  - *Server definitions* are keyed by a catalog id (`linear`) or a
+    normalized hostname (`mcp.linear.app`); a catalog-id definition also
+    governs any connection on that entry's host, so a pasted URL variant
+    cannot step around it. `mode` is `allow` / `recommend` / `block`; the
+    default tool policy (`allow` / `blocked`) plus per-tool overrides make
+    a server a tool allowlist.
+  - *Org context* is every organization in which the actor holds an active
+    membership in the platform projection. A member of several orgs is
+    governed by all of them; any one block denies. A policy-store failure
+    fails the call closed.
+  - *Usage attribution* (`org_id`): the first org (by id) that denied the
+    call; else the first org that governs the server; else the actor's only
+    org; else none. Personal use of an ungoverned server by a member of
+    several orgs is not attributed to any of them, and the admin view shows
+    only org-attributed last use and counts, for current members only.
 - **Usage records.** Each broker call writes a content-free usage row:
   org, actor, connection, server, tool, entry point, harness, outcome,
   latency, timestamp. It records no arguments or results. Writes are
@@ -365,7 +380,7 @@ a generic 503, never a 404.
 - Shutdown: drain in-flight broker calls and close Postgres resources through
   the existing gateway and platform close paths.
 
-## Delivery stack (about 5 PRs, one shared ticket)
+## Delivery stack (about 6 PRs, one shared ticket)
 
 Each layer names its integration checkpoint: a test that runs the real
 producer and consumer together, not only unit tests.
@@ -385,10 +400,12 @@ producer and consumer together, not only unit tests.
    approvals; `matrix mcp` stdio bridge. Checkpoint: each harness launch
    config contains the scoped server; an external write stays pending until
    the owner approves.
-5. Org governance and admin dashboard (connections, usage, blocks), plus the
-   Matrix Core repo sync job and `matrix core sync` CLI. Checkpoint: a member
-   block denies the next call; a signed webhook pins a commit that a VPS
-   installs atomically.
+5. Org governance and admin dashboard (connections, usage, blocks).
+   Checkpoint: a member block denies the next call.
+6. Matrix Core repo sync job, signed webhook, pinned-tarball internal route,
+   VPS installer, and `matrix core sync` CLI (split from layer 5 to keep each
+   PR under the size limit). Checkpoint: a signed webhook pins a commit that
+   a VPS installs atomically; a broken tarball leaves the previous version.
 
 Public docs (required by the constitution's documentation-driven rule): a
 separate PR in `FinnaAI/matrix-os-site` under `content/docs/` ships with
