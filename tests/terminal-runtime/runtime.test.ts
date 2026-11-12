@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 class FakeZellij implements ZellijRuntimeAdapter {
-  readonly sessions = new Map<string, Map<number, { name: string; paneId: string }>>();
+  readonly sessions = new Map<string, Map<number, { name: string; paneId: string; held?: boolean }>>();
   readonly attachments = new Map<string, { handle: ZellijAttachment; emit: (data: Uint8Array) => void }>();
   readonly writes: string[] = [];
   readonly targetedWrites: string[] = [];
@@ -179,8 +179,27 @@ class FakeZellij implements ZellijRuntimeAdapter {
       await deletedPause.wait;
     }
   }
-  async renameTab(_sessionName: string, tabId: number, name: string): Promise<void> {
+  async renameTab(sessionName: string, tabId: number, name: string): Promise<void> {
     this.renamedTabs.push({ tabId, name });
+    const tab = this.sessions.get(sessionName)?.get(tabId);
+    if (tab) tab.name = name;
+  }
+  async recoverRenamedTabs(sessionName: string, candidates: Array<{
+    internalName: string;
+    displayName: string;
+    tabId: number;
+    paneId: string | null;
+    requireLivePane: boolean;
+  }>): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const recovered: Record<string, { tabId: number; paneId: string }> = {};
+    for (const candidate of candidates) {
+      const tab = this.sessions.get(sessionName)?.get(candidate.tabId);
+      if (!tab || tab.name !== candidate.displayName) continue;
+      if (candidate.requireLivePane && (tab.paneId !== candidate.paneId || tab.held)) continue;
+      tab.name = candidate.internalName;
+      recovered[candidate.internalName] = { tabId: candidate.tabId, paneId: tab.paneId };
+    }
+    return recovered;
   }
   async resizeSession(_sessionName: string, size: { cols: number; rows: number }): Promise<void> {
     this.resizedSessions.push(size);
@@ -1632,5 +1651,124 @@ describe("project-scoped terminal runtime", () => {
     await runtime.deleteWorkspace(workspace.id, { confirmTerminate: true });
     expect(zellij.deletedSessions).toHaveLength(1);
     await runtime.shutdown();
+  });
+
+  describe("renamed tab recovery (ENG-466)", () => {
+    async function setup() {
+      const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+      homes.push(homePath);
+      const zellij = new FakeZellij();
+      const store = new TerminalWorkspaceStore({ homePath });
+      const runtime = new TerminalRuntime({ store, zellij });
+      const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+      const tab = await runtime.createTab(workspace.id, { name: "one", cwd: "projects/matrix-os" });
+      const ref = { workspaceId: workspace.id, tabId: tab.id };
+      const internal = (await store.getRuntimeWorkspace(workspace.id))!;
+      const sessionName = internal.zellijSessionName;
+      const internalTab = internal.tabs[tab.id]!;
+      return { homePath, zellij, store, runtime, workspace, tab, ref, sessionName, internalTab };
+    }
+
+    async function restart(homePath: string, zellij: FakeZellij) {
+      const store = new TerminalWorkspaceStore({ homePath });
+      const runtime = new TerminalRuntime({ store, zellij });
+      await runtime.restoreAll();
+      return { store, runtime };
+    }
+
+    // Simulates a tab renamed by a runtime that still renamed the Zellij tab itself.
+    async function legacyRename(ctx: Awaited<ReturnType<typeof setup>>, name: string) {
+      ctx.zellij.sessions.get(ctx.sessionName)!.get(ctx.internalTab.zellijTabId!)!.name = name;
+      const current = (await ctx.store.getTab(ctx.ref))!;
+      await ctx.store.renameTab(ctx.ref, { name, baseRevision: current.revision });
+    }
+
+    it("keeps a renamed tab live and attachable across a runtime restart", async () => {
+      const ctx = await setup();
+      await ctx.runtime.renameTab(ctx.ref, { name: "agent-a", baseRevision: ctx.tab.revision });
+      expect(ctx.zellij.sessions.get(ctx.sessionName)!.get(ctx.internalTab.zellijTabId!)!.name)
+        .toBe(ctx.internalTab.zellijTabName);
+      await ctx.runtime.shutdown();
+
+      const restarted = await restart(ctx.homePath, ctx.zellij);
+      const restored = (await restarted.store.getRuntimeWorkspace(ctx.workspace.id))!.tabs[ctx.tab.id]!;
+      expect(restored).toMatchObject({
+        name: "agent-a",
+        status: "running",
+        zellijTabId: ctx.internalTab.zellijTabId,
+        zellijPaneId: ctx.internalTab.zellijPaneId,
+      });
+      await restarted.runtime.attach(ctx.ref, { viewerId: "desktop", send: () => undefined });
+      await restarted.runtime.writeInput(ctx.ref, "echo ok\r");
+      expect([...ctx.zellij.writes, ...ctx.zellij.targetedWrites].join("")).toContain("echo ok");
+      await restarted.runtime.shutdown();
+    });
+
+    it("repairs a tab whose Zellij name was renamed by an older runtime", async () => {
+      const ctx = await setup();
+      await legacyRename(ctx, "agent-b");
+      await ctx.runtime.shutdown();
+
+      const restarted = await restart(ctx.homePath, ctx.zellij);
+      const restored = (await restarted.store.getRuntimeWorkspace(ctx.workspace.id))!.tabs[ctx.tab.id]!;
+      expect(restored).toMatchObject({
+        name: "agent-b",
+        status: "running",
+        zellijTabId: ctx.internalTab.zellijTabId,
+        zellijPaneId: ctx.internalTab.zellijPaneId,
+      });
+      expect(ctx.zellij.sessions.get(ctx.sessionName)!.get(ctx.internalTab.zellijTabId!)!.name)
+        .toBe(ctx.internalTab.zellijTabName);
+      await restarted.runtime.shutdown();
+    });
+
+    it("revives a legacy-renamed tab wrongly marked exited only while its pane is live", async () => {
+      const ctx = await setup();
+      const held = await ctx.runtime.createTab(ctx.workspace.id, { name: "two", cwd: "projects/matrix-os" });
+      const heldRef = { workspaceId: ctx.workspace.id, tabId: held.id };
+      const heldInternal = (await ctx.store.getRuntimeWorkspace(ctx.workspace.id))!.tabs[held.id]!;
+      await legacyRename(ctx, "agent-a");
+      const heldZellijTab = ctx.zellij.sessions.get(ctx.sessionName)!.get(heldInternal.zellijTabId!)!;
+      heldZellijTab.name = "agent-b";
+      heldZellijTab.held = true;
+      await ctx.store.renameTab(heldRef, { name: "agent-b", baseRevision: held.revision });
+      await ctx.store.markTabExited(ctx.ref);
+      await ctx.store.markTabExited(heldRef);
+      await ctx.runtime.shutdown();
+
+      const restarted = await restart(ctx.homePath, ctx.zellij);
+      const tabs = (await restarted.store.getRuntimeWorkspace(ctx.workspace.id))!.tabs;
+      expect(tabs[ctx.tab.id]).toMatchObject({ status: "running", zellijTabId: ctx.internalTab.zellijTabId });
+      expect(tabs[held.id]).toMatchObject({ status: "exited" });
+      await restarted.runtime.shutdown();
+    });
+
+    it("does not revive an exited tab whose Zellij tab does not carry its display name", async () => {
+      const ctx = await setup();
+      await ctx.runtime.renameTab(ctx.ref, { name: "agent-a", baseRevision: ctx.tab.revision });
+      ctx.zellij.sessions.get(ctx.sessionName)!.get(ctx.internalTab.zellijTabId!)!.name = "someone-else";
+      await ctx.store.markTabExited(ctx.ref, 0);
+      await ctx.runtime.shutdown();
+
+      const restarted = await restart(ctx.homePath, ctx.zellij);
+      expect((await restarted.store.getTab(ctx.ref))?.status).toBe("exited");
+      await restarted.runtime.shutdown();
+    });
+
+    it("recovers a legacy-renamed tab when the observer reports its primary pane closed", async () => {
+      const ctx = await setup();
+      await legacyRename(ctx, "agent-a");
+      const zellijTab = ctx.zellij.sessions.get(ctx.sessionName)!.get(ctx.internalTab.zellijTabId!)!;
+      zellijTab.paneId = "terminal_99";
+      ctx.zellij.observers.get(ctx.sessionName)!.emit({ type: "pane-closed", paneId: ctx.internalTab.zellijPaneId! });
+      await ctx.runtime.flushCheckpoints();
+      expect((await ctx.store.getRuntimeWorkspace(ctx.workspace.id))!.tabs[ctx.tab.id]).toMatchObject({
+        status: "running",
+        zellijTabId: ctx.internalTab.zellijTabId,
+        zellijPaneId: "terminal_99",
+      });
+      expect(zellijTab.name).toBe(ctx.internalTab.zellijTabName);
+      await ctx.runtime.shutdown();
+    });
   });
 });
