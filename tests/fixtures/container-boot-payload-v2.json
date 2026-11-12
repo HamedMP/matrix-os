@@ -1,0 +1,58 @@
+{
+  "normal": {
+    "version": 2,
+    "machineId": "ffffffff-ffff-4fff-bfff-ffffffffffff",
+    "clerkUserId": "user_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "handle": "azzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "runtimeSlot": "ssssssssssssssssssssssssssssssss",
+    "generation": 2147483647,
+    "runtimeTokenEpoch": 2147483647,
+    "platform": {
+      "url": "https://ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp:65535",
+      "runtimeToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "gateway": {
+      "authToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "sync": {
+      "runtimeToken": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "database": {
+      "host": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "port": 65535,
+      "name": "mxo_zzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "user": "mxr_zzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "password": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+    }
+  },
+  "recovery": {
+    "version": 2,
+    "machineId": "ffffffff-ffff-4fff-bfff-ffffffffffff",
+    "clerkUserId": "user_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "handle": "azzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "runtimeSlot": "ssssssssssssssssssssssssssssssss",
+    "generation": 2147483647,
+    "runtimeTokenEpoch": 2147483647,
+    "platform": {
+      "url": "https://ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp.ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp:65535",
+      "runtimeToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "gateway": {
+      "authToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "sync": {
+      "runtimeToken": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "database": {
+      "host": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "port": 65535,
+      "name": "mxo_zzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "user": "mxr_zzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "password": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+    },
+    "recovery": {
+      "lastFlushDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "lastFlushedAt": "2026-11-12T00:00:00.000Z"
+    }
+  }
+}

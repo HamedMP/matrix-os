@@ -7,7 +7,11 @@ import {
 import type { LambdaMicrovmsApi } from '../../packages/platform/src/substrates/container-provider.js';
 import type { OwnerClusterAdmin } from '../../packages/platform/src/substrates/container-owner-database.js';
 import { createPlatformSubstrateRegistry } from '../../packages/platform/src/substrates/platform-substrates.js';
-import { buildPlatformContainerRuntimeToken } from '../../packages/platform/src/platform-token.js';
+import {
+  buildPlatformContainerRuntimeToken,
+  buildPlatformSyncVerificationToken,
+  buildPlatformVerificationToken,
+} from '../../packages/platform/src/platform-token.js';
 import { createTestPGlite } from '../helpers/pglite-test-helper.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
@@ -190,8 +194,9 @@ describe('container substrate registration', () => {
       const payload = JSON.parse(vi.mocked(api.runMicrovm).mock.calls[0]![0].runHookPayload!);
       const owner = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
       expect(payload).toEqual({
-        version: 1,
+        version: 2,
         machineId: 'ctr-1',
+        clerkUserId: 'user_a',
         handle: 'alice',
         runtimeSlot: 'primary',
         generation: 2,
@@ -199,6 +204,11 @@ describe('container substrate registration', () => {
         platform: {
           url: 'https://platform.internal.example',
           runtimeToken: buildPlatformContainerRuntimeToken(
+            { handle: 'alice', machineId: 'ctr-1', runtimeSlot: 'primary' }, ENV.PLATFORM_SECRET, 2),
+        },
+        gateway: { authToken: buildPlatformVerificationToken('alice', ENV.PLATFORM_SECRET) },
+        sync: {
+          runtimeToken: buildPlatformSyncVerificationToken(
             { handle: 'alice', machineId: 'ctr-1', runtimeSlot: 'primary' }, ENV.PLATFORM_SECRET, 2),
         },
         database: {

@@ -1,6 +1,6 @@
 import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
-import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
+import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import {
   createContainerOwnerDatabases,
@@ -191,19 +191,9 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);
-      return JSON.stringify({
-        version: 1,
-        machineId: context.machineId,
-        handle: context.handle,
-        runtimeSlot: context.runtimeSlot,
-        generation: context.generation,
-        runtimeTokenEpoch: context.runtimeTokenEpoch,
-        platform: {
-          url: config.platform.url,
-          runtimeToken: buildPlatformContainerRuntimeToken(
-            { handle: context.handle, machineId: context.machineId, runtimeSlot: context.runtimeSlot },
-            config.platform.secret, context.runtimeTokenEpoch),
-        },
+      return buildContainerBootPayload({
+        context,
+        platform: config.platform,
         database: {
           host: config.ownerDatabase.runtimeHost,
           port: config.ownerDatabase.runtimePort,
@@ -211,7 +201,6 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
           user: database.roleName,
           password: database.password,
         },
-        ...(context.recovery ? { recovery: context.recovery } : {}),
       });
     },
   });
