@@ -584,11 +584,13 @@ export function WorkRail({
       <WorkRailScrollArea>
       {focusedGroup && focusedRecords ? <FocusedProjectRail group={focusedGroup} records={focusedRecords} sections={sections} onToggle={toggleSection}
         client={client} scopeKey={authorityKey} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderChat={renderChatRow} onBack={() => setFocusedProjectId(null)} onNewChat={onNewProjectChat} /> : <>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         client={client} scopeKey={authorityKey} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
         onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; invalidateSelection(); agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}

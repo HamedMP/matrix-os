@@ -39,6 +39,8 @@ export function WorkRailSearchDialog({
   const shared = useWorkSharedDiscovery(open && organizationStatus !== "none");
   const [query, setQuery] = useState("");
   const [serverRecords, setServerRecords] = useState<ChatNavigationRecord[] | null>(null);
+  const [serverCursor, setServerCursor] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -50,14 +52,16 @@ export function WorkRailSearchDialog({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   useEffect(() => {
+    const generation = ++requestGeneration.current;
     if (!open || !client || (activeFilter !== "Archived" && (!query.trim() || activeFilter === "Projects" || activeFilter === "Shared"))) {
       setServerRecords(null);
+      setServerCursor(null);
       setSearchError(null);
       setSearchLoading(false);
-      return;
+      return () => { requestGeneration.current++; };
     }
-    let cancelled = false;
     setServerRecords(null);
+    setServerCursor(null);
     setSearchLoading(true);
     setSearchError(null);
     const timer = window.setTimeout(() => {
@@ -65,19 +69,39 @@ export function WorkRailSearchDialog({
         ? client.list({ lifecycle: "archived", limit: 50 })
         : client.search(query, { lifecycle: activeFilter === "Archived" ? "archived" : "active", limit: 50 });
       void request.then(page => {
-        if (!cancelled) setServerRecords(page.items);
+        if (requestGeneration.current === generation) { setServerRecords(page.items); setServerCursor(page.nextCursor ?? null); }
       }).catch((error: unknown) => {
         console.warn("[work] Chat search failed:", error instanceof Error ? error.name : "UnknownError");
-        if (!cancelled) setSearchError("Chats could not be searched. Try again.");
-      }).finally(() => { if (!cancelled) setSearchLoading(false); });
+        if (requestGeneration.current === generation) setSearchError("Chats could not be searched. Try again.");
+      }).finally(() => { if (requestGeneration.current === generation) setSearchLoading(false); });
     }, query.trim() ? 180 : 0);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { requestGeneration.current++; window.clearTimeout(timer); };
   }, [open, client, activeFilter, query]);
+  const loadMore = async () => {
+    if (!client || !serverCursor || searchLoading) return;
+    const generation = requestGeneration.current;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      const page = activeFilter === "Archived" && !query.trim()
+        ? await client.list({ lifecycle: "archived", limit: 50, cursor: serverCursor })
+        : await client.search(query, { lifecycle: activeFilter === "Archived" ? "archived" : "active", limit: 50, cursor: serverCursor });
+      if (requestGeneration.current !== generation) return;
+      setServerRecords(current => [...(current ?? []), ...page.items.filter(item => !current?.some(row => row.chat.id === item.chat.id))].slice(-500));
+      setServerCursor(page.nextCursor ?? null);
+    } catch (error: unknown) {
+      console.warn("[work] More chat results failed:", error instanceof Error ? error.name : "UnknownError");
+      if (requestGeneration.current === generation) setSearchError("More chats could not be loaded. Try again.");
+    } finally { if (requestGeneration.current === generation) setSearchLoading(false); }
+  };
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    const searchSource = activeFilter === "Archived" || normalized ? (serverRecords ?? []) : records;
+    const remote = serverRecords ? buildWorkRailSearchResults(serverRecords, projects, "", 500) : [];
+    const local = activeFilter === "Archived" ? [] : buildWorkRailSearchResults(records, projects, query);
+    const seen = new Set<string>();
     const chats = activeFilter === "All" || activeFilter === "Chats" || activeFilter === "Archived"
-      ? buildWorkRailSearchResults(searchSource, projects, serverRecords ? "" : query).map(result => ({ kind: "chat" as const, ...result, label: result.record.chat.title, key: `chat:${result.record.chat.id}` })) : [];
+      ? [...remote, ...local].filter(result => !seen.has(result.record.chat.id) && Boolean(seen.add(result.record.chat.id)))
+        .map(result => ({ kind: "chat" as const, ...result, label: result.record.chat.title, key: `chat:${result.record.chat.id}` })) : [];
     const projectResults = (activeFilter === "All" || activeFilter === "Projects") && onSelectProject
       ? projects.filter(project => !normalized || `${project.name}
 ${project.slug}`.toLocaleLowerCase().includes(normalized)).map(project => ({ kind: "project" as const, project, label: project.name, contextLabel: "Project", key: `project:${project.id ?? project.slug}` })) : [];
@@ -85,7 +109,7 @@ ${project.slug}`.toLocaleLowerCase().includes(normalized)).map(project => ({ kin
       ? shared.items.filter(item => !isAcceptedProjectOwnedByRail(item))
         .filter(item => !normalized || `${sharedItemLabel(item)}
 ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item => ({ kind: "shared" as const, item, label: sharedItemLabel(item), contextLabel: sharedItemContext(item), key: item.status === "invited" ? `invite:${item.invitationId}` : `shared:${item.scopeId}` })) : [];
-    return [...chats, ...projectResults, ...sharedResults].slice(0, 50);
+    return [...chats, ...projectResults, ...sharedResults];
   }, [activeFilter, projects, query, records, serverRecords, shared.items, onSelectProject]);
   useEffect(() => {
     setSelectedIndex((current) => (
@@ -275,6 +299,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
               ))}
             </div>
           ) : null}
+          {serverCursor ? <button type="button" className="w-full px-3 py-2 text-center text-xs hover:bg-[var(--bg-hover)]" disabled={searchLoading} onClick={() => { void loadMore(); }}>Show more results</button> : null}
         </div>
       </div>
     </Dialog>
