@@ -51,10 +51,13 @@ completion:
 2. New account with one configured OAuth provider.
 3. Existing Clerk account with matching primary verified email.
 4. Existing Clerk account with matching secondary verified email.
-5. Signed-in account with no matching email, then safe account switch.
-6. Account with unverified matching text only.
-7. Banned, locked, and deprovisioned account.
-8. Sign-out followed by another account.
+5. Already signed in on the main Matrix URL in the same browser, then open the
+   authorized Matrix.page URL without another sign-in prompt.
+6. Signed-in account with no matching email, then safe account switch.
+7. Account with unverified matching text only.
+8. Banned, locked, and deprovisioned account.
+9. Sign-out followed by another account; prove the shared Matrix sign-in ends
+   to the agreed scope and the old app viewer cookie cannot authorize.
 
 Run on:
 
@@ -73,7 +76,18 @@ Run on:
 - No Matrix onboarding, app-session, billing, desktop, or provisioning request
   occurs.
 - Viewer-only sign-up creates no machine/user-runtime/billing row.
-- Account switch/sign-out can clear the separate Matrix.page viewer cookie.
+- Account switch/sign-out expires the exact Matrix.page viewer cookie and
+  revokes viewer sessions bound to that browser's Clerk session across sites.
+- An existing Matrix sign-in is recognized on Matrix.page without another
+  login; signing out from either origin ends the shared sign-in state in that
+  browser and denies every associated viewer cookie on its next request.
+- A reliable Clerk session ID and synchronous trusted termination hook from
+  both origins are demonstrated, including a concurrent exchange versus
+  sign-out attempt; hook failure prevents sign-out completion rather than
+  leaving a live viewer cookie after a completed sign-out.
+- If Clerk needs custom callback context, it is server-issued, site-bound,
+  single-use, expires within ten minutes, and cannot change the canonical
+  destination. If none is needed, record that fact explicitly.
 - Exact Clerk Backend responses for verified/unverified primary/secondary
   emails and inactive flags are captured as sanitized schemas.
 
@@ -86,6 +100,28 @@ or a broader Clerk-domain migration. Do not implement an implicit redirect to
 Matrix main.
 
 Discard the spike code after the result is recorded.
+
+### Attempt status (2026-11-12)
+
+The requester subsequently directed implementation to start while assuming a
+positive Clerk result. This is a **product assumption, not a passed spike**:
+T001 remains unverified, and the `privateEmailInvitations` capability must
+remain disabled until real exact-URL qualification succeeds. The implementation
+can be built and tested against production boundaries under this assumption.
+
+T001 is **blocked, not passed or failed**. The implementation worktree has no
+Clerk/Worker deployment configuration or test accounts, and `clerk.matrix.page`
+has no public DNS answer. In the shared browser, `https://matrix.page/`
+redirected to `https://matrix-os.com/`; the subsequent navigation to the main
+Matrix app became unavailable, so no authenticated session was observed. No
+disposable production-domain publication or exact-URL Clerk flow could be
+started. The current [Clerk satellite-domain guide](https://clerk.com/docs/guides/dashboard/dns-domains/satellite-domains)
+states that sign-in and sign-up complete on the primary domain; this is not
+proof of the required inline Matrix.page behavior. Obtain a disposable
+Matrix.page app URL configured with the existing Clerk instance and test
+accounts from the Clerk/domain owner, then run every case above. Until that
+evidence passes, do not start production feature code or substitute another
+authentication path.
 
 ## 2. Mail adapter qualification
 
@@ -113,12 +149,16 @@ and the UI row remains disabled.
 Write failing tests for:
 
 - three-mode enum and unchanged parsing of existing records;
-- create batch size/body/string limits and per-input outcomes;
+- create batch size/body/string limits and per-input outcomes: `queued` and
+  `existing` require a current invitation summary/state; invalid, duplicate,
+  and policy-rejected results expose no invitation;
 - strict pagination, cursor, mutation, and exchange schemas;
 - generation-3 migration on a database with generation 2 already installed;
 - migration run twice;
 - old public/private-link rows preserved exactly;
 - database checks and unique indexes rejecting invalid combinations.
+- durable keyed recipient lifecycle event ordering and, only if the spike
+  requires custom callback context, its expiry/single-use constraints.
 
 Then implement shared contracts, Kysely types, and migration.
 
@@ -132,8 +172,12 @@ Using independent PostgreSQL connections, first make tests fail for:
 - acceptance racing revoke, unpublish, recipient deletion, and expiry;
 - duplicate same-user acceptance from two browsers;
 - 21st session evicting the oldest of 20;
+- audit repository writes/reads before acceptance and owner mutation services
+  call it;
 - resend generation cancelling stale delivery;
 - idempotent duplicate webhook delivery and out-of-order late update.
+- stale Clerk lifecycle events after process restart, with no in-memory-only
+  replay authority or grant restoration.
 
 Green state must have one logical invitation, at most one active grant per
 site/user, no partial audit/delivery row, and no resurrected authority.
@@ -143,7 +187,8 @@ site/user, no partial audit/delivery row, and no resurrected authority.
 Write failing Worker/Platform tests that prove:
 
 - friendly private alias redirects to permanent UUID;
-- only `/UUID/access/email` accepts Authorization;
+- only exact `/UUID/access/email` exchange and `/UUID/access/email/sign-out`
+  accept a bounded Authorization bearer;
 - slug exchange, cross-origin POST, oversized body/bearer, credential query,
   unrelated cookies, malformed viewer cookies, and multiple viewer cookies fail;
 - Set-Cookie must match the exact canonical site suffix/path;

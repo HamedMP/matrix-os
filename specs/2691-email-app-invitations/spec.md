@@ -11,7 +11,7 @@
 
 ### User Story 1 - Invited recipient enters the app directly (Priority: P1)
 
-A person who does not yet use Matrix receives an email invitation to a specific Matrix.page app. They open the app's own URL, create or use an account in the authentication experience presented there, and enter the shared app immediately after a verified email matches the invitation. They never visit Matrix onboarding and no computer is provisioned.
+A person who does not yet use Matrix receives an email invitation to a specific Matrix.page app. They open the app's own URL, create or use an account in the existing Matrix Clerk identity instance, and enter the shared app immediately after a verified email matches the invitation. A person already signed in to Matrix uses that same authenticated account and session on Matrix.page without another sign-in step. Neither path starts Matrix onboarding or provisions a computer.
 
 **Why this priority**: This is the core customer outcome: an external client can use a privately shared app with durable identity and without becoming a full Matrix OS customer.
 
@@ -20,11 +20,12 @@ A person who does not yet use Matrix receives an email invitation to a specific 
 **Acceptance Scenarios**:
 
 1. **Given** an active email-restricted publication and a pending invitation, **when** a recipient registers on that app URL using the invited email and completes email verification, **then** the invitation is accepted, durable access is attached to that account, and the same app URL loads the complete published app.
-2. **Given** the recipient already has an authenticated account containing the invited verified email, **when** they open the app URL, **then** they enter the app without creating another account.
+2. **Given** the recipient is already signed in to Matrix with an account containing the invited verified email, **when** they open the app URL in that browser, **then** the existing shared sign-in state is recognized and they enter the app without another login or another account.
 3. **Given** an account has several verified emails and one exactly matches the invitation after case-insensitive normalization, **when** it opens the app URL, **then** it may accept and use the invitation.
 4. **Given** the visitor signs in with an account that does not contain the invited verified email, **when** the invitation is checked, **then** access is denied with a safe account-switch action and only a masked invitation hint.
 5. **Given** a visitor authenticates successfully, **when** the authentication flow completes, **then** the return destination is the validated Matrix.page app URL and never a client-supplied external URL, Matrix onboarding, billing, or the Matrix desktop.
 6. **Given** an invitation is revoked or expires while authentication is in progress, **when** the callback attempts acceptance, **then** no grant is created and the visitor sees a generic unavailable invitation state.
+7. **Given** the recipient enters through the shared app URL, **when** they authenticate or accept, **then** no Matrix app-session, onboarding, billing, desktop-continuation, developer-tool, or provisioning request occurs; the main Matrix URL retains its existing full-product onboarding and billing behavior.
 
 ---
 
@@ -112,6 +113,7 @@ An invited viewer sees and uses the whole published app experience, including on
 - Direct requests for a private frame, asset, data operation, or form cannot bypass the viewer grant even when the wrapper was previously loaded.
 - Authentication or email delivery is temporarily unavailable; the visitor or owner sees a safe retry state without provider names, raw errors, internal paths, or invitation existence leaks.
 - A signed-in user opens an invitation meant for another address; the product supports switching accounts without revealing the full invited address.
+- A person already signed in on the main Matrix URL opens a shared app in the same browser; Matrix.page recognizes the same Clerk session without showing a second sign-in prompt. If the cross-domain Clerk configuration cannot provide this behavior, the feasibility spike fails.
 - The owner exports or deletes their account; invitation and grant metadata follows the same owner-scoped export, revocation, and erasure guarantees as the publication.
 
 ## Requirements *(mandatory)*
@@ -123,14 +125,14 @@ An invited viewer sees and uses the whole published app experience, including on
 - **FR-003**: Existing publications MUST preserve their current access mode when this feature is introduced; no publication may become email-restricted implicitly.
 - **FR-004**: The owner MUST manage email invitations through the Share app experience established by PR #3200 rather than through a second competing sharing panel.
 - **FR-005**: The email-invitation controls MUST remain unavailable until the authoritative backend and Matrix.page gate advertise compatible support.
-- **FR-006**: The owner MUST be able to submit, paste, and validate up to 100 email addresses in one invitation action, with explicit results for invalid, duplicate, accepted, pending, and policy-rejected addresses.
+- **FR-006**: The owner MUST be able to submit, paste, and validate up to 100 email addresses in one invitation action, with one explicit outcome per input (`queued`, `existing`, `invalid`, `duplicate_in_batch`, or `policy_rejected`). A `queued` or `existing` result MUST include the current invitation state so the owner can distinguish pending from accepted; rejected results MUST NOT imply an invitation exists.
 - **FR-007**: Email addresses MUST be normalized using trimming and case-insensitive comparison only. The system MUST NOT apply provider-specific dot, plus-address, domain-alias, or inferred-equivalence rules.
 - **FR-008**: At most one active invitation per normalized email and publication MUST exist. Concurrent or repeated creation MUST converge on that logical singleton without duplicate grants or duplicate active credentials.
 - **FR-009**: Pending invitations MUST expire seven days after issuance. Resending MUST begin a new seven-day acceptance period and cancel stale delivery work without duplicating the recipient entry; the Matrix.page app URL itself is not an access credential.
 - **FR-010**: Invitation messages MUST identify the app and inviter, contain a link to the intended Matrix.page app, and avoid placing the recipient email, owner credentials, internal identifiers, or private app data in the visible URL.
-- **FR-011**: Opening an invitation MUST render the authentication and signup experience within the intended app's Matrix.page URL and branded context.
-- **FR-012**: Authentication completion MUST return only to a server-validated destination for the same publication. Client-provided arbitrary return URLs MUST NOT be honored.
-- **FR-013**: Invitation signup MUST NOT start Matrix main onboarding, billing, plan selection, developer-tool selection, desktop launch, or computer/VPS provisioning.
+- **FR-011**: Opening an invitation MUST render the authentication and signup experience within the intended app's Matrix.page URL and branded context using the existing Matrix Clerk identity instance. A browser already signed in to Matrix MUST reuse that shared sign-in state on the app URL without another login.
+- **FR-012**: Authentication completion MUST return only to the server-selected canonical URL for the same publication. Client-provided arbitrary return URLs MUST NOT be honored. If the proven Clerk flow requires a callback context, it MUST be server-issued, single-use, bound to that publication, and expire within ten minutes; the destination is derived from the stored publication ID.
+- **FR-013**: Invitation signup and access through the shared app URL MUST NOT start Matrix main onboarding, billing, plan selection, developer-tool selection, desktop launch, app-session creation, or computer/VPS provisioning. Existing onboarding and billing behavior applies only when the person explicitly enters the full Matrix product through the main Matrix URL.
 - **FR-014**: A recipient identity created only for Matrix.page viewing MUST remain a lightweight viewer identity unless that person later starts full Matrix onboarding through a separate explicit action.
 - **FR-015**: Invitation acceptance MUST use authoritative identity data and MUST require at least one currently verified account email that matches the active invitation.
 - **FR-016**: The browser, query string, form body, or app code MUST NOT be trusted to assert that an email is verified or belongs to the authenticated person.
@@ -138,7 +140,7 @@ An invited viewer sees and uses the whole published app experience, including on
 - **FR-018**: After acceptance, authorization MUST be based on the stable authenticated account identity and active publication grant, not on repeatedly matching editable email text.
 - **FR-019**: An accepted viewer MUST be able to access the canonical publication from another browser or device after authenticating with the same account.
 - **FR-020**: A forwarded invitation URL MUST grant no access by itself. A nonmatching account MUST receive the same coarse denial regardless of whether an invitation exists, expired, was accepted, or was revoked.
-- **FR-021**: The mismatch experience MAY reveal only a masked invited-email hint and MUST provide a safe account-switch action.
+- **FR-021**: The mismatch experience MAY reveal only a masked invited-email hint and MUST provide a safe account-switch action using the shared Matrix Clerk identity. Switching accounts MUST invalidate the old Matrix.page viewer session before a different account can use the app. Signing out from Matrix.page MUST end the shared Matrix sign-in state in that browser and invalidate its Matrix.page viewer authority across shared apps. Signing out from the main Matrix URL MUST synchronously invalidate viewer authority associated with that Clerk session before completing Clerk sign-out; an asynchronous event alone cannot satisfy next-request denial. The exact trusted revocation hook MUST be proven by the production-domain spike before implementation.
 - **FR-022**: Accepted viewers MUST receive the complete current published app and its explicitly declared visitor capabilities, subject to the existing Matrix.page sandbox and capability boundaries.
 - **FR-023**: Email-invited access MUST NOT grant publication ownership, source files, owner management, version controls, owner submissions, owner-private data, private Matrix bridges, owner credentials, or unrestricted runtime access.
 - **FR-024**: Every email-restricted wrapper, frame, asset, data, form, and visitor-action request MUST revalidate the active publication, email access mode, authenticated account, and site-scoped grant. Gating only the top-level page is insufficient.
@@ -153,7 +155,7 @@ An invited viewer sees and uses the whole published app experience, including on
 - **FR-033**: Invitation delivery calls MUST have a maximum 10-second attempt timeout, bounded retries, and generic user-facing errors. Provider names and raw provider failures MUST remain server-side.
 - **FR-034**: Mutating requests MUST reject oversized bodies before buffering. Invitation batches MUST accept no more than 100 addresses and no more than 32 KiB of request content; individual addresses MUST respect the standard 254-character maximum.
 - **FR-035**: In-memory admission, replay, delivery, and callback tracking MUST be size-capped with eviction. Durable invitation inventories MUST use bounded keyset pagination rather than unbounded reads.
-- **FR-036**: Every authentication ticket, callback context, and viewer-session credential MUST be unguessable, publication-bound, time-bounded, excluded from analytics and logs, and invalid after its applicable completion, expiry, revocation, mode change, or unpublish. The emailed Matrix.page URL MUST NOT grant access by possession alone.
+- **FR-036**: Every authentication ticket, callback context, and viewer-session credential MUST be unguessable, publication-bound, time-bounded, excluded from analytics and logs, and invalid after its applicable completion, expiry, revocation, mode change, or unpublish. Any custom callback context MUST be single-use and expire within ten minutes; if the feasibility spike proves no custom context is needed, the implementation MUST document that result and create none. The emailed Matrix.page URL MUST NOT grant access by possession alone.
 - **FR-037**: Invitation and grant data MUST be owner-scoped, exportable, and erasable. Account deletion MUST block new acceptance, revoke existing access, and remove or safely anonymize recipient identity references according to ownership requirements.
 - **FR-038**: Audit history MUST record invitation creation, resend, acceptance, revocation, access-mode transitions, and unpublish without storing credentials or copying recipient emails into general analytics.
 - **FR-039**: The feature MUST preserve existing public and one-time-link behavior and MUST NOT treat one-time browser sessions as authenticated email identities.
@@ -226,10 +228,10 @@ The implementation plan MUST include a full-path integration test that exercises
 ### Measurable Outcomes
 
 - **SC-001**: At least 90% of first-time invited recipients in usability validation can open the invitation, create or use an account, and enter the shared app in under three minutes without assistance.
-- **SC-002**: In 100% of tested new-recipient journeys, successful signup returns to the intended shared app and triggers no Matrix onboarding, billing, desktop launch, or computer provisioning step.
+- **SC-002**: In 100% of tested new-recipient journeys, successful signup returns to the intended shared app and triggers no Matrix onboarding, billing, desktop launch, app-session, or computer provisioning step; an already signed-in Matrix user enters the authorized app without another login.
 - **SC-003**: In 100% of tested mismatch, expired, revoked, replayed, forwarded, cross-site, and direct-content attempts, the visitor receives no protected app content and no unmasked invitation email.
 - **SC-004**: Exactly one durable viewer grant results from 100 concurrent acceptance attempts for the same invitation, with no duplicate grant or partial accepted state.
-- **SC-005**: An accepted viewer can authenticate from a second clean browser using only the canonical app URL and regain access in under 30 seconds.
+- **SC-005**: An accepted viewer can authenticate from a second clean browser using only the canonical app URL and regain access in under 30 seconds. Signing out from either Matrix origin in the first browser denies that browser's associated site viewer sessions on the next request without logging out the second browser.
 - **SC-006**: Revocation, access-mode change, or unpublish denies the former viewer on the next protected request across wrapper, frame, asset, data, form, and action paths, with the denial visible within five seconds of the owner action completing.
 - **SC-007**: Owners can submit a batch of 100 invitation addresses and receive an explicit result for every address in under ten seconds, excluding external inbox-delivery time, with no silent truncation or duplicate active invitation.
 - **SC-008**: Existing public and one-time-link acceptance journeys remain fully successful in regression qualification, with no new authentication or invitation step.

@@ -11,6 +11,10 @@
   moved into Platform invitation tables.
 - Clerk and the mail provider are identity/delivery dependencies, never the
   publication authorization database.
+- The five publication lifecycles below remain separate. A small recipient
+  lifecycle projection is platform identity safety state, not an owner app
+  grant. A callback-context table is needed only if the exact-URL Clerk spike
+  proves a custom callback context is required.
 
 All timestamps are `TIMESTAMPTZ`. UUIDs are server-generated. Email text is PII
 and must not appear in normal logs, metrics, analytics, URLs, or audit metadata.
@@ -109,6 +113,7 @@ or cross-site authority.
 | `site_id` | UUID FK → `public_sites(id)` | `ON DELETE CASCADE` |
 | `grant_id` | UUID FK → viewer grant | `ON DELETE CASCADE` |
 | `secret_hash` | CHAR(64) | SHA-256 hex of 32 random bytes; raw secret returned once |
+| `clerk_session_key` | CHAR(64) | Domain-separated HMAC of the verified Clerk session ID; binds this viewer session to shared browser sign-out, never exposed |
 | `created_at` | TIMESTAMPTZ | Exchange time |
 | `expires_at` | TIMESTAMPTZ | At most 30 days; reauthentication creates/rotates a session |
 | `last_seen_at` | TIMESTAMPTZ | Optional coarse update, never required for authorization |
@@ -118,14 +123,90 @@ or cross-site authority.
 
 - `(site_id, id)` direct lookup.
 - `(grant_id, revoked_at)` supports transactional revocation.
+- `(clerk_session_key, revoked_at)` supports bounded cross-publication revocation after Clerk sign-out or account switch.
 - `(expires_at, id)` supports bounded cleanup.
 - Raw secrets never enter the database, logs, analytics, export, or owner API.
 - Compare decoded fixed-length secret hashes using `timingSafeEqual`.
 - A session authorizes only when it, its grant, invitation, and site are active.
+- A confirmed shared Clerk session termination revokes every viewer session with
+  the matching keyed session reference. The spike must prove the session ID and
+  synchronous trusted sign-out hook; an asynchronous event can provide backup
+  cleanup but cannot establish next-request denial.
 
 One account may have several browser sessions. The implementation caps active
 sessions at 20 per grant; creating the 21st revokes the least-recently-created
 active session in the same transaction.
+
+## Auxiliary identity and callback safety state
+
+### `public_site_recipient_lifecycle`
+
+One durable monotonic projection per Clerk account prevents delayed or repeated
+webhooks from restoring access after an inactive/deleted event. It is separate
+from the five owner-scoped publication lifecycles. It stores no email or raw
+Clerk ID: `recipient_key` is a domain-separated HMAC-SHA-256 of the stable Clerk
+user ID using the existing platform account-deletion secret. The same keyed
+reference is computed for acceptance admission and lifecycle events.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `recipient_key` | CHAR(64) PK | Keyed account reference; never exposed to owner APIs or analytics |
+| `state` | TEXT | `active | inactive | deleted`; `deleted` is terminal |
+| `last_event_id` | TEXT | Bounded verified Svix/Clerk event ID for dedupe |
+| `last_event_at` | TIMESTAMPTZ | Authenticated event timestamp; stale events cannot overwrite newer state |
+| `updated_at` | TIMESTAMPTZ | Platform processing time |
+
+An inactive event revokes all matching grants and sessions in the same
+transaction as advancing the projection. A later genuinely newer active event
+may clear the inactive flag, but never restores a revoked grant; the owner must
+re-invite. A deleted event is terminal even if a delayed update arrives. For
+equal timestamps with different IDs, choose the more restrictive state and do
+not restore authority. Use one targeted conditional upsert under recipient
+admission, not an in-memory-only replay map. Duplicate events are idempotent.
+Retain only a keyed deletion tombstone for a bounded retry window, then erase it
+when no grant/session reference remains; any later acceptance still requires a
+live authoritative Clerk user lookup. Include this recipient-owned safety state
+in recipient export/erasure handling, not in a publication owner's export.
+
+### `public_site_clerk_session_terminations`
+
+A durable, short-lived terminal marker closes the race between sign-out and a
+concurrent viewer exchange. `clerk_session_key` is the same domain-separated
+keyed reference stored on viewer sessions; it contains no raw Clerk session ID.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `clerk_session_key` | CHAR(64) PK | Keyed verified session reference; never exposed |
+| `terminated_at` | TIMESTAMPTZ | Authenticated sign-out or session-termination time |
+| `expires_at` | TIMESTAMPTZ | At least the maximum viewer-session lifetime; bounded cleanup after 30 days |
+
+Exchange and termination take a session-key advisory lock before recipient/site
+locks. Exchange checks the marker inside the acceptance transaction before
+writing viewer authority. Termination inserts it and revokes matching viewer
+sessions in one transaction. A duplicate/late signal is idempotent; it cannot
+reopen the session. The production-domain spike must prove the trusted signal
+from either origin before this path is implemented.
+
+### `public_site_auth_contexts` (conditional)
+
+If the exact-URL spike needs a custom return/callback context, generation 3
+adds this owner-scoped short-lived table before implementing the gate. If Clerk
+completes inline without one, record that result and do not create or issue a
+custom context.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `id` | UUID PK | Random server-issued opaque context ID |
+| `site_id` | UUID FK → `public_sites(id)` | Only return destination; derive canonical URL from this ID |
+| `secret_hash` | CHAR(64) | Hash of a separate random secret; raw value never stored |
+| `created_at` | TIMESTAMPTZ | Issue time |
+| `expires_at` | TIMESTAMPTZ | At most ten minutes after issue |
+| `consumed_at` | TIMESTAMPTZ nullable | Single-use targeted update requires null and unexpired |
+
+Index `(expires_at, id)` for bounded recurring cleanup. The callback may not
+choose or override a URL, site, or owner. Compare decoded fixed-length hashes
+with `timingSafeEqual`; consume once before issuing viewer authority. Expired,
+consumed, cross-site, and malformed contexts fail with the same coarse denial.
 
 ## `public_site_invitation_deliveries`
 
@@ -282,15 +363,20 @@ unpublish/owner deletion
 
 1. Verify Clerk token outside a DB transaction.
 2. Fetch/validate Clerk user outside a DB transaction.
-3. Enter recipient account-deletion admission.
-4. Lock `public_sites`, then invitation.
-5. Targeted invitation update enforces site, mode, generation, state, expiry,
+3. Take the keyed Clerk-session admission lock; reject a terminal marker.
+4. Enter recipient account-deletion admission.
+5. Lock `public_sites`, then invitation.
+6. Targeted invitation update enforces site, mode, generation, state, expiry,
    verified normalized email, and unbound identity.
-6. `INSERT ... ON CONFLICT` grant/session as defined above.
-7. Audit insert and commit.
+7. `INSERT ... ON CONFLICT` grant/session as defined above.
+8. Audit insert and commit.
+
+Session termination takes the same keyed lock before inserting its terminal
+marker and revoking every viewer session with that key. This ordering blocks a
+late concurrent exchange from recreating access after sign-out.
 
 No external call occurs while any database lock is held. A mode change or
-revocation that wins before step 5 makes acceptance fail closed.
+revocation that wins before step 6 makes acceptance fail closed.
 
 ## Retention, export, and erasure
 
