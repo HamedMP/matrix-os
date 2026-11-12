@@ -18,6 +18,7 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "doctor",
   "update",
   "instance",
+  "devstack",
   "collaboration",
   "completion",
 ]);

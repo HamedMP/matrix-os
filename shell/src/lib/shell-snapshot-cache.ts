@@ -5,6 +5,7 @@ import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import type { Theme } from "@/hooks/useTheme";
 import type { DesktopConfig } from "@/hooks/useDesktopConfig";
 import { normalizeOsViewDesktopAppPath } from "@matrix-os/contracts";
+import { getDevstackWorktreePrefix } from "./gateway";
 
 export const SHELL_SNAPSHOT_STORAGE_PREFIX = "matrix:shell-snapshot:v1";
 const SHELL_SNAPSHOT_VERSION = 1;
@@ -292,6 +293,8 @@ function normalizeAppPaths(value: unknown, fallback: readonly string[]): string[
 }
 
 function runtimeScopeFromPath(pathname: string | null | undefined): string {
+  const worktree = getDevstackWorktreePrefix(pathname);
+  if (worktree) return worktree;
   const match = (pathname ?? "").match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   return match ? `/vm/${match[1]}` : "default";
 }

@@ -27,15 +27,44 @@ export function hasVerifiedClerkBrowserSession(result: VerifyResult, expectedUse
 
 export const CLERK_SESSION_REVOKE_TIMEOUT_MS = 10_000;
 
+interface ClerkRequiredClaims {
+  issuer: string;
+  authorizedParty: string;
+}
+
 export interface ClerkAuthDeps {
+  requiredClaims?: ClerkRequiredClaims;
   verifyToken: (token: string) => Promise<ClerkTokenPayload>;
   revokeSession?: (sessionId: string) => Promise<void>;
 }
 
 export type ClerkVerificationConfig = {
-  verifyTokenOptions: { secretKey: string } | { jwtKey: string };
+  verifyTokenOptions: { secretKey: string } | { jwtKey: string; authorizedParties?: string[] };
   sessionRevocationSecret: string | undefined;
+  requiredClaims?: ClerkRequiredClaims;
 };
+
+export class DevstackClerkVerificationConfigError extends Error {
+  constructor() {
+    super("DevStack Clerk binding requires an exact HTTPS issuer and authorized origin, and a verification-only JWT key.");
+    this.name = "DevstackClerkVerificationConfigError";
+  }
+}
+
+function requireExactHttpsOrigin(value: string | undefined): string {
+  let origin: URL | null = null;
+  if (value) {
+    try { origin = new URL(value); }
+    catch (error: unknown) {
+      if (!(error instanceof TypeError)) throw error;
+      throw new DevstackClerkVerificationConfigError();
+    }
+  }
+  if (!origin || origin.protocol !== "https:" || origin.origin !== value) {
+    throw new DevstackClerkVerificationConfigError();
+  }
+  return origin.origin;
+}
 
 export function resolveClerkVerificationConfig(
   env: NodeJS.ProcessEnv,
@@ -43,6 +72,20 @@ export function resolveClerkVerificationConfig(
   // Preserve the existing production input, including malformed values. Local
   // JWT-key support must not change verification or revocation credentials.
   const secretKey = env.CLERK_SECRET_KEY;
+  const jwtKey = env.CLERK_JWT_KEY?.trim();
+  const registeredLocalDevstack = env.PLATFORM_RUNTIME_MODE === "local"
+    && env.MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY === "true";
+  if (registeredLocalDevstack
+    && (env.CLERK_JWT_ISSUER !== undefined || env.CLERK_AUTHORIZED_ORIGIN !== undefined)) {
+    if (!jwtKey || secretKey) throw new DevstackClerkVerificationConfigError();
+    const issuer = requireExactHttpsOrigin(env.CLERK_JWT_ISSUER);
+    const authorizedParty = requireExactHttpsOrigin(env.CLERK_AUTHORIZED_ORIGIN);
+    return {
+      verifyTokenOptions: { jwtKey, authorizedParties: [authorizedParty] },
+      sessionRevocationSecret: undefined,
+      requiredClaims: { issuer, authorizedParty },
+    };
+  }
   if (secretKey) {
     return {
       verifyTokenOptions: { secretKey },
@@ -50,7 +93,6 @@ export function resolveClerkVerificationConfig(
     };
   }
 
-  const jwtKey = env.CLERK_JWT_KEY?.trim();
   return jwtKey
     ? {
         verifyTokenOptions: { jwtKey },
@@ -116,6 +158,15 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
 }
 
 export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
+  const verifyToken = async (token: string): Promise<ClerkTokenPayload> => {
+    const payload = await deps.verifyToken(token);
+    const requiredClaims = deps.requiredClaims;
+    if (requiredClaims && (payload.iss !== requiredClaims.issuer || payload.azp !== requiredClaims.authorizedParty)) {
+      throw new Error("Token verification failed");
+    }
+    return payload;
+  };
+
   return {
     extractToken(authHeader, cookieHeader) {
       if (authHeader?.startsWith("Bearer ")) {
@@ -134,7 +185,7 @@ export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
 
     async verify(token) {
       try {
-        const payload = await deps.verifyToken(token);
+        const payload = await verifyToken(token);
         return verifiedResultFromPayload(payload);
       } catch (err) {
         return {
@@ -146,7 +197,7 @@ export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
 
     async verifyAndMatchOwner(token, expectedUserId) {
       try {
-        const payload = await deps.verifyToken(token);
+        const payload = await verifyToken(token);
         if (payload.sub !== expectedUserId) {
           return { authenticated: false, error: "User mismatch" };
         }

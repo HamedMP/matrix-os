@@ -136,6 +136,8 @@ import {
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
 import { startPlatformServer } from './platform-startup.js';
 import type { createDevstackRunRoutes } from './devstack-runs/routes.js';
+import type { createDevstackPreviewRoutes } from './devstack-preview-routes.js';
+import type { DevstackPublicPreviewAccess, DevstackPublicPreviewBinding } from './devstack-public-preview.js';
 import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
@@ -261,6 +263,8 @@ export function createApp(deps: {
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
   devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
+  devstackPreviewRoutes?: ReturnType<typeof createDevstackPreviewRoutes>;
+  devstackPublicPreview?: DevstackPublicPreviewAccess;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -313,12 +317,16 @@ export function createApp(deps: {
   const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
   const app = new Hono<{
     Variables: {
+      devstackPublicPreviewBinding?: DevstackPublicPreviewBinding;
       platformUserId: string;
       platformHandle: string;
       internalContainerHandle: string;
       internalContainerClerkUserId: string;
     };
   }>() as PlatformApp;
+  if (registeredRuntimeInstance && deps.devstackPublicPreview) {
+    app.use('*', deps.devstackPublicPreview.middleware);
+  }
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: 'matrix-platform',
   });
@@ -709,6 +717,10 @@ export function createApp(deps: {
 
   if (registeredRuntimeInstance && deps.devstackRunRoutes) {
     app.route('/api/devstack/runs', deps.devstackRunRoutes);
+  }
+
+  if (registeredRuntimeInstance && deps.devstackPreviewRoutes) {
+    app.route('/', deps.devstackPreviewRoutes);
   }
 
   // Session-based routing:

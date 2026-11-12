@@ -28,28 +28,65 @@ const configSchema = z.strictObject({
   targets: z.array(targetSchema).min(1).max(24),
 });
 
+const previewTargetSchema = targetSchema.pick({ runtime: true, worktree: true, owner: true, handle: true, containerId: true });
+const previewConfigSchema = configSchema.extend({
+  targets: z.array(previewTargetSchema).min(1).max(24),
+  publicBrowserOnly: z.boolean().optional(),
+  membershipSource: z.literal('private-preview-api').optional(),
+});
+
+export type DevstackPreviewTarget = z.infer<typeof previewTargetSchema>;
+export type DevstackPreviewConfig = z.infer<typeof previewConfigSchema> & { instance: string };
+
 export type DevstackRunTarget = z.infer<typeof targetSchema>;
 export type DevstackRunConfig = z.infer<typeof configSchema> & { instance: string };
 
 export class DevstackRunConfigError extends Error {
-  constructor() { super('DevStack run configuration is invalid or registered-runtime routing is disabled.'); }
+  constructor(kind: 'run' | 'preview' = 'run') {
+    super(`DevStack ${kind} configuration is invalid or registered-runtime routing is disabled.`);
+  }
 }
 
-export function loadDevstackRunConfig(raw: string | undefined, instance: string | undefined): DevstackRunConfig | undefined {
+function parseDevstackConfig<T>(
+  raw: string | undefined, instance: string | undefined, schema: z.ZodType<T>, kind: 'run' | 'preview',
+): (T & { instance: string }) | undefined {
   if (raw === undefined) return undefined;
   if (!instance || !DevstackInstanceSchema.safeParse(instance).success || Buffer.byteLength(raw) > 16 * 1024) {
-    throw new DevstackRunConfigError();
+    throw new DevstackRunConfigError(kind);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError)) throw error;
-    throw new DevstackRunConfigError();
+    throw new DevstackRunConfigError(kind);
   }
-  const result = configSchema.safeParse(parsed);
-  if (!result.success) throw new DevstackRunConfigError();
-  const { operators, targets } = result.data;
+  const result = schema.safeParse(parsed);
+  if (!result.success) throw new DevstackRunConfigError(kind);
+  return { ...result.data, instance };
+}
+
+export function loadDevstackPreviewConfig(raw: string | undefined, instance: string | undefined): DevstackPreviewConfig | undefined {
+  const config = parseDevstackConfig(raw, instance, previewConfigSchema, 'preview');
+  if (!config) return undefined;
+  const { operators, targets } = config;
+  // A canonical preview path serves one checkout. Never offer two selections
+  // that would send the owner to the same registered runtime.
+  if ((config.membershipSource === 'private-preview-api' && !config.publicBrowserOnly)
+    || (config.publicBrowserOnly && new Set(targets.map(target => target.worktree)).size !== targets.length)
+    || new Set(operators).size !== operators.length || new Set(targets.map(target => target.runtime)).size !== targets.length
+    || new Set(targets.map(target => target.handle)).size !== targets.length
+    || new Set(targets.map(target => target.containerId)).size !== targets.length
+    || targets.some(target => !operators.includes(target.owner) || Object.values(target).some(value => value.includes('\n')))) {
+    throw new DevstackRunConfigError('preview');
+  }
+  return config;
+}
+
+export function loadDevstackRunConfig(raw: string | undefined, instance: string | undefined): DevstackRunConfig | undefined {
+  const config = parseDevstackConfig(raw, instance, configSchema, 'run');
+  if (!config) return undefined;
+  const { operators, targets } = config;
   if (new Set(operators).size !== operators.length) throw new DevstackRunConfigError();
 
   const bindings = new Map<string, DevstackRunTarget>();
@@ -69,5 +106,5 @@ export function loadDevstackRunConfig(raw: string | undefined, instance: string 
     selections.add(selection);
     directories.add(directory);
   }
-  return { ...result.data, instance };
+  return config;
 }

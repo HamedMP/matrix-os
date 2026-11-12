@@ -74,7 +74,7 @@ function isAllowedSessionHost(host: string, defaults: readonly string[], extraHo
   return parseSessionHostAllowlist(extraHosts).some((allowed) => normalizedHost === allowed);
 }
 
-function normalizeSessionHost(host: string): string | null {
+export function normalizeSessionHost(host: string): string | null {
   const normalized = host.trim().toLowerCase().replace(/:\d+$/, "");
   if (!/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(normalized)) {
     return null;

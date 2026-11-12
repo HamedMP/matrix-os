@@ -76,6 +76,18 @@ describe("shell snapshot cache", () => {
     expect(createShellSnapshotScope({ userId: undefined, pathname: "/" })).toBeNull();
   });
 
+  it("keeps the default Desktop and different DevStack worktrees in separate caches", () => {
+    const userId = "user_123";
+    const first = createShellSnapshotScope({ userId, pathname: "/devstack/worktrees/eng-123/" });
+    const second = createShellSnapshotScope({ userId, pathname: "/devstack/worktrees/eng-456/" });
+    const primary = createShellSnapshotScope({ userId, pathname: "/" });
+
+    saveShellSnapshot(first, freshSnapshot, storage);
+    expect(loadShellSnapshot(first, storage)).not.toBeNull();
+    expect(loadShellSnapshot(second, storage)).toBeNull();
+    expect(loadShellSnapshot(primary, storage)).toBeNull();
+  });
+
   it("round-trips a sanitized snapshot", () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();

@@ -146,7 +146,11 @@ export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | 
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
   const match = path.match(/^\/vm\/([^/]+)(?:\/(.*))?$/);
   if (!match?.[1] || !HANDLE_PATTERN.test(match[1])) return null;
-  let rest = match[2];
+  const route = readExplicitRuntimePath(match[2]);
+  return route && { handle: match[1], ...route };
+}
+
+export function readExplicitRuntimePath(rest?: string): Omit<ExplicitVmRoute, 'handle'> | null {
   let runtimeSlot: string | undefined;
   const runtimeMatch = rest?.match(/^~runtime\/([^/]+)(?:\/(.*))?$/);
   if (runtimeMatch) {
@@ -156,7 +160,6 @@ export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
     rest = runtimeMatch[2];
   }
   return {
-    handle: match[1],
     ...(runtimeSlot ? { runtimeSlot } : {}),
     upstreamPath: rest ? `/${rest}` : '/',
   };

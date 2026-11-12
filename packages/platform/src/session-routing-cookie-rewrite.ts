@@ -1,4 +1,5 @@
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { devstackWorktreePreviewRoot } from './devstack-preview-path.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 
 /**
@@ -11,6 +12,7 @@ import { HANDLE_PATTERN } from './platform-route-utils.js';
 export function scopeExplicitVmAppSessionCookie(
   headers: Headers,
   route: { handle: string; runtimeSlot?: string; upstreamPath: string },
+  verifiedWorktree?: string,
 ): void {
   const match = route.upstreamPath.match(/^\/api\/apps\/([a-z0-9][a-z0-9-]{0,63})\/session$/);
   const slug = match?.[1];
@@ -21,7 +23,7 @@ export function scopeExplicitVmAppSessionCookie(
   ) return;
 
   const appPath = `/apps/${slug}/`;
-  const routePrefix = route.runtimeSlot
+  const routePrefix = verifiedWorktree ? devstackWorktreePreviewRoot(verifiedWorktree).slice(0, -1) : route.runtimeSlot
     ? `/vm/${route.handle}/~runtime/${route.runtimeSlot}`
     : `/vm/${route.handle}`;
   const cookiePrefix = `matrix_app_session__${slug}=`;
