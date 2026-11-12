@@ -78,6 +78,18 @@ describe("terminal attention notifier", () => {
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 
+  // Fault detected (sixth review of #3299): a warning raised before a reconnect stayed up
+  // although the agent had recovered meanwhile.
+  it("clears alerts the snapshot after a reconnect no longer supports", () => {
+    render(<TerminalAttentionNotifier />);
+    act(() => { useTerminalAgentEvents.setState({ connected: true, tabs: facts("working") }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("blocked") }); });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    act(() => { useTerminalAgentEvents.setState({ connected: false }); });
+    act(() => { useTerminalAgentEvents.setState({ connected: true, tabs: facts("working") }); });
+    expect(screen.queryByTestId("terminal-attention")).toBeNull();
+  });
+
   it("does not treat the first snapshot as news", () => {
     useTerminalAgentEvents.setState({ tabs: facts("blocked") });
     render(<TerminalAttentionNotifier />);

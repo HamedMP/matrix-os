@@ -54,7 +54,17 @@ export function TerminalAttentionNotifier() {
     const next = new Map(Object.entries(tabs));
     const before = previous.current;
     previous.current = next;
-    if (!before) return;
+    if (!before) {
+      // A fresh baseline: keep only alerts this snapshot still supports.
+      setAlerts((current) => {
+        const kept = current.filter((alert) => {
+          const facts = next.get(alert.key);
+          return facts?.state === "live" && facts.agentStatus === alert.kind;
+        });
+        return kept.length === current.length ? current : kept;
+      });
+      return;
+    }
     const changes = terminalAttentionChanges(before, next, visibleTerminalSessions());
     setAlerts((current) => {
       const stillAlerting = current.filter((alert) => {
