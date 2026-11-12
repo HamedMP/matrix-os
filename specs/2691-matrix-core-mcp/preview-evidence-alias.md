@@ -5,12 +5,18 @@ keys refuse the Cloud Run hostname. Hamed approved one four-hour legacy alias on
 2026-11-12: `pr-3314-preview.matrix-os.com`. This is an explicit identity exception,
 not activation of spec 530 or its wildcard route.
 
-- Route only this hostname to the `pr-3314` tag of the dedicated staging service.
+- Route only this hostname to a build-specific `pr-3314-b-<12-hex-sha>` tag
+  on the exact configured staging service. Require its origin explicitly; reject
+  the mutable `pr-3314` tag, sibling PR tags and other services. CI retagging the
+  ordinary PR preview must not redirect the alias to a different platform build.
 - Reuse the preview transport, including body limits, timeouts, WebSockets,
   streaming responses and parent-domain cookie filtering. Share redirect handling
   with the existing legacy pilot.
 - Require a valid expiry no more than four hours ahead and the staging edge key.
   Fail closed for incomplete configuration; refuse sibling hosts and computers.
+- Keep the browser/API origin and OAuth callbacks on the pinned backend. Verify
+  both the platform image and VPS bundle commit before each evidence capture;
+  this alias pin does not change or freeze the existing VPS deployment automation.
 - Keep normal Clerk and platform authorization. Require same-origin cookie-backed
   mutations; strip caller-supplied routing/identity headers before forwarding.
 - Forward the canonical `pr-3314.preview.matrix-os.com` routing identity under the

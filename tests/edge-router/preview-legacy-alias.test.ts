@@ -4,11 +4,12 @@ import { getTrustedSessionRouteHost } from '../../packages/platform/src/session-
 import { canRouteMachineOnPreviewHost, previewHandleFromHost } from '../../packages/platform/src/customer-vps-preview.js';
 
 const publicOrigin = 'https://pr-3314-preview.matrix-os.com';
-const upstream = 'https://pr-3314---matrix-platform-preview-example.a.run.app';
+const upstream = 'https://pr-3314-b-0f33c4f82984---matrix-platform-preview-example.a.run.app';
 const now = new Date('2026-11-12T17:00:00Z');
 const env = {
   PREVIEW_PLATFORM_ORIGIN: 'https://matrix-platform-preview-example.a.run.app',
   PREVIEW_LEGACY_PUBLIC_ORIGIN: publicOrigin,
+  PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream,
   PREVIEW_LEGACY_NOT_AFTER: '2026-11-12T21:00:00Z',
   PREVIEW_LEGACY_EDGE_SECRET: 'dedicated-staging-edge-secret-at-least-32-characters',
 };
@@ -79,6 +80,13 @@ describe('owner-approved, expiring evidence alias', () => {
     { PREVIEW_LEGACY_PUBLIC_ORIGIN: publicOrigin + '/nested' },
     { PREVIEW_LEGACY_EDGE_SECRET: '' },
     { PREVIEW_LEGACY_NOT_AFTER: '' },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: '' },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: 'https://pr-3314---matrix-platform-preview-example.a.run.app' },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream.replace('pr-3314-b-', 'pr-3315-b-') },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream.replace('preview-example', 'preview-other') },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream.replace('https:', 'http:') },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream + '/nested' },
+    { PREVIEW_LEGACY_UPSTREAM_ORIGIN: upstream + '?target=primary' },
   ])('fails closed for incomplete alias configuration: %j', async (patch) => {
     vi.setSystemTime(now);
     const fetchMock = vi.spyOn(globalThis, 'fetch');

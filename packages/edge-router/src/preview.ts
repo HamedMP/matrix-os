@@ -13,21 +13,24 @@ export interface PreviewEdgeEnv {
   PREVIEW_LEGACY_PUBLIC_ORIGIN?: string;
   PREVIEW_LEGACY_NOT_AFTER?: string;
   PREVIEW_LEGACY_EDGE_SECRET?: string;
+  /** Build-specific tag on the configured staging service; never the mutable PR tag. */
+  PREVIEW_LEGACY_UPSTREAM_ORIGIN?: string;
 }
 
-function legacyConfiguration(env: PreviewEdgeEnv): { publicOrigin: string; prNumber: string; secret: string } | null {
+function legacyConfiguration(env: PreviewEdgeEnv): { publicOrigin: string; prNumber: string; secret: string; upstreamOrigin: string } | null {
   try {
     const url = new URL(env.PREVIEW_LEGACY_PUBLIC_ORIGIN ?? '');
     const prNumber = /^pr-([1-9][0-9]{0,8})-preview\.matrix-os\.com$/.exec(url.hostname)?.[1];
     const expiry = env.PREVIEW_LEGACY_NOT_AFTER ?? '';
     const remaining = Date.parse(expiry) - Date.now();
     const secret = env.PREVIEW_LEGACY_EDGE_SECRET ?? '';
+    const upstreamOrigin = pinnedLegacyOrigin(env, prNumber ?? '');
     if (!prNumber || url.protocol !== 'https:' || url.username || url.password || url.port
       || url.pathname !== '/' || url.search || url.hash
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiry)
       || !Number.isFinite(remaining) || remaining <= 0 || remaining > 4 * 60 * 60 * 1000
-      || !/^[\x21-\x7e]{32,256}$/.test(secret)) return null;
-    return { publicOrigin: url.origin, prNumber, secret };
+      || !/^[\x21-\x7e]{32,256}$/.test(secret) || !upstreamOrigin) return null;
+    return { publicOrigin: url.origin, prNumber, secret, upstreamOrigin };
   } catch (error: unknown) {
     if (error instanceof TypeError) return null;
     throw error;
@@ -54,6 +57,22 @@ function taggedPreviewOrigin(origin: string | undefined, prNumber: string): stri
     return null;
   }
   return `https://pr-${prNumber}---${parsed.hostname}`;
+}
+
+function pinnedLegacyOrigin(env: PreviewEdgeEnv, prNumber: string): string | null {
+  if (!taggedPreviewOrigin(env.PREVIEW_PLATFORM_ORIGIN, prNumber)) return null;
+  try {
+    const base = new URL(env.PREVIEW_PLATFORM_ORIGIN!);
+    const pinned = new URL(env.PREVIEW_LEGACY_UPSTREAM_ORIGIN ?? '');
+    const prefix = new RegExp(`^pr-${prNumber}-b-[a-f0-9]{12}---`);
+    if (pinned.protocol !== 'https:' || pinned.username || pinned.password || pinned.port
+      || pinned.pathname !== '/' || pinned.search || pinned.hash || !prefix.test(pinned.hostname)
+      || pinned.hostname.replace(prefix, '') !== base.hostname) return null;
+    return pinned.origin;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
 }
 
 function unavailable(): Response {
@@ -109,7 +128,7 @@ async function boundedBody(request: Request): Promise<ArrayBuffer | null> {
 export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv): Promise<Response> {
   const url = new URL(request.url);
   const legacyConfigured = [env.PREVIEW_LEGACY_PUBLIC_ORIGIN, env.PREVIEW_LEGACY_NOT_AFTER,
-    env.PREVIEW_LEGACY_EDGE_SECRET].some(value => value !== undefined);
+    env.PREVIEW_LEGACY_EDGE_SECRET, env.PREVIEW_LEGACY_UPSTREAM_ORIGIN].some(value => value !== undefined);
   const legacy = legacyConfigured ? legacyConfiguration(env) : null;
   if (legacyConfigured && !legacy) return unavailable();
   const preview = legacy ? (url.origin === legacy.publicOrigin ? { prNumber: legacy.prNumber } : null)
@@ -132,7 +151,7 @@ export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv
     return new Response('Forbidden', { status: 403, headers: { 'cache-control': 'no-store' } });
   }
 
-  const origin = taggedPreviewOrigin(env.PREVIEW_PLATFORM_ORIGIN, preview.prNumber);
+  const origin = legacy?.upstreamOrigin ?? taggedPreviewOrigin(env.PREVIEW_PLATFORM_ORIGIN, preview.prNumber);
   const masterSecret = env.PREVIEW_EDGE_MASTER_SECRET?.trim();
   if (!origin || (!legacy && (!masterSecret || masterSecret.length < 32))) return unavailable();
   const secret = legacy?.secret ?? await previewEdgeSecret(masterSecret!, preview.prNumber);

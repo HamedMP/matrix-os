@@ -1,6 +1,6 @@
 # One owner-approved legacy evidence alias. Does not deploy wrangler.preview.toml.
 # Supply PREVIEW_LEGACY_NOT_AFTER at deployment (at most four hours ahead).
-# With no expiry or preview-only edge secret, every request fails closed.
+# Supply a build-specific upstream tag too; without it every request fails closed.
 name = "matrix-eng458-evidence-pr3314"
 main = "src/preview.ts"
 compatibility_date = "2026-06-06"
@@ -12,6 +12,7 @@ routes = [{ pattern = "pr-3314-preview.matrix-os.com", custom_domain = true }]
 PREVIEW_PLATFORM_ORIGIN = "https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app"
 PREVIEW_LEGACY_PUBLIC_ORIGIN = "https://pr-3314-preview.matrix-os.com"
 PREVIEW_LEGACY_NOT_AFTER = ""
+PREVIEW_LEGACY_UPSTREAM_ORIGIN = ""
 
 [observability]
 enabled = false
