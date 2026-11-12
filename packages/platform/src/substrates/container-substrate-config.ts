@@ -3,8 +3,14 @@ import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import { createContainerOwnerDatabases, type ContainerOwnerDatabases, type OwnerClusterAdmin } from './container-owner-database.js';
-import { createContainerLifecycleService, type ContainerLifecycleService } from './container-lifecycle-service.js';
 import {
+  CONTAINER_QUIESCE_TIMEOUT_MS,
+  createContainerLifecycleService,
+  type ContainerLifecycleService,
+} from './container-lifecycle-service.js';
+import {
+  CONTAINER_SUSPENDED_DURATION_BOUNDS,
+  CONTAINER_UNIT_MAX_IDLE_SECONDS,
   createLambdaMicrovmsProvider,
   type LambdaMicrovmsApi,
   type LambdaMicrovmsProviderConfig,
@@ -38,8 +44,12 @@ const FIELDS = {
   MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
   PLATFORM_SECRET: z.string().min(32),
   MATRIX_CONTAINER_IDLE_STOP_MINUTES: z.coerce.number().int().min(1).max(240).default(10),
-  /** Below the provider's 8 hour unit lifetime, so a session ends by stop rather than by loss. */
-  MATRIX_CONTAINER_MAX_SESSION_MINUTES: z.coerce.number().int().min(10).max(450).default(240),
+  /** A session plus its stop budget must end before the provider's idle maximum and unit lifetime. */
+  MATRIX_CONTAINER_MAX_SESSION_MINUTES: z.coerce.number().int().min(10).default(240)
+    .refine(minutes => minutes * 60_000 + CONTAINER_QUIESCE_TIMEOUT_MS < CONTAINER_UNIT_MAX_IDLE_SECONDS * 1000),
+  MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: z.coerce.number().int()
+    .min(CONTAINER_SUSPENDED_DURATION_BOUNDS.min).max(CONTAINER_SUSPENDED_DURATION_BOUNDS.max)
+    .default(CONTAINER_SUSPENDED_DURATION_BOUNDS.fallback),
 } as const;
 
 const ConfigSchema = z.object(FIELDS);
@@ -86,6 +96,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         gatewayPort: c.MATRIX_CONTAINER_GATEWAY_PORT,
         endpointTokenMinutes: c.MATRIX_CONTAINER_ENDPOINT_TOKEN_MINUTES,
         endpointHostSuffix: c.MATRIX_CONTAINER_ENDPOINT_SUFFIX,
+        suspendedDurationSeconds: c.MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS,
       },
       ownerDatabase: {
         adminUrl: c.MATRIX_CONTAINER_OWNER_DB_ADMIN_URL,

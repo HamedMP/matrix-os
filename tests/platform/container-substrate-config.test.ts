@@ -71,6 +71,7 @@ describe('container substrate configuration', () => {
       ownerDatabase: { runtimeHost: 'owners.internal.example', runtimePort: 5432, sizeLimitBytes: 1024 ** 3 },
       idle: { idleMs: 10 * 60_000, maxSessionMs: 4 * 60 * 60_000 },
     });
+    expect(result.ok && result.config.provider.suspendedDurationSeconds).toBe(28_800);
   });
 
   it('reads the idle stop and maximum session from minutes and bounds them', () => {
@@ -80,6 +81,23 @@ describe('container substrate configuration', () => {
       .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_IDLE_STOP_MINUTES'] });
     expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: '600' }))
       .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_MAX_SESSION_MINUTES'] });
+  });
+
+  it('refuses a maximum session that, with the stop budget, reaches the provider idle maximum', () => {
+    for (const minutes of ['480', '458']) {
+      expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: minutes }))
+        .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_MAX_SESSION_MINUTES'] });
+    }
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: '457' }).ok).toBe(true);
+  });
+
+  it('reads the suspended retention from seconds and bounds it', () => {
+    const result = loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: '7200' });
+    expect(result.ok && result.config.provider.suspendedDurationSeconds).toBe(7_200);
+    for (const value of ['59', '28801', 'soon']) {
+      expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: value }))
+        .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS'] });
+    }
   });
 });
 
