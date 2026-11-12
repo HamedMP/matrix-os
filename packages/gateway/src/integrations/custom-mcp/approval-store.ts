@@ -85,7 +85,7 @@ function validIdentity(actorId: string, runId: string): boolean {
   return actorId.length > 0 && actorId.length <= 256 && runId.length > 0 && runId.length <= 256;
 }
 
-function isCurrentServerPolicy(row: PlatformDatabase["custom_mcp_servers"] | undefined, input: {
+export function isCurrentServerPolicy(row: PlatformDatabase["custom_mcp_servers"] | undefined, input: {
   serverRevision: number; toolName: string;
 }): boolean {
   if (!row || !row.enabled || row.status !== "ready" || row.revision !== input.serverRevision) return false;

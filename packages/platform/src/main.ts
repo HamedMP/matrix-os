@@ -95,6 +95,7 @@ import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
+import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { registerCustomMcpRoutes } from './custom-mcp-route-registration.js';
 import { createUnavailableIntegrationRoutes } from './integration-route-fallback.js';
 import {
@@ -273,6 +274,8 @@ export function createApp(deps: {
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
+  /** Spec 2691: Matrix Core tools for the external `/mcp` endpoint (set once Custom MCP starts). */
+  externalCoreMcp?: ExternalCoreMcp;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -489,7 +492,7 @@ export function createApp(deps: {
   }
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
-  app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  app.route('/', createPlatformMcpRoutes({ db, env: appEnv, coreMcp: () => deps.externalCoreMcp }));
   app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
     enabled: (appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' || appEnv.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true')
       && deps.previewPairs?.enabled === true }));

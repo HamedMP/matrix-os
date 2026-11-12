@@ -14,6 +14,8 @@ export interface McpRoutesOptions {
   requestTimeoutMs?: number;
   maxConcurrent?: number;
   requestsPerMinute?: number;
+  /** Adds tools to the per-request server (spec 2691 Matrix Core tools); runs after auth and admission. */
+  extendServer?: (server: ReturnType<typeof createHostedMatrixMcpServer>, principal: McpPrincipal, signal: AbortSignal) => Promise<void>;
 }
 
 export function createMcpRoutes(options: McpRoutesOptions): Hono {
@@ -133,6 +135,8 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       const scopedFetch: typeof fetch = (input, init) => fetchImpl(input, { ...init,
         signal: AbortSignal.any([AbortSignal.timeout(50_000), controller.signal, ...(init?.signal ? [init.signal] : [])]) });
       server = createHostedMatrixMcpServer({ context: options.context(principal), fetch: scopedFetch, maxCommandTimeoutMs: 45_000 });
+      if (options.extendServer) await options.extendServer(server, principal, controller.signal);
+      controller.signal.throwIfAborted();
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
       controller.signal.throwIfAborted();
