@@ -1,9 +1,11 @@
 import { z } from "zod/v4";
 import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 
-const MAX_TABS = 1_024;
-// Workspaces allow 10 000 tabs; anything beyond is not a valid stream.
-const MAX_SNAPSHOT_ENTRIES = 10_000;
+// Every live tab plus bounded finished history, as the gateway sends; the runtime
+// allows at most 10 000 tabs.
+const MAX_TABS = 10_240;
+// Beyond twice the cap a snapshot is not a valid stream.
+const MAX_SNAPSHOT_ENTRIES = 2 * MAX_TABS;
 const TerminalIdSchema = z.string().regex(/^(tws|tt)_[0-9a-f]{32}$/);
 const RefSchema = z.strictObject({ workspaceId: TerminalIdSchema, tabId: TerminalIdSchema });
 const WordSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
@@ -81,9 +83,15 @@ export function reduceTerminalEvents(state: TerminalEventsState, input: unknown)
   const key = terminalFactsKey(event.ref);
   const current = state.tabs[key];
   switch (event.kind) {
-    case "created":
-      if (Object.keys(state.tabs).length >= MAX_TABS) return state;
-      return { ...state, seq, tabs: { ...state.tabs, [key]: event.tab } };
+    case "created": {
+      if (Object.keys(state.tabs).length < MAX_TABS) return { ...state, seq, tabs: { ...state.tabs, [key]: event.tab } };
+      // At the cap, finished history makes room; a live tab is never dropped for history.
+      const evict = Object.entries(state.tabs).find(([, facts]) => facts.state === "finished")?.[0];
+      if (!evict || event.tab.state === "finished") return state;
+      const { [evict]: _evicted, ...rest } = state.tabs;
+      void _evicted;
+      return { ...state, seq, tabs: { ...rest, [key]: event.tab } };
+    }
     case "removed": {
       if (!current) return state;
       const { [key]: _removed, ...rest } = state.tabs;

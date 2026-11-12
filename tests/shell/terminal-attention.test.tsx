@@ -66,6 +66,18 @@ describe("terminal attention notifier", () => {
     expect(screen.getByText("agent 0")).toBeTruthy();
   });
 
+  // Fault detected (fifth review of #3299): on a page load the empty store became the
+  // baseline, so the first snapshot replayed every blocked agent as a new alert.
+  it("takes the first received snapshot as the baseline on a page load", () => {
+    useTerminalAgentEvents.setState({ connected: false, seq: 0, tabs: {} });
+    render(<TerminalAttentionNotifier />);
+    act(() => { useTerminalAgentEvents.setState({ connected: true, seq: 1, tabs: facts("blocked") }); });
+    expect(screen.queryByTestId("terminal-attention")).toBeNull();
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("blocked") }); });
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
   it("does not treat the first snapshot as news", () => {
     useTerminalAgentEvents.setState({ tabs: facts("blocked") });
     render(<TerminalAttentionNotifier />);

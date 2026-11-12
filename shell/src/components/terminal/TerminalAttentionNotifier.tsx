@@ -37,6 +37,7 @@ function sameAlerts(left: TerminalAttention[], right: TerminalAttention[]): bool
  */
 export function TerminalAttentionNotifier() {
   const tabs = useTerminalAgentEvents((state) => state.tabs);
+  const connected = useTerminalAgentEvents((state) => state.connected);
   const retain = useTerminalAgentEvents((state) => state.retain);
   const previous = useRef<ReadonlyMap<string, TerminalTabFacts> | null>(null);
   const [alerts, setAlerts] = useState<TerminalAttention[]>([]);
@@ -44,10 +45,15 @@ export function TerminalAttentionNotifier() {
   useEffect(() => retain(), [retain]);
 
   useEffect(() => {
+    // Nothing is known until the first snapshot arrives; after a disconnect, the next
+    // snapshot is a fresh baseline too, never a batch of news.
+    if (!connected) {
+      previous.current = null;
+      return;
+    }
     const next = new Map(Object.entries(tabs));
     const before = previous.current;
     previous.current = next;
-    // The first snapshot is the current state, not news.
     if (!before) return;
     const changes = terminalAttentionChanges(before, next, visibleTerminalSessions());
     setAlerts((current) => {
@@ -60,7 +66,7 @@ export function TerminalAttentionNotifier() {
       // Unchanged alerts keep their array, so the done timeout is not restarted.
       return sameAlerts(current, updated) ? current : updated;
     });
-  }, [tabs]);
+  }, [tabs, connected]);
 
   useEffect(() => {
     if (!alerts.some((alert) => alert.kind === "done")) return;

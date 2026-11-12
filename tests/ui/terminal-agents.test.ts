@@ -156,10 +156,21 @@ describe("terminal events client", () => {
   // Fault detected (fourth review of #3299): a snapshot above the client's cap was
   // rejected whole, dropping every live badge.
   it("keeps live tabs from a snapshot larger than its cap", () => {
-    const finished = Array.from({ length: 1_100 }, (_, i) => fact(`tt_${i.toString(16).padStart(32, "0")}`, { state: "finished", exitCode: 0 }));
+    const finished = Array.from({ length: 10_300 }, (_, i) => fact(`tt_${i.toString(16).padStart(32, "0")}`, { state: "finished", exitCode: 0 }));
     const state = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, { type: "snapshot", seq: 1, tabs: [...finished, fact(tabA, { agentStatus: "blocked" })] });
-    expect(Object.keys(state.tabs).length).toBeLessThanOrEqual(1_024);
+    expect(Object.keys(state.tabs).length).toBeLessThanOrEqual(10_240);
     expect(state.tabs[`${workspaceId}:${tabA}`]).toMatchObject({ agentStatus: "blocked" });
+  });
+
+  // Fault detected (fifth review of #3299): at the cap a new live tab was dropped,
+  // although the gateway was about to remove a finished one.
+  it("makes room for a new live tab by dropping finished history", () => {
+    const finished = Array.from({ length: 10_240 }, (_, i) => fact(`tt_${i.toString(16).padStart(32, "0")}`, { state: "finished", exitCode: 0 }));
+    let state = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, { type: "snapshot", seq: 1, tabs: finished });
+    expect(Object.keys(state.tabs)).toHaveLength(10_240);
+    state = reduceTerminalEvents(state, { type: "event", seq: 2, event: { kind: "created", ref: { workspaceId, tabId: tabA }, tab: fact(tabA, { agentStatus: "blocked" }) } });
+    expect(state.tabs[`${workspaceId}:${tabA}`]).toMatchObject({ agentStatus: "blocked" });
+    expect(Object.keys(state.tabs)).toHaveLength(10_240);
   });
 
   it("rejects frames with unknown fields or oversized values", () => {
