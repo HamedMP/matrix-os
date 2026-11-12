@@ -125,7 +125,7 @@ catalog. It makes network calls, so it is a maintenance tool, not a CI gate.
 3. **Use it anywhere.** The user adds `https://app.matrix-os.com/mcp` to any
    MCP client and signs in through Matrix OAuth. The client gets the same Core
    tools, plus the spec 120 computer tools. stdio-only clients use
-   `matrix mcp` (the CLI bridge).
+   `matrix mcp login`, then `matrix mcp bridge` (the CLI bridge).
 4. **Admin oversight.** An org admin opens Organization → Connections and sees,
    per member: connected servers, connection status, last used, and call
    counts by day, server, and tool. The admin can allow, block, or recommend
@@ -178,10 +178,30 @@ It is capped at 40 tools per session.
   the model, or the external client. External clients hold only a Matrix
   OAuth access token for the `/mcp` resource.
 - **Harness wiring.** Extend `agent-launcher.ts` and `provider-catalog.ts` so
-  that Codex (`-c mcp_servers.matrix-core…` / `config.toml`), OpenCode
-  (`opencode.json` `mcp`), and Hermes receive the same scoped stdio server and
+  that Codex (`-c mcp_servers.matrix-integrations.{command,args,env_vars}`),
+  OpenCode (`opencode.json` `mcp` plus exact `matrix-integrations_<tool>`
+  permission grants), and Hermes (its registered server; the run bearer
+  reaches only the Core broker paths) receive the same scoped stdio server and
   run-scoped capability that Claude Code receives today. Run-scoped bearers
-  remain mandatory; there is no machine-bearer fallback.
+  remain mandatory; there is no machine-bearer fallback. A Codex session's
+  bearer is revoked when the session stops or exits; an OpenCode bearer lives
+  exactly as long as its process.
+- **CLI bridge (`matrix mcp login` / `matrix mcp bridge`).** For stdio-only
+  clients. `login` runs Matrix OAuth against the profile's `<platform>/mcp`
+  resource: protected-resource metadata (RFC 9728) → authorization-server
+  metadata (RFC 8414), dynamic client registration with
+  `token_endpoint_auth_method: none`, authorization code with PKCE S256, a
+  random `state`, scope `matrix:computer`, and `resource` (RFC 8707). The
+  redirect is a one-shot loopback listener on `127.0.0.1:<random port>`
+  (RFC 8252) that closes after one callback or 5 minutes. Tokens are stored
+  per profile in `~/.matrixos/profiles/<name>/mcp-oauth.json` (directory
+  `0700`, file `0600`, atomic write). `bridge` is a transport-level proxy
+  from stdio to Streamable HTTP. It adds only the bearer, refreshing it one
+  minute before expiry and once after a `401`. Bounds: 2 MiB per inbound
+  frame (the bridge stops on a larger one), 4 MiB per response, and a 60 s
+  request timeout. A request it cannot deliver gets a generic JSON-RPC error.
+  The CLI's platform login token is never sent to `/mcp`, and `mcp-auth.ts`
+  still accepts only `/mcp`-audience OAuth tokens.
 - **Org scope.** New ownership dimension: a connection belongs to a person.
   An org may *govern* a server definition (allow/block/recommend and
   a default tool policy). Effective permission is
@@ -200,6 +220,11 @@ It is capped at 40 tools per session.
   `INSERT … ON CONFLICT DO UPDATE` so a rerun is idempotent. Raw rows are kept
   for 30 days; aggregates for 13 months. Members are told in Settings that
   their org admin can see connection metadata and call counts.
+  Entry points are recorded as `stdio` (VPS harnesses via
+  `matrix-integrations-mcp`), `managed_pi`, `external_mcp` (the platform
+  `/mcp` endpoint, including the `matrix mcp bridge`), or `unknown`. The
+  harness label comes from the launcher's `--harness=` argument
+  (`claude_code`, `codex`, `opencode`, `hermes`) and is analytics only.
 
 ## Matrix Core repo (skills, hooks, scripts, brain)
 
@@ -247,8 +272,9 @@ It is capped at 40 tools per session.
 | `GET /api/mcp-servers/catalog` | platform (and gateway → platform proxy) | owner session, as the other Custom MCP routes | no | Read-only projection of connectable presets; Zod-validated `category`/`department` filters. Lives under `/api/mcp-servers` so explicit-VM shells reach it through the existing VPS proxy |
 | `GET\|POST\|PATCH\|DELETE /api/mcp-servers[...]` | gateway → platform broker | owner session, or a run-scoped capability bearer | no | Existing Custom MCP routes; gain `catalogId`; registered-client entries use the Matrix-owned app |
 | `GET /api/mcp-servers/oauth/callback` | platform | single-use hashed `state` bound to owner + server + revision | yes (state-gated) | Existing callback; Matrix-owned vendor apps reuse it |
-| `POST /api/mcp-approvals/:approvalId` | gateway | owner session only, never a run or external bearer | no | Confirms an external-client write; the approval digest binds tool + args; single-use, 10-minute TTL |
-| `get_approval(approvalId)` Core MCP tool | platform `/mcp` | the same Matrix OAuth bearer that created the approval | no | How an external client polls a `pending_approval`; another bearer gets `not_found` |
+| `GET /api/mcp-servers/core/external-approvals` | platform (session-routed `/api/mcp-servers` router only) | owner session (Clerk; `platformUserId` set by session routing) | no | Pending external-client approvals: approval id, service, tool, created/expiry. Never returns arguments |
+| `POST /api/mcp-servers/core/external-approvals/:approvalId` | platform (session-routed router only) | owner session only, never a run, machine, or external bearer | no | `{"decision":"approve"\|"decline"}`; `bodyLimit` 4 KB; the approval digest binds server revision + tool + args; single-use, 10-minute TTL. Refuses Chat-run approvals (`409`) |
+| `get_approval(approvalId)` Core MCP tool | platform `/mcp` | the same owner + OAuth `client_id` that created the approval | no | How an external client polls a `pending_approval`; another client gets `not_found` |
 | `GET /api/orgs/:orgId/mcp/connections` | platform | Clerk session + `org:mcp_admin` | no | Member connection metadata only; cursor + limit validated |
 | `GET /api/orgs/:orgId/mcp/usage` | platform | Clerk session + `org:mcp_admin` | no | Daily aggregates; bounded date range (≤ 400 days) |
 | `PUT\|DELETE /api/orgs/:orgId/mcp/servers/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Allow/block/recommend and default tool policy |
@@ -278,10 +304,31 @@ a generic 503, never a 404.
   codes, and raw messages are logged server-side only.
 - **Prompt injection.** All upstream output is wrapped as untrusted. Tool
   descriptions from upstream are length-capped and shown as data.
-- **External approvals.** A write from an external client creates a pending
-  approval that the user confirms in Matrix (Chat, Web/Electron notification,
-  or Native Mobile). The client gets a `pending_approval` result to poll.
-  Policy `allow` tools run directly.
+- **External approvals.** A write (`always_ask`) from an external client
+  creates a pending approval and returns `pending_approval` with its
+  `approvalId`. The client polls `get_approval`, and after the owner approves
+  in Matrix it retries `call_tool` with `approval_id`; the approval is
+  consumed exactly once. Policy `allow` tools run directly.
+  - **Binding.** Approvals live in the existing approval tables on a rotating
+    synthetic run lease, `ext.<sha256(owner, client_id)>.<20-minute window>`
+    (lease lifetime: window + 15 minutes, so a late approval keeps its full
+    10 minutes; at most 16 pending per window). Only the same owner **and the
+    same OAuth `client_id`** can see or consume one. Binding is to the client,
+    not to one access-token value, so a refreshed token keeps working; another
+    client of the same owner gets `not_found`.
+  - **Where the owner decides.** On the platform's session-routed
+    `/api/mcp-servers` router (`/core/external-approvals[/:id]`). The VPS
+    internal router never mounts it, so no run bearer, machine bearer, or
+    external bearer can reach the approve action.
+  - **Why not a gateway route.** The gateway was the original plan
+    (`POST /api/mcp-approvals/:id`). It cannot distinguish an owner browser
+    session from the VPS machine bearer used by the unscoped stdio fallback
+    (`MATRIX_AUTH_TOKEN` + `x-platform-user-id`), so any local process holding
+    that bearer could self-approve. Explicit-VM shells call the platform route
+    on the app origin instead.
+  - **Deferred.** Chat/notification UI for these approvals; `always_ask`
+    calls from Codex, OpenCode, and Hermes runs still return
+    `approval_required` (only Claude Code has a run-time approval hook).
 
 ## Failure modes and resources
 
