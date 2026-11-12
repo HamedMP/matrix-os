@@ -20,7 +20,10 @@ const auth = vi.hoisted(() => ({ userId: "user_owner", sessionId: "session_owner
 
 vi.mock("@clerk/nextjs", () => ({
   useOrganization: () => ({ organization: null }),
-  useAuth: () => auth,
+  useAuth: () => {
+    if (document.documentElement.dataset.matrixSelfHosted === "1") throw new Error("ClerkProvider is absent");
+    return auth;
+  },
 }));
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("../../shell/src/components/chat/ChatInput", () => ({ ChatInput: () => null }));
@@ -29,7 +32,24 @@ vi.mock("@matrix-os/ui", async original => ({ ...await original<typeof import("@
   ChatAgentsRailSection: () => null,
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.userId = "user_owner"; auth.sessionId = "session_owner"; window.history.replaceState(null, "", "/"); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.userId = "user_owner"; auth.sessionId = "session_owner"; delete document.documentElement.dataset.matrixSelfHosted; window.history.replaceState(null, "", "/"); });
+
+it("loads project navigation in self-hosted Chat without a ClerkProvider", async () => {
+  document.documentElement.dataset.matrixSelfHosted = "1";
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  render(<Nav gatewayUrl="https://example.test" scopeKey="self-hosted-owner/runtime/main" />);
+  expect(await screen.findByRole("button", { name: "Expand Local project chats" })).toBeTruthy();
+});
+
+it("renders self-hosted Chat after a conversation exists without a ClerkProvider", async () => {
+  document.documentElement.dataset.matrixSelfHosted = "1";
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[{ id: "chat_local", title: "Local chat", preview: "", messageCount: 0, updatedAt: 1 }]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="self-hosted-owner/runtime/main" />
+  </OrganizationStateProvider>);
+  expect(await screen.findByText("No projects on this computer yet.")).toBeTruthy();
+});
 
 it("finds an existing personal project and opens its chat from the Web Chat rail", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -151,12 +171,12 @@ it("drops prior computer projects immediately and ignores their late response", 
 it("does not show one account's projects when the account changes on the same computer", async () => {
   const response = vi.fn(async () => Response.json({ projects: [{ id: `proj_${auth.userId}`, slug: auth.userId, name: auth.userId }], nextCursor: null }));
   vi.stubGlobal("fetch", response);
-  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "user_owner/main", chats: [], onSelectChat: vi.fn() };
   const view = render(<Nav {...props} />);
   expect(await screen.findByRole("button", { name: "Expand user_owner chats" })).toBeTruthy();
   auth.userId = "user_next";
   auth.sessionId = "session_next";
-  view.rerender(<Nav {...props} />);
+  view.rerender(<Nav {...props} scopeKey="user_next/main" />);
   expect(screen.queryByRole("button", { name: "Expand user_owner chats" })).toBeNull();
   expect(await screen.findByRole("button", { name: "Expand user_next chats" })).toBeTruthy();
   expect(response).toHaveBeenCalledTimes(2);
@@ -397,13 +417,13 @@ it("ignores a late project-chat page after the account changes", async () => {
     ? Response.json({ projects: [{ id: "proj_shared_name", slug: "shared-name", name: "Project" }] })
     : auth.userId === "user_owner" ? oldPage
       : Response.json({ items: [{ chat: { id: "chat_new", title: "New account chat" } }], nextCursor: null })));
-  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "user_owner/main", chats: [], onSelectChat: vi.fn() };
   const view = render(<Nav {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Expand Project chats" }));
   await waitFor(() => expect(screen.getByText("Loading chats…")).toBeTruthy());
   auth.userId = "user_next";
   auth.sessionId = "session_next";
-  view.rerender(<Nav {...props} />);
+  view.rerender(<Nav {...props} scopeKey="user_next/main" />);
   fireEvent.click(await screen.findByRole("button", { name: "Expand Project chats" }));
   expect(await screen.findByRole("button", { name: "New account chat" })).toBeTruthy();
   finishOld(Response.json({ items: [{ chat: { id: "chat_old", title: "Old account chat" } }], nextCursor: null }));
