@@ -746,6 +746,21 @@ describe("TerminalView session switching", () => {
     } finally { window.operator = previous; }
   });
 
+  it("explains the local 8 MB limit before encoding or invoking file IPC", async () => {
+    const invoke = vi.fn();
+    const previous = window.operator;
+    window.operator = { invoke, on: () => () => undefined };
+    try {
+      const { container } = render(<TerminalView sessionName="local:t7" />);
+      fireEvent.paste(container.querySelector("[data-terminal-viewport]")!, { clipboardData: {
+        files: [new File([new Uint8Array(9 * 1024 * 1024)], "large.png", { type: "image/png" })],
+      } });
+      await screen.findByText("Images are limited to 8 MB.");
+      expect(invoke).not.toHaveBeenCalled();
+      expect(attachmentWrite).not.toHaveBeenCalled();
+    } finally { window.operator = previous; }
+  });
+
   it("keeps rich image paste precedence for Command+V", async () => {
     const blob = new Blob(["image"], { type: "image/png" });
     const readText = vi.fn().mockResolvedValue("text fallback");

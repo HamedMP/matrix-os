@@ -17,6 +17,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
+import { LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
 import { putTerminalPasteFile } from "./terminal-paste-transport";
 import { getAttachManager } from "./terminal-runtime";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
@@ -644,9 +645,10 @@ export default function TerminalView({
         }
         return;
       }
-      if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
+      const pasteLimit = sessionName.startsWith("local:") ? LOCAL_TERMINAL_PUT_MAX_BYTES : MAX_TERMINAL_PASTE_FILE_BYTES;
+      if (files.some(({ file }) => file.size > pasteLimit)) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          reportClipboardFailure(feedbackSequence, kind === "file" ? "Files are limited to 10 MB." : "Images are limited to 10 MB.");
+          reportClipboardFailure(feedbackSequence, `${kind === "file" ? "Files" : "Images"} are limited to ${pasteLimit / (1024 * 1024)} MB.`);
         }
         return;
       }
