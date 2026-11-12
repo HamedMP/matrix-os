@@ -557,6 +557,27 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.queryByRole("button", { name: "New folder in system" })).toBeNull();
   });
 
+  it("hides the creation menu when browsing a managed folder", async () => {
+    const managedApi = {
+      get: vi.fn(async (path: string) => path === "/api/files/list?path="
+        ? { entries: [{ name: "system", type: "directory" }] }
+        : { entries: [{ name: "settings.json", type: "file" }] }),
+      baseUrl: "https://app.matrix-os.com",
+    };
+    useConnection.setState({ api: managedApi as never });
+    render(
+      <Tooltip.Provider>
+        <ComputerFileBrowser onRequestCreateFolder={vi.fn()} onRequestCreateFile={vi.fn()} />
+      </Tooltip.Provider>,
+    );
+
+    const system = await screen.findByRole("button", { name: "Open system" });
+    expect(screen.getByRole("button", { name: "Create", exact: true })).toBeTruthy();
+    fireEvent.doubleClick(system);
+    await screen.findByRole("button", { name: "Open settings.json" });
+    expect(screen.queryByRole("button", { name: "Create", exact: true })).toBeNull();
+  });
+
   it("blocks choosing a denied subtree ancestor while allowing a safe child folder there", async () => {
     const protectedApi = {
       get: vi.fn(async (path: string) => path === "/api/files/list?path="

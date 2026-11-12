@@ -1,3 +1,4 @@
+import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
@@ -383,6 +384,20 @@ function CanonicalChatWorkspaceContent({
   }, [controller.activeChatId, controller.detail?.record, initialChatId, initialView, onActiveChatChanged]);
 
   const composerProjectId = controller.detail ? controller.detail.record.projectId ?? null : draftProjectId;
+  const slashRecord = routedComposerChatId && controller.detail?.record.chat.id === routedComposerChatId
+    ? controller.detail.record : undefined;
+  const slashProjectId = routedComposerChatId ? slashRecord?.projectId ?? projectId : draftProjectId;
+  const slashActiveRunId = slashRecord?.activeRun?.runId;
+  const slashRuns = slashRecord ? controller.detail?.runs : undefined;
+  const slashRun = slashActiveRunId ? slashRuns?.find(run => run.id === slashActiveRunId) : slashRuns?.at(-1);
+  const projectSlashScope = useDesktopProjectSlashScope(slashProjectId ?? undefined, Boolean(
+    live && !explicitSharedRoute && !sharedScopeId && !directBotId && !botIdentityUnknown && !editingQueuedTurn
+    && authStatus === "signed-in" && actorId
+    && (!routedComposerChatId || (slashRecord?.chat.ownerScope.type === "personal"
+      && slashRecord.chat.ownerScope.ownerId === actorId && !slashRecord.chat.collaboration))
+    && (!slashActiveRunId || slashRun)
+    && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project"),
+  ));
   const context = projectContext(
     composerProjectId ?? undefined,
     projects,
@@ -485,7 +500,9 @@ function CanonicalChatWorkspaceContent({
     isCurrentSubmission: () => boolean,
   ): Promise<CanonicalChatMessagePart[] | null> => {
     const uploaded = await attachments.uploadAll();
-    if (!isCurrentSubmission()) return null;
+    if (!isCurrentSubmission() || (submission.projectSkill && (
+      submission.projectSkill.projectId !== slashProjectId || !submission.projectSkill.isCurrent()
+    ))) return null;
     if (!uploaded.ok) {
       setSubmissionError(chatSendFailureMessage(uploaded.error));
       return null;
@@ -546,6 +563,7 @@ function CanonicalChatWorkspaceContent({
         },
         interactionMode: selection.interactionMode,
         permissionMode: mentionPermission.permissionMode,
+        ...(submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
@@ -556,6 +574,7 @@ function CanonicalChatWorkspaceContent({
         settle: () => {
           if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
           mentionPermission.confirm(false);
+          submission.projectSkill?.onAccepted();
           updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
           for (const id of submittedAttachmentIds) attachments.remove(id);
         },
@@ -626,6 +645,7 @@ function CanonicalChatWorkspaceContent({
         parts: directBotId ? botSubmissionParts(updatedParts, botExecution.consentResources) : updatedParts,
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
         interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
+        ...(submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
@@ -636,6 +656,7 @@ function CanonicalChatWorkspaceContent({
         settle: () => {
           if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
           mentionPermission.confirm(false);
+          submission.projectSkill?.onAccepted();
           updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
           for (const id of submittedAttachmentIds) attachments.remove(id);
         },
@@ -772,7 +793,9 @@ function CanonicalChatWorkspaceContent({
         permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}
-        draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
+        draftScopeKey={draftScope}
+        projectSlashScope={projectSlashScope}
+        projectSkillSubmitEnabled={selectionAvailable && !uploadingAttachments}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}

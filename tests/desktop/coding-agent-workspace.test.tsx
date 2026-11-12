@@ -23,7 +23,7 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { toast } from "sonner";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
-import { setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 const RUNTIME_SCOPE = codingAgentRuntimeScope({
   handle: "operator",
@@ -1264,6 +1264,7 @@ describe("ProjectChatsView", () => {
   });
 
   it("renders the selected conversation as durable chat bubbles with a same-thread composer", async () => {
+    mockSharedComposerPopoverLayout();
     const conversationSnapshot = {
       ...threadSnapshotFixture(),
       // The composer only accepts turns while the thread is not waiting on an

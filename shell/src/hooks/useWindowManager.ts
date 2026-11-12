@@ -21,6 +21,7 @@ import {
 } from "@/lib/terminal-window-metadata";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { desktopWorkArea } from "@/lib/desktop-work-area";
+import { fitPreviewToDesktopWorkArea } from "@/lib/os-view-layout-memory";
 import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
 export interface AppWindow {
@@ -284,6 +285,13 @@ function centeredWindowPosition(path: string): { x: number; y: number } {
   };
 }
 
+function fitOpenedPreviewWindow(record: AppWindow): AppWindow {
+  if (record.path !== "__preview-window__" || useDesktopMode.getState().mode !== "desktop" || typeof window === "undefined") {
+    return record;
+  }
+  return fitPreviewToDesktopWorkArea(record, { width: window.innerWidth, height: window.innerHeight });
+}
+
 function createWindowRecord(
   state: WindowManagerState,
   name: string,
@@ -300,7 +308,7 @@ function createWindowRecord(
   const terminalPersistence = isTerminalWindowPath(path)
     ? options.terminalPersistence ?? "durable"
     : undefined;
-  return {
+  return fitOpenedPreviewWindow({
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     title: name,
     path,
@@ -316,7 +324,7 @@ function createWindowRecord(
     ...(terminalPersistence ? { terminalPersistence } : {}),
     ...(options.sharedTerminalScopeId ? { sharedTerminalScopeId: options.sharedTerminalScopeId } : {}),
     ...(options.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
-  };
+  });
 }
 
 function normalizeWindowZOrder(
@@ -372,12 +380,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           return {
             windows: zState.windows.map((w) =>
               w.id === existing.id
-                ? {
+                ? fitOpenedPreviewWindow({
                     ...w,
                     minimized: false,
                     zIndex: zState.nextZ,
                     ...(options.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
-                  }
+                  })
                 : w,
             ),
             nextZ: zState.nextZ + 1,
@@ -530,7 +538,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         return {
           windows: zState.windows.map((w) =>
-            w.id === id ? { ...w, minimized: false, zIndex: zState.nextZ } : w,
+            w.id === id ? fitOpenedPreviewWindow({ ...w, minimized: false, zIndex: zState.nextZ }) : w,
           ),
           nextZ: zState.nextZ + 1,
           focusedWindowId: id,

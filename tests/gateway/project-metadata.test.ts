@@ -36,6 +36,17 @@ describe("project metadata route", () => {
     expect((await other.request("/api/projects/alpha/files-location")).status).toBe(404);
     expect((await createWorkspaceRoutes({ homePath }).request("/api/projects/alpha/files-location")).status).not.toBe(200);
   });
+  it("binds Agent configuration navigation to the same immutable project", async () => {
+    const { app, original } = await setup();
+    const path = "/api/projects/alpha/files-location";
+    expect(await (await app.request(`${path}?projectId=${original.id}`)).json()).toEqual({ path: "projects/alpha/repo" });
+    expect((await app.request(`${path}?projectId=proj_replacement`)).status).toBe(404);
+    expect((await app.request(`${path}?projectId=%2F`)).status).toBe(400);
+    expect((await app.request(`${path}?file=AGENTS.md`)).status).toBe(400);
+    for (const file of ["../beta/AGENTS.md", ".env", ".agents/skills/../SKILL.md"]) {
+      expect((await app.request(`${path}?projectId=${original.id}&file=${encodeURIComponent(file)}`)).status).toBe(400);
+    }
+  });
   it("does not resolve inactive, escaped or symlinked project folders", async () => {
     const { app, original } = await setup();
     for (const changed of [{ archivedAt: new Date().toISOString() }, { deletingAt: new Date().toISOString() }, { localPath: tmpdir() }]) {

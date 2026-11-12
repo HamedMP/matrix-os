@@ -31,14 +31,12 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
 }
 
-export interface BoundedReadOptions {
+export interface BoundedReadOptions extends RequestTimeoutOptions {
   headers?: Record<string, string>;
   // Hard cap on the bytes read from the response body. The stat that sized a
   // file can be stale by the time the body is fetched, so the cap must apply
   // to the transfer itself; exceeding it rejects with "file_too_large".
   maxBytes?: number;
-  signal?: AbortSignal;
-  timeoutMs?: number;
 }
 
 export interface RequestTimeoutOptions {

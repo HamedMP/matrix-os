@@ -347,6 +347,7 @@ function $selectAbsoluteOffset(offset: number): void {
 export interface ComposerPromptEditorHandle {
   focus: () => void;
   insertToken: (token: ComposerReferenceToken, trigger?: string, cursor?: number) => void;
+  removeTrigger: (trigger: string, cursor: number) => void;
   readValue: () => { value: string; tokens: ComposerReferenceToken[] };
 }
 
@@ -515,6 +516,19 @@ function ComposerPromptEditorInner({
       value: $serializePrompt(),
       tokens: collectTokens($getRoot()),
     })),
+    removeTrigger: (trigger, cursor) => {
+      focusEditor();
+      editor.update(() => {
+        $selectAbsoluteOffset(cursor);
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+        const anchor = selection.anchor.getNode();
+        const end = selection.anchor.offset;
+        if (!$isTextNode(anchor) || anchor.getTextContent().slice(end - trigger.length, end) !== trigger) return;
+        selection.setTextNodeRange(anchor, end - trigger.length, anchor, end);
+        selection.removeText();
+      }, { discrete: true, tag: SKIP_SCROLL_INTO_VIEW_TAG });
+    },
     insertToken: (token, trigger = "", cursor) => {
       focusEditor();
       editor.update(() => {

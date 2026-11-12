@@ -20,6 +20,7 @@ export * from "#chat-event-wire";
 export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
+export * from "#project-agent-context";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {
@@ -1118,6 +1119,7 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
 }
 
 export const FilePathSchema = safeRelativePath();
+export { FileLeafNameSchema } from "#legacy-contract-primitives";
 export const FileMetadataSchema = z.object({
   path: FilePathSchema,
   kind: z.enum(["file", "directory", "symlink", "unknown"]),

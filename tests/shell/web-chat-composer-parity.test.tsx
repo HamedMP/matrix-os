@@ -220,7 +220,8 @@ describe("Web Chat composer matches Electron Desktop", () => {
   it("wires the project picker in Web Desktop, Web Canvas and Web Mobile", () => {
     for (const [file, state] of [["desktop/DesktopWindow.tsx", "chat"], ["canvas/CanvasWindow.tsx", "chatState"], ["mobile/MobileShell.tsx", "chat"]] as const) {
       const source = readFileSync(path.resolve(import.meta.dirname, "../../shell/src/components", file), "utf8");
-      expect(source, file).toContain(`chatProjectId={${state}.chatProjectId} onSetChatProject={${state}.setChatProject}`);
+      expect(source, file).toContain(`chatProjectId={${state}.chatProjectId}`);
+      expect(source, file).toContain(`onSetChatProject={${state}.setChatProject}`);
     }
   });
 

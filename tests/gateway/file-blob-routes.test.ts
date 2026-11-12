@@ -67,6 +67,23 @@ describe("file blob routes", () => {
     expect(mode).toBe(0o600);
   });
 
+  it("keeps a private project config private when saving from the editor", async () => {
+    const path = "projects/demo/.mcp.json";
+    const localPath = join(homePath, path);
+    await mkdir(join(homePath, "projects/demo"), { recursive: true });
+    await writeFile(localPath, '{"mcpServers":{}}', { mode: 0o600 });
+
+    const body = '{"mcpServers":{"docs":{"url":"https://example.invalid/mcp"}}}';
+    const blob = `/blob?path=${encodeURIComponent(path)}`;
+    const saved = await app.request(`${blob}&force=true`, { method: "PUT", body });
+    expect(saved.status).toBe(200);
+    expect((await stat(localPath)).mode & 0o777).toBe(0o600);
+
+    const opened = await app.request(blob);
+    expect(opened.headers.get("cache-control")).toBe("private, no-store");
+    expect(await opened.text()).toBe(body);
+  });
+
   it("rejects overwrites unless force is set", async () => {
     await mkdir(join(homePath, "notes"), { recursive: true });
     await writeFile(join(homePath, "notes/today.md"), "old");

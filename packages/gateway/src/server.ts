@@ -13,8 +13,6 @@ import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-in
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
-import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
-import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { configureEdgeRequestDeadlines } from "@matrix-os/contracts/http-request-deadlines";
@@ -91,14 +89,12 @@ import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
-import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
-import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
@@ -110,7 +106,6 @@ import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.j
 import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
 import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
-import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import {
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
@@ -270,7 +265,7 @@ import { registerCollaborationChatRoutes } from "./server/collaboration-chat-rou
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
-import { registerFileRoutes } from "./server/file-routes.js";
+import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -1269,19 +1264,6 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
-  const legacyProjectPathAdmission = gatewayCollaboration
-    ? createLegacyProjectPathAdmission({
-        homePath,
-        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-        listOwnerProjects: async (ownerType, ownerId) => {
-          const result = await codingAgentProjectManager.listManagedProjects({
-            visibility: "all",
-            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
-          });
-          return result.projects.map((project) => ({ id: project.id, localPath: project.localPath }));
-        },
-      })
-    : undefined;
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1312,27 +1294,18 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
-  app.route("/api/coding-agents", createCodingAgentRoutes({
+  registerGatewayCodingAgentRoutes(app, {
     service: codingAgentRuntimeSummaryService,
     projectWorkspaces: codingAgentProjectWorkspaceStore,
-    projectMutations: createCodingAgentProjectMutationService({ projects: codingAgentProjectManager }),
+    projects: codingAgentProjectManager,
     threads: codingAgentThreadStore,
     turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
     notificationPreferences: codingAgentNotificationPreferenceStore,
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-      resolveProjectId: async (principal, projectSlug) => {
-        const project = await codingAgentProjectManager.getProject(
-          projectSlug,
-          { type: "user", id: principal.userId },
-        );
-        return project.ok ? project.project.id : null;
-      },
-    } : {}),
-  }));
+    projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
+  });
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
@@ -1399,14 +1372,9 @@ export async function createGateway(config: GatewayConfig) {
     captureGatewayProductEvent, nativeProviderProfileGuard,
   });
 
-  registerFileRoutes(app, {
-    homePath,
-    filePreviewService,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-    ...(legacyProjectPathAdmission ? {
-      getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      projectPathAdmission: legacyProjectPathAdmission,
-    } : {}),
+  registerGatewayProjectFileRoutes(app, {
+    homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
+    projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
   });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -1562,9 +1530,7 @@ export async function createGateway(config: GatewayConfig) {
     chatGptPlanSource: appSubscriptionSource,
   });
   const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
-  const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
-  app.route("/",chatDriveContext.routes);
-  app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
+  const chatDriveContext = await registerGatewayProjectDriveRoutes(app, { repository: chatRepository, collaborationReady: gatewayCollaboration !== null });
   const {
     catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog,
   } = createGatewayChatProviderCatalog({
