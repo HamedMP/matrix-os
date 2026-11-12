@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanonicalChatNavigationPageQuery } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
+import { AppError } from "../../../../../shared/app-error";
 
 type State = { key: string; rows: ChatNavigationRecord[]; count: number; cursor?: string; loading: boolean; error: boolean };
 
@@ -38,7 +39,9 @@ export function useWorkRailPage(client: CanonicalChatClient | null, query: Pick<
     })().catch((cause: unknown) => {
       if (generation.current !== current) return;
       console.warn("[work-rail] Navigation page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-      setState(previous => ({ ...previous, loading: false, error: true }));
+      setState(previous => cause instanceof AppError && cause.category === "unauthorized"
+        ? { key, rows: [], count: 0, loading: false, error: true }
+        : { ...previous, loading: false, error: true });
     });
     return () => { generation.current++; };
   }, [client, key, query.group, query.projectId, version, initialSize]);
@@ -53,8 +56,11 @@ export function useWorkRailPage(client: CanonicalChatClient | null, query: Pick<
     }).catch((cause: unknown) => {
       if (generation.current !== current) return;
       console.warn("[work-rail] More chats unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-      setState(previous => ({ ...previous, loading: false, error: true }));
+      setState(previous => cause instanceof AppError && cause.category === "unauthorized"
+        ? { key, rows: [], count: 0, loading: false, error: true }
+        : { ...previous, loading: false, error: true });
     });
   }, [client, key, query.group, query.projectId, state]);
-  return state.key === key ? { ...state, loadMore } : { key, rows: [], count: 0, loading: Boolean(client?.navigationPage), error: false, loadMore };
+  return client?.navigationPage && state.key === key ? { ...state, loadMore }
+    : { key, rows: [], count: 0, loading: Boolean(client?.navigationPage), error: false, loadMore };
 }
