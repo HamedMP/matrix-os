@@ -281,6 +281,22 @@ describe("terminal agents: limits, vanished children and admission", () => {
     expect(h.sends.filter((send) => send.tabId === parentId)).toHaveLength(1);
   });
 
+  // Fault detected (live check on the pr-3300 preview): an exited helper's note named it
+  // by its tab id twice, because the name was read only from live tabs.
+  it("names an exited helper by its tab name in the note to its parent", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    const state = new Map<string, string>();
+    await h.agents.supervise(state);
+
+    h.tabs.set(child.ref.tabId, { ...h.tabs.get(child.ref.tabId), status: "exited", exitCode: 0 });
+    await h.agents.supervise(state);
+    expect(h.sends.filter((send) => send.tabId === parentId).map((send) => send.text)).toEqual([
+      `<matrix from="${child.ref.tabId} review">exited</matrix>`,
+    ]);
+  });
+
   it("keeps the record of a tab created during a supervision pass", async () => {
     const h = await harness();
     const parent = { workspaceId, tabId: parentId };
