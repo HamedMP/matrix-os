@@ -227,7 +227,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
-  it("restores the selected file, folder expansion, filter, scroll and tree width after closing the inspector", async () => {
+  it("restores the selected file, folder expansion, filter, scroll and tree height after closing the inspector", async () => {
     const scope = { kind: "home" as const, chatId: "remember-files" };
     const api = useConnection.getState().api!;
     vi.mocked(api.get).mockImplementation(async (url: string) => url.startsWith("/api/files/list")
@@ -240,7 +240,7 @@ describe("Work Files and Terminal inspector", () => {
     const scroller = view.container.querySelector("[data-file-tree-scroll]") as HTMLElement;
     scroller.scrollTop = 165;
     fireEvent.scroll(scroller);
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowDown" });
     view.unmount();
     const persisted = localStorage.getItem("matrix-inspector-file-views-v1")!;
     useInspectorFileViews.setState({ views: [] });
@@ -250,7 +250,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
     expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
     fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
     view.unmount();
@@ -362,6 +362,10 @@ describe("Work Files and Terminal inspector", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
 
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+
     await waitFor(() => expect(useConnection.getState().api?.delete).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${refKey("terminal_first").split(":")[1]}`,
     ));
@@ -386,7 +390,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(screen.queryByRole("separator", { name: "Resize file list" })).toBeNull();
   });
 
-  it("resizes the file list beside an open preview with an accessible divider", async () => {
+  it("resizes the file tree above a full-width preview with an accessible divider", async () => {
     const { chatDetail, project } = projectDetail("chat_first");
     const { container } = render(<WorkFilesInspector detail={chatDetail} projects={[project]} active />);
 
@@ -394,12 +398,14 @@ describe("Work Files and Terminal inspector", () => {
     await screen.findByText("README");
 
     const panes = container.querySelector('[data-layout="split"]');
+    expect(panes?.classList.contains("flex-col")).toBe(true);
     expect(panes?.children[0]?.getAttribute("aria-label")).toBe("Files");
     expect(panes?.children[2]?.querySelector('[aria-label="File preview"]')).not.toBeNull();
     const divider = screen.getByRole("separator", { name: "Resize file list" });
-    expect(divider.getAttribute("aria-valuenow")).toBe("300");
-    fireEvent.keyDown(divider, { key: "ArrowRight" });
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(divider.getAttribute("aria-valuenow")).toBe("240");
+    fireEvent.keyDown(divider, { key: "ArrowDown" });
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
   });
 
   it("keeps a usable preview when the inspector becomes narrower", async () => {
@@ -412,10 +418,10 @@ describe("Work Files and Terminal inspector", () => {
     const callback = resizeObserverCallbacks.at(-1);
     expect(callback).toBeTypeOf("function");
     act(() => callback?.([{
-      contentRect: { width: 480 },
+      contentRect: { height: 360 },
     } as unknown as ResizeObserverEntry], {} as ResizeObserver));
 
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("232");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("192");
   });
 
   it("keeps one permanent Files tab and reselects it from the add menu", () => {

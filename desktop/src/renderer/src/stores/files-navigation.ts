@@ -49,6 +49,7 @@ const FileViewSchema = z.object({
   scrollTop: z.number().min(0).max(100_000_000).default(0),
   treeVisible: z.boolean().default(true),
   treeWidth: z.number().min(220).max(2000).default(300),
+  treeHeight: z.number().min(120).max(1200).default(240),
   selectedFile: FileResourceRefSchema.nullable().default(null),
 });
 export type InspectorFileView = z.infer<typeof FileViewSchema>;

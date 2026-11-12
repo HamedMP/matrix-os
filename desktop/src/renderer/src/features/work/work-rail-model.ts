@@ -125,14 +125,11 @@ export function buildWorkRailModel(
   const doneDisplay: ChatNavigationRecord[] = [];
   const placed = new Set<string>();
   for (const record of records) {
-    if (placed.has(record.chat.id) || excluded.has(record.chat.id)) continue;
+    if (placed.has(record.chat.id) || excluded.has(record.chat.id) || record.chat.lifecycle !== "active") continue;
     placed.add(record.chat.id);
+    if (record.projectId) groupByProjectReference.get(record.projectId)?.chats.push(record);
     if (record.chat.userState?.pinned) {
       pinned.push(record);
-      continue;
-    }
-    if (record.projectId) {
-      groupByProjectReference.get(record.projectId)?.chats.push(record);
       continue;
     }
     const group = resolveCanonicalChatLifecycleGroup(record);

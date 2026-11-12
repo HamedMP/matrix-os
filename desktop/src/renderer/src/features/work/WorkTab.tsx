@@ -44,11 +44,13 @@ import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from 
 import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
+import { SideChatDraftContext, type SideChatDraftRequest } from "./SideChatDraftContext";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -66,7 +68,7 @@ const MEDIUM_WORK_MIN_WIDTH = 740;
 const NAVIGATION_WIDTH = 240;
 const MIN_INSPECTOR_WIDTH = 240;
 const MAX_INSPECTOR_WIDTH = 820;
-const DEFAULT_INSPECTOR_WIDTH = 380;
+const DEFAULT_INSPECTOR_WIDTH = 400;
 const MIN_CHAT_WIDTH = 360;
 const COLLAPSE_RESIZE_THRESHOLD = 48;
 
@@ -133,6 +135,7 @@ function ResponsiveWorkInspector({
   maxWidth,
   onResizeStart,
   onResizeKeyboard,
+  onResetWidth,
   closeButtonRef,
   openButtonRef,
   regionRef,
@@ -153,6 +156,7 @@ function ResponsiveWorkInspector({
   maxWidth: number;
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void;
   onResizeKeyboard: (delta: number) => void;
+  onResetWidth: () => void;
   closeButtonRef: Ref<HTMLButtonElement>;
   openButtonRef: Ref<HTMLButtonElement>;
   regionRef: Ref<HTMLDivElement>;
@@ -190,7 +194,7 @@ function ResponsiveWorkInspector({
         : "relative flex min-h-0 shrink-0"}
       style={layout === "narrow" ? undefined : { width }}
     >
-      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} /> : null}
+      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} onReset={onResetWidth} /> : null}
       <WorkFilesInspector
         detail={detail}
         scope={scope}
@@ -237,6 +241,7 @@ function WorkTabContent({
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
+  const verifiedUserId = useConnection((state) => state.userId);
   const projects = useBoard((state) => state.projects);
   const workRef = useRef<HTMLDivElement>(null);
   const showToolsRef = useRef<HTMLButtonElement>(null);
@@ -263,7 +268,19 @@ function WorkTabContent({
     narrowPane: "chat",
     narrowPaneRouteKey: null,
   });
-  const [requestedInspectorWidth, setInspectorWidth] = useState(DEFAULT_INSPECTOR_WIDTH);
+  const inspectorLayoutKey = verifiedUserId && initialChatId
+    ? chatInspectorLayoutKey(verifiedUserId, runtimeSlot || "default", initialChatId) : null;
+  const savedInspectorWidth = useChatInspectorLayout(state => inspectorLayoutKey
+    ? state.entries.find(entry => entry.key === inspectorLayoutKey)?.layout.width : undefined);
+  const [inspectorWidthState, setInspectorWidthState] = useState<{ key: string | null; width: number }>({
+    key: inspectorLayoutKey, width: savedInspectorWidth ?? DEFAULT_INSPECTOR_WIDTH,
+  });
+  const requestedInspectorWidth = inspectorWidthState.key === inspectorLayoutKey
+    ? inspectorWidthState.width : savedInspectorWidth ?? DEFAULT_INSPECTOR_WIDTH;
+  const setInspectorWidth = (width: number) => {
+    setInspectorWidthState({ key: inspectorLayoutKey, width });
+    if (inspectorLayoutKey) useChatInspectorLayout.getState().update(inspectorLayoutKey, { width });
+  };
   const [surfaceWidth, setSurfaceWidth] = useState(0);
   const [draftTerminalLaunch, setDraftTerminalLaunch] = useState<{
     chatId: string;
@@ -273,6 +290,8 @@ function WorkTabContent({
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
   const updateSharedChatMetadata = useCallback(({ title }: { title: string }) => setActiveChatTitle(title), []);
   const { agentDraftRequest, requestAgentDraft, consumeAgentDraft } = useWorkAgentDraftRequest();
+  const [sideChatDraft, setSideChatDraft] = useState<SideChatDraftRequest | null>(null);
+  const sideChatDraftSequence = useRef(0);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
@@ -677,6 +696,7 @@ function WorkTabContent({
       maxWidth={maxInspectorWidth}
       onResizeStart={startInspectorResize}
       onResizeKeyboard={resizeInspectorWithKeyboard}
+      onResetWidth={() => setInspectorWidth(DEFAULT_INSPECTOR_WIDTH)}
       closeButtonRef={inspectorCloseRef}
       openButtonRef={showToolsRef}
       regionRef={inspectorRegionRef}
@@ -704,6 +724,7 @@ function WorkTabContent({
       maxWidth={maxInspectorWidth}
       onResizeStart={startInspectorResize}
       onResizeKeyboard={resizeInspectorWithKeyboard}
+      onResetWidth={() => setInspectorWidth(DEFAULT_INSPECTOR_WIDTH)}
       closeButtonRef={inspectorCloseRef}
       openButtonRef={showToolsRef}
       regionRef={inspectorRegionRef}
@@ -836,6 +857,10 @@ function WorkTabContent({
 
   return (
     <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
+    <SideChatDraftContext.Provider value={{ pending: sideChatDraft,
+      request: (chatId, text) => { setSideChatDraft({ id: ++sideChatDraftSequence.current, chatId, text }); showChat(); },
+      consume: (id) => setSideChatDraft(current => current?.id === id ? null : current),
+    }}>
     <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}`} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
@@ -938,11 +963,12 @@ function WorkTabContent({
       </div>
     </div>
     </ChatFileNavigationProvider>
+    </SideChatDraftContext.Provider>
     </CanonicalChatClientProvider>
   );
 }
 
-function ResizeHandle({ side, label, value, min, max, onPointerDown, onKeyboardResize }: {
+function ResizeHandle({ side, label, value, min, max, onPointerDown, onKeyboardResize, onReset }: {
   side: "left" | "right";
   label: string;
   value: number;
@@ -950,6 +976,7 @@ function ResizeHandle({ side, label, value, min, max, onPointerDown, onKeyboardR
   max: number;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onKeyboardResize: (delta: number) => void;
+  onReset: () => void;
 }) {
   return (
     <div
@@ -962,6 +989,7 @@ function ResizeHandle({ side, label, value, min, max, onPointerDown, onKeyboardR
       tabIndex={0}
       className={`group/resize absolute inset-y-0 z-20 w-2 cursor-col-resize outline-none ${side === "left" ? "-left-1" : "-right-1"}`}
       onPointerDown={onPointerDown}
+      onDoubleClick={onReset}
       onKeyDown={(event) => {
         const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
         if (direction === 0) return;
