@@ -70,9 +70,10 @@ export default function EmbedHost({
         key={`${runtimeSlot}:${authGeneration}:${slug}`}
         appSlug={slug}
         portalContainer={portalContainer}
+        buildEpoch={openedEmbedRevision}
       />
     ),
-  }) : null, [authGeneration, portalContainer, runtimeSlot, slug, visible]);
+  }) : null, [authGeneration, openedEmbedRevision, portalContainer, runtimeSlot, slug, visible]);
 
   useLayoutEffect(() => {
     if (!surfaceChromeHost) return;

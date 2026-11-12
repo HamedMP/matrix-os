@@ -100,6 +100,10 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - **FR-014**: The share flow MUST explain that existing app records will be visible, that the creator hosts the app and its data, that all current organization members can use it, and what stopping the share does.
 - **FR-015**: Public app publication, Gallery installation, and private live sharing MUST be presented as distinct actions and data scopes.
 
+#### Electron owner flow
+
+The existing **Publish app** control opens one contained owner popover. Within it, a separate **Share with your org** section shows the active organization, readiness and its corrective action, a readiness check, and an enabled share action only for a ready exact build. An active share shows its organization and **Stop sharing**, even when the current organization selection changes. The section explains that current members, including guests, can use existing owner data and that the app stays on the owner's Matrix. Missing membership, unavailable requests, and pending actions have explicit states. Organization sharing uses the owner collaboration gateway and never invokes Matrix.page publication. The native embedded view detaches while this popover is open so its controls remain visible.
+
 ### Key Entities
 
 - **Collaborative app version**: Exact app identity, declaration, and validated readiness result.
