@@ -2,6 +2,8 @@
 
 This guide documents the Matrix OS coding-agent architecture across Electron Desktop, Web Desktop, Web Canvas, Native Mobile, and Web Mobile. The gateway/runtime remains the source of truth; clients are resumable OS views that render validated summaries and snapshots.
 
+See [Project instruction discovery in Chat](project-agent-context.md) for the files each runtime loads and the project tool inventory.
+
 ## Ownership Boundaries
 
 Older native Codex Chats may have a retained native conversation but no saved

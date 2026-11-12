@@ -7,9 +7,10 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { AppError } from "@desktop/shared/app-error";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
-import { setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 beforeEach(() => {
+  mockSharedComposerPopoverLayout();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   useConnection.setState(useConnection.getInitialState(), true);
   window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };

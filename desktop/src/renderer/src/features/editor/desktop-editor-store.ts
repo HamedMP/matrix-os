@@ -1,6 +1,7 @@
 import { FilePathSchema, FileResourceRefSchema, type FileResourceRef } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { useConnection } from "../../stores/connection";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import { useTabs } from "../../stores/tabs";
 
 export const MAX_DESKTOP_EDITOR_TABS = 16;
@@ -40,7 +41,7 @@ interface DesktopEditorState {
   dirtyPaths: string[];
   error: string | null;
   ensureScope(scope: string): void;
-  openFile(path: string, resource?: Extract<FileResourceRef, { kind: "project" }>): boolean;
+  openFile(path: string, resource?: Extract<FileResourceRef, { kind: "project" }>, options?: { exactPath?: boolean }): boolean;
   setActive(path: string): void;
   setDirty(path: string, dirty: boolean): void;
   closeFile(path: string): void;
@@ -64,10 +65,12 @@ export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
     error: null,
   }),
 
-  openFile: (rawPath, resource) => {
+  openFile: (rawPath, resource, options) => {
     const parsedResource = resource ? FileResourceRefSchema.safeParse(resource) : null;
     if (resource && (!parsedResource?.success || parsedResource.data.kind !== "project")) return false;
-    const path = resource ? `@project/${encodeURIComponent(resource.projectId)}/${encodeURIComponent(resource.worktreeId ?? "root")}/${resource.path}` : normalizeDesktopEditorPath(rawPath);
+    const path = resource
+      ? `@project/${encodeURIComponent(resource.projectId)}/${encodeURIComponent(resource.worktreeId ?? "root")}/${resource.path}`
+      : options?.exactPath ? FilePathSchema.safeParse(rawPath).data ?? null : normalizeDesktopEditorPath(rawPath);
     if (!path) {
       set({ error: "That file path is outside Matrix home." });
       return false;
@@ -136,11 +139,25 @@ export function currentDesktopEditorScope(): string {
 }
 
 export function openFileInDesktopEditor(rawPath: string): boolean {
+  return openDesktopEditor(rawPath);
+}
+
+export function openExactFileInDesktopEditor(path: string): boolean {
+  return openDesktopEditor(path, { exactPath: true });
+}
+
+function openDesktopEditor(rawPath: string, options?: { exactPath?: boolean }): boolean {
   const editor = useDesktopEditor.getState();
   editor.ensureScope(currentDesktopEditorScope());
-  if (!useDesktopEditor.getState().openFile(rawPath)) return false;
-  useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  if (!useDesktopEditor.getState().openFile(rawPath, undefined, options)) return false;
+  showEditorWorkspace();
   return true;
+}
+
+function showEditorWorkspace(): void {
+  const tabId = useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  // Selecting a retained tab does not restore its minimized or closed window.
+  useDesktopSurfaces.getState().activateSurface(tabId);
 }
 
 export async function openResourceInDesktopEditor(resource: FileResourceRef, isCurrent: () => boolean = () => true): Promise<boolean> {
@@ -159,6 +176,6 @@ export async function openResourceInDesktopEditor(resource: FileResourceRef, isC
   }
   useDesktopEditor.getState().ensureScope(scope);
   if (!useDesktopEditor.getState().openFile(target.path, target)) return false;
-  useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  showEditorWorkspace();
   return true;
 }

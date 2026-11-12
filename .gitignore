@@ -129,6 +129,8 @@ skills-lock.json
 !.agents/skills/matrix-handoff/**
 !.agents/skills/unblock-tickets/
 !.agents/skills/unblock-tickets/**
+!.agents/skills/daily-update/
+!.agents/skills/daily-update/**
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**

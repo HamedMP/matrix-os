@@ -7,7 +7,7 @@ import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { canonicalChatRecord, createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
 
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper", revision: "3" };
@@ -39,6 +39,7 @@ beforeEach(() => {
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 });
 afterEach(cleanup);
+beforeEach(mockSharedComposerPopoverLayout);
 
 async function startEditing(queued = turn) {
   const client = createCanonicalChatWorkspaceClient();

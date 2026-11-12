@@ -296,7 +296,7 @@ export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionCl
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
-export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry, type ProjectChatSkillCatalog } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
@@ -339,7 +339,11 @@ export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.j
 export { ChatModelPicker } from "./chat/composer/ChatModelPicker.js";
 export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "./chat/composer/ChatProjectContextPicker.js";
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
-export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
+export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
+
+export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
+
+export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";

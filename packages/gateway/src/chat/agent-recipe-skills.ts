@@ -7,8 +7,12 @@ import {
   CHAT_AGENT_RECIPE_MAX_CATALOG_SKILLS,
   ChatAgentRecipeCatalogSchema,
   ChatAgentRecipeSkillIdSchema,
+  InstalledSkillManifestPathSchema,
+  PROJECT_SKILL_FILE_MAX_BYTES,
   ResolvedChatAgentRecipeSchema,
 } from "@matrix-os/contracts";
+import { GalleryFileError, isFsError, pinDirectory } from "../app-gallery/pinned-directory.js";
+import { openedPathIsAuthorized } from "../file-preview-service.js";
 
 const MAX_SKILL_FILE_BYTES = 28 * 1024;
 const MAX_SCAN_ENTRIES = 2_048;
@@ -32,11 +36,13 @@ function within(root: string, path: string): boolean {
   return rel !== "" && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
 
-async function sourcesFor(options: { skillsRoot: string; homePath?: string }): Promise<Source[]> {
+async function sourcesFor(options: { skillsRoot?: string; homePath?: string }): Promise<Source[]> {
   const home = options.homePath ? await realpath(options.homePath) : undefined;
   const candidates: Source[] = [
     ...(home ? skillSources(home).map((source) => ({ ...source, bundled: false })) : []),
-    { label: "bundled", dir: await realpath(options.skillsRoot), kind: "directory-scan", bundled: true },
+    ...(options.skillsRoot ? [{
+      label: "bundled", dir: await realpath(options.skillsRoot), kind: "directory-scan" as const, bundled: true,
+    }] : []),
   ];
   const sources: Source[] = [];
   for (const source of candidates) {
@@ -62,26 +68,75 @@ async function entriesFor(source: Source): Promise<string[]> {
   return entries.sort();
 }
 
-async function readCandidate(path: string, roots: readonly Source[], installedOnly: boolean): Promise<{ content: string; sourceFile: string }> {
+type CandidateReadOptions = { installedOnly: boolean } | { projectManifest: true };
+
+function allowedManifestTarget(root: Source, filePath: string): boolean {
+  const candidate = relative(root.dir, filePath);
+  // Bundled installs use a link from an owner directory to a packaged skill directory.
+  const installPath = root.bundled ? `.agents/skills/${candidate}` : `${root.label}/${candidate}`;
+  return InstalledSkillManifestPathSchema.safeParse(installPath).success;
+}
+
+async function readCandidate(path: string, roots: readonly Source[], options: CandidateReadOptions): Promise<{ content: string; sourceFile: string }> {
   const parent = await realpath(dirname(path));
   const filePath = join(parent, basename(path));
-  if (!roots.some((root) => within(root.dir, filePath))) throw new InvalidSkillError("Skill link leaves approved roots");
+  const manifest = "projectManifest" in options;
+  const installedOnly = !manifest && options.installedOnly;
+  const root = roots.find((candidate) => within(candidate.dir, filePath));
+  if (!root || (manifest && !allowedManifestTarget(root, filePath))) throw new InvalidSkillError("Skill link leaves approved roots");
+
+  const maxBytes = manifest ? PROJECT_SKILL_FILE_MAX_BYTES : MAX_SKILL_FILE_BYTES;
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: manifest });
+  // Host bundles run on Linux, where we can pin the resolved parent for the entire read.
+  if (manifest && process.platform === "linux") {
+    const directory = await pinDirectory(parent);
+    try {
+      const bytes = await directory.readFile(basename(path), maxBytes, { singleLink: true });
+      return { content: decoder.decode(bytes), sourceFile: filePath };
+    } finally {
+      await directory.close();
+    }
+  }
   // The final file must be regular, not a link, pipe or device. O_NONBLOCK prevents
   // a replaced FIFO from stalling the gateway between lstat and open.
-  const before = await lstat(filePath);
+  const before = await lstat(filePath, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink()) throw new InvalidSkillError("Invalid skill file");
   const file = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const info = await file.stat();
+    const info = await file.stat({ bigint: true });
     if (!info.isFile() || info.ino !== before.ino || info.dev !== before.dev
-      || (!installedOnly && info.size > MAX_SKILL_FILE_BYTES)) throw new InvalidSkillError("Invalid skill file");
+      || (!installedOnly && info.size > BigInt(maxBytes))) throw new InvalidSkillError("Invalid skill file");
     if (await realpath(parent) !== parent) throw new InvalidSkillError("Skill directory changed");
-    const buffer = Buffer.alloc(MAX_SKILL_FILE_BYTES + 1);
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-    if (!installedOnly && bytesRead > MAX_SKILL_FILE_BYTES) throw new InvalidSkillError("Skill is too large");
-    return { content: new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead), { stream: installedOnly }), sourceFile: filePath };
+    if (manifest && (info.nlink !== 1n || !await openedPathIsAuthorized(filePath, info, root.dir))) {
+      throw new InvalidSkillError("Invalid skill file");
+    }
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    while (manifest && bytesRead < buffer.length) {
+      const chunk = await file.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (!chunk.bytesRead) break;
+      bytesRead += chunk.bytesRead;
+    }
+    if (!installedOnly && bytesRead > maxBytes) throw new InvalidSkillError("Skill is too large");
+    return { content: decoder.decode(buffer.subarray(0, bytesRead), { stream: installedOnly }), sourceFile: filePath };
   } finally {
     await file.close();
+  }
+}
+
+/** Read only a manifest under the owner's installed roots or the packaged skill root. */
+export async function readInstalledSkillManifest(options: { skillsRoot?: string; homePath: string }, path: string): Promise<string | null> {
+  const sources = await sourcesFor(options);
+  const source = sources.find(candidate => !candidate.bundled && path.startsWith(`${candidate.label}/`));
+  if (!source) return null;
+
+  try {
+    const { content } = await readCandidate(join(source.dir, path.slice(source.label.length + 1)), sources, { projectManifest: true });
+    return content;
+  } catch (error: unknown) {
+    if (error instanceof InvalidSkillError || error instanceof GalleryFileError || missing(error)
+      || isFsError(error, "ELOOP") || isFsError(error, "ERR_ENCODING_INVALID_ENCODED_DATA")) return null;
+    throw error;
   }
 }
 
@@ -117,7 +172,7 @@ export async function discoverRecipeSkills(options: { skillsRoot: string; homePa
       const path = source.kind === "flat-scan" ? join(source.dir, entry) : join(source.dir, entry, "SKILL.md");
       let skill: Skill;
       try {
-        const candidate = await readCandidate(path, sources, installedOnly);
+        const candidate = await readCandidate(path, sources, { installedOnly });
         skill = parseSkill(candidate.content, candidate.sourceFile, source, installedOnly);
       } catch (error: unknown) {
         if (!missing(error)) console.warn("[chat-agents] Skipped unavailable skill:", source.label, entry,

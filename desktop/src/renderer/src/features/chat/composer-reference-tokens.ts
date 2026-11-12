@@ -18,6 +18,7 @@ export type ComposerReferenceToken =
 export interface SharedChatComposerSubmission {
   text: string;
   agentPrompt: string;
+  projectSkill?: { projectId: string; isCurrent(): boolean; onAccepted(): void };
   invocations: CanonicalChatInvocation[];
   resources: CanonicalChatResourceReference[];
 }

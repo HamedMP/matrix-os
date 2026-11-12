@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { XpToolMenu, type XpMenuItem } from "./XpToolMenu";
 import {
@@ -15,13 +15,14 @@ import {
 interface XpToolbarProps {
   taskPaneOpen: boolean;
   onToggleTaskPane: () => void;
+  creationMenu?: ReactNode;
 }
 
 function pathLabel(path: string): string {
   return path === "" ? "Home" : path;
 }
 
-export function XpToolbar({ taskPaneOpen, onToggleTaskPane }: XpToolbarProps) {
+export function XpToolbar({ taskPaneOpen, onToggleTaskPane, creationMenu }: XpToolbarProps) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const history = useFileBrowser((s) => s.history);
   const historyIndex = useFileBrowser((s) => s.historyIndex);
@@ -167,6 +168,7 @@ export function XpToolbar({ taskPaneOpen, onToggleTaskPane }: XpToolbarProps) {
       <span className="xp-tool-separator" />
 
       <div className="xp-tool-group">
+        {creationMenu}
         <button
           type="button"
           className="xp-tool-btn"
