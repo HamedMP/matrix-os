@@ -16,3 +16,14 @@ export function createUnavailableIntegrationRoutes() {
   });
   return app;
 }
+
+/** Mount only behind the normal machine-bearer and signed-delegation guard. */
+export function createUnavailableInternalIntegrationRoutes() {
+  const app = new Hono();
+  app.use('*', bodyLimit({ maxSize: 64 * 1024 }));
+  app.all('*', (c) => {
+    c.header('Cache-Control', 'no-store');
+    return c.json({ error: 'integrations_unavailable' }, 503);
+  });
+  return app;
+}

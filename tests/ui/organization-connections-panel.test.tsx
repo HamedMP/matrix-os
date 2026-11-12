@@ -81,6 +81,18 @@ describe("Organization → Connections panel", () => {
     expect(api.put).toHaveBeenCalledWith("/api/orgs/org_acme1/mcp/servers/linear", { mode: "block" });
   });
 
+  it.each(["recommend", "block", "allow"])("shows the saved blocked tool independently of the %s server mode", async (mode) => {
+    const { withClient } = fakeApi({ connections: page({ servers: [{
+      serverDefId: "linear", mode, defaultToolPolicy: "allow",
+      toolOverrides: { delete_issue: "blocked", list_issues: "allow" }, updatedAt: "2026-11-01T00:00:00.000Z",
+    }] }) });
+    render(<OrganizationConnectionsPanel organizationName="Acme" withClient={withClient} />);
+    const overrides = await screen.findByRole("list", { name: "Tool overrides for linear" });
+    expect(overrides.textContent).toContain("delete_issueBlocked");
+    expect(overrides.textContent).toContain("list_issuesAllowed");
+    expect(screen.getByText("Tools allowed by default")).toBeTruthy();
+  });
+
   // Fault: provider, path, or database text from a failed request reaches the admin.
   it("shows only allowlisted copy when a change fails and keeps the current view", async () => {
     const { withClient } = fakeApi({ mutation: async () => { throw new Error("pg: relation org_mcp_member_blocks does not exist at /srv/db"); } });

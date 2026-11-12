@@ -288,10 +288,9 @@ function SettingsFrame({
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
   } else if (justOpened) {
-    const openSection = showBillingSection && billingActive === false
-      ? "billing"
-      : resolvedDefaultSection;
-    if (activeSection !== openSection) setActiveSection(openSection);
+    // BillingGate uses lockedSection for setup admission. Ordinary Settings
+    // links must keep their destination, including owner write approvals.
+    if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }

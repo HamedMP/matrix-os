@@ -6,6 +6,8 @@ import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import {
   hasNewConnectionForService,
   shouldLogIntegrationWarning,
+  IntegrationsUnavailableError,
+  INTEGRATIONS_UNAVAILABLE_NOTICE,
   type ConnectedService,
 } from "./integrations-helpers";
 import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
@@ -26,6 +28,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   const [connected, setConnected] = useState<ConnectedService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [appsUnavailable, setAppsUnavailable] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
@@ -46,14 +49,20 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     try {
       const readJson = async (url: string) => {
         const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!response.ok) throw new Error("Integrations unavailable");
+        if (!response.ok) {
+          const body = response.status === 503 ? await response.json() : null;
+          if (body?.error === "integrations_unavailable") throw new IntegrationsUnavailableError();
+          throw new Error("Integrations unavailable");
+        }
         return response.json();
       };
       const [availResult, connResult] = await Promise.allSettled([
         readJson(`${GATEWAY}/api/integrations/available`),
         readJson(`${GATEWAY}/api/integrations`),
       ]);
-      setError(availResult.status === "rejected" || connResult.status === "rejected" ? "Failed to load integrations" : null);
+      const results = [availResult, connResult];
+      setAppsUnavailable(results.some(result => result.status === "rejected" && result.reason instanceof IntegrationsUnavailableError));
+      setError(results.some(result => result.status === "rejected" && !(result.reason instanceof IntegrationsUnavailableError)) ? "Failed to load integrations" : null);
       for (const result of [availResult, connResult]) {
         if (result.status === "rejected") console.warn("[integrations] Load failed", { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" });
       }
@@ -109,6 +118,10 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     setError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `refreshing` on every path; the code is correct and the finalizer must run whether the sync resolves, rejects, or throws.
     try {
+      if (appsUnavailable) {
+        await loadData();
+        return;
+      }
       const res = await fetch(`${GATEWAY}/api/integrations/sync`, {
         method: "POST",
         signal: AbortSignal.timeout(30_000),
@@ -421,6 +434,11 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
                 <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                   {error}
                 </div>
+              ) : null}
+              {!loading && appsUnavailable ? (
+                <p role="status" className="rounded-lg border border-border/60 px-4 py-3 text-sm text-muted-foreground">
+                  {INTEGRATIONS_UNAVAILABLE_NOTICE}
+                </p>
               ) : null}
 
               {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
