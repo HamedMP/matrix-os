@@ -15,6 +15,7 @@ it("asks before stopping an active terminal and keeps it running when canceled",
   const tabId = `tt_${"b".repeat(32)}`;
   const request = vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === "DELETE") return new Response("{}", { status: 200 });
+    if (_url.endsWith("/api/terminal/workspaces")) return Response.json({ workspaces: [{ id: workspaceId, tabs: [{ id: tabId }] }] });
     return new Response(JSON.stringify({ entries: [] }), { status: 200 });
   });
   vi.stubGlobal("fetch", request);
@@ -22,10 +23,10 @@ it("asks before stopping an active terminal and keeps it running when canceled",
     filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[`${workspaceId}:${tabId}`]}
     sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
   fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
-  expect(screen.getByText("Connected terminal")).toBeTruthy();
+  expect(await screen.findByText("Connected terminal")).toBeTruthy();
   expect(terminalProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_one" }));
   fireEvent.click(screen.getByRole("button", { name: "Close terminal tab" }));
-  expect(screen.getByRole("alertdialog", { name: "Stop this terminal?" })).toBeTruthy();
+  expect(screen.getByRole("alertdialog", { name: "Stop this terminal?" }).getAttribute("data-slot")).toBe("dialog-content");
   expect(request.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByText("Connected terminal")).toBeTruthy();
@@ -37,6 +38,21 @@ it("asks before stopping an active terminal and keeps it running when canceled",
   ));
   await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Files" })).toBeTruthy());
   fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+  expect(screen.queryByText("Connected terminal")).toBeNull();
+  expect(screen.getByRole("button", { name: "New terminal" })).toBeTruthy();
+});
+
+it("ignores a saved terminal binding after its runtime tab was deleted", async () => {
+  const workspaceId = `tws_${"a".repeat(32)}`;
+  const tabId = `tt_${"b".repeat(32)}`;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/api/terminal/workspaces")
+    ? Response.json({ workspaces: [{ id: workspaceId, tabs: [] }] })
+    : Response.json({ entries: [] })));
+  render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
+    filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[`${workspaceId}:${tabId}`]}
+    sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("http://localhost:4000/api/terminal/workspaces", expect.anything()));
   expect(screen.queryByText("Connected terminal")).toBeNull();
   expect(screen.getByRole("button", { name: "New terminal" })).toBeTruthy();
 });
