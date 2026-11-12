@@ -37,6 +37,7 @@ export function WorkRailChatRow({
   onToggleRead,
   readPending = false,
   onPin,
+  onArchive,
   onDelete,
   moveItems,
   moving = false,
@@ -57,6 +58,7 @@ export function WorkRailChatRow({
   onToggleRead?: () => void;
   readPending?: boolean;
   onPin: () => void;
+  onArchive?: () => void;
   onDelete: () => void;
   moveItems?: {label: string; disabled?: boolean; onSelect: () => void}[];
   moving?: boolean;
@@ -84,7 +86,8 @@ export function WorkRailChatRow({
     { label: pinned ? "Unpin" : "Pin", disabled: pinning, onSelect: onPin },
     { label: "Rename", disabled: renameDisabled, onSelect: () => scheduleRename(20) },
     ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
-    { label: "Delete", danger: true, onSelect: onDelete },
+    ...(onArchive ? [{ label: "Archive", disabled: Boolean(record.activeRun), onSelect: onArchive }] : []),
+    { label: "Delete", danger: true, disabled: Boolean(record.activeRun), onSelect: onDelete },
   ];
   return (
     <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
