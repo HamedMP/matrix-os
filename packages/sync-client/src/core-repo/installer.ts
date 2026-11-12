@@ -64,6 +64,8 @@ const KNOWN_SKILL_TARGETS = new Set(["matrix", "claude", "codex", "hermes", "age
 const MAX_SKILL_TARGETS = 16;
 const TARGETS_FILE = ".matrix-core-targets.json";
 const TARGETS_TEMP_PREFIX = ".targets-";
+/** Temporary links created by `pointAt` before they are renamed over `current`/`previous`. */
+const POINTER_TEMP_PATTERN = /^\.(current|previous)-\d+-\d+$/;
 
 /**
  * De-duplicated targets from a `MATRIX_SKILL_TARGETS`-style list. Unset means
@@ -171,7 +173,15 @@ async function currentMeta(orgRoot: string): Promise<{ commit: string; slug: str
 async function pointAt(orgRoot: string, name: "current" | "previous", target: string): Promise<void> {
   const temporary = join(orgRoot, `.${name}-${process.pid}-${Date.now()}`);
   await symlink(target, temporary);
-  await rename(temporary, join(orgRoot, name));
+  try {
+    await rename(temporary, join(orgRoot, name));
+  } catch (error: unknown) {
+    // Never leave the temporary link behind; a crash here is covered by sweepStaging.
+    await rm(temporary, { force: true }).catch((cleanupError: unknown) => {
+      console.warn(`[core-repo] could not remove temporary link: ${cleanupError instanceof Error ? cleanupError.name : "unknown"}`);
+    });
+    throw error;
+  }
 }
 
 function namespacedSkill(text: string, name: string): string {
@@ -229,8 +239,14 @@ async function buildSkills(release: string, files: readonly string[], namespace:
 async function sweepStaging(orgRoot: string, now: number): Promise<void> {
   for (const entry of await readdir(orgRoot)) {
     const staging = entry.startsWith(STAGING_PREFIX);
-    if (!staging && !entry.startsWith(TARGETS_TEMP_PREFIX)) continue;
     const path = join(orgRoot, entry);
+    if (POINTER_TEMP_PATTERN.test(entry)) {
+      // Abandoned `pointAt` links: only symlinks, only stale ones; the live `current`/`previous` never match.
+      const link = await lstat(path);
+      if (link.isSymbolicLink() && now - link.mtimeMs > STAGING_TTL_MS) await rm(path, { force: true });
+      continue;
+    }
+    if (!staging && !entry.startsWith(TARGETS_TEMP_PREFIX)) continue;
     const info = await lstat(path);
     if (info.isSymbolicLink() || now - info.mtimeMs <= STAGING_TTL_MS) continue;
     // Staging leftovers are directories; targets temp files are regular files. Nothing else is touched.

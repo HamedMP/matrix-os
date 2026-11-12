@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, symlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lutimesSync, readlinkSync, symlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -221,6 +221,24 @@ describe("Matrix Core repo installer", () => {
     const results = await installCoreRepo({ root, targets: ["claude"], transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
     expect(results).toEqual([{ orgId: "org_acme1", status: "failed" }]);
     expect(readdirSync(orgRoot).filter(entry => entry.startsWith(".targets-")).sort()).toEqual([".targets-fresh", ".targets-link"]);
+  });
+
+  // Fault: a crash between creating and renaming the `current`/`previous` link leaves `.current-*` links forever.
+  it("sweeps abandoned current/previous temp links without touching the live links", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    mkdirSync(orgRoot, { recursive: true });
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    symlinkSync(join(root, "gone"), join(orgRoot, ".current-11-1"));
+    lutimesSync(join(orgRoot, ".current-11-1"), old, old);
+    symlinkSync(join(root, "gone"), join(orgRoot, ".previous-12-1"));
+    lutimesSync(join(orgRoot, ".previous-12-1"), old, old);
+    symlinkSync(join(root, "gone"), join(orgRoot, ".current-13-1"));
+    const results = await installCoreRepo({ root, targets: ["claude"], transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    expect(results).toEqual([expect.objectContaining({ orgId: "org_acme1", status: "installed" })]);
+    expect(readdirSync(orgRoot).filter(entry => /^\.(current|previous)-/.test(entry))).toEqual([".current-13-1"]);
+    expect(existsSync(join(orgRoot, "current"))).toBe(true);
   });
 
   // Fault: two overlapping runs (timer + manual) interleave renames.
