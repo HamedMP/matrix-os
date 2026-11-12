@@ -14,7 +14,7 @@
  * personal skills. Hooks and scripts are installed but not activated.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -190,7 +190,11 @@ async function buildSkills(release: string, files: readonly string[], namespace:
       const relative = file.slice(prefix.length);
       await mkdir(join(target, relative, ".."), { recursive: true });
       const content = await readFile(join(sourceDir, relative));
-      await writeFile(join(target, relative), relative === "SKILL.md" ? namespacedSkill(content.toString("utf8"), name) : content, { flag: "wx" });
+      // Keep a helper's executable bit; never carry setuid, setgid, sticky, or group/world write.
+      const mode = (await stat(join(sourceDir, relative))).mode & 0o111 ? 0o755 : 0o644;
+      const destination = join(target, relative);
+      await writeFile(destination, relative === "SKILL.md" ? namespacedSkill(content.toString("utf8"), name) : content, { flag: "wx", mode });
+      await chmod(destination, mode);
     }
   }
   return rejected;

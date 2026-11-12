@@ -14,7 +14,7 @@ import { inspectCoreRepoArchive } from "../../packages/sync-client/src/core-repo
 import { CoreRepoInstallError, installCoreRepo, type CoreRepoTransport } from "../../packages/sync-client/src/core-repo/installer.js";
 import { coreSyncTimerFiles } from "../../packages/sync-client/src/cli/commands/core.js";
 
-interface RawEntry { name: string; type?: "0" | "1" | "2" | "5"; content?: string; link?: string }
+interface RawEntry { name: string; type?: "0" | "1" | "2" | "5"; content?: string; link?: string; mode?: string }
 
 /** A minimal ustar writer, so hostile names and types reach the reader verbatim. */
 function rawTar(entries: RawEntry[]): Uint8Array {
@@ -23,7 +23,7 @@ function rawTar(entries: RawEntry[]): Uint8Array {
     const body = Buffer.from(entry.content ?? "");
     const header = Buffer.alloc(512);
     header.write(entry.name, 0, 100);
-    header.write("0000644\0", 100);
+    header.write(`${entry.mode ?? "0000644"}\0`, 100);
     header.write("0000000\0", 108);
     header.write("0000000\0", 116);
     header.write(`${body.length.toString(8).padStart(11, "0")}\0`, 124);
@@ -166,6 +166,23 @@ describe("Matrix Core repo installer", () => {
     const [result] = await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!, slug)], bytes), runSkillSync: async () => {} });
     expect(result).toEqual({ orgId: "org_acme1", status: "installed", commit: a, rejectedSkills: [long, "bad_name"] });
     expect(readdirSync(join(root, "org_acme1", "current", ".matrix-skills"))).toEqual([`org-${slug}-ok`]);
+  });
+
+  // Fault: a skill's helper script loses its executable bit, or a setuid/setgid bit reaches the installed copy.
+  it("keeps helpers executable in installed skills and drops special mode bits", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, rawTar([{ name: "root/", type: "5" },
+      { name: "root/skills/deploy/SKILL.md", content: skill("deploy") },
+      { name: "root/skills/deploy/run.sh", content: "#!/bin/sh\necho ok\n", mode: "0000755" },
+      { name: "root/skills/deploy/setuid.sh", content: "#!/bin/sh\n", mode: "0006755" },
+      { name: "root/skills/deploy/notes.txt", content: "plain" }])]]);
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    const skillDir = join(root, "org_acme1", "current", ".matrix-skills", "org-acme-deploy");
+    const mode = (name: string) => statSync(join(skillDir, name)).mode & 0o7777;
+    expect(mode("run.sh")).toBe(0o755);
+    expect(mode("setuid.sh")).toBe(0o755);
+    expect(mode("notes.txt")).toBe(0o644);
+    expect(mode("SKILL.md")).toBe(0o644);
   });
 
   // Fault: two overlapping runs (timer + manual) interleave renames.
