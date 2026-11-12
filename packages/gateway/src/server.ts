@@ -264,6 +264,7 @@ import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
 import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
@@ -513,7 +514,7 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
-    enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
+    enabled: isBrowserRuntimeEnabled(process.env), ownerId: terminalRuntimeOwnerId,
     clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]

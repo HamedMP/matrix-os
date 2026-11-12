@@ -64,7 +64,7 @@ export default function EmbedHost({
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
-  const publishingChrome = useMemo(() => slug && visible ? ({
+  const publishingChrome = useMemo(() => slug && visible && !product ? ({
     rightActions: (
       <DesktopAppSiteButton
         key={`${runtimeSlot}:${authGeneration}:${slug}`}
@@ -72,7 +72,7 @@ export default function EmbedHost({
         portalContainer={portalContainer}
       />
     ),
-  }) : null, [authGeneration, portalContainer, runtimeSlot, slug, visible]);
+  }) : null, [authGeneration, portalContainer, product, runtimeSlot, slug, visible]);
 
   useLayoutEffect(() => {
     if (!surfaceChromeHost) return;
