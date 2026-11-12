@@ -86,6 +86,23 @@ export function terminalAttentionChanges(
   return changes;
 }
 
+/**
+ * Open alerts the latest facts still support (same live status), refreshed with the
+ * tab's current name and message: an agent can replace its request while blocked.
+ */
+export function retainTerminalAttention(
+  alerts: readonly TerminalAttention[],
+  next: ReadonlyMap<string, TerminalTabFacts>,
+): TerminalAttention[] {
+  return alerts.flatMap((alert) => {
+    const facts = next.get(alert.key);
+    if (facts?.state !== "live" || facts.agentStatus !== alert.kind) return [];
+    const { message: _message, ...rest } = alert;
+    void _message;
+    return [{ ...rest, name: facts.name, ...(facts.statusMessage ? { message: facts.statusMessage } : {}) }];
+  });
+}
+
 /** Agents in Herdr's navigation order: needs you, done, working, idle; then by name. */
 export function orderTerminalAgents(facts: Iterable<TerminalTabFacts>): TerminalTabFacts[] {
   return [...facts]

@@ -80,6 +80,22 @@ describe("terminal attention notifier", () => {
 
   // Fault detected (sixth review of #3299): a warning raised before a reconnect stayed up
   // although the agent had recovered meanwhile.
+  // Fault detected (review of #3299): an open alert kept its first request after the
+  // agent replaced it with another one, live and after a reconnect.
+  it("shows an open alert's latest request and name", () => {
+    render(<TerminalAttentionNotifier />);
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("blocked", "Allow edit?") }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: facts("blocked", "Run tests?") }); });
+    expect(screen.getByRole("alert").textContent).toContain("review needs you: Run tests?");
+
+    act(() => { useTerminalAgentEvents.setState({ connected: false }); });
+    const renamed = facts("blocked", "Push branch?");
+    renamed[key] = { ...renamed[key]!, name: "reviewer" };
+    act(() => { useTerminalAgentEvents.setState({ connected: true, tabs: renamed }); });
+    expect(screen.getByRole("alert").textContent).toContain("reviewer needs you: Push branch?");
+  });
+
   it("clears alerts the snapshot after a reconnect no longer supports", () => {
     render(<TerminalAttentionNotifier />);
     act(() => { useTerminalAgentEvents.setState({ connected: true, tabs: facts("working") }); });
