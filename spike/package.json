@@ -1,7 +1,7 @@
 {
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest",
-    "zod": "^4.0"
+    "@anthropic-ai/claude-agent-sdk": "0.2.39",
+    "zod": "^4.6.7"
   },
   "name": "matrix-os-spike",
   "private": true,

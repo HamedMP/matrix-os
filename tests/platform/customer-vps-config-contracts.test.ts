@@ -117,7 +117,7 @@ describe('platform/customer-vps', () => {
     expect(isPreviewMachine({ handle: 'alice', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(false);
   });
   it('accepts only supported Hetzner locations at the provisioning boundary', () => {
-    for (const location of ['fsn1', 'nbg1', 'ash', 'hil']) {
+    for (const location of ['fsn1', 'nbg1', 'hel1', 'ash', 'hil']) {
       expect(ProvisionRequestSchema.safeParse({
         clerkUserId: 'user_123',
         handle: 'alice',

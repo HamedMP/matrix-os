@@ -717,6 +717,29 @@ dashboards.
   close; they are never referenced by channel pointers. Keep any version that an
   active Private Preview still has confirmed.
 
+### Isolated execution origin
+
+GitHub attaches `workflow_dispatch` and scheduled checks to the dispatched
+ref's commit. So that preview deploys and the daily reaper never mark `main`
+red, `preview-vps.yml` can run them on a separate commit:
+
+- `MATRIX_CI_ISOLATED_EXECUTION=true` makes `main` only route scheduled and
+  `main`-dispatched preview requests to `ci-execution/<MATRIX_CI_CONTROLLER_SHA>`.
+- That branch holds one empty child commit of the pinned, reviewed `main`
+  commit: one parent (the pin) and the same tree. Protect `ci-execution/*`
+  against creation, updates and deletion by anyone but the operator.
+- `scripts/ci/execution-origin.mjs`, loaded from the pin, verifies the ref,
+  parent, tree and that the pin is still on `main` before any preview
+  credential is used.
+- With the variable false or unset, the workflow runs from `main` as before
+  (`legacy` mode). Pull-request previews always run on the PR event.
+
+To move the pin: create the child commit and protected branch for the new
+reviewed `main` commit, read back its parent and tree, wait for running
+preview jobs to finish, then update `MATRIX_CI_CONTROLLER_SHA`. Keep both
+variables while isolated execution is on; they are not part of the retired
+fast-ci system.
+
 ## Collaboration preview pair
 
 For two test-owned computers and matching isolated Electron apps from an unmerged

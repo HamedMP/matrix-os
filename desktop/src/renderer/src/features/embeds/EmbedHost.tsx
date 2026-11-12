@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -6,6 +6,7 @@ import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
@@ -29,6 +30,7 @@ type EmbedHostProps = EmbedHostCommonProps & (
   | { kind: "browser"; url: string }
 );
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- Native embed lifecycle, fallback states, and window chrome share one host and must stay synchronized.
 export default function EmbedHost({
   ...props
 }: EmbedHostProps) {
@@ -51,15 +53,32 @@ export default function EmbedHost({
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
   const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  const surfaceChromeHost = useSurfaceChromeHost();
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
   const lastRefreshRequestRef = useRef(refreshRequest);
-  activeRef.current = active;
+  useLayoutEffect(() => { activeRef.current = active; }, [active]);
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
+  const publishingChrome = useMemo(() => slug && visible ? ({
+    rightActions: (
+      <DesktopAppSiteButton
+        key={`${runtimeSlot}:${authGeneration}:${slug}`}
+        appSlug={slug}
+        portalContainer={portalContainer}
+      />
+    ),
+  }) : null, [authGeneration, portalContainer, runtimeSlot, slug, visible]);
+
+  useLayoutEffect(() => {
+    if (!surfaceChromeHost) return;
+    surfaceChromeHost.setChrome(publishingChrome);
+    return () => surfaceChromeHost.setChrome(null);
+  }, [publishingChrome, surfaceChromeHost]);
 
   const reportBounds = useCallback((): void => {
     const id = embedIdRef.current;
@@ -215,69 +234,68 @@ export default function EmbedHost({
   }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {slug && visible ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
-    <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
-      {snapshotDataUrl ? (
-        <img
-          data-testid="embed-retained-frame"
-          src={snapshotDataUrl}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute inset-0 size-full object-fill"
-        />
-      ) : null}
-      {state === "loading" ? (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
-            Loading…
-          </span>
-        </div>
-      ) : null}
-      {state === "auth-required" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            This surface needs you to sign in again.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => {
-              const id = embedIdRef.current;
-              if (id) {
+    <div ref={setPortalContainer} data-testid="created-app-surface" className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
+        {snapshotDataUrl ? (
+          <img
+            data-testid="embed-retained-frame"
+            src={snapshotDataUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none absolute inset-0 size-full object-fill"
+          />
+        ) : null}
+        {state === "loading" ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
+              Loading…
+            </span>
+          </div>
+        ) : null}
+        {state === "auth-required" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              This surface needs you to sign in again.
+            </p>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const id = embedIdRef.current;
+                if (id) {
+                  setState("loading");
+                  void invoke("embed:retry-auth", { embedId: id })
+                    .then((result) => {
+                      if (embedIdRef.current !== id) return;
+                      if (result.ok) reportBounds();
+                      else setState((current) => current === "loading" ? "auth-required" : current);
+                    })
+                    .catch(() => {
+                      if (embedIdRef.current === id) setState("auth-required");
+                    });
+                }
+              }}
+            >
+              Retry sign-in
+            </Button>
+          </div>
+        ) : null}
+        {state === "failed" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
+            </span>
+            <Button
+              variant="primary"
+              onClick={() => {
                 setState("loading");
-                void invoke("embed:retry-auth", { embedId: id })
-                  .then((result) => {
-                    if (embedIdRef.current !== id) return;
-                    if (result.ok) reportBounds();
-                    else setState((current) => current === "loading" ? "auth-required" : current);
-                  })
-                  .catch(() => {
-                    if (embedIdRef.current === id) setState("auth-required");
-                  });
-              }
-            }}
-          >
-            Retry sign-in
-          </Button>
-        </div>
-      ) : null}
-      {state === "failed" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
-          </span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setState("loading");
-              setRetryRevision((revision) => revision + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      ) : null}
+                setRetryRevision((revision) => revision + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : null}
       {state === "host-offline" || state === "access-ended" || state === "needs-recheck" ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--bg-app)]">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
@@ -301,7 +319,7 @@ export default function EmbedHost({
           }}>Try again</Button> : null}
         </div>
       ) : null}
-    </div>
+      </div>
     </div>
   );
 }
