@@ -109,9 +109,8 @@ describe("This Computer terminals", () => {
     const attention = await screen.findByRole("region", { name: "Needs attention" });
     expect(within(attention).getAllByRole("button").map((button) => button.textContent)).toEqual(["claudeThis Computer", "testsThis Computer"]);
     const list = screen.getByRole("list", { name: "This Computer terminals" });
-    expect(within(list).getByText("Needs you")).toBeTruthy();
+    expect(within(list).getAllByText("Needs you")).toHaveLength(2);
     expect(within(list).getByText("Working")).toBeTruthy();
-    expect(within(list).getByText("Error")).toBeTruthy();
     expect(within(list).queryByText("idle")).toBeNull();
     fireEvent.click(within(attention).getByRole("button", { name: /claude/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");

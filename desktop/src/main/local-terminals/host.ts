@@ -9,6 +9,7 @@ import {
   LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
   type LocalTerminalAgent,
 } from "../../shared/local-terminals";
+import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket, type HcStream } from "./hc-client";
 
@@ -37,10 +38,10 @@ const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
   state: z.string().max(32),
   // Titles and status come from the program in the terminal: anything goes in,
-  // only a bounded printable title and a known state come out.
+  // only bounded printable text and a known state come out.
   title: z.string().nullable().optional().catch(null),
   name: z.string().nullable().optional().catch(null),
-  status: z.object({ state: z.string().max(32) }).nullable().optional().catch(null),
+  status: z.object({ state: z.string().max(32), msg: z.string().optional().catch(undefined) }).nullable().optional().catch(null),
   labels: z.record(z.string(), z.string()).nullable().optional().catch(null),
 });
 /** The label a rename sets; it wins over the program's own title. */
@@ -72,6 +73,10 @@ export type LocalTerminalHostStatus = "ready" | "not-installed" | "unavailable" 
 
 export class LocalRuntimeMissingError extends Error {
   constructor() { super("local terminal runtime is not installed"); this.name = "LocalRuntimeMissingError"; }
+}
+
+function safeStatusMessage(value: string): string {
+  return value.replace(UNSAFE_TITLE_CHARS, "").trim().slice(0, 200);
 }
 
 export function safeTerminalTitle(...candidates: Array<string | null | undefined>): string {
@@ -172,6 +177,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     await privateDir(options.dataDir);
     await privateDir(join(options.dataDir, "state"));
     await privateDir(join(options.dataDir, "config"));
+    await privateDir(join(options.dataDir, "bin"));
+    await installLocalStatusReporter(options.dataDir);
     return binaryPath;
   }
 
@@ -234,6 +241,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         id: terminal.data.address,
         title: safeTerminalTitle(terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name),
         status: state.success ? state.data : null,
+        ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
       });
     }
     return terminals;
@@ -270,7 +278,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         : ["/usr/bin/env", ...unset, options.shell, "-l"],
       cwd,
       ...(launch.agent ? { labels: { "matrix.agent": launch.agent } } : {}),
-      env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
+      env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS",
+        PATH: `${join(options.dataDir, "bin")}:${options.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"}` },
       size,
       no_parent: true,
       no_notify: true,

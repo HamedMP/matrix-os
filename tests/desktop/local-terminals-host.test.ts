@@ -23,6 +23,20 @@ describe("local shell environment", () => {
   });
 });
 
+describe("local status reporter", () => {
+  it("installs a private executable reporter and emits herdr's actual OSC format", async () => {
+    const { installLocalStatusReporter } = await import("@desktop/main/local-terminals/status-reporter");
+    const root = scratchDir("mx-status-");
+    const bin = await installLocalStatusReporter(root);
+    const executable = join(bin, "matrix-status");
+    expect(statSync(executable).mode & 0o777).toBe(0o700);
+    expect(execFileSync(executable, ["blocked", "approve v2?"], { encoding: "utf8" }))
+      .toBe("\x1b]7501;state=blocked:msg=YXBwcm92ZSB2Mj8=\x1b\\");
+    expect(() => execFileSync(executable, ["bogus"], { stdio: "ignore" })).toThrow();
+    expect(() => execFileSync(executable, ["blocked", "x".repeat(201)], { stdio: "ignore" })).toThrow();
+  });
+});
+
 describe("local terminal shell", () => {
   it("uses SHELL, then the account's login shell, and /bin/sh only as a last resort", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -212,7 +226,7 @@ describe("local terminal host against a scripted core", () => {
       expect(argv.join(" ")).toContain(`-u ${name}`);
     }
     expect(argv.slice(-2)).toEqual(["/bin/zsh", "-l"]);
-    expect(Object.keys(runs[0]!.params.env as object).sort()).toEqual(["COLORTERM", "TERM", "TERM_PROGRAM"]);
+    expect(Object.keys(runs[0]!.params.env as object).sort()).toEqual(["COLORTERM", "PATH", "TERM", "TERM_PROGRAM"]);
   });
 
   // Fault detected: an agent started from the window runs a command the renderer
@@ -417,6 +431,16 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     const names = [...text.matchAll(/E:([A-Z_a-z0-9]+)=/g)].map((match) => match[1]!);
     expect(names).toEqual(expect.arrayContaining(["HOME", "PATH", "TERM"]));
     for (const name of names) expect(name, name).not.toMatch(/^(XDG_|HC_|MATRIX_|ELECTRON_|NODE_)/);
+    host.detach(attachId);
+  }, 30_000);
+
+  it("runs matrix-status in the login shell and relays bounded status messages", async () => {
+    const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
+    host.input(attachId, 'matrix-status blocked "approve the migration?"\r', false);
+    await vi.waitFor(async () => expect((await host.list()).find(terminal => terminal.id === terminalId)?.status).toBe("blocked"), { timeout: 10_000 });
+    expect((await host.list()).find(terminal => terminal.id === terminalId)).toMatchObject({ status: "blocked", statusMessage: "approve the migration?" });
+    host.input(attachId, 'matrix-status blocked "approve v2?"\r', false);
+    await vi.waitFor(async () => expect((await host.list()).find(terminal => terminal.id === terminalId)?.statusMessage).toBe("approve v2?"), { timeout: 10_000 });
     host.detach(attachId);
   }, 30_000);
 
