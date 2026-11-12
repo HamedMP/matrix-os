@@ -51,6 +51,7 @@
     "#chat-links": "./src/chat-links.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
+    "#project-agent-context": "./src/project-agent-context.ts",
     "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",

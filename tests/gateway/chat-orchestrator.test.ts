@@ -1,8 +1,11 @@
 import { adapter, catalog, owner, principal } from "./chat-orchestrator-test-support.js";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { KyselyPGlite } from "kysely-pglite";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
+import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import {
   CanonicalChatProviderRegistry,
@@ -1130,33 +1133,32 @@ describe("CanonicalChatOrchestrator", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("starts a fresh Provider session when execution-root provenance changes", async () => {
+  it("resumes a Provider session only within the same resolved Project checkout", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-chat-checkouts-"));
+    const project = { id: "project_matrix", slug: "matrix-os", localPath: join(homePath, "projects", "matrix-os") };
+    const worktree = { id: "wt_abc123def456", projectSlug: project.slug, createdAt: "2026-08-25T09:00:00.000Z",
+      path: join(homePath, "worktrees", project.slug, "wt_abc123def456") };
+    await Promise.all([mkdir(project.localPath, { recursive: true }), mkdir(worktree.path, { recursive: true })]);
+    const projectRoot = await realpath(project.localPath);
+    const worktreeRoot = await realpath(worktree.path);
+    const roots = createChatExecutionRootResolver({
+      homePath,
+      projects: { getProjectById: async () => ({ ok: true, project }), resolveProjectWorkingDirectory: async () => project.localPath },
+      worktrees: { getWorktree: async () => ({ ok: true, worktree }) },
+    });
     await repository.create(owner, {
       id: "chat_changed_root",
       clientRequestId: "req_create_changed_root",
       title: "Changed root",
       projectId: "project_matrix",
     });
-    let fingerprint = "a".repeat(64);
-    const roots: ChatExecutionRootResolver = {
-      resolve: async (_owner, ref) => ({
-        ref,
-        fingerprint,
-        primaryWorkspaceRoot: "/safe/project",
-        projectSlug: "matrix-os",
-      }),
-      revalidate: async (_owner, provenance) => ({
-        ref: provenance.ref,
-        fingerprint: provenance.fingerprint,
-        primaryWorkspaceRoot: "/safe/project",
-        projectSlug: "matrix-os",
-      }),
-    };
-    const start = vi.fn(async function* () {
-      yield { type: "state.updated" as const, state: { sessionId: "native_root" } };
+    type RunInput = Parameters<CanonicalChatProviderAdapter<{ sessionId: string }>["start"]>[0];
+    const start = vi.fn(async function* (input: RunInput) {
+      const sessionId = input.worktreeId ? "native_worktree" : "native_primary";
+      yield { type: "state.updated" as const, state: { sessionId } };
       yield { type: "run.completed" as const, outcome: "completed" as const };
     });
-    const resume = vi.fn(async function* () {
+    const resume = vi.fn(async function* (_input: Parameters<NonNullable<CanonicalChatProviderAdapter["resume"]>>[0]) {
       yield { type: "run.completed" as const, outcome: "completed" as const };
     });
     const orchestrator = new CanonicalChatOrchestrator({
@@ -1166,30 +1168,30 @@ describe("CanonicalChatOrchestrator", () => {
       executionRoots: roots,
     });
 
-    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
-      clientRequestId: "req_changed_root_first",
-      baseRevision: 0,
-      parts: [{ type: "text", text: "first" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
-    await orchestrator.drain();
-    const first = await repository.get(owner, "chat_changed_root");
-    expect(first).not.toBeNull();
-    fingerprint = "b".repeat(64);
-    await orchestrator.admitTurn(principal, owner, "chat_changed_root", {
-      clientRequestId: "req_changed_root_second",
-      baseRevision: first!.chat.revision,
-      parts: [{ type: "text", text: "second" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
-    await orchestrator.drain();
+    try {
+      const chatId = "chat_changed_root";
+      const send = async (turn: string, executionRoot: NonNullable<Parameters<typeof orchestrator.admitTurn>[3]["executionRoot"]>) => {
+        const chat = await repository.get(owner, chatId);
+        if (!chat) throw new Error("Fixture Chat missing");
+        await orchestrator.admitTurn(principal, owner, chatId, {
+          clientRequestId: `req_changed_root_${turn}`, baseRevision: chat.chat.revision,
+          parts: [{ type: "text", text: turn }], selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default", permissionMode: "supervised", executionRoot,
+        });
+        await orchestrator.drain();
+      };
+      const selected = { kind: "worktree" as const, projectId: project.id, worktreeId: worktree.id };
+      await send("primary", { kind: "project", projectId: project.id });
+      await send("switch", selected);
+      await send("resume", selected);
 
-    expect(start).toHaveBeenCalledTimes(2);
-    expect(resume).not.toHaveBeenCalled();
+      expect(start.mock.calls.map(([input]) => input.executionRoot)).toEqual([projectRoot, worktreeRoot]);
+      expect(resume).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        executionRoot: worktreeRoot, worktreeId: worktree.id, resumeState: { sessionId: "native_worktree" },
+      }));
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("aborts an active Run idempotently and does not persist late Provider output", async () => {

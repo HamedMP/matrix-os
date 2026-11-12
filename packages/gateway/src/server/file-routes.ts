@@ -1,9 +1,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import {
+  lstat,
   mkdir as mkdirAsync,
+  realpath,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { ProjectAgentConfigFileSchema, ProjectIdSchema } from "@matrix-os/contracts";
+import { z } from "zod/v4";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -30,6 +34,17 @@ import {
 } from "../collaboration/project-fence.js";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file-mutations.js";
+import { ChatExecutionRootError, type ChatExecutionRootResolver } from "../chat/execution-root.js";
+import { withProjectLock } from "../state-ops.js";
+import { isFsError, pinDirectory } from "../app-gallery/pinned-directory.js";
+import { createProjectAgentConfigFile } from "../project-agent-context.js";
+
+const ProjectConfigTouchSchema = z.strictObject({
+  path: z.string().min(1).max(4096),
+  content: z.string().max(8192).optional(),
+  projectId: ProjectIdSchema,
+  projectFile: ProjectAgentConfigFileSchema,
+});
 
 export interface FileRouteDeps {
   homePath: string;
@@ -37,6 +52,7 @@ export interface FileRouteDeps {
   getPrincipal?: (c: Context) => RequestPrincipal;
   filePreviewService?: FilePreviewService;
   projectPathAdmission?: LegacyProjectPathAdmission;
+  projectExecutionRoots?: ChatExecutionRootResolver | null;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
@@ -97,6 +113,42 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     }
   }
 
+  async function touchProjectConfig(c: Context, body: z.infer<typeof ProjectConfigTouchSchema>): Promise<Response> {
+    const roots = deps.projectExecutionRoots;
+    if (!roots || !deps.getPrincipal) return c.json({ error: "File service unavailable" }, 503);
+    const notFound = () => c.json({ error: "Project file not found" }, 404);
+    try {
+      const owner = { type: "personal" as const, ownerId: deps.getPrincipal(c).userId };
+      const root = await roots.resolve(owner, { kind: "project", projectId: body.projectId });
+      const projectSlug = root.projectSlug;
+      if (!projectSlug) return notFound();
+      const workspacePath = relative(await realpath(homePath), root.primaryWorkspaceRoot);
+      if (!workspacePath || isAbsolute(workspacePath) || workspacePath === ".." || workspacePath.startsWith("../")
+        || body.path !== `${workspacePath}/${body.projectFile}`) return notFound();
+      return await withProjectLock(projectSlug, async () => {
+        if (!resolveWritableFileApiPath(homePath, body.path)) return notFound();
+        const directory = await pinDirectory(root.primaryWorkspaceRoot);
+        try {
+          const identity = await directory.identity();
+          const current = await roots.revalidate(owner, root);
+          if (current.primaryWorkspaceRoot !== root.primaryWorkspaceRoot) return notFound();
+          const checked = await lstat(current.primaryWorkspaceRoot);
+          if (!checked.isDirectory() || checked.dev !== identity.dev || checked.ino !== identity.ino) return notFound();
+          await createProjectAgentConfigFile(directory, body.projectFile, body.content ?? "");
+          return c.json({ ok: true, path: body.path });
+        } finally {
+          await directory.close();
+        }
+      });
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError && error.code !== "validation_unavailable") return notFound();
+      if (["ENOENT", "ENOTDIR", "ELOOP"].some(code => isFsError(error, code))) return notFound();
+      if (isFsError(error, "EEXIST")) return c.json({ error: "File already exists" }, 409);
+      console.warn("[project-config] File creation unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ error: "File service unavailable" }, 503);
+    }
+  }
+
   app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
     const result = await listDirectory(homePath, pathParam);
@@ -153,8 +205,13 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string; content?: string }>(c);
+    const body = await parseJson<{ path: string; content?: string; projectId?: unknown; projectFile?: unknown }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
+    if ("projectId" in body || "projectFile" in body) {
+      const scoped = ProjectConfigTouchSchema.safeParse(body);
+      if (!scoped.success) return c.json({ error: "Invalid project file" }, 400);
+      return withProjectFileAdmission(c, [scoped.data.path], () => touchProjectConfig(c, scoped.data));
+    }
     return withProjectFileAdmission(c, [body.path], async () => {
       const result = await fileTouch(homePath, body.path, body.content);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
