@@ -11,23 +11,23 @@ const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 const owner = { type: "personal" as const, ownerId: "owner_codex_core" };
 
-async function fixture(createTabFails = false) {
+async function fixture(createTabFails = false, clock = { now: 0 }) {
   const homePath = await mkdtemp("/tmp/codex-core-mcp-session-"); homes.push(homePath);
-  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId, now: () => clock.now });
   const terminalRuntime = {
     ensureWorkspace: vi.fn(async () => ({ id: "tws_00000000000000000000000000000001" })),
     createTab: vi.fn(async () => {
       if (createTabFails) throw new Error("terminal unavailable");
       return { id: "tt_00000000000000000000000000000001" };
     }),
-    terminateTab: vi.fn(), writeInput: vi.fn(), listWorkspaces: vi.fn(async () => []),
+    terminateTab: vi.fn(async () => undefined), writeInput: vi.fn(), listWorkspaces: vi.fn(async () => []),
   };
   const manager = createAgentSessionManager({ homePath, terminalRuntime,
     agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: "/tmp/synthetic-codex" }),
     worktreeManager: createWorktreeManager({ homePath, runCommand: vi.fn() }), idGenerator: () => "sess_core_fixture",
     issueMatrixCoreMcp: ({ ownerId, sessionId, readOnly }) => {
       const grant = registry.issue({ owner: { type: "personal", ownerId }, runId: sessionId, scope: readOnly ? "discovery" : "call" });
-      return grant ? { token: grant.token, scope: readOnly ? "discovery" : "call", revoke: grant.revoke } : null;
+      return grant ? { token: grant.token, scope: readOnly ? "discovery" : "call", revoke: grant.revoke, renew: grant.renew! } : null;
     } });
   return { manager, registry, terminalRuntime };
 }
@@ -86,4 +86,57 @@ it("revokes live Core bearers when the session manager shuts down", async () => 
     f.manager.shutdown();
     expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBeNull();
   } finally { f.registry.close(); }
+});
+
+it("keeps a live Codex session's Core bearer valid past the 35-minute lifetime by renewing it", async () => {
+  // Fault (Greptile P1): the bearer is fixed in the Codex process env at spawn, so a
+  // session that outlives 35 minutes would get unauthorized Core calls mid-session.
+  const clock = { now: 0 };
+  const f = await fixture(false, clock);
+  try {
+    await f.manager.startSession({ kind: "agent", agent: "codex", ownerId: owner.ownerId, prompt: "fixture only",
+      sandbox: { enabled: true, mode: "workspace-write" } });
+    const token = tokenFrom(f.terminalRuntime.createTab.mock.calls[0]![1].command as string[]);
+    for (let minute = 0; minute < 120; minute += 10) {
+      clock.now = minute * 60_000;
+      await f.manager.renewCoreMcpSessions();
+      expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBe(owner.ownerId);
+    }
+  } finally { f.manager.shutdown(); f.registry.close(); }
+});
+
+it("does not renew, and revokes, a bearer whose session record is no longer active", async () => {
+  const clock = { now: 0 };
+  const f = await fixture(false, clock);
+  try {
+    await f.manager.startSession({ kind: "agent", agent: "codex", ownerId: owner.ownerId, prompt: "fixture only",
+      sandbox: { enabled: true, mode: "workspace-write" } });
+    const token = tokenFrom(f.terminalRuntime.createTab.mock.calls[0]![1].command as string[]);
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { readdir } = await import("node:fs/promises");
+    const home = homes.at(-1)!;
+    const sessionsDir = join(home, "system", "sessions");
+    const files = (await readdir(sessionsDir)).filter(name => name.includes("sess_core_fixture"));
+    const record = JSON.parse(await readFile(join(sessionsDir, files[0]!), "utf8"));
+    await writeFile(join(sessionsDir, files[0]!), JSON.stringify({ ...record, runtime: { ...record.runtime, status: "exited" } }));
+    await f.manager.renewCoreMcpSessions();
+    expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBeNull();
+  } finally { f.manager.shutdown(); f.registry.close(); }
+});
+
+it("revokes the Core bearer when the started session cannot be saved", async () => {
+  // Fault (Greptile P2): the tab is terminated but the bearer stays live until its TTL.
+  const f = await fixture();
+  try {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await mkdir(join(homes.at(-1)!, "system"), { recursive: true });
+    await writeFile(join(homes.at(-1)!, "system", "sessions"), "not a directory");
+    expect((await f.manager.startSession({ kind: "agent", agent: "codex", ownerId: owner.ownerId, prompt: "fixture only",
+      sandbox: { enabled: true, mode: "workspace-write" } })).ok).toBe(false);
+    const command = f.terminalRuntime.createTab.mock.calls[0]![1].command as string[];
+    expect(f.terminalRuntime.terminateTab).toHaveBeenCalled();
+    expect(f.registry.resolve(tokenFrom(command), "GET", "/api/mcp-servers/core/services")).toBeNull();
+  } finally { f.manager.shutdown(); f.registry.close(); }
 });
