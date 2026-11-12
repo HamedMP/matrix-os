@@ -359,3 +359,24 @@ it("validates the optional Workers review bundle before Cloud Run authentication
     const result=runDeploymentValidation(start,end,extra);expect(result.status).toBe(1);expect(result.stderr).toContain('Workers AI review');
   }
 });
+
+it("validates individual DeepSeek and GLM price reviews before Cloud Run authentication", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const individual = {
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/deepseek-ai/deepseek-v4.1-flash-1017"],
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEWED_AT: start,
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: end,
+    MATRIX_FUNDED_GLM_FULL_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3"],
+    MATRIX_FUNDED_GLM_FULL_PRICING_REVIEWED_AT: start,
+    MATRIX_FUNDED_GLM_FULL_PRICING_VALID_THROUGH: end,
+  };
+  expect(runDeploymentValidation(start, end, individual).status).toBe(0);
+  const expired = new Date(Date.now() - 1).toISOString();
+  expect(runDeploymentValidation(start, end, {
+    ...individual, MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: expired,
+  }).status).toBe(1);
+  expect(runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: individual.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION,
+  }).status).toBe(1);
+});

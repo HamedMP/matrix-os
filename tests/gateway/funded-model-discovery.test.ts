@@ -12,6 +12,9 @@ import { chatPickerModelAvailabilityLabel, deriveChatPickerModelRows } from "../
 const now = new Date("2026-10-23T15:40:00.000Z");
 const workers = [...MANAGED_WORKERS_AI_MODEL_IDS];
 const sonnet = "claude-sonnet-5";
+const glmFlash = "@cf/zai-org/glm-5.3-flash";
+const glmFull = "@cf/zai-org/glm-5.3";
+const deepSeekV41 = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 async function observe(readiness: AiProviderReadiness, readyIds: string[], policyIds: string[]) {
   const homePath = await mkdtemp(join(tmpdir(), "funded-model-discovery-"));
   const service = new AiProviderService({ homePath, env: {}, now: () => now, driverInventory: async () => [],
@@ -23,6 +26,21 @@ async function observe(readiness: AiProviderReadiness, readyIds: string[], polic
 }
 const fresh: AiProviderReadiness = { state: "ready", checkedAt: now.toISOString(),
   staleAfter: new Date(+now + 30_000).toISOString(), action: "none", safeReason: null };
+
+it("offers full GLM and DeepSeek V4.1 as independent selections while keeping GLM Flash as default", async () => {
+  const ids = [glmFlash, glmFull, deepSeekV41];
+  const snapshot = await observe(fresh, ids, ids);
+  const instance = managedPiChatInstances(snapshot, +now)[0]!;
+  expect(instance.defaultSelection?.model).toBe(glmFlash);
+  expect(instance.models).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: glmFull, displayName: "GLM 5.3", availability: "available", supportsVision: false }),
+    expect.objectContaining({ id: deepSeekV41, displayName: "DeepSeek V4.1 Flash", availability: "available", supportsVision: true }),
+  ]));
+  expect(resolveManagedPiRoute(snapshot, { instanceId: instance.id, model: glmFull }, +now).route)
+    .toMatchObject({ modelId: glmFull, input: ["text"] });
+  expect(resolveManagedPiRoute(snapshot, { instanceId: instance.id, model: deepSeekV41 }, +now).route)
+    .toMatchObject({ modelId: deepSeekV41, input: ["text", "image"] });
+});
 
 it("retains a policy-authorized unready Anthropic peer without borrowing Workers health or owner-key inventory", async () => {
   const snapshot = await observe(fresh, workers.slice(1, 3), [...workers, sonnet, "unsupported/model"]);

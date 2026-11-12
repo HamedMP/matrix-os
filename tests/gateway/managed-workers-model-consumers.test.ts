@@ -16,12 +16,14 @@ const IDS = [
   "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/zai-org/glm-5.3",
   "@cf/moonshotai/kimi-k2.7-code", "@cf/openai/gpt-oss-120b", "@cf/google/gemma-4-26b-a4b-it",
   "@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/qwen/qwen3.8-27b", "@cf/openai/gpt-oss-20b",
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
 ];
+const DEEPSEEK_V41 = IDS.at(-1)!;
 const NOW = new Date("2026-10-15T10:00:00.000Z");
 const credentials = { OPENAI_API_KEY: "private-lease", OPENAI_BASE_URL: "https://relay.example.test/v1" };
 
 describe("managed Workers AI model consumers", () => {
-  it("shares exactly nine managed models while preserving Flash first and as default", () => {
+  it("shares exactly ten managed models while preserving Flash first and as default", () => {
     const models = buildBundledModelCatalog().filter(model => model.eligibleAccessSourceIds.includes("matrix_cloudflare"));
     expect(models.map(model => model.id)).toEqual(IDS);
     expect(MATRIX_DEFAULT_MODEL_ID).toBe(IDS[0]);
@@ -33,10 +35,16 @@ describe("managed Workers AI model consumers", () => {
     try {
       const openCode = JSON.parse(buildOpenCodeRunConfiguration(credentials));
       expect(Object.keys(openCode.provider.cloudflare.models)).toEqual(IDS);
+      expect(openCode.provider.cloudflare.models[DEEPSEEK_V41]).toMatchObject({
+        attachment: true, modalities: { input: ["text", "image"], output: ["text"] },
+      });
+      expect(openCode.provider.cloudflare.models[IDS[0]!].attachment).toBeUndefined();
       const env = await preparePiRunEnvironment({ homePath: home, credentials });
       const text = await readFile(join(env.PI_CODING_AGENT_DIR!, "models.json"), "utf8");
       expect(text).not.toContain("private-lease");
-      expect(JSON.parse(text).providers.cloudflare.models.map((model: { id: string }) => model.id)).toEqual(IDS);
+      const models = JSON.parse(text).providers.cloudflare.models as { id: string; input: string[] }[];
+      expect(models.map(model => model.id)).toEqual(IDS);
+      expect(models.filter(model => model.input.includes("image")).map(model => model.id)).toEqual([DEEPSEEK_V41]);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 

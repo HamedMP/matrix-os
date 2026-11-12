@@ -13,6 +13,17 @@ export interface FundedPricingReview {
 }
 export type FundedPricingReviews = readonly Readonly<FundedPricingReview>[];
 const MAX_REVIEW_WINDOW_MS = 31 * 24 * 60 * 60_000;
+// Keep the historical attestation bound to the eight explicitly reviewed routes.
+const BUNDLED_WORKERS_PRICING_MODEL_IDS = [
+  "@cf/deepseek-ai/deepseek-v4-flash-0731",
+  "@cf/zai-org/glm-5.3",
+  "@cf/moonshotai/kimi-k2.7-code",
+  "@cf/openai/gpt-oss-120b",
+  "@cf/google/gemma-4-26b-a4b-it",
+  "@cf/deepseek-ai/deepseek-v4-pro-0813",
+  "@cf/qwen/qwen3.8-27b",
+  "@cf/openai/gpt-oss-20b",
+] as const satisfies readonly (keyof typeof WORKERS_AI_PRICE_SNAPSHOTS)[];
 function canonicalTime(value: unknown): number {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
     throw new Error("Invalid funded AI pricing review timestamp");
@@ -61,9 +72,8 @@ export function readFundedPricingReviews(env: NodeJS.ProcessEnv): FundedPricingR
     if (bundleVersion !== "cloudflare-2026-10-15-workers-eight" || !bundleReviewedAt || !bundleValidThrough) {
       throw new Error("Invalid bundled Workers AI pricing review");
     }
-    for (const [id, price] of Object.entries(WORKERS_AI_PRICE_SNAPSHOTS)) {
-      if (price.prefix === "GLM") continue; // Existing Flash review stays independent.
-      const canonicalModelId = id as keyof typeof WORKERS_AI_PRICE_SNAPSHOTS;
+    for (const canonicalModelId of BUNDLED_WORKERS_PRICING_MODEL_IDS) {
+      const price = WORKERS_AI_PRICE_SNAPSHOTS[canonicalModelId];
       if (reviews.some(review => review.canonicalModelId === canonicalModelId)) {
         throw new Error("Duplicate funded AI pricing review");
       }

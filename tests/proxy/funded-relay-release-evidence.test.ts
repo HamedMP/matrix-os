@@ -40,6 +40,18 @@ function workersReview() {
   };
 }
 
+function individualReview(model: string, version: string) {
+  const prefix = `MATRIX_FUNDED_${model}_PRICING_`;
+  return {
+    [`${prefix}REVIEW_VERSION`]: version,
+    [`${prefix}REVIEWED_AT`]: new Date(Date.now() - day).toISOString(),
+    [`${prefix}VALID_THROUGH`]: new Date(Date.now() + day).toISOString(),
+  };
+}
+
+const deepSeekReview = () => individualReview("DEEPSEEK_V41_FLASH", "cloudflare-2026-11-12-deepseek-v4.1-flash-1017");
+const fullGlmReview = () => individualReview("GLM_FULL", "cloudflare-2026-10-15-glm-5.3");
+
 function verify(receipt = fixture(), options: Record<string, unknown> = {}) {
   // Build real ZIP bytes, then exercise the same Python verifier used before cloud authentication.
   const result = spawnSync("python3", ["-c", `
@@ -104,6 +116,7 @@ try:
         if change == "extraWorkers": entries.append({"name":"MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION", "value":"cloudflare-2026-10-15-workers-eight"})
         if change == "missingWorkers": entries[:] = [entry for entry in entries if entry["name"] != "MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH"]
         if change == "operatorWorkers": os.environ["MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION"] = "cloudflare-2026-10-15-workers-eight"
+        if change == "operatorDeepSeek": os.environ["MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION"] = "cloudflare-2026-11-12-deepseek-v4.1-flash-1017"
         if change == "maxInstances": revision["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "999"
         if change == "cloudConcurrency": revision["spec"]["containerConcurrency"] = 1000
         if change == "memory": revision["spec"]["containers"][0]["resources"]["limits"]["memory"] = "8Gi"
@@ -180,9 +193,9 @@ describe("reviewed funded Relay release evidence", () => {
   it("verifies actual candidate configuration before promotion", () => {
     expect(verify(productionFixture(), { promotion: true, exercisePromotion: true }).status).toBe(0);
   });
-  it.each([false, true])("promotes the exact emitted environment with Workers review %s", withWorkers => {
+  it.each([false, true])("promotes exact DeepSeek bindings with a legacy bundle: %s", withWorkers => {
     const receipt = productionFixture();
-    if (withWorkers) Object.assign(receipt.configuration.pricing, workersReview());
+    Object.assign(receipt.configuration.pricing, deepSeekReview(), withWorkers ? workersReview() : fullGlmReview());
     const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
     const block = workflow.split("- name: Deploy candidate revision")[1]!
       .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
@@ -190,6 +203,11 @@ describe("reviewed funded Relay release evidence", () => {
     const config = receipt.configuration;
     const result = spawnSync("bash", ["-c", `
 gcloud() { for arg in "$@"; do printf '%s\\n' "$arg"; done; exit 0; }
+set -e
+export GITHUB_ENV="$(mktemp)"
+trap 'rm -f "$GITHUB_ENV"' EXIT
+python3 scripts/verify-funded-relay-evidence.py workers-pricing-bindings
+export WORKERS_PRICING_BINDINGS="$(cut -d= -f2- "$GITHUB_ENV")"
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
       ...process.env, GITHUB_SHA: sha, CANDIDATE_TAG: `relay-${sha.slice(0, 12)}`, IMAGE_DIGEST: receipt.candidate.image,
@@ -202,9 +220,6 @@ ${script}
       WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-production", WORKERS_TOKEN_VERSION: "2",
       CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "3",
       METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "4",
-      WORKERS_PRICING_BINDINGS: Object.entries(config.pricing)
-        .filter(([key]) => key.startsWith("MATRIX_FUNDED_WORKERS_PRICING_"))
-        .map(([key, value]) => `|${key}=${value}`).join(""),
       ...config.pricing,
     } });
     expect(result.error).toBeUndefined();
@@ -216,6 +231,8 @@ ${script}
       return [entry.slice(0, index), entry.slice(index + 1)];
     }));
     expect(workflowEnvironment.MATRIX_FUNDED_AI_BETAS).toContain("advisor-tool-2026-03-01");
+    expect(workflowEnvironment.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION)
+      .toBe(config.pricing.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION);
     if (withWorkers) {
       expect(workflowEnvironment.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION)
         .toBe("cloudflare-2026-10-15-workers-eight");
@@ -230,6 +247,26 @@ ${script}
     ]) {
       expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment: emitted }).status).toBe(1);
     }
+  });
+  it("requires DeepSeek to have its own exact review and rejects an overlapping GLM review", () => {
+    const receipt = productionFixture();
+    Object.assign(receipt.configuration.pricing, deepSeekReview(), fullGlmReview());
+    expect(verify(receipt, { promotion: true, exercisePromotion: true }).status).toBe(0);
+
+    expect(verify(productionFixture(), { promotion: true, exercisePromotion: true,
+      candidateChange: "operatorDeepSeek" }).stderr).toContain("Reviewed deployment configuration mismatch");
+
+    const duplicate = structuredClone(receipt);
+    Object.assign(duplicate.configuration.pricing, workersReview());
+    expect(verify(duplicate, { promotion: true }).status).toBe(1);
+
+    const partial = structuredClone(receipt);
+    delete partial.configuration.pricing.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH;
+    expect(verify(partial, { promotion: true }).status).toBe(1);
+
+    receipt.configuration.pricing.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION =
+      "cloudflare-2026-10-15-workers-eight";
+    expect(verify(receipt, { promotion: true }).status).toBe(1);
   });
   it.each(["partial", "version", "expired", "future", "overlong"])("rejects an invalid Workers receipt review: %s", change => {
     const receipt = productionFixture();

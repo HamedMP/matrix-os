@@ -16,6 +16,8 @@ import {
   FundedAiRuntimeFundingSummaryRequestSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiRouteReadinessRequestSchema,
+  FUNDED_AI_LEGACY_READINESS_MODEL_IDS,
+  FUNDED_AI_READINESS_CATALOG,
   FUNDED_AI_READINESS_TIMEOUTS,
   JEV_MODEL_ID,
   FundedAiSettlementRequestSchema,
@@ -374,9 +376,11 @@ export function createAiFundedRuntimeRoutes(options: {
       stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();
+      const expandedCatalog = c.req.header(FUNDED_AI_READINESS_CATALOG.header) === FUNDED_AI_READINESS_CATALOG.version;
+      const aggregateModels = expandedCatalog ? FUNDED_PROBE_MODELS : FUNDED_AI_LEGACY_READINESS_MODEL_IDS;
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
-        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : FUNDED_PROBE_MODELS)
+        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : aggregateModels)
           .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";

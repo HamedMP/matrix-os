@@ -100,6 +100,23 @@ A user can choose among the latest generally available Anthropic models that the
 
 ---
 
+### Matrix-funded Workers AI model selection
+
+Eligible Matrix AI users can select full GLM 5.3 or DeepSeek V4.1 Flash from
+the same Chat model picker. Availability follows the owner/runtime policy and
+a current, model-specific pricing review. The existing funded credential and
+settlement apply to either model.
+
+Preview acceptance verifies the exact selected model, stream completion,
+tool calls, supported image input, and a matching ledger debit at the model's
+reviewed rates. Compare observed quality and cost before selecting the default
+for the GLM 5.3 Flash retirement. The default selection and model retirement
+are separate rollout decisions.
+
+[Cloudflare model and pricing evidence](https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/)
+
+---
+
 ### User Story 5 - Add more execution harnesses without fragmenting Chat (Priority: P3)
 
 A developer can add a compatible coding harness or model source behind the canonical provider contract and have it appear in the same Chat, Settings, readiness, and model-selection surfaces.
