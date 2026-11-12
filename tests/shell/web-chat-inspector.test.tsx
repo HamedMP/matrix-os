@@ -10,6 +10,17 @@ vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it("covers the chat pane in a narrow floating window instead of leaving an unusable sliver", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: [] })));
+  render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={768} railWidth={260}
+    filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
+    sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
+  const inspector = screen.getByRole("complementary", { name: "Chat inspector" });
+  expect(inspector.className).toContain("absolute");
+  expect(inspector.style.width).toBe("508px");
+  expect(screen.getByRole("button", { name: "Close inspector" })).toBeTruthy();
+});
+
 it("asks before stopping an active terminal and keeps it running when canceled", async () => {
   const workspaceId = `tws_${"a".repeat(32)}`;
   const tabId = `tt_${"b".repeat(32)}`;
