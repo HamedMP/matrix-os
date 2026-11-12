@@ -2,7 +2,8 @@
 
 import { useAuth, useOrganization, useOrganizationList } from "@clerk/nextjs";
 import type { OrganizationManagementInvitation, OrganizationManagementMember, OrganizationManagementRole, OrganizationManagementSummary } from "@matrix-os/contracts";
-import { useCallback, useRef, useState } from "react";
+import { OrganizationMcpSettings, useOrganizationMcpClient } from "@matrix-os/ui";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { MoreHorizontal, Plus } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
 import { DeleteOrganizationDialog, InviteMembersDialog, LeaveOrganizationDialog, MakeAdminDialog, RemoveMemberDialog, RenameOrganizationDialog } from "@/components/organization/OrganizationDialogs";
@@ -11,6 +12,7 @@ import { organizationInitials } from "@/components/organization/organization-mar
 import { useShellOrganizationDirectory } from "@/components/organization/useShellOrganizationDirectory";
 import { useShellOrganizationActions } from "@/components/organization/useShellOrganizationActions";
 import { useShellOrganizations } from "@/components/organization/useShellOrganizations";
+import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 
 function roleLabel(role: OrganizationManagementMember["role"]): string {
   return role === "org:admin" ? "Admin" : "Member";
@@ -36,6 +38,7 @@ export function OrganizationSectionView({
   onLeave,
   onDelete,
   busy = false,
+  connections,
 }: {
   organization: OrganizationManagementSummary;
   currentActorId: string | null;
@@ -52,6 +55,8 @@ export function OrganizationSectionView({
   onLeave?: () => void;
   onDelete?: () => void;
   busy?: boolean;
+  /** Organization → Connections (spec 2691): the admin panel, or the member visibility notice. */
+  connections?: ReactNode;
 }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -84,6 +89,8 @@ export function OrganizationSectionView({
         </div>) : null}
       </section>
 
+      {connections ? <div className="mt-6">{connections}</div> : null}
+
       {admin && lastAdmin ? <section className="mt-6 rounded-xl bg-muted/60 px-4 py-3"><p className="text-xs text-muted-foreground">You’re the only Admin. Make someone else an Admin before you leave.</p><div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!onMakeSomeoneAdmin} onClick={onMakeSomeoneAdmin}>Make someone Admin</Button><Button size="sm" variant="outline" disabled>Leave organization</Button><Button size="sm" variant="destructive" onClick={() => setDeleteOpen(true)}>Delete organization</Button></div></section>
         : admin ? <div className="mt-6 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => setLeaveOpen(true)}>Leave organization</Button><Button size="sm" variant="destructive" onClick={() => setDeleteOpen(true)}>Delete organization</Button></div>
           : <div className="mt-6"><Button size="sm" variant="outline" onClick={() => setLeaveOpen(true)}>Leave {organization.name}</Button></div>}
@@ -109,6 +116,7 @@ export default function OrganizationSection() {
   const organization = listing.state === "loaded" ? listing.organizations.find((candidate) => candidate.organizationId === clerkOrganization?.id) ?? null : null;
   const directory = useShellOrganizationDirectory(organization?.organizationId ?? null, organization?.role === "org:admin", refreshKey);
   const actions = useShellOrganizationActions(organization?.organizationId ?? null, refresh);
+  const withMcpClient = useOrganizationMcpClient(useBrowserOrigin(), organization?.organizationId ?? null);
 
   if (listing.state === "loading" || (organization && directory.state === "loading")) return <p role="status" className="p-6 text-sm text-muted-foreground">Loading organization…</p>;
   if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="p-6 text-sm text-destructive">Organization settings are unavailable. Try again.</p>;
@@ -145,6 +153,7 @@ export default function OrganizationSection() {
       onLeave={leave}
       onDelete={deleteOrganization}
       busy={actions.busy}
+      connections={<OrganizationMcpSettings admin={organization.role === "org:admin"} organizationName={organization.name} withClient={withMcpClient} />}
     />
     <input ref={logoInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" aria-label="Organization logo file" onChange={(event) => {
       const file = event.target.files?.[0];
