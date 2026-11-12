@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CORE_REPO_MAX_SKILL_NAME_LENGTH } from "../../packages/contracts/src/core-repo.js";
 
 function writeSkill(root: string, dirName: string, skillName: string): void {
   const skillDir = join(root, dirName);
@@ -144,6 +145,125 @@ describe("Matrix coding-agent skill sync", () => {
         expect(lstatSync(join(target, "apple-design")).isSymbolicLink()).toBe(false);
         expect(existsSync(join(target, "retired-vendored"))).toBe(false);
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: the gateway-start (default) sync deletes org skills, or namespace mode touches personal or public skills.
+  it("keeps org-namespaced skills separate from the Matrix pack and from personal skills", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-skills-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const orgSkills = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    const run = (env: Record<string, string>) => execFileSync("bash", [script], {
+      env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude", ...env }, stdio: "pipe" });
+    const skills = join(home, ".claude", "skills");
+    try {
+      writeSkill(source, "app-builder", "matrix-app-builder");
+      writeSkill(orgSkills, "org-acme-deploy", "org-acme-deploy");
+      writeSkill(orgSkills, "sneaky", "matrix-app-builder");
+      writeSkill(skills, "org-acme-notes", "org-acme-notes");
+      // What namespace mode's copy fallback leaves where symlinks are unavailable.
+      writeSkill(skills, "org-other-copied", "org-other-copied");
+      writeFileSync(join(skills, "org-other-copied", ".matrix-os-managed"), "");
+      run({ MATRIX_SKILLS_SOURCE: orgSkills, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot });
+      run({ MATRIX_SKILLS_SOURCE: source });
+      expect(existsSync(join(skills, "org-other-copied", "SKILL.md"))).toBe(true);
+      expect(realpathSync(join(skills, "org-acme-deploy"))).toBe(realpathSync(join(orgSkills, "org-acme-deploy")));
+      expect(realpathSync(join(skills, "matrix-app-builder"))).toBe(realpathSync(join(source, "app-builder")));
+      expect(lstatSync(join(skills, "org-acme-notes")).isSymbolicLink()).toBe(false);
+
+      // An empty org source unlinks only that org's own entries.
+      const empty = join(root, "empty");
+      mkdirSync(empty);
+      run({ MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot });
+      expect(existsSync(join(skills, "org-acme-deploy"))).toBe(false);
+      expect(existsSync(join(skills, "org-acme-notes", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skills, "matrix-app-builder", "SKILL.md"))).toBe(true);
+      expect(() => run({ MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "../", MATRIX_SKILL_OWNED_ROOT: orgRoot })).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: org `acme` deletes copied skills of org `acme-tools` (`org-acme-tools-*` matches `org-acme-*`).
+  it("owns a copied org skill only when its marker names this org root", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-marker-${Date.now()}`), { recursive: true }));
+    const acmeRoot = join(root, "matrix-core", "org_acme1");
+    const toolsRoot = join(root, "matrix-core", "org_tools1");
+    const home = join(root, "home");
+    const skills = join(home, ".claude", "skills");
+    const empty = join(root, "empty");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    try {
+      mkdirSync(acmeRoot, { recursive: true });
+      mkdirSync(toolsRoot, { recursive: true });
+      mkdirSync(empty);
+      writeSkill(skills, "org-acme-tools-deploy", "org-acme-tools-deploy");
+      writeFileSync(join(skills, "org-acme-tools-deploy", ".matrix-os-managed"), `${realpathSync(toolsRoot)}\n`);
+      writeSkill(skills, "org-acme-review", "org-acme-review");
+      writeFileSync(join(skills, "org-acme-review", ".matrix-os-managed"), `${realpathSync(acmeRoot)}\n`);
+      execFileSync("bash", [script], { env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude",
+        MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: acmeRoot }, stdio: "pipe" });
+      expect(existsSync(join(skills, "org-acme-tools-deploy", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skills, "org-acme-review"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: an org skill over the combined name limit disappears without any report.
+  it("reports org skills whose combined name is over the limit", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-long-${Date.now()}`), { recursive: true }));
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const source = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const long = `org-acme-${"x".repeat(92)}`;
+    // The script and the installer enforce the same combined limit.
+    expect(long.length).toBe(CORE_REPO_MAX_SKILL_NAME_LENGTH + 1);
+    try {
+      writeSkill(source, long, long);
+      writeSkill(source, "org-acme-ok", "org-acme-ok");
+      const result = spawnSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh")], { encoding: "utf8",
+        env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude",
+          MATRIX_SKILLS_SOURCE: source, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot } });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(`Org skill not installed (invalid name or over 100 characters): ${long}`);
+      expect(existsSync(join(home, ".claude", "skills", "org-acme-ok", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(home, ".claude", "skills", long))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: namespace mode falls back to the default agents for an empty or mistyped selection.
+  it("never falls back to default targets in namespace mode", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-targets-${Date.now()}`), { recursive: true }));
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const source = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    const run = (targets: string | undefined) => {
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home, MATRIX_HOME: home,
+        MATRIX_SKILLS_SOURCE: source, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot, MATRIX_SKILL_TARGETS: targets };
+      if (targets === undefined) delete env.MATRIX_SKILL_TARGETS;
+      return spawnSync("bash", [script], { encoding: "utf8", env: env as NodeJS.ProcessEnv });
+    };
+    try {
+      writeSkill(source, "org-acme-ok", "org-acme-ok");
+      expect(run("").status).toBe(0);
+      expect(existsSync(join(home, ".claude"))).toBe(false);
+      expect(existsSync(join(home, ".agents"))).toBe(false);
+      for (const targets of [undefined, "Claude", "claude,emacs"]) {
+        const result = run(targets);
+        expect(result.status, String(targets)).not.toBe(0);
+        expect(existsSync(join(home, ".claude")), String(targets)).toBe(false);
+      }
+      expect(run("claude").status).toBe(0);
+      expect(existsSync(join(home, ".claude", "skills", "org-acme-ok", "SKILL.md"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

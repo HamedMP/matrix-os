@@ -278,6 +278,8 @@ export function createApp(deps: {
   externalCoreMcp?: ExternalCoreMcp;
   /** Organization → Connections admin routes (spec 2691); platform-owned, never proxied to a VPS. */
   orgMcpRoutes?: Hono<any>;
+  /** Matrix Core repo webhook, admin sync, and VPS tarball routes (spec 2691); platform-owned. */
+  coreRepoRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -679,6 +681,7 @@ export function createApp(deps: {
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
   if (deps.orgMcpRoutes) app.route('/', deps.orgMcpRoutes);
+  if (deps.coreRepoRoutes) app.route('/', deps.coreRepoRoutes);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
   app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
