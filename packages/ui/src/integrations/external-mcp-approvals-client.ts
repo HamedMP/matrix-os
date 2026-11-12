@@ -23,7 +23,7 @@ export interface ExternalMcpApprovalsTransport {
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
-const MAX_RESPONSE_CHARS = 256 * 1024;
+const MAX_RESPONSE_BYTES = 256 * 1024;
 export const EXTERNAL_MCP_APPROVALS_MIN_POLL_MS = 15_000;
 export const EXTERNAL_MCP_APPROVALS_DEFAULT_POLL_MS = 30_000;
 export const EXTERNAL_MCP_APPROVALS_LOAD_ERROR = "Approvals are unavailable right now. Try again.";
@@ -37,7 +37,33 @@ export function externalMcpApprovalErrorMessage(error: unknown): string {
   return status === 409 ? CONFLICT_ERROR : EXTERNAL_MCP_APPROVALS_SAVE_ERROR;
 }
 
-/** Fetch transport for surfaces that call the gateway directly (the shell). */
+/** Streams the body, cancelling the read as soon as it passes the cap; never buffers an oversized body. */
+async function readBoundedText(response: Response): Promise<string> {
+  if (Number(response.headers.get("content-length") ?? "0") > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw new Error("ExternalMcpApprovalsUnavailable");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("ExternalMcpApprovalsUnavailable");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
+/** Fetch transport for the platform-owned owner routes; `baseUrl` is the app origin, never a `/vm/<handle>` gateway prefix. */
 export function createExternalMcpApprovalsFetchTransport(options: { baseUrl: string; fetchImpl?: typeof fetch }): ExternalMcpApprovalsTransport {
   const base = `${options.baseUrl.replace(/\/$/, "")}/api/mcp-servers/core/external-approvals`;
   const request = async (url: string, init: RequestInit): Promise<unknown> => {
@@ -46,9 +72,7 @@ export function createExternalMcpApprovalsFetchTransport(options: { baseUrl: str
       await response.body?.cancel();
       throw Object.assign(new Error("ExternalMcpApprovalsUnavailable"), { httpStatus: response.status });
     }
-    const text = await response.text();
-    if (text.length > MAX_RESPONSE_CHARS) throw new Error("ExternalMcpApprovalsUnavailable");
-    return JSON.parse(text) as unknown;
+    return JSON.parse(await readBoundedText(response)) as unknown;
   };
   return {
     list: () => request(base, { method: "GET", headers: { accept: "application/json" } }),
