@@ -17,7 +17,7 @@ jest.mock("@/app/_layout", () => ({ useGateway: () => mockUseGateway() }));
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }));
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Linking } from "react-native";
+import { AppState, Linking, type AppStateStatus } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import DeveloperAccessSettingsScreen from "../app/settings-detail/developer-access";
 
@@ -36,10 +36,17 @@ function deferred<T>() {
 
 describe("GitHub developer access settings", () => {
   let client: Record<string, jest.Mock>;
+  let appStateChanged: ((state: AppStateStatus) => void) | undefined;
+  const removeAppStateListener = jest.fn();
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     focusCleanups.length = 0;
+    appStateChanged = undefined;
+    jest.spyOn(AppState, "addEventListener").mockImplementation((type, listener) => {
+      if (type === "change") appStateChanged = listener as (state: AppStateStatus) => void;
+      return { remove: removeAppStateListener };
+    });
     client = {
       getGithubDeveloperStatus: jest.fn().mockResolvedValue({ ok: true, status: { ...readyStatus, ready: false, authenticated: false, user: null } }),
       startGithubDeveloperSetup: jest.fn().mockResolvedValue(waiting),
@@ -68,6 +75,44 @@ describe("GitHub developer access settings", () => {
     fireEvent.press(screen.getByLabelText("Refresh GitHub developer access"));
     await act(async () => {});
     expect(client.getGithubDeveloperStatus).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the complete shared-contract commit identity readable", async () => {
+    const label = "n".repeat(250) + " <" + "e".repeat(272) + ">";
+    expect(label.length).toBe(525);
+    client.getGithubDeveloperStatus.mockResolvedValue({ ok: true, status: { ...readyStatus, commitIdentity: { status: "ready", label } } });
+    render(<DeveloperAccessSettingsScreen />);
+    const identity = await screen.findByText(label);
+    expect(identity.props.numberOfLines).toBe(0);
+  });
+  it("reconciles readiness on foreground after GitHub's completed operation has expired", async () => {
+    render(<DeveloperAccessSettingsScreen />); await connect();
+    client.getGithubDeveloperSetup.mockRejectedValue(new Error("operation not found"));
+    client.getGithubDeveloperStatus.mockResolvedValue({ ok: true, status: readyStatus });
+    await act(async () => { appStateChanged?.("active"); });
+    expect(screen.getByText("Ready to clone, commit, push, and open pull requests.")).toBeTruthy();
+    expect(screen.queryByText("ABCD-1234")).toBeNull();
+    expect(client.cancelGithubDeveloperSetup).not.toHaveBeenCalled();
+  });
+  it("rechecks canonical readiness before treating a missing operation as failure", async () => {
+    render(<DeveloperAccessSettingsScreen />); await connect();
+    client.getGithubDeveloperSetup.mockRejectedValue(new Error("operation not found"));
+    client.getGithubDeveloperStatus.mockResolvedValue({ ok: true, status: readyStatus });
+    await poll(); await poll(); await poll();
+    expect(screen.getByText("Ready to clone, commit, push, and open pull requests.")).toBeTruthy();
+    expect(screen.queryByText("Couldn't finish GitHub sign-in on this computer.")).toBeNull();
+    expect(client.cancelGithubDeveloperSetup).not.toHaveBeenCalled();
+  });
+  it("ignores a foreground reconciliation after switching computers", async () => {
+    const status = deferred<unknown>();
+    const view = render(<DeveloperAccessSettingsScreen />); await connect();
+    client.getGithubDeveloperStatus.mockReturnValue(status.promise);
+    await act(async () => { appStateChanged?.("active"); });
+    mockUseGateway.mockReturnValue({ client: { ...client, getGithubDeveloperStatus: jest.fn().mockResolvedValue({ ok: true, status: { ...readyStatus, user: "other-owner" } }) } });
+    view.rerender(<DeveloperAccessSettingsScreen />);
+    await act(async () => status.resolve({ ok: true, status: readyStatus }));
+    expect(screen.getByText("other-owner")).toBeTruthy();
+    expect(screen.queryByText("octocat")).toBeNull();
+    expect(removeAppStateListener).toHaveBeenCalled();
   });
   it("hides Connect until status is known", async () => {
     const status = deferred<unknown>();

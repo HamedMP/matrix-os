@@ -158,7 +158,9 @@ label up to the shared schema limit must remain readable.
 Show a selectable one-time code, Copy, Open GitHub, waiting/finishing state,
 and Cancel. Open only the fixed GitHub device URL through native linking.
 Poll once per second with bounded requests, tolerate two transient polling
-failures, and stop within ten minutes. Refresh status after success. Failed,
+failures, and stop within ten minutes. Refresh canonical readiness on app
+foreground and before failing a missing operation: completed operations may
+expire while GitHub is open. Refresh status after observed success. Failed,
 expired, or cancelled attempts clear the code and allow retry. Navigation,
 unmount, and computer switches discard late results and cancel known attempts
 against the original client, including late start responses. Codes remain

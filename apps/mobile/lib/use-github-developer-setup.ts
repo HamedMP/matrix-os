@@ -1,12 +1,14 @@
 import { useCallback, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
+import { AppState } from "react-native";
 import type { GatewayClient } from "@/lib/gateway-client";
 
 type Client = Pick<GatewayClient, "startGithubDeveloperSetup" | "getGithubDeveloperSetup" | "cancelGithubDeveloperSetup">;
 type View = { phase: "waiting"; code: string } | { phase: "starting" | "finishing" | "failed" | "expired" | "cancelled" };
-type Scope = { active: boolean; attempt: AbortController | null };
+type Attempt = { controller: AbortController; reconciled: boolean };
+type Scope = { active: boolean; attempt: Attempt | null };
 
-export function useGithubDeveloperSetup(client: Client | null, refresh: () => Promise<void>) {
+export function useGithubDeveloperSetup(client: Client | null, refresh: () => Promise<boolean>) {
   const scopeRef = useRef<Scope | null>(null);
   const [display, setDisplay] = useState<{ scope: Scope; client: Client; view: View } | null>(null);
   const [pending, setPending] = useState(false);
@@ -16,15 +18,30 @@ export function useGithubDeveloperSetup(client: Client | null, refresh: () => Pr
     scopeRef.current = scope;
     setDisplay(null);
     setPending(false);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || !scope.active) return;
+      const attempt = scope.attempt;
+      void refresh().then((ready) => {
+        if (!ready || !scope.active || scopeRef.current !== scope || scope.attempt !== attempt) return;
+        if (attempt) {
+          attempt.reconciled = true;
+          attempt.controller.abort();
+        }
+        setDisplay(null);
+      }).catch((error: unknown) => {
+        console.warn("[mobile] GitHub foreground refresh failed", error instanceof Error ? error.name : "unknown");
+      });
+    });
     return () => {
       scope.active = false;
-      scope.attempt?.abort();
+      scope.attempt?.controller.abort();
       setDisplay(null);
+      subscription.remove();
     };
-  }, [client]));
+  }, [client, refresh]));
 
   function dismiss() {
-    scopeRef.current?.attempt?.abort();
+    scopeRef.current?.attempt?.controller.abort();
     setDisplay(null);
   }
 
@@ -32,7 +49,8 @@ export function useGithubDeveloperSetup(client: Client | null, refresh: () => Pr
     const scope = scopeRef.current;
     if (!client || !scope?.active || scope.attempt) return;
     const controller = new AbortController();
-    scope.attempt = controller;
+    const attempt: Attempt = { controller, reconciled: false };
+    scope.attempt = attempt;
     let expired = false;
     const timer = setTimeout(() => { expired = true; controller.abort(); }, 10 * 60_000);
     const current = () => scope.active && scopeRef.current === scope;
@@ -79,12 +97,20 @@ export function useGithubDeveloperSetup(client: Client | null, refresh: () => Pr
     } catch (error: unknown) {
       if (!controller.signal.aborted) {
         console.warn("[mobile] GitHub setup failed", error instanceof Error ? error.name : "unknown");
-        show({ phase: "failed" });
+        // Completed operations are evicted by the gateway after a short TTL.
+        // Canonical readiness can prove success even when a poll is now 404.
+        const ready = await refresh();
+        if (ready && current() && !controller.signal.aborted) {
+          terminal = true;
+          setDisplay(null);
+        } else if (!controller.signal.aborted) {
+          show({ phase: "failed" });
+        }
       }
     } finally {
       clearTimeout(timer);
-      if (expired) show({ phase: "expired" });
-      if (id && !terminal) {
+      if (expired && !attempt.reconciled) show({ phase: "expired" });
+      if (id && !terminal && !attempt.reconciled) {
         try { await client.cancelGithubDeveloperSetup(id); }
         catch (error: unknown) {
           console.warn("[mobile] GitHub setup cancellation failed", error instanceof Error ? error.name : "unknown");

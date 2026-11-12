@@ -24,16 +24,25 @@ export default function DeveloperAccessSettingsScreen() {
       if (!client) {
         setStatus(null);
         setStatusError(true);
-        return;
+        return false;
       }
       const result = await client.getGithubDeveloperStatus();
-      if (generation !== refreshGeneration.current) return;
+      if (generation !== refreshGeneration.current) return false;
       if (result.ok) {
         setStatus(result.status);
+        return result.status.ready;
       } else {
         setStatus(null);
         setStatusError(true);
+        return false;
       }
+    } catch (error: unknown) {
+      console.warn("[mobile] GitHub status refresh failed", error instanceof Error ? error.name : "unknown");
+      if (generation === refreshGeneration.current) {
+        setStatus(null);
+        setStatusError(true);
+      }
+      return false;
     } finally {
       if (generation === refreshGeneration.current) setIsRefreshing(false);
     }
@@ -67,7 +76,7 @@ export default function DeveloperAccessSettingsScreen() {
       <SettingsCardStack>
         <SettingsRow card title="GitHub account" detail={accountDetail(status, isRefreshing)} />
         <SettingsRow card title="SSH access" detail={sshDetail(status, isRefreshing)} />
-        <SettingsRow card title="Commit identity" detail={commitIdentityDetail(status, isRefreshing)} />
+        <SettingsRow card title="Commit identity" detail={commitIdentityDetail(status, isRefreshing)} detailNumberOfLines={0} />
       </SettingsCardStack>
       <Spacer size="lg" />
       <Text tone={status?.ready ? "success" : "subtle"}>{workflowCopy}</Text>

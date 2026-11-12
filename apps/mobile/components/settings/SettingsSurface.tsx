@@ -64,6 +64,8 @@ export function SettingsCardStack({ children }: { children: ReactNode }) {
 interface SettingsRowProps {
   title: string;
   detail?: string;
+  /** Zero keeps long identity/configuration values fully readable. */
+  detailNumberOfLines?: number;
   icon?: IconData;
   leading?: ReactNode;
   trailing?: ReactNode;
@@ -77,6 +79,7 @@ interface SettingsRowProps {
 export function SettingsRow({
   title,
   detail,
+  detailNumberOfLines = 2,
   icon,
   leading,
   trailing,
@@ -101,7 +104,7 @@ export function SettingsRow({
           {detail ? (
             <>
               <Spacer size="xs" />
-              <NativeText numberOfLines={2} style={styles.detail}>{detail}</NativeText>
+              <NativeText numberOfLines={detailNumberOfLines} style={styles.detail}>{detail}</NativeText>
             </>
           ) : null}
         </View>
