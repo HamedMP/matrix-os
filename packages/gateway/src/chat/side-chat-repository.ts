@@ -71,6 +71,12 @@ export class SideChatRepository {
       .returning("id").executeTakeFirst();
     if (!locked) throw new SideChatBusyError();
     try {
+      // A retry may have read before the first request committed, then acquired
+      // this lease after it completed. Check again before a paid model call.
+      const completed = await this.db.selectFrom("chat_side_messages").select("seq")
+        .where("thread_id", "=", thread.id).where("client_request_id", "=", request.clientRequestId)
+        .where("role", "=", "assistant").executeTakeFirst();
+      if (completed) return this.read(owner, chatId);
       // Read the newest committed main messages immediately before generation.
       const mainRows = await this.db.selectFrom("chat_messages").selectAll().where("chat_id", "=", chatId)
         .where("state", "=", "committed").where("role", "in", ["user", "assistant"])
@@ -84,10 +90,10 @@ export class SideChatRepository {
       const side = sideRows.reverse().map(row => `${row.role}: ${row.content.slice(0, 2_000)}`);
       const prompt = [
         "You are a read-only side chat. Answer the user's question using the supplied main chat and side chat context. Never claim to have edited files or sent messages to the main chat.",
-        "Main chat (latest committed messages):", ...main,
-        "Side chat:", ...side,
+        "Main chat (latest committed messages):", main.join("\n\n").slice(-32_000),
+        "Side chat:", side.join("\n\n").slice(-16_000),
         `user: ${request.text}`,
-      ].join("\n\n").slice(-64_000);
+      ].join("\n\n");
       const generated = await generate(prompt, AbortSignal.timeout(90_000));
       const answer = z.string().min(1).max(64_000).parse(generated.text);
       await this.db.transaction().execute(async trx => {
