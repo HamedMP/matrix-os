@@ -8,6 +8,7 @@
  */
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assignCoreServiceSlugs } from "../../packages/gateway/src/integrations/custom-mcp/core-catalog.js";
 import { CoreToolService } from "../../packages/gateway/src/integrations/custom-mcp/core-tools.js";
 import type { CoreUsageRecord } from "../../packages/gateway/src/integrations/custom-mcp/core-usage.js";
 import { createCustomMcpRoutes } from "../../packages/gateway/src/integrations/custom-mcp/routes.js";
@@ -26,6 +27,7 @@ describe("external Matrix Core MCP write approvals", () => {
   let mcp: Hono;
   let owner: Hono;
   let internal: Hono;
+  let service: string;
 
   beforeEach(async () => {
     linear = { host: "mcp.linear.test", calls: [], tools: [
@@ -34,6 +36,7 @@ describe("external Matrix Core MCP write approvals", () => {
     ] };
     fixture = await createCoreFixture([linear]);
     await fixture.connect("Linear", linear.host, { list_issues: "allow", create_issue: "always_ask" });
+    service = [...assignCoreServiceSlugs(await fixture.broker.list(fixture.userId)).values()][0]!;
     usage = [];
     const core = new CoreToolService({ broker: fixture.broker, approvals: fixture.db, usage: { record: row => { usage.push(row); } } });
     const expiresAt = Math.floor(Date.now() / 1000) + 3600;
@@ -65,7 +68,7 @@ describe("external Matrix Core MCP write approvals", () => {
   }
 
   it("keeps the write pending until the owner approves, then executes it exactly once", async () => {
-    const create = { service: "linear", tool: "create_issue", arguments: { title: "From Codex" } };
+    const create = { service, tool: "create_issue", arguments: { title: "From Codex" } };
     const pending = await tool("client-a", "call_tool", create);
     expect(pending.isError).toBe(false);
     const { status, approvalId } = JSON.parse(pending.text) as { status: string; approvalId: string };
@@ -83,7 +86,7 @@ describe("external Matrix Core MCP write approvals", () => {
     expect(linear.calls).toEqual([]);
 
     const listed = await (await owner.request("/api/mcp-servers/core/external-approvals")).json() as { approvals: Array<Record<string, unknown>> };
-    expect(listed.approvals).toEqual([expect.objectContaining({ approvalId, service: "linear", tool: "create_issue" })]);
+    expect(listed.approvals).toEqual([expect.objectContaining({ approvalId, service, tool: "create_issue" })]);
     expect(JSON.stringify(listed)).not.toContain("From Codex");
     const approved = await owner.request(`/api/mcp-servers/core/external-approvals/${approvalId}`, { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "approve" }) });
@@ -106,12 +109,12 @@ describe("external Matrix Core MCP write approvals", () => {
   });
 
   it("runs allow-policy tools directly and lets the owner decline a pending write", async () => {
-    expect((await tool("client-a", "call_tool", { service: "linear", tool: "list_issues" })).isError).toBe(false);
+    expect((await tool("client-a", "call_tool", { service, tool: "list_issues" })).isError).toBe(false);
     expect(linear.calls).toEqual([{ tool: "list_issues", args: {} }]);
     const services = JSON.parse((await tool("client-a", "list_services", {})).text) as { services: Array<{ service: string }> };
-    expect(services.services.map(entry => entry.service)).toEqual(["linear"]);
+    expect(services.services.map(entry => entry.service)).toEqual([service]);
 
-    const create = { service: "linear", tool: "create_issue", arguments: { title: "Declined" } };
+    const create = { service, tool: "create_issue", arguments: { title: "Declined" } };
     const { approvalId } = JSON.parse((await tool("client-a", "call_tool", create)).text) as { approvalId: string };
     const declined = await owner.request(`/api/mcp-servers/core/external-approvals/${approvalId}`, { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "decline" }) });

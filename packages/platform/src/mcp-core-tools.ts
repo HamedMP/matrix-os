@@ -17,7 +17,7 @@ export interface ExternalCoreToolService {
   describeTool(userId: string, service: string, tool: string): Promise<unknown>;
   callTool(caller: ExternalCoreCaller, input: {
     service: string; tool: string; arguments?: Record<string, unknown>; approvalId?: string; signal?: AbortSignal;
-  }): Promise<{ status: string; text?: string; approvalId?: string; expiresAt?: string; service?: string; tool?: string }>;
+  }): Promise<{ status: string; text?: string; isError?: boolean; approvalId?: string; expiresAt?: string; service?: string; tool?: string }>;
   getApproval(caller: ExternalCoreCaller, approvalId: string): Promise<unknown>;
 }
 
@@ -96,7 +96,10 @@ export function registerExternalCoreMcpTools(server: McpServer, options: {
         service: input.service, tool: input.tool, arguments: input.arguments,
         ...(input.approval_id ? { approvalId: input.approval_id } : {}), signal: options.signal,
       });
-      if (result.status === 'ok' && typeof result.text === 'string') return { content: [{ type: 'text' as const, text: result.text }] };
+      if (result.status === 'ok' && typeof result.text === 'string') {
+        // An upstream-reported tool error stays an error, still wrapped as untrusted data.
+        return { ...(result.isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: result.text }] };
+      }
       if (result.status === 'pending_approval') {
         return json({ status: 'pending_approval', approvalId: result.approvalId, expiresAt: result.expiresAt,
           service: result.service, tool: result.tool,
