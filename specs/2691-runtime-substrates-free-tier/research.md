@@ -62,6 +62,17 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 - **Note**: provider features and prices move quickly. The measurements used a 1.5 GB
   probe image, not the gateway image; repeat the wake measurement with the real image
   before rollout.
+- **Per-unit configuration (docs check 2026-11-12)**:
+  - Lambda delivers `runHookPayload` only as the body of the `/run` lifecycle hook
+    (`POST /aws/lambda-microvms/runtime/v1/run`, `{ microvmId, runHookPayload }`).
+    Environment variables are fixed per image version. That is why the image needs a
+    bootstrap that takes `/run` and starts the gateway, which fits the rule above that the
+    gateway starts after restore.
+  - Any endpoint traffic counts as activity for the provider's idle policy, and the policy
+    has no "off" setting. The platform passes the maximum idle duration and turns
+    auto-resume off, so the platform decides idleness (see `contracts/lifecycle.md`).
+  - The docs give no timeout for any hook.
+  - Source: AWS Lambda developer guide, "Running and using MicroVMs".
 
 
 ## Spike log
