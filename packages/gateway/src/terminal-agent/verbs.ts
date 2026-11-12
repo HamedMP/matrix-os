@@ -102,6 +102,8 @@ export interface TerminalAgentVerbs {
     maxHoldMs?: number;
     /** The caller went away: a held send is dropped instead of typed later. */
     signal?: AbortSignal;
+    /** A background note: if a person is still typing when the hold ends, refuse (`cancelled`) instead of typing into the draft. */
+    deferWhileTyping?: boolean;
   }): Promise<{ sent: true; heldMs: number }>;
   keys(ref: TerminalRef, input: { keys: string[] }): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef, input?: {
@@ -218,6 +220,10 @@ export function createTerminalAgentVerbs(options: {
       }
       const limitMs = Math.min(draftWaitMs, z.number().int().min(0).max(DEFAULT_DRAFT_WAIT_MS).parse(input.maxHoldMs ?? draftWaitMs));
       const heldMs = await holdForDraft(ref, limitMs, input.signal);
+      if (input.deferWhileTyping) {
+        const lastInput = options.inputActivity.lastInputAt(ref);
+        if (lastInput !== undefined && now() - lastInput < quietMs) throw new TerminalAgentVerbError("cancelled");
+      }
       const current = await requireLiveTab(ref);
       if (current.incarnation !== tab.incarnation) throw new TerminalAgentVerbError("not_found");
       // The agent may have asked for permission during the tab lookup or the draft hold,

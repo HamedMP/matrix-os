@@ -38,6 +38,8 @@ async function harness(options: {
   const createdCommands: Array<string[] | undefined> = [];
   const sends: Array<{ tabId: string; text: string }> = [];
   const terminated: string[] = [];
+  // Pane id -> tab, as the runtime resolves a caller's pane.
+  const panes = new Map<string, string>([["3", parentId]]);
   const runtime = {
     listWorkspaces: async () => [{
       id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
@@ -61,8 +63,10 @@ async function harness(options: {
       tabs.set(ref.tabId, { ...tabs.get(ref.tabId), status: "exited", exitCode: 0 });
     },
     getSnapshot: async () => ({ viewport: ["> ready"] }),
-    resolvePane: async (input: { sessionName: string; paneId: string }) =>
-      input.sessionName === session && input.paneId === "3" ? { workspaceId, tabId: parentId } : null,
+    resolvePane: async (input: { sessionName: string; paneId: string }) => {
+      const tabId = input.sessionName === session ? panes.get(input.paneId) : undefined;
+      return tabId ? { workspaceId, tabId } : null;
+    },
   };
   const statusSource = {
     list: async () => new Map([...statuses].map(([tabId, status]) => [`${workspaceId}:${tabId}`, {
@@ -75,7 +79,7 @@ async function harness(options: {
     },
   };
   const verbs = {
-    send: vi.fn(async (ref: { tabId: string }, input: { text: string }) => {
+    send: vi.fn(async (ref: { tabId: string }, input: { text: string; maxHoldMs?: number; deferWhileTyping?: boolean; signal?: AbortSignal }) => {
       sends.push({ tabId: ref.tabId, text: input.text });
       return { sent: true as const, heldMs: 0 };
     }),
@@ -91,7 +95,7 @@ async function harness(options: {
     now: () => now,
     sleep: async (ms) => { now += ms; },
   });
-  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, advance: (ms: number) => { now += ms; }, time: () => now };
+  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, panes, advance: (ms: number) => { now += ms; }, time: () => now };
 }
 
 const reviewer = `---
@@ -401,5 +405,49 @@ describe("terminal agents: failed registration", () => {
       .rejects.toThrow("disk full");
     expect(h.terminated).toHaveLength(1);
     expect(h.createdCommands).toHaveLength(1);
+  });
+});
+
+// Fault detected (review of #3298): a child's report never woke its parent's
+// `wait-children any`, notes held supervision for a minute while a person typed, and
+// child waits kept running after the services closed.
+describe("terminal agents: reports, notes and shutdown", () => {
+  it("wakes a parent waiting on any child when that child reports", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "working");
+    h.panes.set("9", child.ref.tabId);
+    const first = await h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0 });
+    expect(first).toMatchObject({ reason: "timeout" });
+
+    await h.agents.reportToParent({ caller: { sessionName: session, paneId: "9" }, text: "done; see notes" });
+
+    const cursor = first.reason === "timeout" ? first.cursor : undefined;
+    await expect(h.agents.waitChildren(parent, { mode: "any", timeoutMs: 1_000, ...(cursor ? { cursor } : {}) }))
+      .resolves.toEqual({ reason: "changed", child: child.ref, reported: true });
+  });
+
+  it("gives a parent note a short, deferrable hold", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const helper = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(helper.ref.tabId, "blocked");
+    await h.agents.supervise(new Map());
+    const noteCall = h.verbs.send.mock.calls.find(([ref]) => ref.tabId === parentId);
+    expect(noteCall?.[1]).toMatchObject({ deferWhileTyping: true, signal: expect.any(AbortSignal) });
+    expect(noteCall?.[1].maxHoldMs).toBeLessThanOrEqual(2_000);
+  });
+
+  it("ends child waits on close and waits for them to finish", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "working");
+    let settled = false;
+    const wait = h.agents.waitChildren(parent, { mode: "all", timeoutMs: 3_600_000 }).finally(() => { settled = true; });
+    await h.agents.close();
+    expect(settled).toBe(true);
+    await expect(wait).resolves.toMatchObject({ reason: "timeout" });
   });
 });

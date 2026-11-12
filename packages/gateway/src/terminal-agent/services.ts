@@ -95,6 +95,8 @@ export function createTerminalAgentServices(options: {
       // Subscribers and waiters first, so nothing touches the runtime client after it closes.
       events.shutdown();
       waiter.shutdown();
+      // Ends child waits and cancels pending notes, so the supervisor's pass ends quickly.
+      await agents.close();
       await supervisor.close();
     },
   };
