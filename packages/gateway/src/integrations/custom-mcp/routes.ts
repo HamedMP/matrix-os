@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { CUSTOM_MCP_UNAVAILABLE } from "@matrix-os/contracts";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
 import { MCP_TOOL_STREAM_TYPE } from "./tool-progress.js";
 import { toolProgressResponse } from "./tool-progress-response.js";
@@ -71,6 +72,8 @@ export interface CustomMcpOAuthFlow {
 export interface CustomMcpRoutesOptions {
   broker: CustomMcpBroker;
   resolveUserId: (context: Context) => Promise<string | null>;
+  /** An outer authenticated router may classify missing account state as unavailable. */
+  unavailableUserStatus?: 503;
   resolveActorId?: (context: Context) => string | null;
   oauth?: CustomMcpOAuthFlow;
   allowToolCalls?: boolean;
@@ -111,7 +114,9 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
 
   async function requireUser(context: Context, mutation = false): Promise<string | Response> {
     const userId = await options.resolveUserId(context);
-    if (!userId) return context.json({ error: "Unauthorized" }, 401);
+    if (!userId) return options.unavailableUserStatus === 503
+      ? context.json({ error: CUSTOM_MCP_UNAVAILABLE }, 503)
+      : context.json({ error: "Unauthorized" }, 401);
     if (mutation && !checkRateLimit(userId)) {
       return context.json({ error: "Too many requests" }, 429);
     }

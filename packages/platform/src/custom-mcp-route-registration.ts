@@ -80,6 +80,30 @@ export async function resolveCustomMcpUserIdForMachine(
   })).id;
 }
 
+/** Public routes already verified the session; machine bearers never reach this lookup. */
+function createOwnerCustomMcpUserResolver(
+  db: PlatformDB,
+  accounts: Parameters<typeof resolveCustomMcpUserIdForMachine>[1],
+): (context: Context) => Promise<string | null> {
+  return async (context) => {
+    const actorId = context.get('platformUserId') as string | undefined;
+    if (!actorId) return null;
+    const owner = await accounts.getUserByClerkId(actorId);
+    if (owner) return owner.id;
+    // Preserve first-use account creation for an owned personal machine. A
+    // shared preview must never bootstrap a collaborator's personal account.
+    return resolveCustomMcpUserIdForMachine(db, accounts, actorId,
+      context.get('platformHandle') as string | undefined);
+  };
+}
+
+export function createOwnerCustomMcpRouteOptions(
+  db: PlatformDB,
+  accounts: Parameters<typeof resolveCustomMcpUserIdForMachine>[1],
+) {
+  return { resolveUserId: createOwnerCustomMcpUserResolver(db, accounts), unavailableUserStatus: 503 as const };
+}
+
 type McpVariables = {
   platformUserId: string;
   platformHandle: string;
