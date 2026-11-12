@@ -18,7 +18,9 @@ it("keeps side answers in the side transcript and copies an editable draft to ma
   render(<SideChatPanel chatId="chat_main" client={client} onSendToMain={sendToMain}/>);
   await screen.findByText(/Ask about this chat/);
   fireEvent.change(screen.getByRole("textbox", { name: "Ask side chat" }), { target: { value: "Question" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+  const send = screen.getByRole("button", { name: "Send side question" });
+  expect(send.className).toContain("matrix-btn-secondary");
+  fireEvent.click(send);
   await waitFor(() => expect(client.askSideChat).toHaveBeenCalledWith("chat_main", expect.objectContaining({ text: "Question" })));
   fireEvent.click(await screen.findByRole("button", { name: "Send to main chat" }));
   expect(sendToMain).toHaveBeenCalledWith("Draft answer");

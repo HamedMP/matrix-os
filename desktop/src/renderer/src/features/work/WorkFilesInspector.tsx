@@ -169,6 +169,8 @@ function WorkInspectorContent({
     return () => useUi.getState().releaseRendererOverlay();
   }, [menuOpen]);
   const summary = useCodingAgentWorkspace((state) => state.summary);
+  const summaryRevision = useCodingAgentWorkspace((state) => state.summaryRevision);
+  const initialSummaryRevision = useRef(summaryRevision);
   const refreshSummary = useCodingAgentWorkspace((state) => state.refresh);
   const [createdSessions, setCreatedSessions] = useState<TerminalSessionSummary[]>(
     initialTerminal ? [initialTerminal.session] : [],
@@ -210,8 +212,9 @@ function WorkInspectorContent({
   const [selectedId, setSelectedId] = useState(() => initialTerminalTab?.id ??
     (tabs.some(tab => tab.id === savedLayout?.selectedTabId) ? savedLayout!.selectedTabId : FILES_TAB.id));
   const knownSessionIds = sessions.filter(session => session.attachable).map(session => session.id).join("\0");
+  const hasFreshSummary = Boolean(summary && summaryRevision > initialSummaryRevision.current);
   useEffect(() => {
-    if (!summary) return;
+    if (!hasFreshSummary) return;
     const known = new Set(knownSessionIds.split("\0").filter(Boolean));
     if (terminalCloseTarget && !known.has(terminalCloseTarget.slice("terminal:".length))) {
       setTerminalCloseTarget(null);
@@ -223,7 +226,7 @@ function WorkInspectorContent({
       const next = current.filter(tab => tab.kind !== "terminal" || known.has(tab.sessionId));
       return next.length === current.length ? current : next;
     });
-  }, [summary, knownSessionIds, selectedId, terminalCloseTarget]);
+  }, [hasFreshSummary, knownSessionIds, selectedId, terminalCloseTarget]);
   useEffect(() => {
     if (!layoutKey) return;
     useChatInspectorLayout.getState().update(layoutKey, {
@@ -249,16 +252,15 @@ function WorkInspectorContent({
   );
   const selected = tabs.find((tab) => tab.id === selectedId) ?? tabs[0] ?? FILES_TAB;
   const terminalBindingKey = detail ? collectTerminalBindingIds(detail).join("\0") : "";
-  const unresolvedBinding = terminalBindingKey.split("\0").filter(Boolean).some((bindingId) => (
-    !sessions.some((session) => session.id === bindingId && session.attachable)
-  ));
+  const unresolvedSessionIds = [...new Set([
+    ...terminalBindingKey.split("\0").filter(Boolean),
+    ...(!hasFreshSummary ? tabs.flatMap((tab) => tab.kind === "terminal" ? [tab.sessionId] : []) : []),
+  ])].filter((sessionId) => !sessions.some((session) => session.id === sessionId && session.attachable)).join("\0");
 
   useEffect(() => {
-    if (!active || !unresolvedBinding) return;
-    const bindingIds = terminalBindingKey ? terminalBindingKey.split("\0") : [];
-    if (bindingIds.length === 0) return;
-    return startTerminalSummaryRefresh(bindingIds, refreshSummary);
-  }, [active, refreshSummary, terminalBindingKey, unresolvedBinding]);
+    if (!active || !unresolvedSessionIds) return;
+    return startTerminalSummaryRefresh(unresolvedSessionIds.split("\0"), refreshSummary);
+  }, [active, refreshSummary, unresolvedSessionIds]);
 
   const openFile = (target: InspectorFileTarget) => {
     setSelectedFile(target);
@@ -313,13 +315,12 @@ function WorkInspectorContent({
   };
 
   const removeTab = (id: string) => {
-    setTabs((current) => {
-      const index = current.findIndex((tab) => tab.id === id);
-      const next = current.filter((tab) => tab.id !== id);
-      const safe = next.some((tab) => tab.id === FILES_TAB.id) ? next : [FILES_TAB, ...next];
-      if (selectedId === id) setSelectedId(safe[Math.min(Math.max(index - 1, 0), safe.length - 1)]!.id);
-      return safe;
-    });
+    const index = tabs.findIndex((tab) => tab.id === id);
+    if (index < 0) return;
+    const next = tabs.filter((tab) => tab.id !== id);
+    const safe = next.some((tab) => tab.id === FILES_TAB.id) ? next : [FILES_TAB, ...next];
+    setTabs(safe);
+    if (selectedId === id) setSelectedId(safe[Math.min(Math.max(index - 1, 0), safe.length - 1)]!.id);
   };
 
   const stopTerminalTab = async (id: string) => {
@@ -327,7 +328,7 @@ function WorkInspectorContent({
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find((candidate) => candidate.id === tab.sessionId);
     if (!session) { removeTab(id); return; }
-    if (summary && !session.attachable) { removeTab(id); setTerminalCloseTarget(null); return; }
+    if (hasFreshSummary && !session.attachable) { removeTab(id); setTerminalCloseTarget(null); return; }
     if (!api || closingSessionIds.includes(tab.sessionId)) return;
     setTerminalCloseError(false);
     setClosingSessionIds((current) => [...current, tab.sessionId]);
@@ -353,7 +354,7 @@ function WorkInspectorContent({
     const tab = tabs.find(candidate => candidate.id === id);
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find(candidate => candidate.id === tab.sessionId);
-    if (!session || (summary && !session.attachable)) { removeTab(id); return; }
+    if (!session || (hasFreshSummary && !session.attachable)) { removeTab(id); return; }
     setTerminalCloseTarget(id);
   };
 

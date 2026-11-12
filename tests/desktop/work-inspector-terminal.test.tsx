@@ -116,9 +116,35 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("keeps a saved terminal tab while a cached summary is being refreshed", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1 });
+    const sessionId = refKey("terminal_live");
+    const id = `terminal:${sessionId}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_cached");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+    let finishRefresh: (() => void) | undefined;
+    const refresh = vi.fn(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
+    useCodingAgentWorkspace.setState({ refresh });
+
+    render(<WorkFilesInspector detail={detail("chat_cached", "terminal_live")} projects={[]} active />);
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+
+    act(() => {
+      useCodingAgentWorkspace.setState({ summary: summary([terminal("terminal_live")]), summaryRevision: 2 });
+      finishRefresh?.();
+    });
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+  });
   it("removes saved terminal tabs that are absent after session discovery", async () => {
     useConnection.setState({ userId: "user_test" });
-    useCodingAgentWorkspace.setState({ summary: summary([]) });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
     const key = chatInspectorLayoutKey("user_test", "primary", "chat_stale");
     useChatInspectorLayout.getState().update(key, { selectedTabId: "terminal:missing", openTabIds: ["files", "terminal:missing"] });
     render(<WorkFilesInspector detail={detail("chat_stale")} projects={[]} active />);
@@ -127,7 +153,9 @@ describe("Work Files and Terminal inspector", () => {
   });
   it("removes a saved chat-bound terminal when discovery finds no live session", async () => {
     useConnection.setState({ userId: "user_test" });
-    useCodingAgentWorkspace.setState({ status: "ready", summary: summary([]) });
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
     const id = `terminal:${refKey("terminal_missing")}`;
     const key = chatInspectorLayoutKey("user_test", "primary", "chat_bound_stale");
     useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
@@ -589,6 +617,7 @@ describe("Work Files and Terminal inspector", () => {
       useCodingAgentWorkspace.setState({
         status: "ready",
         summary: summary([terminal("terminal_new")]),
+        summaryRevision: useCodingAgentWorkspace.getState().summaryRevision + 1,
       });
     });
     useCodingAgentWorkspace.setState({ status: "ready", summary: summary([terminal("terminal_first")]), refresh });
