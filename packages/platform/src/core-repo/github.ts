@@ -13,6 +13,8 @@ const API = "https://api.github.com";
 const TARBALL_HOSTS = new Set(["codeload.github.com"]);
 const API_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+/** Token and ref responses are tiny; anything larger is refused while streaming. */
+const API_RESPONSE_MAX_BYTES = 64 * 1024;
 
 export class CoreRepoUpstreamError extends Error {
   constructor(readonly reason: "token" | "ref" | "download" | "too_large") {
@@ -66,8 +68,16 @@ export function createGitHubCoreRepoClient(options: { appId: string; privateKey:
       method: "POST", headers: headers(createGitHubAppJwt(options.appId, options.privateKey, now())),
       redirect: "error", signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
-    const body = response.ok ? await response.json() as { token?: unknown } : undefined;
-    if (!response.ok) await response.body?.cancel();
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new CoreRepoUpstreamError("token");
+    }
+    let body: { token?: unknown } | undefined;
+    try { body = JSON.parse(new TextDecoder().decode(await readCapped(response, API_RESPONSE_MAX_BYTES))) as { token?: unknown }; }
+    catch (error: unknown) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new CoreRepoUpstreamError("token");
+    }
     if (typeof body?.token !== "string" || body.token.length > 1_024) throw new CoreRepoUpstreamError("token");
     return body.token;
   }
@@ -79,8 +89,11 @@ export function createGitHubCoreRepoClient(options: { appId: string; privateKey:
       const response = await fetchImpl(`${API}/repos/${source.repository}/commits/${encodeURIComponent(source.ref)}`, {
         headers: { ...headers(token), accept: "application/vnd.github.sha" }, redirect: "error", signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
-      const commit = response.ok ? (await response.text()).trim() : "";
-      if (!response.ok) await response.body?.cancel();
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new CoreRepoUpstreamError("ref");
+      }
+      const commit = new TextDecoder().decode(await readCapped(response, API_RESPONSE_MAX_BYTES)).trim();
       const parsed = CoreRepoCommitSchema.safeParse(commit);
       if (!parsed.success) throw new CoreRepoUpstreamError("ref");
       return { commit: parsed.data, token };

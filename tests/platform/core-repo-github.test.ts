@@ -58,6 +58,21 @@ describe("GitHub Core repo client", () => {
     await expect(client(fetchImpl).downloadTarball(source, "a".repeat(40), "ghs_t")).rejects.toBeInstanceOf(CoreRepoUpstreamError);
   });
 
+  // Fault: an oversized token or ref response is buffered whole in platform memory.
+  it("caps the token and commit responses at 64 KB", async () => {
+    const padded = (text: string) => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.enqueue(new TextEncoder().encode(" ".repeat(70 * 1024)));
+      controller.close();
+    } }));
+    const bigToken = vi.fn(async (url: string) => url.endsWith("/access_tokens") ? padded('{"token":"ghs_t"}') : new Response("a".repeat(40)));
+    await expect(client(bigToken).headCommit(source)).rejects.toBeInstanceOf(CoreRepoUpstreamError);
+    const bigCommit = vi.fn(async (url: string) => url.endsWith("/access_tokens") ? Response.json({ token: "ghs_t" }) : padded("a".repeat(40)));
+    await expect(client(bigCommit).headCommit(source)).rejects.toBeInstanceOf(CoreRepoUpstreamError);
+    const fine = vi.fn(async (url: string) => url.endsWith("/access_tokens") ? Response.json({ token: "ghs_t" }) : new Response(`${"a".repeat(40)}\n`));
+    await expect(client(fine).headCommit(source)).resolves.toEqual({ commit: "a".repeat(40), token: "ghs_t" });
+  });
+
   it("rejects a ref that does not resolve to a commit sha", async () => {
     const fetchImpl = vi.fn(async (url: string) => url.endsWith("/access_tokens")
       ? Response.json({ token: "ghs_t" }) : new Response("<html>not a sha</html>"));
