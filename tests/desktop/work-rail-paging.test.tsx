@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useWorkRailPage } from "@desktop/renderer/src/features/work/work-rail/useWorkRailPage";
+import { AppError } from "@desktop/shared/app-error";
 
 afterEach(cleanup);
 
@@ -59,5 +60,19 @@ it("drops paged titles and ignores a late page when navigation authority is lost
   rerender({ allowed: false });
   expect(result.current.rows).toEqual([]);
   await act(async () => finishNext({ items: [{ chat: { id: "chat_private_older", title: "Older" } }], totalCount: 2 }));
+  expect(result.current.rows).toEqual([]);
+});
+
+it("clears already loaded titles when a later page is forbidden", async () => {
+  const navigationPage = vi.fn(async (query: { cursor?: string }) => {
+    if (query.cursor) throw new AppError("unauthorized", { httpStatus: 403 });
+    return { items: Array.from({ length: 10 }, (_, index) => ({ chat: { id: `chat_private_${index}`, title: "Private title" } })), totalCount: 11, nextCursor: "next" };
+  });
+  const client = { navigationPage } as never;
+  const { result } = renderHook(() => useWorkRailPage(client,
+    { group: "done" }, "owner:0", 0, 10));
+  await waitFor(() => expect(result.current.rows).toHaveLength(10));
+  act(() => result.current.loadMore());
+  await waitFor(() => expect(result.current.error).toBe(true));
   expect(result.current.rows).toEqual([]);
 });

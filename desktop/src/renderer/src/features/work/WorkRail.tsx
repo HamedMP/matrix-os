@@ -217,12 +217,14 @@ export function WorkRail({
     setPinError(null); setPinning({}); setReadPending(false); setReadError(null);
     setDeleteChatTarget(null); setDeletingChat(false); setDeleteChatError(null);
     setRenamingChatId(null); setRenamePending(false); setRenameError(null); setSelectionError(null);
-    setSearchOpen(false);
+    setSearchOpen(false); setArchivePendingId(null); setBulkArchivePending(false);
+    setArchiveProjectTarget(null); setArchiveUndo(null); setArchiveError(null); setBulkArchiveError(null);
   }
   useEffect(()=>{
     setPinError(null);setPinning({});setReadPending(false);setReadError(null);
     setDeleteChatTarget(null);setDeletingChat(false);setDeleteChatError(null);
     setRenamingChatId(null);setRenamePending(false);setRenameError(null);setSelectionError(null);
+    setArchivePendingId(null);setBulkArchivePending(false);setArchiveProjectTarget(null);
   },[routeScope,client]);
   useEffect(() => {
     if (!archiveUndo) return;
