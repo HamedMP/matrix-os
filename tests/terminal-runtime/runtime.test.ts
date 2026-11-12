@@ -266,7 +266,7 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
-  it("rejects an attachment when its pane exits while the adapter is opening it", async () => {
+  it("rejects an attachment when its client exits during opening without ending the program", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
     const store = new TerminalWorkspaceStore({ homePath });
@@ -281,7 +281,7 @@ describe("project-scoped terminal runtime", () => {
       send: () => undefined,
     })).rejects.toThrow("Terminal tab unavailable");
     await runtime.flushCheckpoints();
-    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "exited", exitCode: 17 });
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "running" });
     expect(zellij.attachments.size).toBe(0);
     await runtime.shutdown();
   });

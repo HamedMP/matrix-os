@@ -158,6 +158,17 @@ describe("TerminalApp workspace contract", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows a plain reporter tab working in the Canvas sidebar", () => {
+    const shell: ShellSessionSummary = { name: REF_KEY, subtitle: "agent-a", workspaceId: WORKSPACE_ID,
+      tabId: TAB_ID, revision: 1, workspaceRevision: 1, status: "active", agentVisualStatus: "running" };
+    render(<ShellSessionGroup label="Active" shells={[shell]} expanded foreground
+      deletingShellNames={[]} selectedShellName={null}
+      onOpen={vi.fn()} onToggle={vi.fn()} onPin={vi.fn()} onRename={vi.fn(async () => true)}
+      onDelete={vi.fn()} draggingShellName={null} dragOverShellName={null}
+      onDragStart={vi.fn()} onDragOver={vi.fn()} onDrop={vi.fn()} onDragEnd={vi.fn()} />);
+    expect(screen.getByTestId(`terminal-session-status-${REF_KEY}`).getAttribute("title")).toBe("Working");
+  });
+
   it("renders whole-project sharing in the web project group", () => {
     const projectShell: ShellSessionSummary = {
       name: REF_KEY,

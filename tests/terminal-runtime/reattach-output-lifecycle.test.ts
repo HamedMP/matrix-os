@@ -16,6 +16,7 @@ type Frame = z.infer<typeof TerminalTabServerFrameSchema>;
 async function fixture() {
   const homePath = await mkdtemp("/tmp/matrix-eng294-");
   let emit: ((data: Uint8Array) => void) | undefined;
+  let clientExit: ((exitCode: number | null) => void) | undefined;
   const createTab = vi.fn(async () => ({ tabId: 1, paneId: "terminal_1" }));
   const closeTab = vi.fn(async () => {});
   const adapter: ZellijRuntimeAdapter = {
@@ -23,6 +24,7 @@ async function fixture() {
     subscribeWorkspace: async () => ({ close: async () => {} }),
     openAttachment: async (_session, input) => {
       emit = input.onData;
+      clientExit = input.onExit;
       return { write: async () => {}, resize: async () => {}, close: async () => {} };
     },
     resizeSession: async () => {},
@@ -48,6 +50,7 @@ async function fixture() {
     const ref: TerminalRef = { workspaceId: workspace.id, tabId: tab.id };
   return {
     runtime, store, ref, tab, createTab, closeTab,
+    clientExit() { if (!clientExit) throw new Error("No attachment"); clientExit(1); },
     emit(data: string) {
       if (!emit) throw new Error("Fixture has no live attachment");
       emit(Buffer.from(data));
@@ -187,4 +190,25 @@ it("delivers numbered markers in the snapshot-to-live handoff exactly once while
     release.resolve();
     await f.cleanup();
   }
+});
+
+// A zellij attachment is a client, not the command it observes. Changing shell
+// presentation can disconnect that client while the original process survives.
+it("reattaches the original tab after its viewer client exits unexpectedly", async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    const first = f.attach("canvas");
+    await vi.waitFor(() => { f.emit("canvas-marker\r\n"); expect(output(first.frames)).toContain("canvas-marker"); });
+    f.clientExit();
+    await vi.waitFor(() => expect(first.onClose.mock.calls.length > 0 || first.frames.some(frame =>
+      frame.type === "safe-error" || frame.type === "error")).toBe(true));
+    const saved = await f.store.getRuntimeWorkspace(f.ref.workspaceId);
+    expect(saved?.tabs[f.ref.tabId].status).toBe("running");
+    const resumed = f.attach("desktop");
+    await vi.waitFor(() => { f.emit("same-process-marker\r\n"); expect(output(resumed.frames)).toContain("same-process-marker"); });
+    expect(terminalTabIncarnation((await f.store.getRuntimeWorkspace(f.ref.workspaceId))!.tabs[f.ref.tabId])).toBe(f.tab.incarnation);
+    expect(f.createTab).toHaveBeenCalledTimes(1);
+    expect(f.closeTab).not.toHaveBeenCalled();
+  } finally { await f.cleanup(); }
 });

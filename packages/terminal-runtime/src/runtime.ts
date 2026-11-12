@@ -13,6 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
@@ -710,14 +711,18 @@ export class TerminalRuntime {
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
-            void this.handleAttachmentExit(key, exitCode)
-              .catch((error: unknown) => { console.error("[terminal-runtime] failed to record terminal attachment exit", error); })
+            void disconnectAttachmentClient({
+              current: () => this.attachments.get(key) === next,
+              viewers: [...next.viewers.values()],
+              close: () => this.closeAttachment(key, true),
+            })
+              .catch((error: unknown) => { console.error("[terminal-runtime] failed to disconnect terminal client", error); })
               .finally(releasePaneClosure);
           },
         }), (data) => { void this.broadcast(key, data); });
         next.handle = bootstrap.handle;
         this.attachments.set(key, next);
-        if (openingExit) { await this.handleAttachmentExit(key, openingExit.exitCode); throw new Error("Terminal tab unavailable"); }
+        if (openingExit) { await this.closeAttachment(key, true); throw new Error("Terminal tab unavailable"); }
       } finally { openingExit?.release(); }
       attachment = next;
     }
