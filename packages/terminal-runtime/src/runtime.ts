@@ -23,6 +23,8 @@ import { archiveEndedTerminalTab, TerminalEndedTabArchiveInputSchema, type Termi
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
+import { sweepHeldPaneExits, type HeldPaneExitSweepResult } from "./held-pane-exit-sweep.js";
+import type { HeldPaneExit } from "./terminal-command-state.js";
 import {
   captureTabScreen,
   TerminalScreenCaptureRequestSchema,
@@ -41,6 +43,7 @@ export interface ZellijRuntimeAdapter {
   /** Plain text of a pane's viewport, or its whole scrollback when `full`. */
   dumpPaneText?(sessionName: string, paneId: string, full: boolean): Promise<string>;
   getCommandResult?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult>;
+  listHeldPaneExits?(sessionName: string): Promise<HeldPaneExit[]>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
     internalName: string;
@@ -825,6 +828,27 @@ export class TerminalRuntime {
       const tab = workspace.tabs[parsed.tabId];
       if (!tab || terminalTabIncarnation(tab) !== expectedIncarnation) throw new TerminalRuntimeError("not_found");
       return this.store.readSnapshot(parsed);
+    });
+  }
+
+  /** Records exits zellij reports only through held panes (no pane_closed fires for them). */
+  async sweepHeldPaneExits(): Promise<HeldPaneExitSweepResult> {
+    const listHeldPaneExits = this.zellij.listHeldPaneExits?.bind(this.zellij);
+    if (!listHeldPaneExits || this.shuttingDown) return { sessions: 0, exited: 0 };
+    return sweepHeldPaneExits({
+      workspaceIds: (await this.store.listWorkspaces()).map((workspace) => workspace.id),
+      maxSessions: this.maxObservers,
+      readWorkspace: (workspaceId) => this.store.getRuntimeWorkspace(workspaceId),
+      listHeldPaneExits,
+      record: (ref, expected, exitCode) => this.runWorkspaceMutation(async () => {
+        const tab = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];
+        if (!tab || tab.status === "exited" || tab.status === "failed" || tab.zellijTabName !== expected.zellijTabName
+          || tab.zellijPaneId !== expected.paneId) return false;
+        const key = refKey(ref);
+        if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);
+        else await this.store.markTabExited(ref, exitCode);
+        return true;
+      }),
     });
   }
 

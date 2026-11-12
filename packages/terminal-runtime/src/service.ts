@@ -11,6 +11,7 @@ import { TerminalWorkspaceStore } from "./workspace-store.js";
 import { createTerminalAgentStatusIndex } from "./agent-status.js";
 import { ZellijCliRuntimeAdapter } from "./zellij-adapter.js";
 import { resolveTerminalRuntimeLimits } from "./runtime-config.js";
+import { startHeldPaneExitSweep } from "./held-pane-exit-sweep.js";
 import { startTerminalOrphanSweepLifecycle } from "./orphan-sweep-lifecycle.js";
 import { runBestEffortTerminalShutdown } from "./service-shutdown.js";
 import {
@@ -127,11 +128,21 @@ async function main(): Promise<void> {
       );
     },
   });
+  // Zellij keeps a command tab's pane open after its program exits and sends no
+  // pane_closed, so finished programs are noticed by asking it every 2 s.
+  const heldPaneExits = startHeldPaneExitSweep({
+    intervalMs: 2_000,
+    sweep: () => runtime.sweepHeldPaneExits(),
+    logFailed: (error) => {
+      console.warn("[terminal-runtime] held-pane exit sweep failed:", error instanceof Error ? error.name : "UnknownError");
+    },
+  });
   let closing = false;
   const close = async () => {
     if (closing) return;
     closing = true;
     await server.close();
+    await heldPaneExits.close();
     await orphanSweep.close();
     await runBestEffortTerminalShutdown(() => runtime.shutdown());
   };
