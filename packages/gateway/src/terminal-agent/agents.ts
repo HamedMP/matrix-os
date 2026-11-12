@@ -306,8 +306,16 @@ export function createTerminalAgents(options: {
       if (!wrapped) return { ref, tab, ...(parent ? { parent } : {}) };
       // A caller with its own request deadline (hosted MCP) shortens the readiness wait.
       const readyTimeoutMs = Math.min(READY_TIMEOUT_MS, Math.max(1_000, input.readyTimeoutMs ?? READY_TIMEOUT_MS));
-      const firstMessage = await deliverFirstMessage(ref, wrapped, readyTimeoutMs);
-      await options.registry.upsert(ref, (current) => ({ ...current, firstMessage }));
+      // The helper is running and registered: from here on a failure is reported in
+      // `firstMessage`, never as a failed run that a caller would retry.
+      const firstMessage = await deliverFirstMessage(ref, wrapped, readyTimeoutMs).catch((error: unknown): TerminalFirstMessage => {
+        // Send failures are handled inside; this is a readiness check, so nothing was sent.
+        console.warn("[gateway] terminal readiness check failed", error instanceof Error ? error.name : "unknown_error");
+        return { sent: false, reason: "not_ready" };
+      });
+      await options.registry.upsert(ref, (current) => ({ ...current, firstMessage })).catch((error: unknown) => {
+        console.warn("[gateway] terminal first message record failed", error instanceof Error ? error.name : "unknown_error");
+      });
       return { ref, tab, ...(parent ? { parent } : {}), firstMessage };
     },
 
