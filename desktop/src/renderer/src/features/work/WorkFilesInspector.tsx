@@ -349,11 +349,7 @@ function WorkInspectorContent({
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find(candidate => candidate.id === tab.sessionId);
     if (!session) { removeTab(id); return; }
-    if (session.attachable && (session.status === "starting" || session.status === "running" || session.status === "idle")) {
-      setTerminalCloseTarget(id);
-      return;
-    }
-    void stopTerminalTab(id);
+    setTerminalCloseTarget(id);
   };
 
   const splitRef = useRef<HTMLDivElement>(null);
