@@ -20,6 +20,7 @@ skills=(
   animation-performance
   animation-vocabulary
   app-builder
+  app-collaboration
   app-ui-patterns
   apple-design
   browser-admin
