@@ -39,8 +39,7 @@ import type { GatewayCollaborationConfigurationFailure, GatewayCollaborationRunt
 import { requireRequestPrincipal } from "../request-principal.js";
 import { createSideChatRoutes } from "../chat/side-chat-routes.js";
 import { SideChatRepository } from "../chat/side-chat-repository.js";
-import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
-import { generateAppText } from "@matrix-os/kernel";
+import { generateSideChatText } from "../chat/side-chat-generation.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
@@ -106,14 +105,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   app.route("/", createSideChatRoutes({
     repository: chatRepository ? new SideChatRepository(chatRepository.kysely) : null,
     getPrincipal: c => requireRequestPrincipal(c),
-    async generate(prompt, signal) {
-      const sources = await resolveKernelCredentialSources(options.homePath, process.env, options.fundedCredentialProvider);
-      const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId,
-        options.fundedCredentialProvider, { requestClass: "interactive" });
-      if (!launch.env) throw new Error("SideChatCredentialsUnavailable");
-      return generateAppText({ prompt, model: "claude-sonnet-5", env: launch.env,
-        signal: launch.fundedRunTimeoutMs ? AbortSignal.any([signal, AbortSignal.timeout(launch.fundedRunTimeoutMs)]) : signal });
-    },
+    generate: (prompt, signal) => generateSideChatText(options, prompt, signal),
   }));
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
   app.route("/", createCanonicalChatRoutes({

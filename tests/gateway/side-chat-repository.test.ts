@@ -33,3 +33,20 @@ it("saves a child transcript using the latest committed main chat without changi
   expect(generate).toHaveBeenCalledTimes(1);
   await expect(side.read({ type: "personal", ownerId: "another_user" }, chat.chat.id)).rejects.toBeInstanceOf(SideChatNotFoundError);
 });
+
+it("keeps newest main context when the side transcript is long", async () => {
+  const chat = await chats.create(owner, { id: "chat_side_long", clientRequestId: "req_side_long", title: "Main" });
+  await chats.kysely.insertInto("chat_messages").values({
+    id: "msg_side_recent", chat_id: chat.chat.id, seq: 1, role: "user", purpose: "ai_request", state: "committed",
+    turn_id: null, run_id: null, actor_id: null, parts: [{ type: "text", text: "RECENT_MAIN_CONTEXT" }],
+    byte_count: 19, search_text: "RECENT_MAIN_CONTEXT", created_at: new Date(),
+  }).execute();
+  const thread = (await side.create(owner, chat.chat.id)).threadId!;
+  await chats.kysely.insertInto("chat_side_messages").values(Array.from({ length: 40 }, (_, index) => ({
+    thread_id: thread, seq: index + 1, role: "assistant" as const, content: "x".repeat(2_000),
+    client_request_id: `req_side_history_${index}`, created_at: new Date(),
+  }))).execute();
+  const generate = vi.fn(async (prompt: string) => ({ text: "Answer" }));
+  await side.ask(owner, chat.chat.id, { clientRequestId: "req_side_latest", text: "Question" }, generate);
+  expect(generate.mock.calls[0]?.[0]).toContain("RECENT_MAIN_CONTEXT");
+});

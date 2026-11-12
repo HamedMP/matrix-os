@@ -25,9 +25,9 @@ const detail: CanonicalChatDetailResponse = {
     parts: JSON.stringify([{ type: "text", text: "hello" }]), created_at: new Date(timestamp) })],
   turns: [], runs: [], activities: [],
 };
-function app() {
+function app(responseDetail = detail) {
   return new Hono().route("/", createCanonicalChatRoutes({
-    service: { getDetail: async () => detail } as unknown as CanonicalChatRouteService,
+    service: { getDetail: async () => responseDetail } as unknown as CanonicalChatRouteService,
     getPrincipal: () => ({ userId: "owner", source: "jwt" }),
   }));
 }
@@ -110,7 +110,14 @@ it.each(["turn", "steer", "queued-steer"])("preserves the old parser for %s resp
   }
 });
 
-const oldChat = CanonicalChatSchema.omit({ titleVersion: true, activityAt: true }).strict();
+const oldChat = CanonicalChatSchema.omit({ titleVersion: true, activityAt: true, archivedAt: true }).strict();
+it("keeps archived chats readable by released Desktop parsers", async () => {
+  const archived = { ...detail, record: { chat: { ...detail.record.chat, lifecycle: "archived" as const, archivedAt: timestamp } } };
+  const legacy = await app(archived).request("/api/chats/chat_test");
+  expect(oldChat.safeParse((await legacy.json()).record.chat).success).toBe(true);
+  const current = await app(archived).request("/api/chats/chat_test", { headers: { "x-matrix-chat-metadata": "1" } });
+  expect((await current.json()).record.chat.archivedAt).toBe(timestamp);
+});
 it.each(["0", "1"])("negotiates chat title and activity metadata in HTTP and SSE (%s)", async (version) => {
   const headers = { "x-matrix-chat-metadata": version, "x-matrix-chat-protocol": "2", accept: "text/event-stream" };
   const response = await app().request("/api/chats/chat_test?messageVersion=2", { headers });
