@@ -13,6 +13,10 @@ not activation of spec 530 or its wildcard route.
   Fail closed for incomplete configuration; refuse sibling hosts and computers.
 - Keep normal Clerk and platform authorization. Require same-origin cookie-backed
   mutations; strip caller-supplied routing/identity headers before forwarding.
+- Forward the canonical `pr-3314.preview.matrix-os.com` routing identity under the
+  staging edge key, while keeping the browser origin on the approved alias. This
+  applies the platform's existing preview-only machine gate to implicit API and
+  WebSocket requests too; missing runtime selectors cannot choose a primary VPS.
 - Expiry denies new requests; existing upgraded connections retain their normal
   lifecycle. Remove the Worker/custom domain and its secret after evidence work.
 - No channel promotion, customer deployment, shared traffic change or change to

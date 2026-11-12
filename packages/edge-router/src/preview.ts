@@ -156,7 +156,10 @@ export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv
   for (const name of ['host', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-matrix-edge-secret']) {
     headers.delete(name);
   }
-  headers.set('x-forwarded-host', url.hostname);
+  // Preserve the platform's existing preview-machine boundary for implicit routes.
+  // The browser origin stays the approved alias; this trusted routing host cannot
+  // fall back to the signed-in owner's primary machine.
+  headers.set('x-forwarded-host', legacy ? `pr-${preview.prNumber}.preview.matrix-os.com` : url.hostname);
   headers.set('x-forwarded-proto', 'https');
   headers.set('x-matrix-edge-secret', secret);
   const ip = request.headers.get('cf-connecting-ip')?.trim();

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handlePreviewRequest } from '../../packages/edge-router/src/preview.js';
+import { getTrustedSessionRouteHost } from '../../packages/platform/src/session-routing-websocket.js';
+import { canRouteMachineOnPreviewHost, previewHandleFromHost } from '../../packages/platform/src/customer-vps-preview.js';
 
 const publicOrigin = 'https://pr-3314-preview.matrix-os.com';
 const upstream = 'https://pr-3314---matrix-platform-preview-example.a.run.app';
@@ -14,6 +16,27 @@ const env = {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('owner-approved, expiring evidence alias', () => {
+  it.each(['/api/health', '/api/files', '/ws/terminal/tab', '/'])
+    ('applies the real platform machine boundary even without a runtime selector: %s', async (path) => {
+      vi.setSystemTime(now);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const request = input as Request;
+        const host = getTrustedSessionRouteHost(new URL(request.url).host,
+          request.headers.get('x-forwarded-host') ?? undefined,
+          request.headers.get('x-matrix-edge-secret') ?? undefined,
+          env.PREVIEW_LEGACY_EDGE_SECRET);
+        expect(previewHandleFromHost(host)).toBe('pr-3314');
+        expect(canRouteMachineOnPreviewHost(host, {
+          handle: 'owner-primary', runtimeSlot: 'primary', provisioningClass: 'customer',
+        })).toBe(false);
+        expect(canRouteMachineOnPreviewHost(host, {
+          handle: 'pr-3314', runtimeSlot: 'pr-3314', provisioningClass: 'preview',
+        })).toBe(true);
+        return new Response('bounded preview');
+      });
+      expect((await handlePreviewRequest(new Request(publicOrigin + path), env)).status).toBe(200);
+    });
+
   it('opens the matching preview with staging authentication and replaces forged routing headers', async () => {
     vi.setSystemTime(now);
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('preview'));
@@ -24,7 +47,7 @@ describe('owner-approved, expiring evidence alias', () => {
     expect(response.status).toBe(200);
     const request = fetchMock.mock.calls[0]?.[0] as Request;
     expect(request.url).toBe(upstream + '/vm/pr-3314/api/health');
-    expect(request.headers.get('x-forwarded-host')).toBe('pr-3314-preview.matrix-os.com');
+    expect(request.headers.get('x-forwarded-host')).toBe('pr-3314.preview.matrix-os.com');
     expect(request.headers.get('x-matrix-edge-secret')).toBe(env.PREVIEW_LEGACY_EDGE_SECRET);
     expect(request.headers.get('x-platform-user-id')).toBeNull();
   });
