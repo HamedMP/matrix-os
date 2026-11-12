@@ -9,6 +9,7 @@ import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platfor
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 import { z } from 'zod/v4';
 import { buildPlatformUserProof } from './session-routing-websocket.js';
+import { createUnavailableInternalIntegrationRoutes } from './integration-route-fallback.js';
 
 /**
  * Machine-bearer routes a VPS gateway uses to reach its owner's platform-owned
@@ -24,7 +25,6 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
   /** Spec 537 P5; without it every Private Preview stays denied. */
   privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
-  if (!options.internalIntegrationRoutes) return;
   const { db, platformSecret } = options;
   const internalIntegrationApp = new Hono<{
     Variables: {
@@ -58,7 +58,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       // A Private Preview may pass only while spec 537 P5 holds for it.
       const restricted = await getPersonalAccountRestrictedMachineByHandle(db, handle);
       if (restricted && !(await options.privatePreviewEligibility?.(restricted))) {
-        c.res = c.json({ error: 'Forbidden' }, 403);
+        c.res = c.json({ error: 'Forbidden', code: 'preview_integrations_unavailable' }, 403);
         return;
       }
       // Customer VPSes are persisted in user_machines. Keep the legacy
@@ -102,6 +102,6 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
   internalIntegrationApp.use('*', createAccountDeletionMutationGuard({ db,
     resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
   internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
-  internalIntegrationApp.route('/', options.internalIntegrationRoutes);
+  internalIntegrationApp.route('/', options.internalIntegrationRoutes ?? createUnavailableInternalIntegrationRoutes());
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
 }

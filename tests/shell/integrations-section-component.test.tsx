@@ -87,6 +87,62 @@ describe("IntegrationsSection websocket lifecycle", () => {
 
 describe("Connect Apps partial loading", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it("explains unavailable app connections while MCP discovery and owner approvals remain usable", async () => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    let available = false;
+    const saved = { id: "first", service: "gmail", account_label: "First", account_email: "first@example.test", status: "active", connected_at: "2026-11-12T00:00:00.000Z" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/integrations/available") || url.endsWith("/api/integrations")) {
+        if (available) return Response.json(url.endsWith("/available") ? { services: [] } : { connections: [saved] });
+        return Response.json({ error: "integrations_unavailable" }, { status: 503 });
+      }
+      if (url.endsWith("/api/integrations/sync")) return Response.json({ services: [saved, { ...saved, id: "second", account_label: "Second", account_email: "second@example.test" }] });
+      if (url.endsWith("/api/mcp-servers/catalog")) return Response.json({ presets: [{
+        id: "context7", name: "Context7", url: "https://mcp.context7.com/mcp", auth: "none",
+        category: "developer", departments: ["engineering"], description: "Library documentation",
+      }] });
+      if (url.endsWith("/api/mcp-servers")) return Response.json([]);
+      if (url.endsWith("/external-approvals")) return Response.json({ approvals: [] });
+      return Response.json({});
+    }));
+    render(<IntegrationsSection />);
+    expect(await screen.findByText("Some app connections are unavailable. You can still connect MCP servers and review external approvals below.")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Connect Context7" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(screen.queryByText("Failed to load integrations")).toBeNull();
+    available = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh", exact: true }));
+    await waitFor(() => expect(screen.queryByText("Some app connections are unavailable. You can still connect MCP servers and review external approvals below.")).toBeNull());
+    expect(await screen.findByText("second@example.test")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect Context7" })).toBeTruthy();
+  });
+  it.each([true, false])("distinguishes a signed preview restriction from an ordinary forbidden response (known=%s)", async (known) => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/integrations/available")) return Response.json({ error: "integrations_unavailable" }, { status: 503 });
+      if (url.endsWith("/api/integrations")) return Response.json({ error: "Forbidden", ...(known ? { code: "preview_integrations_unavailable" } : {}) }, { status: 403 });
+      if (url.endsWith("/api/mcp-servers/catalog")) return Response.json({ presets: [{ id: "context7", name: "Context7", url: "https://mcp.context7.com/mcp", auth: "none", category: "developer", departments: ["engineering"], description: "Library documentation" }] });
+      if (url.endsWith("/api/mcp-servers")) return Response.json([]);
+      if (url.endsWith("/external-approvals")) return Response.json({ approvals: [] });
+      return Response.json({});
+    }));
+    render(<IntegrationsSection />);
+    expect(await screen.findByRole("button", { name: "Connect Context7" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Check again" })).toBeTruthy();
+    const notice = "App connections are unavailable on this preview computer. You can still connect MCP servers and review external approvals below.";
+    if (known) {
+      expect(await screen.findByText(notice)).toBeTruthy();
+      expect(screen.queryByText("Failed to load integrations")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Refresh", exact: true }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Refresh", exact: true }).hasAttribute("disabled")).toBe(false));
+      expect(screen.queryByText("Failed to load integrations")).toBeNull();
+    } else {
+      expect(await screen.findByText("Failed to load integrations")).toBeTruthy();
+      expect(screen.queryByText(notice)).toBeNull();
+    }
+  });
   it.each(["http", "network", "json"])("keeps accounts removable when the catalog fails with %s", async (failure) => {
     buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

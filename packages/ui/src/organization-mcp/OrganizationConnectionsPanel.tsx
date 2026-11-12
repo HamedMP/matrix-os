@@ -72,9 +72,23 @@ function ServerPolicyCard({ servers, busy, mutate }: { servers: readonly OrgMcpS
       <p className="mt-1 text-xs" style={muted}>Blocking a server stops Matrix from calling it for every member in this organization. Members keep their own connections.</p>
       {servers.length > 0 ? <ul className="mt-3 space-y-2" aria-label="Governed servers">
         {servers.map(server => (
-          <li key={server.serverDefId} className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm">{server.serverDefId}</span>
-            <div className="flex items-center gap-2">
+          <li key={server.serverDefId} className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <span className="break-all text-sm">{server.serverDefId}</span>
+              <p className="mt-1 text-xs" style={muted}>
+                {server.defaultToolPolicy === "blocked" ? "Tools blocked by default" : "Tools allowed by default"}
+              </p>
+              {Object.keys(server.toolOverrides).length > 0 ? (
+                <ul className="mt-2 space-y-1" aria-label={`Tool overrides for ${server.serverDefId}`}>
+                  {Object.entries(server.toolOverrides).sort(([left], [right]) => left.localeCompare(right)).map(([tool, policy]) => (
+                    <li key={tool} className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="break-all">{tool}</span><Badge variant={policy === "blocked" ? "error" : "default"}>{policy === "blocked" ? "Blocked" : "Allowed"}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
               <ModeSelect value={server.mode} label={`Policy for ${server.serverDefId}`} disabled={busy}
                 onChange={(mode) => { void mutate(client => client.setServerMode(server.serverDefId, mode)); }} />
               <Button size="sm" variant="ghost" disabled={busy} aria-label={`Remove policy for ${server.serverDefId}`}

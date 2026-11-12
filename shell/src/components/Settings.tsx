@@ -145,6 +145,8 @@ interface SettingsProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultSection?: SettingsSectionInputId;
+  /** A new explicit link is actionable even while the same panel is open. */
+  navigationRequestId?: number;
   lockedSection?: SettingsSectionInputId;
   billingActiveOverride?: boolean | null;
   closeDisabled?: boolean;
@@ -193,6 +195,7 @@ function SettingsFrame({
   open,
   onOpenChange,
   defaultSection = "agents-providers",
+  navigationRequestId = 0,
   lockedSection,
   closeDisabled = false,
   billingMode = "settings",
@@ -235,14 +238,14 @@ function SettingsFrame({
       }, [])
     : standardFrameSections;
   const [activeSection, setActiveSection] = useState<SectionId>(resolvedDefaultSection);
-  // Tracks the prior `open` value so the render-time section adjustment below
-  // can detect the open transition. Uses the React-documented "store previous
+  // Tracks prior open/link state so section adjustment below can detect an
+  // explicit navigation request. Uses the React-documented "store previous
   // prop in state" pattern (state, not a ref): reading/writing a ref during
   // render is exactly what React Compiler cannot optimize, whereas a guarded
   // setState during render is the supported pattern.
-  // react-doctor-disable-next-line react-doctor/no-derived-useState -- transition tracker, not a mirror of `open`: it stores the previous `open` value so the render-time section adjustment below can detect the open->close edge
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- transition tracker for prior open/link state so the guarded render-time adjustment detects a new request
   // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- intentionally state, not a ref: it IS read during render (in `justOpened` below) to drive the adjustment; the rule's "use useRef" advice would force ref reads/writes during render, which React Compiler flags as unoptimizable
-  const [prevOpen, setPrevOpen] = useState(open);
+  const [previousNavigation, setPreviousNavigation] = useState({ open, requestId: navigationRequestId });
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
   // "from" state to animate out of. Same pattern as VocalPanel.
@@ -283,15 +286,15 @@ function SettingsFrame({
   // check so the setState only fires on an actual transition, never looping.
   // `activeSection` is still genuine interactive state — the nav buttons mutate
   // it — so it cannot be a pure render-time derivation.
-  const justOpened = open && !prevOpen;
-  if (open !== prevOpen) setPrevOpen(open);
+  const justOpened = open && !previousNavigation.open;
+  const sectionRequested = navigationRequestId !== previousNavigation.requestId;
+  if (open !== previousNavigation.open || sectionRequested) setPreviousNavigation({ open, requestId: navigationRequestId });
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
-  } else if (justOpened) {
-    const openSection = showBillingSection && billingActive === false
-      ? "billing"
-      : resolvedDefaultSection;
-    if (activeSection !== openSection) setActiveSection(openSection);
+  } else if (open && (justOpened || sectionRequested)) {
+    // BillingGate uses lockedSection for setup admission. Ordinary Settings
+    // links must keep their destination, including owner write approvals.
+    if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }

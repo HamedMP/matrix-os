@@ -122,6 +122,48 @@ describe("Settings panel", () => {
     expect(screen.getByRole("button", { name: "Connect Apps" }).getAttribute("aria-current")).toBe("page");
   });
 
+  it("opens the real Settings integration section from the approval pill when billing is inactive", async () => {
+    billingState.active = false;
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    const { ShellExternalMcpApprovalsPill } = await import("../../shell/src/components/ShellExternalMcpApprovalsPill.js");
+    const { useSettingsNavigation } = await import("../../shell/src/hooks/useSettingsNavigation.js");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ approvals: [{
+      approvalId: "11111111-1111-4111-8111-111111111111", service: "linear", tool: "create_issue",
+      createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    }] })));
+    function Harness() {
+      const navigation = useSettingsNavigation();
+      return <>
+        <ShellExternalMcpApprovalsPill openSettings={navigation.openSettings} />
+        <Settings open={navigation.settingsOpen} defaultSection={navigation.settingsDefaultSection}
+          navigationRequestId={navigation.settingsNavigationRequestId}
+          onOpenChange={navigation.setSettingsOpen} />
+      </>;
+    }
+    try {
+      render(<Harness />);
+      fireEvent.click(await screen.findByRole("button", { name: "1 external MCP write waiting for approval" }));
+      expect(await screen.findByText("Integration settings")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Connect Apps" }).getAttribute("aria-current")).toBe("page");
+      expect(screen.queryByText("Billing settings settings")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Appearance", exact: true }));
+      expect(screen.getByText("Appearance settings")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "1 external MCP write waiting for approval" }));
+      expect(await screen.findByText("Integration settings")).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps an explicit provisioning billing lock when a closed panel receives an integrations link", async () => {
+    billingState.active = false;
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    const view = render(<Settings open={false} lockedSection="billing" billingMode="provisioning" onOpenChange={() => {}} />);
+    view.rerender(<Settings open defaultSection="integrations" lockedSection="billing" billingMode="provisioning" onOpenChange={() => {}} />);
+    expect(await screen.findByText("Billing settings provisioning")).toBeTruthy();
+    expect(screen.queryByText("Integration settings")).toBeNull();
+  });
+
   it("keeps account controls available while billing is locked for provisioning", async () => {
     billingState.active = false;
     const { Settings } = await import("../../shell/src/components/Settings.js");

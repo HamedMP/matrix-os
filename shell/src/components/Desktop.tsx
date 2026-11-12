@@ -143,7 +143,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
-  const { settingsOpen, settingsDefaultSection, setSettingsOpen, openSettings, toggleSettings } = useSettingsNavigation();
+  const { settingsOpen, settingsDefaultSection, settingsNavigationRequestId, setSettingsOpen, openSettings, toggleSettings } = useSettingsNavigation();
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
@@ -1372,6 +1372,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         defaultSection={settingsDefaultSection}
+        navigationRequestId={settingsNavigationRequestId}
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
           openSetupTerminal(action);

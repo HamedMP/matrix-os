@@ -108,7 +108,7 @@ import {
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import { bootstrapPlatformSlack } from './slack-startup.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
-import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
+import { createOwnerCustomMcpRouteOptions, getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
 import {
   PlatformSpeechConfigError,
@@ -769,10 +769,7 @@ async function startPlatformServerWithCleanup(
       catalog: registeredMcpOAuthClients,
       // Spec 2691: owner-session decisions for external `/mcp` writes (never on the internal router).
       ownerApprovals: customDb,
-      resolveUserId: async (c: Context) => resolveCustomMcpUserId(
-        c.get('platformUserId') as string | undefined,
-        c.get('platformHandle') as string | undefined,
-      ),
+      ...createOwnerCustomMcpRouteOptions(db, customDb),
     });
     customMcpRoutes=new Hono();
     customMcpRoutes.use('/oauth/callback',createAccountDeletionMutationGuard({db,env:process.env,isMutation:()=>true,
