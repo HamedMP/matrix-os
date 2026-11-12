@@ -64,6 +64,13 @@ export function McpServersSection() {
     });
   }, [load]);
   useEffect(() => { retryLoad(); }, [retryLoad]);
+  function authorize(serverId: string) {
+    return run(async () => {
+      const result = await api!.post<{ url: string }>(`/api/mcp-servers/${serverId}/connect`, {});
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    });
+  }
+
   async function connectPreset(presetId: string) {
     if (!api) return;
     setBusy(true); setConnectingPreset(presetId); setError(null);
@@ -89,9 +96,9 @@ export function McpServersSection() {
     catch (operationError: unknown) {
       console.warn(
         "[custom-mcp] operation failed:",
-        operationError instanceof Error ? operationError.message : String(operationError),
+        operationError instanceof AppError ? operationError.httpStatus : operationError instanceof Error ? operationError.name : typeof operationError,
       );
-      setError("The MCP operation failed. Check the server status and try again.");
+      setError(presetErrorMessage(operationError));
     }
     finally { setBusy(false); }
   }
@@ -212,8 +219,8 @@ export function McpServersSection() {
     ) : null}
     {loading ? <p role="status" className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading MCP servers…</p> : null}
     <fieldset disabled={!loaded || loading || !api || diagnosing} className="min-w-0 space-y-5">
-    <RemoteMcpPresetPicker presets={presets} state={catalogState} connectedUrls={servers.map((server) => server.url)}
-      connectingId={connectingPreset} disabled={busy} onConnect={(presetId) => { void connectPreset(presetId); }} onRetry={loadCatalog} />
+    <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
+      connectingId={connectingPreset} disabled={busy} onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
     <div className="grid grid-cols-2 gap-2 rounded-xl border p-4" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
       <p className="col-span-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>Paste any MCP server URL</p>
       <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" className="rounded-lg border bg-transparent px-3 py-2 text-sm" />
@@ -223,13 +230,13 @@ export function McpServersSection() {
       <button type="button" disabled={!api || busy || !name.trim() || !url.trim()} onClick={add} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Add MCP server</button>
     </div>
     {!api ? <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Connect a Matrix computer to manage MCP servers.</p> : null}
-    {api && loaded && !error ? <McpConnectionInventory
+    {api && loaded && (servers.length > 0 || !error) ? <McpConnectionInventory
       entries={inventoryFor(servers)}
       renderActions={(entry) => {
         const server = findMcpServer(servers, entry.id);
         if (!server) return null;
         return <>
-          {server.authMode === "oauth" && server.status === "auth_required" ? <button type="button" className="text-xs underline" onClick={() => run(async () => { const result = await api!.post<{ url: string }>(`/api/mcp-servers/${server.id}/connect`, {}); window.open(result.url, "_blank", "noopener,noreferrer"); })}>Authorize</button> : null}
+          {server.authMode === "oauth" && server.status === "auth_required" ? <button type="button" className="text-xs underline" onClick={() => { void authorize(server.id); }}>Authorize</button> : null}
           <button type="button" className="text-xs text-red-400 underline" onClick={() => run(() => api!.delete(`/api/mcp-servers/${server.id}`))}>Remove</button>
         </>;
       }}

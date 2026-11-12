@@ -10,11 +10,13 @@ const pill = { background: "var(--bg-surface-hover, var(--muted))" };
 export interface RemoteMcpPresetPickerProps {
   presets: readonly RemoteMcpPreset[];
   state: "loading" | "ready" | "error";
-  /** Server URLs already connected; their presets show as connected. */
-  connectedUrls: readonly string[];
+  /** Saved MCP servers; a preset reflects its server's real status, not just that a row exists. */
+  connections: ReadonlyArray<{ serverId: string; url: string; status: string }>;
   connectingId: string | null;
   disabled?: boolean;
   onConnect: (presetId: string) => void;
+  /** Restart sign-in for a saved server that still needs OAuth authorization. */
+  onFinishSignIn: (serverId: string) => void;
   onRetry: () => void;
 }
 
@@ -28,10 +30,10 @@ function normalized(url: string): string {
 }
 
 /** Shared preset picker for Web Canvas, Web Desktop, and Electron Desktop (spec 2691). */
-export function RemoteMcpPresetPicker({ presets, state, connectedUrls, connectingId, disabled = false, onConnect, onRetry }: RemoteMcpPresetPickerProps) {
+export function RemoteMcpPresetPicker({ presets, state, connections, connectingId, disabled = false, onConnect, onFinishSignIn, onRetry }: RemoteMcpPresetPickerProps) {
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState<RemoteMcpDepartment | null>(null);
-  const connected = new Set(connectedUrls.map(normalized));
+  const byUrl = new Map(connections.map(connection => [normalized(connection.url), connection]));
   const visible = filterRemoteMcpPresets(presets, { query, department });
 
   return (
@@ -71,7 +73,7 @@ export function RemoteMcpPresetPicker({ presets, state, connectedUrls, connectin
       {state === "ready" && visible.length > 0 ? (
         <ul className="grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-2">
           {visible.map(preset => {
-            const isConnected = connected.has(normalized(preset.url));
+            const saved = byUrl.get(normalized(preset.url));
             const isConnecting = connectingId === preset.id;
             return (
               <li key={preset.id} className="flex min-w-0 items-center gap-3 py-3" data-testid={`mcp-preset-${preset.id}`}>
@@ -82,7 +84,7 @@ export function RemoteMcpPresetPicker({ presets, state, connectedUrls, connectin
                   <p className="truncate text-sm font-medium">{preset.name}</p>
                   <p className="truncate text-xs" style={muted} title={preset.description}>{preset.description}</p>
                 </div>
-                {isConnected ? <span className="shrink-0 rounded-full px-2.5 py-1 text-xs" style={pill}>Connected</span> : (
+                {saved ? <SavedPresetState name={preset.name} saved={saved} disabled={disabled || connectingId !== null} onFinishSignIn={onFinishSignIn} /> : (
                   <button type="button" aria-label={`Connect ${preset.name}`} disabled={disabled || connectingId !== null} onClick={() => onConnect(preset.id)}
                     className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50">
                     {isConnecting ? "Connecting…" : "Connect"}
@@ -95,4 +97,17 @@ export function RemoteMcpPresetPicker({ presets, state, connectedUrls, connectin
       ) : null}
     </section>
   );
+}
+
+function SavedPresetState({ name, saved, disabled, onFinishSignIn }: {
+  name: string; saved: { serverId: string; status: string }; disabled: boolean; onFinishSignIn: (serverId: string) => void;
+}) {
+  if (saved.status === "auth_required") {
+    return (
+      <button type="button" aria-label={`Finish sign-in for ${name}`} disabled={disabled} onClick={() => onFinishSignIn(saved.serverId)}
+        className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50">Finish sign-in</button>
+    );
+  }
+  const label = saved.status === "ready" ? "Connected" : saved.status === "disabled" ? "Disabled" : "Needs attention";
+  return <span className="shrink-0 rounded-full px-2.5 py-1 text-xs" style={pill}>{label}</span>;
 }

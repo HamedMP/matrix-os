@@ -225,6 +225,11 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
     }
   }
 
+  async function authorize(serverId: string) {
+    const result = await mutate<{ url: string }>(serverId, `/api/mcp-servers/${serverId}/connect`, "POST");
+    if (result?.url) window.open(result.url, "_blank", "noopener,noreferrer");
+  }
+
   async function connectPreset(presetId: string) {
     const created = await mutate<McpServer>(`preset:${presetId}`, "/api/mcp-servers", "POST", { catalogId: presetId });
     if (created?.authMode !== "oauth") return;
@@ -333,9 +338,9 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
       ) : null}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading MCP servers…</p>}
       <fieldset disabled={!loaded || loading || diagnosing} className="min-w-0 space-y-4">
-      <RemoteMcpPresetPicker presets={presets} state={catalogState} connectedUrls={servers.map((server) => server.url)}
+      <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
         connectingId={busy?.startsWith("preset:") ? busy.slice("preset:".length) : null} disabled={busy !== null}
-        onConnect={(presetId) => { void connectPreset(presetId); }} onRetry={loadCatalog} />
+        onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
       <div className="grid gap-2 rounded-lg border border-border/60 bg-card/50 p-4 sm:grid-cols-2">
         <p className="text-sm font-medium sm:col-span-2">Paste any MCP server URL</p>
         <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" maxLength={100} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
@@ -346,13 +351,13 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
         {(authMode === "bearer" || authMode === "api_key") && <input aria-label="MCP credential" type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Secret credential" maxLength={4096} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />}
         <button type="button" disabled={busy !== null || !name.trim() || !url.trim()} onClick={createServer} className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">Add MCP server</button>
       </div>
-      {loaded && !error ? <McpConnectionInventory entries={inventory}
+      {loaded && (inventory.length > 0 || !error) ? <McpConnectionInventory entries={inventory}
         renderActions={(entry) => {
           const server = serverById.get(entry.id);
           if (!server) return null;
           return (
             <>
-              {server.authMode === "oauth" && server.status === "auth_required" && <button type="button" className="text-xs underline" onClick={async () => { const result = await mutate<{ url: string }>(server.id, `/api/mcp-servers/${server.id}/connect`, "POST"); if (result?.url) window.open(result.url, "_blank", "noopener,noreferrer"); }}>Authorize</button>}
+              {server.authMode === "oauth" && server.status === "auth_required" && <button type="button" className="text-xs underline" onClick={() => { void authorize(server.id); }}>Authorize</button>}
               <button type="button" className="text-xs text-red-400 underline" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}`, "DELETE")}>Remove</button>
             </>
           );

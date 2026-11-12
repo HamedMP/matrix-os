@@ -56,17 +56,35 @@ describe("remote MCP preset derivations", () => {
 });
 
 describe("RemoteMcpPresetPicker", () => {
-  it("connects an unconnected preset and marks connected ones", () => {
+  it("connects an unconnected preset and marks ready ones connected", () => {
     const onConnect = vi.fn();
-    render(<RemoteMcpPresetPicker presets={presets} state="ready" connectedUrls={["https://app.lemlist.com/mcp"]} connectingId={null} onConnect={onConnect} onRetry={vi.fn()} />);
+    render(<RemoteMcpPresetPicker presets={presets} state="ready" connections={[{ serverId: "s1", url: "https://app.lemlist.com/mcp", status: "ready" }]} connectingId={null} onConnect={onConnect} onFinishSignIn={vi.fn()} onRetry={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Connect Linear" }));
     expect(onConnect).toHaveBeenCalledWith("linear");
     expect(screen.getByText("Connected")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Connect lemlist" })).toBeNull();
   });
 
+  // Fault: a saved but unfinished connection is shown as Connected.
+  it.each([
+    ["auth_required", null, "Finish sign-in"],
+    ["disabled", "Disabled", null],
+    ["degraded", "Needs attention", null],
+    ["action_required", "Needs attention", null],
+  ])("shows %s connections truthfully", (status, label, action) => {
+    const onFinishSignIn = vi.fn();
+    render(<RemoteMcpPresetPicker presets={presets} state="ready" connections={[{ serverId: "s1", url: "https://mcp.linear.app/mcp", status }]} connectingId={null} onConnect={vi.fn()} onFinishSignIn={onFinishSignIn} onRetry={vi.fn()} />);
+    expect(screen.queryByText("Connected")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
+    if (label) expect(screen.getByText(label)).toBeTruthy();
+    if (action) {
+      fireEvent.click(screen.getByRole("button", { name: `${action} for Linear` }));
+      expect(onFinishSignIn).toHaveBeenCalledWith("s1");
+    }
+  });
+
   it("filters by search and department and explains an empty result", () => {
-    render(<RemoteMcpPresetPicker presets={presets} state="ready" connectedUrls={[]} connectingId={null} onConnect={vi.fn()} onRetry={vi.fn()} />);
+    render(<RemoteMcpPresetPicker presets={presets} state="ready" connections={[]} connectingId={null} onConnect={vi.fn()} onFinishSignIn={vi.fn()} onRetry={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Sales" }));
     expect(screen.queryByText("Linear")).toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search MCP services" }), { target: { value: "zzz" } });
@@ -75,9 +93,9 @@ describe("RemoteMcpPresetPicker", () => {
 
   it("shows loading and a retryable error", () => {
     const onRetry = vi.fn();
-    const { rerender } = render(<RemoteMcpPresetPicker presets={[]} state="loading" connectedUrls={[]} connectingId={null} onConnect={vi.fn()} onRetry={onRetry} />);
+    const { rerender } = render(<RemoteMcpPresetPicker presets={[]} state="loading" connections={[]} connectingId={null} onConnect={vi.fn()} onFinishSignIn={vi.fn()} onRetry={onRetry} />);
     expect(screen.getByRole("status").textContent).toContain("Loading");
-    rerender(<RemoteMcpPresetPicker presets={[]} state="error" connectedUrls={[]} connectingId={null} onConnect={vi.fn()} onRetry={onRetry} />);
+    rerender(<RemoteMcpPresetPicker presets={[]} state="error" connections={[]} connectingId={null} onConnect={vi.fn()} onFinishSignIn={vi.fn()} onRetry={onRetry} />);
     fireEvent.click(screen.getByRole("button", { name: "Retry loading MCP services" }));
     expect(onRetry).toHaveBeenCalled();
   });
