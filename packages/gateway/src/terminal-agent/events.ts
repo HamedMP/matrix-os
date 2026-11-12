@@ -13,6 +13,8 @@ const MAX_BACKLOG_BYTES = 1024 * 1024;
  * runtime bounds how many can run); finished history fills what is left.
  */
 export const TERMINAL_EVENTS_MAX_TABS = 1_024;
+/** Longest working folder a stream entry carries (about 1 KiB per tab at most). */
+export const MAX_STREAM_CWD_CHARS = 256;
 
 /** A snapshot's tabs: all live ones, then finished history up to the cap. */
 function snapshotTabs(facts: Map<string, TerminalTabFacts>): TerminalTabFacts[] {
@@ -83,7 +85,8 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
     facts.set(terminalRefKey(ref), {
       ref,
       name: tab.name,
-      cwd: tab.cwd,
+      // Bounded so a snapshot of every live tab stays small; full folders come from `get`.
+      cwd: tab.cwd.slice(0, MAX_STREAM_CWD_CHARS),
       ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
       state: finished ? "finished" : "live",
       ...(finished ? { exitCode: tab.exitCode ?? null } : {}),

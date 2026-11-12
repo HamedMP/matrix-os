@@ -172,6 +172,18 @@ describe("terminal event hub", () => {
     expect(events).toContainEqual({ kind: "finished", ref: { workspaceId, tabId: exiting }, exitCode: 7 });
   });
 
+  // Fault detected (sixth review of #3297): very long working folders made a snapshot of
+  // many live tabs exceed what clients accept.
+  it("bounds each tab's size in the stream", async () => {
+    const h = harness();
+    h.setTabs([tab(tabA, { cwd: `projects/${"a".repeat(4_000)}` })]);
+    const sub = h.subscriber();
+    await h.hub.tick();
+    const snapshot = sub.frames[0]?.type === "snapshot" ? sub.frames[0].tabs : [];
+    expect(snapshot[0]!.cwd.length).toBeLessThanOrEqual(256);
+    expect(JSON.stringify(snapshot[0]).length).toBeLessThan(1_000);
+  });
+
   it("caps subscribers", () => {
     const h = harness();
     for (let index = 0; index < 64; index += 1) h.subscriber();
