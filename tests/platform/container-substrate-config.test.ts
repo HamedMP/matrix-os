@@ -120,7 +120,7 @@ describe('container substrate registration', () => {
       const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
       expect(vi.getTimerCount()).toBe(0);
       configured.startBackgroundWork();
-      expect(vi.getTimerCount()).toBe(1);
+      expect(vi.getTimerCount()).toBe(2);
       await configured.shutdown();
       expect(vi.getTimerCount()).toBe(0);
     } finally {

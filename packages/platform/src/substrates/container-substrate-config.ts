@@ -12,6 +12,7 @@ import {
 import { createContainerRuntimeClient } from './container-runtime-client.js';
 import { createContainerSubstrate } from './container-substrate.js';
 import { createActivityTracker, createIdleReaper } from './idle-reaper.js';
+import { createOrphanReconciler } from './orphan-reconciler.js';
 import { createLambdaMicrovmsApi, createLambdaMicrovmsClient, type LambdaMicrovmsSender } from './lambda-microvms-client.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -103,7 +104,7 @@ export interface ConfiguredContainerSubstrate {
   platformSecret: string;
   lifecycle: ContainerLifecycleService;
   ownerDatabases: ContainerOwnerDatabases;
-  /** Starts the idle sweep; call once the platform database is ready. */
+  /** Starts the idle and orphan sweeps; call once the platform database is ready. */
   startBackgroundWork(): void;
   shutdown(): Promise<void>;
 }
@@ -174,6 +175,7 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
   });
   const activity = createActivityTracker({ db: deps.db });
   const reaper = createIdleReaper({ db: deps.db, lifecycle, runtime, activity, config: config.idle });
+  const reconciler = createOrphanReconciler({ db: deps.db, provider });
   const substrate = createContainerSubstrate({
     lifecycle,
     provider,
@@ -188,8 +190,10 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     ownerDatabases,
     startBackgroundWork() {
       reaper.start();
+      reconciler.start();
     },
     async shutdown() {
+      await reconciler.shutdown();
       await reaper.shutdown();
       await lifecycle.shutdown();
       sdkClient?.destroy();
