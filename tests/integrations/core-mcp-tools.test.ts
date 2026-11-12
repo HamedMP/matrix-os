@@ -47,7 +47,7 @@ describe("Matrix Core MCP tool surface over the real broker", () => {
   it("ranks matches across both servers, never suggests blocked tools, and honours the service filter", async () => {
     const all = await core.searchTools(fixture.userId, { query: "issues" });
     expect(all.results.map(hit => hit.qualifiedName)).toEqual(["linear.list_issues", "docs.search_docs"]);
-    expect(all.results[0]).toEqual({ service: "linear", tool: "list_issues", qualifiedName: "linear.list_issues",
+    expect(all.results[0]).toEqual({ serverId: linearId, service: "linear", tool: "list_issues", qualifiedName: "linear.list_issues",
       description: "List the caller's Linear issues.", policy: "allow" });
     expect((await core.searchTools(fixture.userId, { query: "delete issue" })).results.map(hit => hit.tool))
       .not.toContain("delete_issue");

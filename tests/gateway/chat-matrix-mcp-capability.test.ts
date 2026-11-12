@@ -135,4 +135,19 @@ describe("Claude Custom MCP Run capability", () => {
     expect(registry.resolve(capabilities[0]!.token, "GET", "/api/mcp-servers")).toBeNull();
     registry.close();
   });
+  it.each(["call", "discovery", "chat_call", "chat_discovery"] as const)("grants %s Run bearers exactly the matching Matrix Core MCP paths", scope => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const capability = registry.issue({ owner, runId: `run_core_${scope}`, scope })!;
+    const calls = scope === "call" || scope === "chat_call";
+    for (const path of ["/api/mcp-servers/core/services", "/api/mcp-servers/core/search", "/api/mcp-servers/core/describe"]) {
+      expect(registry.resolve(capability.token, "GET", path)).toBe(owner.ownerId);
+    }
+    expect(registry.resolve(capability.token, "POST", "/api/mcp-servers/core/call")).toBe(calls ? owner.ownerId : null);
+    expect(registry.resolve(capability.token, "GET", `/api/mcp-servers/core/approvals/${serverId}`)).toBe(calls ? owner.ownerId : null);
+    for (const [method, path] of [["POST", "/api/mcp-servers/core/search"], ["GET", "/api/mcp-servers/core/call"],
+      ["GET", "/api/mcp-servers/core/approvals/not-a-uuid"], ["GET", "/api/mcp-servers/core/services/extra"], ["DELETE", "/api/mcp-servers/core/call"]] as const) {
+      expect(registry.resolve(capability.token, method, path)).toBeNull();
+    }
+    registry.close();
+  });
 });

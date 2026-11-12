@@ -42,6 +42,8 @@ export type CoreCatalogResult =
   | { ok: false; reason: "catalog_too_large" | "invalid_catalog" };
 
 export interface CoreSearchHit {
+  /** The owner's own connection id, for server-id clients (managed Pi `mcp_describe`/`mcp_call`). */
+  serverId: string;
   service: string;
   tool: string;
   qualifiedName: string;
@@ -188,6 +190,7 @@ export function searchCoreCatalogs(catalogs: readonly CoreCatalog[], query: stri
       }
       if (score === 0) continue;
       scored.push({ score, hit: {
+        serverId: catalog.serverId,
         service: catalog.service,
         tool: tool.name,
         qualifiedName: tool.qualifiedName,
