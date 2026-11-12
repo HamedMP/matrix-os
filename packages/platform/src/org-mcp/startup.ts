@@ -8,7 +8,7 @@
  */
 import type { Context, Hono } from "hono";
 import type { Kysely } from "kysely";
-import { bootstrapPlatformOrganizationDatabase } from "../organizations/database.js";
+import { bootstrapPlatformOrganizationDatabase, type OrganizationPlatformDatabase } from "../organizations/database.js";
 import type { PlatformOrganizations } from "../organizations/wiring.js";
 import { bootstrapOrgMcpDatabase, createOrgMcpRepository, type OrgMcpDatabase } from "./database.js";
 import { createOrgMcpPolicy, type OrgMcpPolicy } from "./policy.js";
@@ -21,7 +21,8 @@ export async function createPlatformOrgMcp(options: {
   resolveActor(c: Context): Promise<string | null>;
 }): Promise<{ policy: OrgMcpPolicy; routes: Hono }> {
   // Idempotent; the org-mcp tables reference organizations.
-  await bootstrapPlatformOrganizationDatabase(options.db);
+  // Same platform database viewed through the organizations schema (Kysely table maps are invariant).
+  await bootstrapPlatformOrganizationDatabase(options.db as unknown as Kysely<OrganizationPlatformDatabase>);
   await bootstrapOrgMcpDatabase(options.db);
   const repository = createOrgMcpRepository(options.db);
   if (!options.organizations) {
