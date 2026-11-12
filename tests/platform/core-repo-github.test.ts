@@ -193,3 +193,33 @@ describe("Matrix Core repo tarball retention", () => {
     }
   });
 });
+
+describe("Matrix Core repo pins membership evidence", () => {
+  const ORG_ID = "org_acme1";
+  async function pinsWith(membershipState: string, current: boolean) {
+    const { createCoreRepoRoutes } = await import("../../packages/platform/src/core-repo/routes.js");
+    const routes = createCoreRepoRoutes({
+      repository: { listPins: async () => [] } as never,
+      organizations: {
+        repository: {
+          getMembership: vi.fn(), listMembers: vi.fn(),
+          listOrganizationsForActor: async () => [{ organization: { organizationId: ORG_ID, slug: "acme", lifecycle: "active" }, membership: { state: membershipState } }],
+        },
+        projection: { isCurrentMember: async () => current },
+      } as never,
+      authenticateMachine: async () => "user_member",
+      resolveActor: async () => null,
+    });
+    return routes.request("/internal/core-repo/pins", { headers: { "x-matrix-handle": "member-vps", authorization: "Bearer machine-token-0123456789" } });
+  }
+
+  // Fault: an unreachable Clerk or stale evidence reads as "not a member", and the installer deletes the org's skills.
+  it("answers 503 when an active membership cannot be verified", async () => {
+    expect((await pinsWith("active", false)).status).toBe(503);
+  });
+
+  it("reports verified membership when every listed org is confirmed", async () => {
+    expect(await (await pinsWith("removed", false)).json()).toEqual({ pins: [], membership: "verified" });
+    expect(await (await pinsWith("active", true)).json()).toEqual({ pins: [], membership: "verified" });
+  });
+});

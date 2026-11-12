@@ -37,8 +37,14 @@ const LOCK_TTL_MS = 10 * 60_000;
 const MAX_SKILLS = 500;
 const SKILL_SYNC_TIMEOUT_MS = 120_000;
 
+export interface CoreRepoPinList {
+  pins: CoreRepoPin[];
+  /** True only when the platform confirmed membership; absent orgs may then be removed. */
+  membershipVerified: boolean;
+}
+
 export interface CoreRepoTransport {
-  listPins(): Promise<CoreRepoPin[]>;
+  listPins(): Promise<CoreRepoPinList>;
   downloadTarball(pin: CoreRepoPin): Promise<Uint8Array>;
 }
 
@@ -88,7 +94,8 @@ export function createCoreRepoHttpTransport(options: { baseUrl: string; headers:
         throw new CoreRepoInstallError("pins_unavailable");
       }
       const text = new TextDecoder().decode(await readBounded(response, 256 * 1024));
-      return CoreRepoPinsResponseSchema.parse(JSON.parse(text)).pins;
+      const parsed = CoreRepoPinsResponseSchema.parse(JSON.parse(text));
+      return { pins: parsed.pins, membershipVerified: parsed.membership === "verified" };
     },
     async downloadTarball(pin) {
       const response = await fetchImpl(`${origin}/internal/core-repo/${pin.orgId}/${pin.commit}.tar.gz`, {
@@ -273,7 +280,12 @@ export async function installCoreRepo(options: InstallOptions): Promise<CoreRepo
   }
   try {
     let pins: CoreRepoPin[];
-    try { pins = (await options.transport.listPins()).map(pin => CoreRepoPinSchema.parse(pin)); }
+    let membershipVerified: boolean;
+    try {
+      const listed = await options.transport.listPins();
+      pins = listed.pins.map(pin => CoreRepoPinSchema.parse(pin));
+      membershipVerified = listed.membershipVerified === true;
+    }
     catch (error: unknown) {
       if (error instanceof CoreRepoInstallError) throw error;
       console.warn("[core-repo] pins unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -281,6 +293,8 @@ export async function installCoreRepo(options: InstallOptions): Promise<CoreRepo
     }
     const results: CoreRepoInstallResult[] = [];
     for (const pin of pins) results.push(await installPin(options, pin));
+    // Removal needs confirmed membership loss; an unverified list only installs.
+    if (!membershipVerified) return results;
     const pinned = new Set(pins.map(pin => pin.orgId));
     for (const entry of await readdir(options.root)) {
       if (!ORG_DIR.test(entry) || pinned.has(entry)) continue;

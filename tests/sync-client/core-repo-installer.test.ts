@@ -76,7 +76,7 @@ describe("Matrix Core repo installer", () => {
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
   const transportFor = (pins: Array<ReturnType<typeof pinFor>>, bytes: Map<string, Uint8Array>): CoreRepoTransport => ({
-    listPins: async () => pins,
+    listPins: async () => ({ pins, membershipVerified: true }),
     downloadTarball: async (pin) => bytes.get(pin.commit)!,
   });
 
@@ -91,6 +91,29 @@ describe("Matrix Core repo installer", () => {
     expect(results).toEqual([{ orgId: "org_acme1", status: "failed" }]);
     expect(readlinkSync(join(root, "org_acme1", "current"))).toBe(`releases/${a}`);
     expect(sync).toHaveBeenLastCalledWith(expect.objectContaining({ namespace: "org-acme-", source: join(root, "org_acme1", "current", ".matrix-skills") }));
+  });
+
+  // Fault: a 503, a network error, or an unverified pins list removes an org the user still belongs to.
+  it("removes an org only when the platform confirms membership", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const sync = vi.fn(async () => {});
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: sync });
+    const unverified: CoreRepoTransport = { listPins: async () => ({ pins: [], membershipVerified: false }), downloadTarball: vi.fn() };
+    expect(await installCoreRepo({ root, transport: unverified, runSkillSync: sync })).toEqual([]);
+    const down: CoreRepoTransport = { listPins: async () => { throw new CoreRepoInstallError("pins_unavailable"); }, downloadTarball: vi.fn() };
+    await expect(installCoreRepo({ root, transport: down, runSkillSync: sync })).rejects.toBeInstanceOf(CoreRepoInstallError);
+    expect(existsSync(join(root, "org_acme1", "current"))).toBe(true);
+    expect(await installCoreRepo({ root, transport: transportFor([], bytes), runSkillSync: sync })).toEqual([{ orgId: "org_acme1", status: "removed" }]);
+  });
+
+  it("treats a pins response without the membership signal as unverified", async () => {
+    const { createCoreRepoHttpTransport } = await import("../../packages/sync-client/src/core-repo/installer.js");
+    const fetchFor = (body: unknown, status = 200) => (async () => Response.json(body, { status })) as unknown as typeof fetch;
+    const transport = (body: unknown, status?: number) => createCoreRepoHttpTransport({ baseUrl: "https://app.matrix-os.test", headers: {}, fetchImpl: fetchFor(body, status) });
+    expect(await transport({ pins: [] }).listPins()).toEqual({ pins: [], membershipVerified: false });
+    expect(await transport({ pins: [], membership: "verified" }).listPins()).toEqual({ pins: [], membershipVerified: true });
+    await expect(transport({ error: "unavailable" }, 503).listPins()).rejects.toBeInstanceOf(CoreRepoInstallError);
   });
 
   // Fault: two overlapping runs (timer + manual) interleave renames.

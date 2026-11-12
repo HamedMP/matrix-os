@@ -48,7 +48,10 @@ export interface CoreRepoRouteOptions {
   webhookSecret?: string;
   organizations?: OrgMcpOrganizations & {
     repository: OrgMcpOrganizations["repository"] & {
-      listOrganizationsForActor(actorId: string): Promise<Array<{ organization: { organizationId: string; slug: string; lifecycle: string } }>>;
+      listOrganizationsForActor(actorId: string): Promise<Array<{
+        organization: { organizationId: string; slug: string; lifecycle: string };
+        membership: { state: string };
+      }>>;
     };
   };
   /** Clerk user id of the running primary machine behind this credential, or null. */
@@ -151,14 +154,21 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
         .filter(entry => entry.organization.lifecycle === "active");
       const current = [];
       for (const entry of memberships) {
-        if (await organizations.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId })) current.push(entry.organization);
+        if (await organizations.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId })) {
+          current.push(entry.organization);
+          continue;
+        }
+        // A recorded non-active membership is confirmed loss. An active one that
+        // cannot be verified now (Clerk down, stale evidence) is not: answering
+        // without it would make installers delete that org's skills.
+        if (entry.membership.state === "active") return unavailable(c, "membership verification");
       }
       const slugs = new Map(current.map(organization => [organization.organizationId, coreRepoSlug(organization.slug, organization.organizationId)]));
       const pins = await repository.listPins([...slugs.keys()]);
       c.header("Cache-Control", "private, no-store");
       return c.json(CoreRepoPinsResponseSchema.parse({ pins: pins.map(pin => ({
         orgId: pin.organizationId, slug: slugs.get(pin.organizationId)!, commit: pin.commit, sha256: pin.sha256, bytes: pin.bytes,
-      })) }));
+      })), membership: "verified" }));
     } catch (error: unknown) {
       return unavailable(c, "pins", error);
     }

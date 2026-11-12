@@ -26,7 +26,15 @@ export const CoreRepoPinSchema = z.object({
 }).strict();
 export type CoreRepoPin = z.infer<typeof CoreRepoPinSchema>;
 
-export const CoreRepoPinsResponseSchema = z.object({ pins: z.array(CoreRepoPinSchema).max(100) }).strict();
+/**
+ * `membership: "verified"` means the platform confirmed every one of the
+ * caller's memberships: an org absent from `pins` is confirmed not current
+ * (or no longer publishes). Without it, an installer must not remove anything.
+ */
+export const CoreRepoPinsResponseSchema = z.object({
+  pins: z.array(CoreRepoPinSchema).max(100),
+  membership: z.literal("verified").optional(),
+}).strict();
 
 export const CoreRepoSyncResultSchema = z.object({
   status: z.enum(["pinned", "unchanged", "failed"]),
