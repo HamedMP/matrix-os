@@ -9,6 +9,12 @@ import {
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { getActiveUserMachineByHandle, getContainer, type PlatformDB } from "./db.js";
+import {
+  createStorageQuota,
+  DEFAULT_STORAGE_QUOTA_LIMITS,
+  type StorageQuotaDecision,
+  type StorageQuotaLimits,
+} from "./free-tier/storage-quota.js";
 import { buildCustomerVpsR2Key } from "./customer-vps-r2.js";
 import { RuntimeSlotSchema } from "./customer-vps-schema.js";
 import {
@@ -24,6 +30,10 @@ const SYSTEM_STORAGE_PRESIGN_TTL_SECONDS = 300;
 const SYSTEM_STORAGE_SINGLE_PUT_LIMIT = 64 * 1024 * 1024;
 const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 const SYSTEM_SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/;
+const DEFAULT_PRESIGN_TTL_SECONDS = 900;
+/** A proxied body has this long to stream before its reservation is reconciled against the store. */
+const PROXY_PUT_PENDING_MS = 15 * 60_000;
+const PRESIGN_PENDING_MARGIN_MS = 60_000;
 
 interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
@@ -31,7 +41,7 @@ interface R2Client {
   headObject(
     key: string,
     options?: { signal?: AbortSignal },
-  ): Promise<{ exists: boolean; etag?: string }>;
+  ): Promise<{ exists: boolean; etag?: string; contentLength?: number }>;
   listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(
@@ -83,14 +93,14 @@ interface MultipartAbortInput extends MultipartCreateInput {
   uploadId: string;
 }
 
-async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
+async function getAuthorizedOwner(db: PlatformDB, handle: string): Promise<{ userId: string; metered: boolean } | null> {
   const machine = await getActiveUserMachineByHandle(db, handle, "primary");
   if (machine?.clerkUserId) {
-    return machine.clerkUserId;
+    return { userId: machine.clerkUserId, metered: machine.substrate === "container" };
   }
   const record = await getContainer(db, handle);
   if (record?.clerkUserId) {
-    return record.clerkUserId;
+    return { userId: record.clerkUserId, metered: false };
   }
   return null;
 }
@@ -291,11 +301,21 @@ export function createInternalSyncRoutes(opts: {
   r2: R2Client;
   platformSecret: string;
   r2PrefixRoot: string;
+  /** Container runtimes are metered against these; VPS owners are not. */
+  storageLimits?: StorageQuotaLimits;
+  now?: () => Date;
 }): Hono<any> {
   const app = new Hono<{ Variables: {
     internalSyncUserId: string;
     internalSyncScope: SyncScope;
+    internalSyncMetered: boolean;
   } }>();
+  const quota = createStorageQuota({
+    db: opts.db,
+    limits: opts.storageLimits ?? DEFAULT_STORAGE_QUOTA_LIMITS,
+    headObject: (key, options) => opts.r2.headObject(key, options),
+    ...(opts.now ? { now: opts.now } : {}),
+  });
 
   app.use("*", async (c, next) => {
     const handle = c.req.param("handle");
@@ -310,6 +330,7 @@ export function createInternalSyncRoutes(opts: {
     const machineId = c.req.header("x-matrix-machine-id")?.trim();
     const runtimeHeader = c.req.header("x-matrix-runtime-slot")?.trim();
     let scope: SyncScope;
+    let metered = false;
     if (machineId || runtimeHeader) {
       const runtime = SyncRuntimeSlotSchema.safeParse(runtimeHeader);
       if (!machineId || machineId.length > 128 || !runtime.success) {
@@ -328,20 +349,23 @@ export function createInternalSyncRoutes(opts: {
         return c.json({ error: "Unauthorized" }, 401);
       }
       scope = { ownerId: machine.clerkUserId, runtimeSlot: machine.runtimeSlot };
+      metered = machine.substrate === "container";
     } else {
       const expected = buildPlatformVerificationToken(handle, opts.platformSecret);
       if (!timingSafeTokenEquals(token, expected)) {
         return c.json({ error: "Unauthorized" }, 401);
       }
-      const userId = await getAuthorizedUserId(opts.db, handle);
-      if (!userId) {
+      const owner = await getAuthorizedOwner(opts.db, handle);
+      if (!owner) {
         return c.json({ error: "Unknown handle" }, 404);
       }
-      scope = { ownerId: userId, runtimeSlot: "primary" };
+      scope = { ownerId: owner.userId, runtimeSlot: "primary" };
+      metered = owner.metered;
     }
 
     c.set("internalSyncUserId", scope.ownerId);
     c.set("internalSyncScope", scope);
+    c.set("internalSyncMetered", metered);
     return next();
   });
 
@@ -356,6 +380,55 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Forbidden key" }, 403);
     }
     return scope.ownerId;
+  }
+
+  type QuotaContext = {
+    get(key: "internalSyncScope"): SyncScope;
+    get(key: "internalSyncMetered"): boolean;
+  };
+
+  function countsAsFile(key: string, scope: SyncScope): boolean {
+    const prefix = buildSyncStoragePrefix(scope);
+    return key.startsWith(`${prefix}/objects/sha256/`) || key.startsWith(`${prefix}/files/`);
+  }
+
+  /** Null when the owner is not metered. */
+  async function meter(
+    c: QuotaContext,
+    key: string,
+    bytes: number,
+    pendingMs: number | null,
+  ): Promise<StorageQuotaDecision | null> {
+    if (!c.get("internalSyncMetered")) return null;
+    const scope = c.get("internalSyncScope");
+    return quota.authorize(scope.ownerId, { key, bytes, countsAsFile: countsAsFile(key, scope), pendingMs });
+  }
+
+  function refusal(c: { json: (body: unknown, status?: number) => Response }, decision: StorageQuotaDecision): Response | null {
+    if (decision.ok) return null;
+    return decision.code === "storage_full"
+      ? c.json({ error: "Storage limit reached", code: "storage_full" }, 507)
+      : c.json({ error: "File limit reached", code: "file_limit_reached" }, 507);
+  }
+
+  /** Multipart sizes are known only once the object exists; one that does not fit is removed unless it replaced a counted key. */
+  async function meterCompleted(
+    c: QuotaContext & { json: (body: unknown, status?: number) => Response },
+    key: string,
+  ): Promise<Response | null> {
+    if (!c.get("internalSyncMetered")) return null;
+    const head = await opts.r2.headObject(key, { signal: AbortSignal.timeout(10_000) });
+    if (!head.exists || head.contentLength === undefined || !Number.isSafeInteger(head.contentLength)) {
+      throw new Error("Completed object size unavailable");
+    }
+    const decision = await meter(c, key, head.contentLength, null);
+    if (!decision || decision.ok) return null;
+    if (!decision.priorExisted) await opts.r2.deleteObject(key);
+    return refusal(c, decision);
+  }
+
+  function presignPendingMs(expiresIn: number | undefined): number {
+    return (expiresIn ?? DEFAULT_PRESIGN_TTL_SECONDS) * 1000 + PRESIGN_PENDING_MARGIN_MS;
   }
 
   app.post("/presign/get", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
@@ -376,6 +449,9 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
+    const decision = await meter(c, parsed.key, parsed.size, presignPendingMs(parsed.expiresIn));
+    const refused = decision && refusal(c, decision);
+    if (refused) return refused;
     const url = await opts.r2.getPresignedPutUrl(
       parsed.key,
       parsed.size,
@@ -430,11 +506,11 @@ export function createInternalSyncRoutes(opts: {
     ) !== "write") {
       return c.json({ error: "Forbidden key" }, 403);
     }
-    const url = await opts.r2.getPresignedPutUrl(
-      systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
-      parsed.data.size,
-      SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
-    );
+    const key = systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key);
+    const decision = await meter(c, key, parsed.data.size, presignPendingMs(SYSTEM_STORAGE_PRESIGN_TTL_SECONDS));
+    const refused = decision && refusal(c, decision);
+    if (refused) return refused;
+    const url = await opts.r2.getPresignedPutUrl(key, parsed.data.size, SYSTEM_STORAGE_PRESIGN_TTL_SECONDS);
     return c.json({ url });
   });
 
@@ -477,11 +553,10 @@ export function createInternalSyncRoutes(opts: {
         return c.json({ error: "Validation error" }, 400);
       }
       try {
-        const result = await opts.r2.completeMultipartUpload(
-          systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
-          parsed.uploadId,
-          parsed.parts,
-        );
+        const key = systemStorageKey(c, opts.r2PrefixRoot, parsed.key);
+        const result = await opts.r2.completeMultipartUpload(key, parsed.uploadId, parsed.parts);
+        const refused = await meterCompleted(c, key);
+        if (refused) return refused;
         return c.json({ etag: result.etag ?? null });
       } catch (err: unknown) {
         console.error("[internal-sync] System multipart completion failed:", err instanceof Error ? err.message : String(err));
@@ -573,6 +648,8 @@ export function createInternalSyncRoutes(opts: {
           parsed.uploadId,
           parsed.parts,
         );
+        const refused = await meterCompleted(c, parsed.key);
+        if (refused) return refused;
         return c.json({ etag: result.etag ?? null });
       } catch (err: unknown) {
         if (err instanceof Error && ["InvalidPart", "InvalidPartOrder"].includes(err.name)) {
@@ -654,10 +731,16 @@ export function createInternalSyncRoutes(opts: {
     // Storage needs the exact length to stream; chunked bodies are buffered within the body limit.
     const declared = c.req.header("content-length");
     const contentLength = declared && /^\d{1,12}$/.test(declared) ? Number(declared) : undefined;
-    const result = contentLength !== undefined && c.req.raw.body
-      && contentLength <= INTERNAL_SYNC_OBJECT_BODY_LIMIT
-      ? await opts.r2.putObject(key, c.req.raw.body, { contentLength })
-      : await opts.r2.putObject(key, new Uint8Array(await c.req.arrayBuffer()));
+    const streamed = contentLength !== undefined && c.req.raw.body !== null
+      && contentLength <= INTERNAL_SYNC_OBJECT_BODY_LIMIT;
+    const buffered = streamed ? null : new Uint8Array(await c.req.arrayBuffer());
+    const decision = await meter(c, key, streamed ? contentLength! : buffered!.byteLength, PROXY_PUT_PENDING_MS);
+    const refused = decision && refusal(c, decision);
+    if (refused) return refused;
+    const result = streamed
+      ? await opts.r2.putObject(key, c.req.raw.body!, { contentLength })
+      : await opts.r2.putObject(key, buffered!);
+    if (decision?.ok) await quota.confirm(c.get("internalSyncScope").ownerId, key, decision.reservationId);
     return c.json({ etag: result.etag ?? null });
   });
 
@@ -669,6 +752,7 @@ export function createInternalSyncRoutes(opts: {
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
     await opts.r2.deleteObject(key);
+    if (c.get("internalSyncMetered")) await quota.release(c.get("internalSyncScope").ownerId, key);
     return c.json({ ok: true });
   });
 

@@ -858,6 +858,8 @@ export interface PlatformDatabase {
   user_machines: UserMachinesTable;
   container_owner_databases: import('./substrates/container-owner-database.js').ContainerOwnerDatabasesTable;
   free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
+  runtime_storage_usage: import('./free-tier/storage-quota.js').RuntimeStorageUsageTable;
+  runtime_storage_objects: import('./free-tier/storage-quota.js').RuntimeStorageObjectsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;

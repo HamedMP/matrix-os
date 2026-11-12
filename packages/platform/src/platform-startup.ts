@@ -55,7 +55,7 @@ import { createPlatformSubstrateRegistry } from './substrates/platform-substrate
 import { createConfiguredContainerSubstrate } from './substrates/container-substrate-config.js';
 import { createContainerInternalRoutes } from './substrates/container-internal-routes.js';
 import { createContainerRegistrationFunding } from './customer-funded-starter-policy.js';
-import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { loadConfiguredFreeTier, loadContainerStorageLimits, type FreeTierConfig } from './free-tier/config.js';
 import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import type { LambdaMicrovmsApi } from './substrates/container-provider.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
@@ -830,6 +830,7 @@ async function startPlatformServerWithCleanup(
       r2,
       platformSecret,
       r2PrefixRoot: process.env.R2_PREFIX_ROOT ?? 'matrixos-sync',
+      storageLimits: loadContainerStorageLimits(process.env),
     });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;

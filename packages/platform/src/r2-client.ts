@@ -49,7 +49,7 @@ export interface R2Client {
   headObject(
     key: string,
     options?: { signal?: AbortSignal },
-  ): Promise<{ exists: boolean; etag?: string }>;
+  ): Promise<{ exists: boolean; etag?: string; contentLength?: number }>;
   deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
@@ -251,13 +251,17 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     async headObject(
       key: string,
       options?: { signal?: AbortSignal },
-    ): Promise<{ exists: boolean; etag?: string }> {
+    ): Promise<{ exists: boolean; etag?: string; contentLength?: number }> {
       const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
       try {
         const response = await s3.send(command, {
           abortSignal: options?.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
         });
-        return { exists: true, etag: response.ETag ?? undefined };
+        return {
+          exists: true,
+          etag: response.ETag ?? undefined,
+          ...(response.ContentLength !== undefined ? { contentLength: response.ContentLength } : {}),
+        };
       } catch (error: unknown) {
         const providerError = error as {
           name?: string;
