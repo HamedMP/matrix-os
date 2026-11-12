@@ -4,6 +4,7 @@ import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OrganizationMcpVisibilityNotice } from "@matrix-os/ui";
 import type {
   OrganizationManagementInvitation,
   OrganizationManagementMember,
@@ -301,5 +302,40 @@ describe("OrganizationSectionView", () => {
     expect(screen.getByRole("alertdialog", { name: "Remove Ava Chen?" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Remove member" }));
     await waitFor(() => expect(apiState.delete).toHaveBeenCalledWith("/api/organizations/org_northwind/members/user_ava"));
+  });
+});
+
+describe("Organization → Connections wiring (Electron Desktop)", () => {
+  // Fault: the admin panel is not mounted, reads the wrong route, or members miss the visibility notice.
+  it("loads the admin panel from the org MCP routes and shows members only the notice", async () => {
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/usage?")
+      ? { rows: [], truncated: false }
+      : { servers: [], members: [{ actorId: "user_ava", displayName: "Ava Chen", blockedServerDefIds: [], connections: [{
+        connectionId: "11111111-1111-4111-8111-111111111111", name: "Linear", host: "mcp.linear.app", serverDefIds: ["mcp.linear.app", "linear"],
+        status: "ready", enabled: true, connectedAt: "2026-11-01T00:00:00.000Z", lastUsedAt: null }] }] }),
+    { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      apiState.get.mockImplementation(async (path: string) => {
+        if (path === "/api/organizations") return { complete: true, organizations: [northwind] };
+        if (path === "/api/organizations/org_northwind/members") return { members };
+        if (path === "/api/organizations/org_northwind/invitations") return { invitations: [] };
+        throw new Error(`Unexpected path: ${path}`);
+      });
+      render(<OrganizationSection />);
+      expect(await screen.findByRole("list", { name: "Connections for Ava Chen" })).toBeTruthy();
+      expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toContain("/api/orgs/org_northwind/mcp/connections");
+      expect(screen.getByRole("note").textContent).toContain("never see your credentials");
+      cleanup();
+
+      fetchMock.mockClear();
+      render(<OrganizationSectionView organization={{ ...northwind, role: "org:member" }} currentActorId="user_ava" members={members} invitations={[]}
+        onOpenInvite={() => undefined} connections={<OrganizationMcpVisibilityNotice />} />);
+      expect(screen.getByRole("note")).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "Connections" })).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
