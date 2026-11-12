@@ -62,4 +62,29 @@ describe("Claude Code Core call_tool approvals by service slug", () => {
     expect((await post("/runs/run_allow/prepare", { generation, nativeRequestId: "native_both", serverId: "123e4567-e89b-42d3-a456-426614174000",
       service, tool: "list_issues" })).status).toBe(400);
   });
+
+  it("resolves prepare names exactly like call_tool, refusing an ambiguous service.tool name", async () => {
+    // Fault: prepare strips `service.` while call_tool resolves the exact name first,
+    // so an approval could be reserved for a different tool than the one that runs.
+    const docs: FakeUpstream = { host: "docs.example.test", calls: [], tools: [{ name: "create_issue", description: "Create." }] };
+    const local = await createCoreFixture([docs]);
+    try {
+      const created = await local.broker.create(local.userId, { name: "Docs", url: `https://${docs.host}/mcp`, authMode: "none" });
+      const docsService = assignCoreServiceSlugs([created]).get(created.id)!;
+      docs.tools.push({ name: `${docsService}.create_issue`, description: "A tool literally named service.tool." });
+      const discovered = await local.broker.discover(local.userId, created.id);
+      await local.broker.patch(local.userId, created.id, { revision: discovered.revision, enabled: true,
+        tools: discovered.tools.map(tool => ({ name: tool.name, enabled: true, approval: "always_ask" as const })) });
+      const routes = new Hono().route("/approvals", createCustomMcpApprovalRoutes({ db: local.db, broker: local.broker,
+        resolvePrincipal: async () => ({ userId: local.userId, actorId: local.actorId, handle: "coreowner" }),
+        verifyDecisionProof: () => false }));
+      const call = (path: string, value: unknown) => routes.request(`/approvals${path}`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+      const { generation } = await (await call("/runs", { runId: "run_ambiguous" })).json() as { generation: number };
+      expect((await call("/runs/run_ambiguous/prepare", { generation, nativeRequestId: "native_ambiguous",
+        service: docsService, tool: `${docsService}.create_issue` })).status).toBe(403);
+      expect(await (await call("/runs/run_ambiguous/prepare", { generation, nativeRequestId: "native_exact",
+        service: docsService, tool: "create_issue" })).json()).toMatchObject({ kind: "pending" });
+    } finally { await local.close(); }
+  });
 });

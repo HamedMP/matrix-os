@@ -13,6 +13,7 @@ import {
   CORE_SEARCH_DEFAULT_LIMIT,
   CoreCatalogCache,
   assignCoreServiceSlugs,
+  normalizeCoreCatalog,
   coreCapabilitySummary,
   searchCoreCatalogs,
   truncateUtf8,
@@ -147,7 +148,7 @@ export function wrapCoreResult(qualifiedName: string, result: unknown, maxBytes 
 }
 
 /** Exact catalog name first, then `service.tool`; input matching two different tools is refused. */
-function resolveTool(catalog: CoreCatalog | null, service: string, input: string) {
+export function resolveTool(catalog: CoreCatalog | null, service: string, input: string) {
   const exact = catalog?.tools.find(candidate => candidate.name === input);
   const prefix = `${service}.`;
   const qualified = input.startsWith(prefix) ? catalog?.tools.find(candidate => candidate.name === input.slice(prefix.length)) : undefined;
@@ -155,6 +156,21 @@ function resolveTool(catalog: CoreCatalog | null, service: string, input: string
     throw new CoreToolsError("ambiguous", "Ambiguous tool name; use the exact name from describe_tool");
   }
   return exact ?? qualified;
+}
+
+/**
+ * The server and upstream tool name a Core `call_tool` would reach, resolved
+ * exactly as callTool does (service id, readiness, catalog, ambiguity check).
+ * The Claude approval prepare uses it so an approval binds the same tool.
+ */
+export function resolveCoreCallTarget(servers: readonly CustomMcpServer[], service: string, tool: string): { serverId: string; toolName: string } {
+  const slugs = assignCoreServiceSlugs(servers);
+  const server = servers.find(candidate => slugs.get(candidate.id) === service);
+  if (!server) throw new CoreToolsError("not_found");
+  const catalog = server.enabled && server.status === "ready" ? normalizeCoreCatalog(server, service) : null;
+  const match = resolveTool(catalog?.ok ? catalog.catalog : null, service, tool);
+  if (!match) throw new CoreToolsError("not_found");
+  return { serverId: server.id, toolName: match.name };
 }
 
 export class CoreToolService {
