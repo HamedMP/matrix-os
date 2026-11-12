@@ -76,6 +76,7 @@ export default defineConfig({
       "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
       "@matrix-os/contracts/preview-pair-control": path.resolve(__dirname, "packages/contracts/src/preview-pair-control.ts"),
       "@matrix-os/contracts/preview-pair": path.resolve(__dirname, "packages/contracts/src/preview-pair.ts"),
+      "@matrix-os/contracts/private-preview": path.resolve(__dirname, "packages/contracts/src/private-preview.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/postgres": path.resolve(__dirname, "packages/observability/src/postgres.ts"),
       "@matrix-os/observability/client": path.resolve(

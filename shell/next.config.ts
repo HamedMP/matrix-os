@@ -1,15 +1,39 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { isPrivatePreviewHandle } from "@matrix-os/contracts/private-preview";
 import type { NextConfig } from "next";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
   ? "/__platform-shell"
   : undefined;
+const runtimeHandle = process.env.MATRIX_HANDLE;
+const privatePreviewAssetPrefix = process.env.NODE_ENV === "production"
+  && process.env.MATRIX_PREVIEW_RUNTIME === "true"
+  && runtimeHandle && runtimeHandle === process.env.MATRIX_RUNTIME_SLOT
+  && isPrivatePreviewHandle(runtimeHandle)
+  ? `/vm/${runtimeHandle}`
+  : undefined;
 const localParityBuild = process.env.MATRIX_LOCAL_PARITY_BUILD === "1";
 
+type CssLoader = string | { loader?: string; options?: string | { publicPath?: string } };
+type CssRule = string | { use?: CssLoader | CssLoader[]; rules?: CssRule[]; oneOf?: CssRule[] };
+
+function setRelativeCssAssetPaths(rules: CssRule[], extractionLoader: string): void {
+  for (const rule of rules) {
+    if (!rule || typeof rule !== "object") continue;
+    const loaders = Array.isArray(rule.use) ? rule.use : [rule.use];
+    for (const loader of loaders) {
+      if (!loader || typeof loader !== "object" || loader.loader !== extractionLoader ||
+        !loader.options || typeof loader.options !== "object" || loader.options.publicPath !== "/_next/") continue;
+      loader.options.publicPath = "auto";
+    }
+    setRelativeCssAssetPaths([...(rule.rules ?? []), ...(rule.oneOf ?? [])], extractionLoader);
+  }
+}
+
 const nextConfig: NextConfig = {
-  assetPrefix: platformShellAssetPrefix,
+  assetPrefix: platformShellAssetPrefix ?? privatePreviewAssetPrefix,
   env: {
     NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
   },
@@ -55,12 +79,20 @@ const nextConfig: NextConfig = {
   // Production builds still use webpack. Some NodeNext workspace packages are
   // consumed as TS source with emitted .js specifiers, so webpack needs this
   // alias while Turbopack development consumes bundler-style source imports.
-  webpack: (config) => {
+  webpack: (config, { dev, isServer }) => {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,
       ".js": [".ts", ".tsx", ".js"],
       ".jsx": [".tsx", ".jsx"],
     };
+    // The host bundle is built once, then Next serves it under the assigned
+    // Preview URL. Resolve lazy chunks from the loaded Webpack runtime script.
+    if (dev === false && isServer === false && !platformShellAssetPrefix) {
+      config.output.publicPath = "auto";
+      // Keep fonts and other media relative to the emitted stylesheet URL.
+      const extractionLoader = createRequire(import.meta.url).resolve("next/dist/compiled/mini-css-extract-plugin/loader");
+      setRelativeCssAssetPaths(config.module?.rules ?? [], extractionLoader);
+    }
     return config;
   },
   async rewrites() {
