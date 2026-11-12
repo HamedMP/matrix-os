@@ -6,12 +6,14 @@
  * broker (`callSelectedTool`) and the approval store; this layer only maps
  * service names, bounds output, wraps it as untrusted, and records usage.
  */
+import { randomUUID } from "node:crypto";
 import { CustomMcpBrokerError } from "./broker.js";
 import type { CustomMcpApprovalStore } from "./approval-store.js";
 import {
   CORE_SEARCH_DEFAULT_LIMIT,
   CoreCatalogCache,
   assignCoreServiceSlugs,
+  normalizeCoreCatalog,
   coreCapabilitySummary,
   searchCoreCatalogs,
   truncateUtf8,
@@ -19,6 +21,7 @@ import {
   type CoreSearchHit,
   type CoreToolPolicy,
 } from "./core-catalog.js";
+import { externalClientKey, externalLeaseExpiry, externalRunIds } from "./external-approval-store.js";
 import { coreServerKey, type CoreEntryPoint, type CoreUsageOutcome, type CoreUsageSink } from "./core-usage.js";
 import type { McpProgressListener } from "./tool-progress.js";
 import type { CustomMcpServer, CustomMcpStatus } from "./types.js";
@@ -35,12 +38,18 @@ export interface CoreToolBroker {
   describe(userId: string, serverId: string): Promise<CustomMcpServer>;
   callSelectedTool(input: {
     userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>;
-    approvalGranted?: boolean; approvalReceipt?: string; actorId?: string; runId?: string;
+    approvalGranted?: boolean; approvalReceipt?: string; externalApprovalId?: string; actorId?: string; runId?: string;
     signal?: AbortSignal; onProgress?: McpProgressListener;
   }): Promise<unknown>;
+  /** Reserves (or allow-fast-paths) a digest-bound approval; required for external writes. */
+  prepareToolApproval?(input: {
+    userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
+    serverId: string; toolName: string; arguments?: Record<string, unknown>;
+  }): Promise<{ kind: "allow" } | { kind: "pending"; approvalId: string; expiresAt: string }>;
 }
 
-export type CoreApprovalReader = Pick<CustomMcpApprovalStore, "readCustomMcpToolApproval">;
+export type CoreApprovalReader = Pick<CustomMcpApprovalStore, "readCustomMcpToolApproval">
+  & Partial<Pick<CustomMcpApprovalStore, "registerCustomMcpRunLease">>;
 
 export interface CoreCaller {
   userId: string;
@@ -50,6 +59,12 @@ export interface CoreCaller {
   entryPoint: CoreEntryPoint;
   harness?: string | null;
   orgId?: string | null;
+  /**
+   * Set only in-process by the platform `/mcp` endpoint from a verified OAuth
+   * bearer (owner + client). Never derived from a header: it selects the
+   * external approval flow, in which the client can never approve itself.
+   */
+  externalClientId?: string;
 }
 
 export class CoreToolsError extends Error {
@@ -85,7 +100,8 @@ export interface CoreToolDescription {
 
 export type CoreCallResult =
   | { status: "ok"; text: string; truncated: boolean; isError: boolean }
-  | { status: "approval_required"; service: string; tool: string };
+  | { status: "approval_required"; service: string; tool: string }
+  | { status: "pending_approval"; approvalId: string; expiresAt: string; service: string; tool: string };
 
 export interface CoreApprovalStatus {
   approvalId: string;
@@ -132,7 +148,7 @@ export function wrapCoreResult(qualifiedName: string, result: unknown, maxBytes 
 }
 
 /** Exact catalog name first, then `service.tool`; input matching two different tools is refused. */
-function resolveTool(catalog: CoreCatalog | null, service: string, input: string) {
+export function resolveTool(catalog: CoreCatalog | null, service: string, input: string) {
   const exact = catalog?.tools.find(candidate => candidate.name === input);
   const prefix = `${service}.`;
   const qualified = input.startsWith(prefix) ? catalog?.tools.find(candidate => candidate.name === input.slice(prefix.length)) : undefined;
@@ -140,6 +156,21 @@ function resolveTool(catalog: CoreCatalog | null, service: string, input: string
     throw new CoreToolsError("ambiguous", "Ambiguous tool name; use the exact name from describe_tool");
   }
   return exact ?? qualified;
+}
+
+/**
+ * The server and upstream tool name a Core `call_tool` would reach, resolved
+ * exactly as callTool does (service id, readiness, catalog, ambiguity check).
+ * The Claude approval prepare uses it so an approval binds the same tool.
+ */
+export function resolveCoreCallTarget(servers: readonly CustomMcpServer[], service: string, tool: string): { serverId: string; toolName: string } {
+  const slugs = assignCoreServiceSlugs(servers);
+  const server = servers.find(candidate => slugs.get(candidate.id) === service);
+  if (!server) throw new CoreToolsError("not_found");
+  const catalog = server.enabled && server.status === "ready" ? normalizeCoreCatalog(server, service) : null;
+  const match = resolveTool(catalog?.ok ? catalog.catalog : null, service, tool);
+  if (!match) throw new CoreToolsError("not_found");
+  return { serverId: server.id, toolName: match.name };
 }
 
 export class CoreToolService {
@@ -209,6 +240,8 @@ export class CoreToolService {
 
   async callTool(caller: CoreCaller, input: {
     service: string; tool: string; arguments?: Record<string, unknown>; approvalReceipt?: string;
+    /** External clients retry with the approval id the owner approved; never a receipt. */
+    approvalId?: string;
     signal?: AbortSignal; onProgress?: McpProgressListener; maxResultBytes?: number;
   }): Promise<CoreCallResult> {
     const resolved = await this.resolveOne(caller.userId, input.service);
@@ -221,13 +254,61 @@ export class CoreToolService {
       record("denied");
       throw new CustomMcpBrokerError("forbidden");
     }
-    if (tool.policy === "always_ask" && !input.approvalReceipt) {
+    let execution: { caller: CoreCaller; externalApprovalId?: string } = { caller };
+    if (tool.policy === "always_ask" && caller.externalClientId) {
+      if (!input.approvalId) {
+        const pending = await this.requestExternalApproval(caller, resolved.server, name, input.arguments);
+        if (pending) {
+          record("approval_required");
+          return { status: "pending_approval", ...pending, service: input.service, tool: name };
+        }
+      } else {
+        const runId = await this.externalRunFor(caller, input.approvalId);
+        if (!runId) { record("denied"); throw new CustomMcpBrokerError("forbidden", APPROVAL_REQUIRED_MESSAGE); }
+        execution = { caller: { ...caller, runId }, externalApprovalId: input.approvalId };
+      }
+    } else if (tool.policy === "always_ask" && !input.approvalReceipt) {
       record("approval_required");
       return { status: "approval_required", service: input.service, tool: name };
     }
-    const result = await this.execute(caller, resolved.server, name, input, record);
+    const result = await this.execute(execution.caller, resolved.server, name,
+      { ...input, ...(execution.externalApprovalId ? { externalApprovalId: execution.externalApprovalId, approvalReceipt: undefined } : {}) }, record);
     return { status: "ok", isError: upstreamReportedError(result),
       ...wrapCoreResult(tool.qualifiedName, result, boundedResultBytes(input.maxResultBytes)) };
+  }
+
+  /**
+   * Creates a pending, digest-bound approval on this client's rotating lease.
+   * Returns null only when policy changed to `allow` meanwhile (the call runs).
+   */
+  private async requestExternalApproval(caller: CoreCaller, server: CustomMcpServer, toolName: string,
+    args: Record<string, unknown> | undefined): Promise<{ approvalId: string; expiresAt: string } | null> {
+    const register = this.options.approvals?.registerCustomMcpRunLease;
+    const prepare = this.options.broker.prepareToolApproval;
+    if (!register || !prepare) throw new CustomMcpBrokerError("forbidden", "Tool approval is unavailable");
+    const now = this.now();
+    const [runId] = externalRunIds(externalClientKey(caller.userId, caller.externalClientId!), now);
+    const lease = await register.call(this.options.approvals, {
+      userId: caller.userId, actorId: caller.actorId, runId, expiresAt: externalLeaseExpiry(now),
+    });
+    if (!lease) throw new CustomMcpBrokerError("forbidden", "Tool approval is unavailable");
+    const prepared = await prepare.call(this.options.broker, {
+      userId: caller.userId, actorId: caller.actorId, runId, generation: lease.generation,
+      nativeRequestId: randomUUID(), serverId: server.id, toolName, arguments: args,
+    });
+    return prepared.kind === "pending" ? { approvalId: prepared.approvalId, expiresAt: prepared.expiresAt } : null;
+  }
+
+  /** The approval must sit on this same owner + client lease (current or previous window). */
+  private async externalRunFor(caller: CoreCaller, approvalId: string): Promise<string | null> {
+    if (!this.options.approvals || !caller.externalClientId) return null;
+    for (const runId of externalRunIds(externalClientKey(caller.userId, caller.externalClientId), this.now())) {
+      const found = await this.options.approvals.readCustomMcpToolApproval({
+        userId: caller.userId, actorId: caller.actorId, runId, approvalId,
+      });
+      if (found) return runId;
+    }
+    return null;
   }
 
   /** Legacy server-id dispatch (`/:id/call`, Pi `mcp_call`): same broker policy, same usage row. */
@@ -242,9 +323,10 @@ export class CoreToolService {
   }
 
   async getApproval(caller: CoreCaller, approvalId: string): Promise<CoreApprovalStatus> {
-    if (!this.options.approvals || !caller.runId) throw new CoreToolsError("not_found");
+    const runId = caller.externalClientId ? await this.externalRunFor(caller, approvalId) : caller.runId;
+    if (!this.options.approvals || !runId) throw new CoreToolsError("not_found");
     const approval = await this.options.approvals.readCustomMcpToolApproval({
-      userId: caller.userId, actorId: caller.actorId, runId: caller.runId, approvalId,
+      userId: caller.userId, actorId: caller.actorId, runId, approvalId,
     });
     if (!approval) throw new CoreToolsError("not_found");
     const servers = await this.options.broker.list(caller.userId);
@@ -253,7 +335,8 @@ export class CoreToolService {
   }
 
   private async execute(caller: CoreCaller, server: CustomMcpServer, toolName: string, input: {
-    arguments?: Record<string, unknown>; approvalReceipt?: string; signal?: AbortSignal; onProgress?: McpProgressListener;
+    arguments?: Record<string, unknown>; approvalReceipt?: string; externalApprovalId?: string;
+    signal?: AbortSignal; onProgress?: McpProgressListener;
   }, record: (outcome: CoreUsageOutcome) => void): Promise<unknown> {
     const deadline = AbortSignal.timeout(CORE_CALL_TIMEOUT_MS);
     const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
@@ -261,6 +344,7 @@ export class CoreToolService {
       const result = await this.options.broker.callSelectedTool({
         userId: caller.userId, serverId: server.id, toolName, arguments: input.arguments,
         approvalGranted: false, approvalReceipt: input.approvalReceipt,
+        ...(input.externalApprovalId ? { externalApprovalId: input.externalApprovalId } : {}),
         actorId: caller.actorId, runId: caller.runId, signal,
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
       });

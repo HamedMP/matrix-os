@@ -9,6 +9,10 @@ import {
   type CustomMcpRunLeasesTable,
   type CustomMcpToolApprovalsTable,
 } from "./integrations/custom-mcp/approval-store.js";
+import {
+  createCustomMcpExternalApprovalStore,
+  type CustomMcpExternalApprovalStore,
+} from "./integrations/custom-mcp/external-approval-store.js";
 import type {
   CustomMcpAuthMode,
   CustomMcpServer,
@@ -180,7 +184,7 @@ export type CustomMcpServerBrokerRow = CustomMcpServersTable;
 // PlatformDb interface
 // ---------------------------------------------------------------------------
 
-export interface PlatformDb extends CustomMcpApprovalStore {
+export interface PlatformDb extends CustomMcpApprovalStore, CustomMcpExternalApprovalStore {
   migrate(): Promise<void>;
 
   createUser(input: CreateUserInput): Promise<UsersTable>;
@@ -298,6 +302,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
 
   const db: PlatformDb = {
     ...createCustomMcpApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
+    ...createCustomMcpExternalApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
     async migrate(): Promise<void> {
       await sql`
         CREATE TABLE IF NOT EXISTS users (

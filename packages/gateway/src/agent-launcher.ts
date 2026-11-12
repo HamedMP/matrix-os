@@ -12,7 +12,7 @@ import {
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
-import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 import { INTEGRATION_READ_GUIDANCE } from "./chat/integration-read-guidance.js";
 import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
@@ -77,6 +77,8 @@ export interface AgentLaunchInput {
   matrixDriveContext?: boolean;
   matrixIntegrationRead?: boolean;
   matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call";
+  /** Server-issued run capability for the Matrix Core MCP server (Codex); never a renderer DTO. */
+  matrixCoreMcp?: { scope: "call" | "discovery"; token: string };
 }
 
 export interface AgentLaunchSpec {
@@ -227,14 +229,16 @@ const ClaudeEditPermissionRuleSchema = z.string()
 const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
+  z.enum(MATRIX_CORE_MCP_DISCOVERY_TOOLS),
+  z.enum(MATRIX_CORE_MCP_CALL_TOOLS),
   z.enum(MATRIX_INTEGRATION_DISCOVERY_TOOLS),
   z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
   z.enum(MATRIX_INTEGRATION_READ_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    // Twenty writable roots plus fixed built-in, Custom MCP and company Drive wrappers.
-    allow: z.array(ClaudeAllowRuleSchema).max(28).optional(),
+    // Twenty writable roots plus fixed built-in, Custom MCP, Core MCP and company Drive wrappers.
+    allow: z.array(ClaudeAllowRuleSchema).max(33).optional(),
     ask: z.array(z.enum(MATRIX_INTEGRATION_ACTION_TOOLS)).max(4).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
@@ -307,7 +311,8 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   const mcpTools = input.matrixCustomMcp
     ? [...(input.matrixIntegrationRead && !chatIntegrations ? MATRIX_INTEGRATION_READ_TOOLS : []), ...(!previewDrive && input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
       : chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(previewDrive ? [] : mode === "read-only" || claudePermissionMode(input) === "default"
-      ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
+      ? [...MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, ...MATRIX_CORE_MCP_DISCOVERY_TOOLS]
+      : [...MATRIX_CUSTOM_MCP_TOOLS, ...MATRIX_CORE_MCP_DISCOVERY_TOOLS, ...MATRIX_CORE_MCP_CALL_TOOLS])]
     : [];
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({
@@ -465,6 +470,20 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
   });
 }
 
+const MatrixCoreMcpLaunchSchema = z.object({
+  scope: z.enum(["call", "discovery"]),
+  token: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+/** Codex receives the scoped stdio server; the bearer travels only in the child environment. */
+function codexCoreMcp(input: AgentLaunchInput, env: Record<string, string>): string[] {
+  if (!input.matrixCoreMcp) return [];
+  const core = MatrixCoreMcpLaunchSchema.parse(input.matrixCoreMcp);
+  env[MATRIX_MCP_RUN_TOKEN_ENV] = core.token;
+  env.MATRIX_MCP_HARNESS = "codex";
+  return codexMatrixMcpConfigArgs(core.scope);
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = parsed === "codex" && input.codexExecutable
@@ -472,12 +491,14 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
     : AGENTS[parsed].command;
   const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
   const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
+  const coreArgs = parsed === "codex" ? codexCoreMcp(input, env) : [];
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
       {
         const args = [
+          ...coreArgs,
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
           ...codexSandboxArgs(input.sandbox),
@@ -500,6 +521,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
             CODEX_VERIFIED_VERSION,
             command,
             ...(nativePolicy?.args ?? []),
+            ...coreArgs,
             appServerConfig,
           ],
           cwd: input.cwd,

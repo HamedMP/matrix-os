@@ -341,6 +341,11 @@ export async function createGateway(config: GatewayConfig) {
       : undefined,
     previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
   });
+  /** Spec 2691: Codex/OpenCode receive the same run-scoped Core MCP bearer Claude Code does. */
+  const issueCoreMcpRunCapability = (ownerId: string, runId: string, scope: "call" | "discovery") => {
+    const grant = matrixMcpCapabilities.issue({ owner: { type: "personal", ownerId }, runId, scope });
+    return grant ? { token: grant.token, scope, revoke: grant.revoke, renew: () => grant.renew?.() ?? false } : null;
+  };
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -581,6 +586,7 @@ export async function createGateway(config: GatewayConfig) {
     worktreeManager: codingAgentWorktreeManager,
     agentLauncher: agentCredentialLauncher,
     resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    issueMatrixCoreMcp: ({ ownerId, sessionId, readOnly }) => issueCoreMcpRunCapability(ownerId, sessionId, readOnly ? "discovery" : "call"),
     beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     terminalRuntime: terminalWorkspaceRuntime,
     backgroundRuntime: backgroundAgentRuntime,
@@ -628,6 +634,9 @@ export async function createGateway(config: GatewayConfig) {
         }),
       },
       opencode: {
+        // OpenCode runs for the configured owner only; the registry refuses any other owner.
+        issueMatrixCoreMcp: ({ runId }) => process.env.MATRIX_CLERK_USER_ID
+          ? issueCoreMcpRunCapability(process.env.MATRIX_CLERK_USER_ID, runId, "call") : null,
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "opencode",
           homePath,

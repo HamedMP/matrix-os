@@ -85,6 +85,11 @@ export interface OpenCodeCodingAgentProviderOptions {
   /** Optional trusted caller timebox; omitted for ordinary owner turns. */
   runTimeoutMs?: number;
   killGraceMs?: number;
+  /**
+   * Spec 2691: issues a run-scoped Matrix Core MCP capability for one OpenCode
+   * process. Null means the run starts without Core tools (never a machine bearer).
+   */
+  issueMatrixCoreMcp?: (input: { runId: string }) => { token: string; scope: "call" | "discovery"; revoke(): void } | null;
 }
 
 const execFileAsync = promisify(execFile);
@@ -176,11 +181,13 @@ function childEnvironment(
   base: Record<string, string> | undefined,
   credentialEnv: Record<string, string>,
   homePath: string,
+  coreMcp?: { token: string; scope: "call" | "discovery" },
 ): Record<string, string> {
   return prepareOpenCodeRunEnvironment({
     homePath,
     baseEnvironment: base,
     credentials: credentialEnv,
+    ...(coreMcp ? { coreMcp: { token: coreMcp.token, scope: coreMcp.scope } } : {}),
   });
 }
 
@@ -440,8 +447,18 @@ export function createOpenCodeCodingAgentProvider(
     if (selectedModel) args.push("--model", selectedModel);
     if (input.sessionId) args.push("--session", input.sessionId);
     args.push(promptArg(input.prompt));
-    const env = childEnvironment(options.env, launch.env, options.homePath);
+    let coreMcp: ReturnType<NonNullable<typeof options.issueMatrixCoreMcp>> = null;
+    let env: Record<string, string>;
+    try {
+      coreMcp = options.issueMatrixCoreMcp?.({ runId: input.scope }) ?? null;
+      env = childEnvironment(options.env, launch.env, options.homePath, coreMcp ?? undefined);
+    } catch (error: unknown) {
+      coreMcp?.revoke();
+      logCodingAgentWarning("OpenCode Matrix Core MCP launch failed", error);
+      return { events: [], outcome: "failed" };
+    }
     const timeoutMs = remainingCodingRunTimeout(runDeadline, launch.maxRunMs);
+    try {
     return await new Promise((resolve) => {
       let child: OpenCodeProcess;
       try { child = spawnFn(command, args, { cwd: input.cwd, env }); } catch (error: unknown) {
@@ -652,6 +669,10 @@ export function createOpenCodeCodingAgentProvider(
       if (input.signal?.aborted) tracked.abort();
       else input.signal?.addEventListener("abort", tracked.abort, { once: true });
     });
+    } finally {
+      // The capability lives exactly as long as this OpenCode process.
+      coreMcp?.revoke();
+    }
   }
 
   async function cwdFor(projectId?: string, worktreeId?: string): Promise<string | null> {

@@ -12,13 +12,13 @@ export interface CustomMcpApprovalClient {
   verifyIntegrationDecision?(input: { chatId: string; runId: string; approvalId: string;
     decision: "approve" | "decline" | "cancel"; clientRequestId: string; platformApprovalProof: string }): Promise<boolean>;
   registerRun(runId: string): Promise<{ generation: number }>;
+  /** Exactly one target: a Custom MCP server id, or a Matrix Core service slug (spec 2691). */
   prepare(runId: string, input: {
     generation: number;
     nativeRequestId: string;
-    serverId: string;
     tool: string;
     arguments?: Record<string, unknown>;
-  }): Promise<z.infer<typeof PrepareResponse>>;
+  } & ({ serverId: string; service?: never } | { service: string; serverId?: never })): Promise<z.infer<typeof PrepareResponse>>;
   decide(runId: string, approvalId: string, decision: "approve" | "decline" | "cancel", provenance?: {
     chatId: string; clientRequestId: string; platformApprovalProof: string;
   }):
