@@ -53,7 +53,8 @@ export interface OwnerRequestLike {
 /**
  * Meaningful activity (FR-009) seen at the proxy: work the owner submits, or
  * opening the runtime or an app. Polling, presence pings, and WebSocket
- * upgrades are not.
+ * upgrades are not. WebSocket frames are not counted because the container
+ * profile has no terminal.
  */
 export function isMeaningfulOwnerRequest(request: OwnerRequestLike): boolean {
   if (request.header('upgrade')?.toLowerCase() === 'websocket') return false;
@@ -213,6 +214,11 @@ export function createIdleReaper(deps: IdleReaperDeps) {
             .whereRef('r.machine_id', '=', 'm.machine_id')
             .where('r.status', 'in', ACTIVE_RESERVATION_STATUSES)
             .where('r.expires_at', '>', at.toISOString()))),
+          // A run ending is activity too (FR-009): the idle window restarts when it settles or is released.
+          eb.not(eb.exists(eb.selectFrom('ai_funded_usage_reservations as r')
+            .select('r.reservation_id')
+            .whereRef('r.machine_id', '=', 'm.machine_id')
+            .where(sql<Date>`GREATEST(r.settled_at::timestamptz, r.released_at::timestamptz)`, '>', idleBefore))),
         ]),
       ]))
       .orderBy('m.last_activity_at', 'asc')

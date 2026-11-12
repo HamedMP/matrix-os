@@ -212,6 +212,36 @@ describe('container idle stop', () => {
     expect((await row()).status).toBe('stopped');
   });
 
+  it('restarts the idle window when a run settles, so a reply is not cut off as it arrives', async () => {
+    const { reaper, runtime } = setup();
+    await db.executor.insertInto('ai_runtime_credentials').values({
+      token_id: 'tok_idle_2', token_hash: 'c'.repeat(64), owner_id: 'user_idle_a', machine_id: 'ctr-1', runtime_slot: 'primary',
+      audience: 'matrix-funded-relay', scope: 'ai:invoke', issued_at: T0.toISOString(), expires_at: T0.toISOString(), revoked_at: null,
+    }).execute();
+    // The owner's message at T0 started a run that settled 15 minutes later.
+    await db.executor.insertInto('ai_funded_usage_reservations').values({
+      reservation_id: 'res_idle_2', request_id: 'req_idle_2', payload_hash: 'd'.repeat(64), authorization_response: '{}',
+      settlement_response: null, finalization_mode: null, manual_review_evidence_ref: null, manual_review_actor: null,
+      manual_reviewed_at: null, start_response: null, release_response: null, release_reason: null,
+      token_id: 'tok_idle_2', owner_id: 'user_idle_a', machine_id: 'ctr-1', runtime_slot: 'primary', model_id: 'anthropic/claude-sonnet-5',
+      reserved_microusd: 1, promotional_reserved_microusd: null, addon_reserved_microusd: null, actual_microusd: null,
+      resolved_model: null, pricing_version: null, period_start: T0.toISOString(), status: 'released',
+      created_at: T0.toISOString(), started_at: null, expires_at: new Date(T0.getTime() + 24 * 60 * MINUTE).toISOString(),
+      settled_at: null, released_at: new Date(T0.getTime() + 15 * MINUTE).toISOString(),
+    }).execute();
+    advance(16 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect(runtime.calls).toEqual([]);
+    expect((await row()).status).toBe('running');
+
+    advance(10 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect(runtime.calls).toEqual(['quiesce', 'flush']);
+    expect((await row()).status).toBe('stopped');
+  });
+
   it('stops at the maximum session even while the owner stays active', async () => {
     const { reaper, runtime, activity } = setup();
     advance(4 * 60 * MINUTE + MINUTE);
