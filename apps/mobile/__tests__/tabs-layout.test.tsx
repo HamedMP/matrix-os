@@ -14,6 +14,7 @@ let tabsProps: {
 } = {};
 let mockKeyboardVisible = false;
 let mockAgentsWaiting = 0;
+let mockSegments: string[] = [];
 
 jest.mock("expo-router/tabs", () => {
   const mockReact = jest.requireActual("react") as typeof import("react");
@@ -28,6 +29,9 @@ jest.mock("expo-router/tabs", () => {
   return { Tabs };
 });
 
+// The bar reads the screen open inside the focused tab from the route's segments.
+jest.mock("expo-router", () => ({ useSegments: () => mockSegments }));
+
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => mockKeyboardVisible }));
 // The real hook reads the agents of the signed-in computer.
 jest.mock("@/components/agents/use-agents-waiting-count", () => ({
@@ -40,21 +44,28 @@ interface TabRouteState {
   key: string;
   name: string;
   params?: object;
-  state?: { index: number; routes: { name: string }[] };
 }
 
-function tabState(focused: string, nested: Record<string, TabRouteState["state"]> = {}) {
-  const routes: TabRouteState[] = TAB_ROUTES.map((name) => ({ key: `${name}-key`, name, state: nested[name] }));
+/** The tab bar's state, which lists the tabs only, and the segments of the open screen. */
+function tabState(focused: string, segments: string[] = ["(drawer)", "(tabs)", focused]) {
+  mockSegments = segments;
+  const routes: TabRouteState[] = TAB_ROUTES.map((name) => ({ key: `${name}-key`, name }));
   return { index: TAB_ROUTES.indexOf(focused), routes };
 }
 
 function renderTabBar(state: ReturnType<typeof tabState>, defaultPrevented = false) {
   const navigation = {
     emit: jest.fn(() => ({ defaultPrevented })),
-    navigate: jest.fn(),
+    navigateToTab: jest.fn(),
   };
   render(<TabsLayout />);
-  const tabBar = tabsProps.tabBar!({ state, navigation, descriptors: {}, insets: { top: 0, right: 0, bottom: 0, left: 0 } });
+  const tabBar = tabsProps.tabBar!({
+    state,
+    emitter: { emit: navigation.emit },
+    navigateToTab: navigation.navigateToTab,
+    descriptors: {},
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
+  });
   cleanup();
   render(<>{tabBar}</>);
   return navigation;
@@ -71,6 +82,7 @@ describe("tabs layout", () => {
     tabsProps = {};
     mockKeyboardVisible = false;
     mockAgentsWaiting = 0;
+    mockSegments = [];
   });
 
   afterEach(() => {
@@ -103,7 +115,7 @@ describe("tabs layout", () => {
   });
 
   it("draws the tab bar with the focused tab active and no Agents badge", () => {
-    renderTabBar(tabState("(apps)", { "(apps)": { index: 0, routes: [{ name: "apps" }] } }));
+    renderTabBar(tabState("(apps)", ["(drawer)", "(tabs)", "(apps)", "apps"]));
 
     expect(screen.getAllByRole("tab").map((tab) => tab.props.accessibilityLabel)).toEqual([
       "Chats", "Agents", "Apps", "Terminal", "Settings",
@@ -135,14 +147,12 @@ describe("tabs layout", () => {
   });
 
   it("switches to the pressed tab, telling its navigator first", () => {
-    const state = tabState("(chats)");
-    state.routes[4].params = { from: "link" };
-    const navigation = renderTabBar(state);
+    const navigation = renderTabBar(tabState("(chats)"));
 
     fireEvent.press(screen.getByRole("tab", { name: "Settings" }));
 
     expect(navigation.emit).toHaveBeenCalledWith({ type: "tabPress", target: "settings-key", canPreventDefault: true });
-    expect(navigation.navigate).toHaveBeenCalledWith("settings", { from: "link" });
+    expect(navigation.navigateToTab).toHaveBeenCalledWith("settings-key");
   });
 
   it("only tells the navigator when the pressed tab is already on screen", () => {
@@ -151,7 +161,7 @@ describe("tabs layout", () => {
     fireEvent.press(screen.getByRole("tab", { name: "Apps" }));
 
     expect(navigation.emit).toHaveBeenCalledWith({ type: "tabPress", target: "(apps)-key", canPreventDefault: true });
-    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(navigation.navigateToTab).not.toHaveBeenCalled();
   });
 
   it("stays on the current tab when a screen prevents the press", () => {
@@ -160,7 +170,7 @@ describe("tabs layout", () => {
     fireEvent.press(screen.getByRole("tab", { name: "Agents" }));
 
     expect(navigation.emit).toHaveBeenCalled();
-    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(navigation.navigateToTab).not.toHaveBeenCalled();
   });
 
   it("passes a long press on to the tab's navigator", () => {
@@ -169,40 +179,40 @@ describe("tabs layout", () => {
     fireEvent(screen.getByRole("tab", { name: "Terminal" }), "longPress");
 
     expect(navigation.emit).toHaveBeenCalledWith({ type: "tabLongPress", target: "terminal-key" });
-    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(navigation.navigateToTab).not.toHaveBeenCalled();
   });
 
   it("is hidden on the New agent screen, which takes the whole display", () => {
-    renderTabBar(tabState("agents", { agents: { index: 1, routes: [{ name: "index" }, { name: "new" }] } }));
+    renderTabBar(tabState("agents", ["(drawer)", "(tabs)", "agents", "new"]));
     expect(screen.queryByRole("tab")).toBeNull();
     cleanup();
 
     // Back on the tab's first screen, and on every other tab, it returns.
-    renderTabBar(tabState("agents", { agents: { index: 0, routes: [{ name: "index" }] } }));
+    renderTabBar(tabState("agents", ["(drawer)", "(tabs)", "agents"]));
     expect(screen.getAllByRole("tab")).toHaveLength(5);
     cleanup();
 
-    renderTabBar(tabState("(chats)", { agents: { index: 1, routes: [{ name: "index" }, { name: "new" }] } }));
+    renderTabBar(tabState("(chats)", ["(drawer)", "(tabs)", "(chats)"]));
     expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 
   it("is hidden on an agent's chat, and returns on the Agents list", () => {
-    renderTabBar(tabState("agents", { agents: { index: 1, routes: [{ name: "index" }, { name: "[agentId]" }] } }));
+    renderTabBar(tabState("agents", ["(drawer)", "(tabs)", "agents", "[agentId]"]));
     expect(screen.queryByRole("tab")).toBeNull();
     cleanup();
 
-    renderTabBar(tabState("agents", { agents: { index: 0, routes: [{ name: "index" }] } }));
+    renderTabBar(tabState("agents", ["(drawer)", "(tabs)", "agents"]));
     expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 
   it("is hidden on any other screen listed as taking the whole display", () => {
     hiddenRoutes["(apps)"] = ["files"];
 
-    renderTabBar(tabState("(apps)", { "(apps)": { index: 1, routes: [{ name: "apps" }, { name: "files" }] } }));
+    renderTabBar(tabState("(apps)", ["(drawer)", "(tabs)", "(apps)", "files"]));
     expect(screen.queryByRole("tab")).toBeNull();
     cleanup();
 
-    renderTabBar(tabState("(apps)", { "(apps)": { index: 0, routes: [{ name: "apps" }] } }));
+    renderTabBar(tabState("(apps)", ["(drawer)", "(tabs)", "(apps)", "apps"]));
     expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 

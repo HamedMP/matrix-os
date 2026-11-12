@@ -31,7 +31,7 @@ export interface ShellApiClient {
   post<T>(path: string, body: unknown, options?: RequestOptions): Promise<T>;
   put<T>(path: string, body: unknown, options?: RequestOptions): Promise<T>;
   patch<T>(path: string, body: unknown, options?: RequestOptions): Promise<T>;
-  delete<T>(path: string, options?: RequestOptions): Promise<T>;
+  delete<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
 }
 
 export function createShellApiClient(options: ShellApiClientOptions = {}): ShellApiClient {
@@ -64,7 +64,7 @@ export function createShellApiClient(options: ShellApiClientOptions = {}): Shell
     }
   }
 
-  const json = <T>(method: "POST" | "PUT" | "PATCH", path: string, body: unknown, requestOptions?: RequestOptions): Promise<T> =>
+  const json = <T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, requestOptions?: RequestOptions): Promise<T> =>
     request(path, {
       method,
       headers: { "content-type": "application/json" },
@@ -76,7 +76,9 @@ export function createShellApiClient(options: ShellApiClientOptions = {}): Shell
     post: <T>(path: string, body: unknown, requestOptions?: RequestOptions) => json<T>("POST", path, body, requestOptions),
     put: <T>(path: string, body: unknown, requestOptions?: RequestOptions) => json<T>("PUT", path, body, requestOptions),
     patch: <T>(path: string, body: unknown, requestOptions?: RequestOptions) => json<T>("PATCH", path, body, requestOptions),
-    delete: <T>(path: string, requestOptions?: RequestOptions) => request<T>(path, { method: "DELETE" }, requestOptions),
+    delete: <T>(path: string, body?: unknown, requestOptions?: RequestOptions) => body === undefined
+      ? request<T>(path, { method: "DELETE" }, requestOptions)
+      : json<T>("DELETE", path, body, requestOptions),
   };
 }
 

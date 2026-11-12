@@ -4,6 +4,7 @@ import {
   ScrollView,
   Text as NativeText,
   View,
+  type ScrollViewInstance,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -15,7 +16,7 @@ import { motion } from "@/lib/theme-v2";
 export function SettingsPage({ children, scrollRef }: {
   children: ReactNode;
   /** For screens that scroll themselves, e.g. back to a notice after an action. */
-  scrollRef?: Ref<ScrollView>;
+  scrollRef?: Ref<ScrollViewInstance>;
 }) {
   return (
     <ScrollView

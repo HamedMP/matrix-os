@@ -759,9 +759,9 @@ function SharedChatScreen({ state, actorId, markdownTheme, getToken, onBack, onL
     {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared Chat" /> : null}
     <FlatList data={visibleMessages} keyExtractor={(message) => message.id} contentContainerStyle={styles.history}
       renderItem={renderMessage}
-      ListEmptyComponent={!state.loading ? <Text style={styles.emptyHistory}>Message Matrix to start this Chat.</Text> : null}
+      ListEmptyComponent={!state.loading ? <Text style={styles.emptyHistory}>Message Matrix to start this Chat.</Text> : undefined}
       ListFooterComponent={state.hasMoreMessages ? <Action label={state.loadingMoreMessages ? "Loading…" : "Load more messages"}
-        disabled={state.loadingMoreMessages} onPress={() => void onLoadMore()} /> : null} />
+        disabled={state.loadingMoreMessages} onPress={() => void onLoadMore()} /> : undefined} />
     <SharedChatComposer state={state} actorId={actorId} onDraftChange={onDraftChange}
       onRequestAi={onRequestAi} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
     {state.scope ? <SessionDiscussionSheet open={discussionOpen} scope={state.scope} actorId={actorId}

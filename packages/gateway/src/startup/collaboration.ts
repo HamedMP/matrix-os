@@ -1,5 +1,6 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
 import type { Kysely } from "kysely";
@@ -13,6 +14,9 @@ import { enableOwnerCollaborationSurfaces } from "../collaboration/owner-runtime
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
 import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
+import { CollaborativeAppReadinessRepository } from "../collaboration/collaborative-app-readiness-repository.js";
+import { CollaborativeAppShareRepository } from "../collaboration/collaborative-app-share-repository.js";
+import { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,
@@ -22,6 +26,79 @@ import {
   type GatewayCollaborationRuntime,
 } from "../collaboration/wiring.js";
 import type { createProjectManager } from "../project-manager.js";
+
+const COLLABORATIVE_BUILD_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const COLLABORATIVE_BUILD_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+const MAX_COLLABORATIVE_BUILD_SNAPSHOTS = 1_000;
+
+export interface CollaborativeAppInfrastructure {
+  readiness: CollaborativeAppReadinessRepository;
+  shares: CollaborativeAppShareRepository;
+  builds: ImmutableCollaborativeBuildStore;
+  close(): Promise<void>;
+}
+
+/** Repository wrappers borrow the owner pool; only the immutable-build store is owned here. */
+export function createCollaborativeAppInfrastructure(options: {
+  db: Kysely<OwnerCollaborationDatabase>;
+  buildStoreRoot: string;
+  startTimers?: boolean;
+}): CollaborativeAppInfrastructure {
+  const builds = new ImmutableCollaborativeBuildStore({
+    rootDir: options.buildStoreRoot,
+    maxSnapshots: MAX_COLLABORATIVE_BUILD_SNAPSHOTS,
+    retentionMs: COLLABORATIVE_BUILD_RETENTION_MS,
+    cleanupIntervalMs: COLLABORATIVE_BUILD_CLEANUP_INTERVAL_MS,
+    startTimer: options.startTimers !== false,
+    isProtectedBuild: async (buildId) => {
+      const readiness = await options.db.selectFrom("collaboration_app_readiness")
+        .select("build_id")
+        .where("build_id", "=", buildId)
+        .where("status", "in", ["checking", "ready"])
+        .where("invalidated_at", "is", null)
+        .executeTakeFirst();
+      if (readiness) return true;
+      const binding = await options.db.selectFrom("collaboration_app_bindings")
+        .select("build_id")
+        .where("build_id", "=", buildId)
+        .where("state", "!=", "stopped")
+        .executeTakeFirst();
+      return Boolean(binding);
+    },
+  });
+  return {
+    readiness: new CollaborativeAppReadinessRepository(options.db),
+    shares: new CollaborativeAppShareRepository(options.db),
+    builds,
+    close: () => builds.close(),
+  };
+}
+
+function ownCollaborativeAppInfrastructure<T extends {
+  shutdown(): Promise<void>;
+  fence?: () => void;
+}>(runtime: T, infrastructure: CollaborativeAppInfrastructure): T & {
+  collaborativeApps: CollaborativeAppInfrastructure;
+} {
+  const shutdown = runtime.shutdown.bind(runtime);
+  const fence = runtime.fence?.bind(runtime);
+  return Object.assign(runtime, {
+    collaborativeApps: infrastructure,
+    async shutdown(): Promise<void> {
+      try {
+        await shutdown();
+      } finally {
+        await infrastructure.close();
+      }
+    },
+    ...(fence ? {
+      fence(): void {
+        void infrastructure.close();
+        fence();
+      },
+    } : {}),
+  });
+}
 
 export interface OwnerCollaborationRouteOptions {
   app: Hono;
@@ -73,6 +150,10 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     terminalWorkspaceRuntime,
   } = options;
   const ownerChatRepository = chatRepository;
+  const collaborativeApps = createCollaborativeAppInfrastructure({
+    db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
+    buildStoreRoot: join(homePath, "system", "collaboration", "app-builds"),
+  });
   const projectGitDriver = createProjectGitDriver({
     homePath,
     resolveProjectRoot: async ({ ownerId, projectId }) => {
@@ -83,33 +164,41 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     },
   });
   const construction = await constructGatewayCollaborationOrFailClosed(
-    () => createGatewayCollaboration({
-    db: ownerChatRepository.kysely as Kysely<any>,
-    chatRepository: ownerChatRepository,
-    config: collaborationConfig,
-    providerSnapshotReader,
-    projectSource: {
-      getProject: async (ownerId, projectId) => {
-        const result = await codingAgentProjectManager.getProjectById(
-          { type: "user", id: ownerId },
-          projectId,
-        );
-        if (!result.ok) return null;
-        const revision = Date.parse(result.project.updatedAt);
-        if (!Number.isSafeInteger(revision) || revision < 0) {
-          throw new Error("ProjectRevisionUnavailable");
-        }
-        return { id: result.project.id, ownerId, revision };
-      },
+    async () => {
+      try {
+        const runtime = await createGatewayCollaboration({
+          db: ownerChatRepository.kysely as Kysely<any>,
+          chatRepository: ownerChatRepository,
+          config: collaborationConfig,
+          providerSnapshotReader,
+          projectSource: {
+            getProject: async (ownerId, projectId) => {
+              const result = await codingAgentProjectManager.getProjectById(
+                { type: "user", id: ownerId },
+                projectId,
+              );
+              if (!result.ok) return null;
+              const revision = Date.parse(result.project.updatedAt);
+              if (!Number.isSafeInteger(revision) || revision < 0) {
+                throw new Error("ProjectRevisionUnavailable");
+              }
+              return { id: result.project.id, ownerId, revision };
+            },
+          },
+        });
+        return ownCollaborativeAppInfrastructure(runtime, collaborativeApps);
+      } catch (error: unknown) {
+        await collaborativeApps.close();
+        throw error;
+      }
     },
-  }),
     {
     // The shared resources, their app binding and the project inventory belong to the
     // collaboration package's own composition, so this delegates rather than keeping a copy —
     // that is what stops the resource driver's app-asset and app-incarnation wiring drifting
     // out of this startup module. The canonical terminal bridge is this layer's own addition
     // and is wired here, before the delegation, because it must exist on the runtime first.
-    onPartialRuntime: (runtime) => {
+    onPartialRuntime: async (runtime) => {
       // The owner Chat database is the owner collaboration database (same Kysely instance as `db` above).
       const terminalBridge = createCanonicalTerminalCollaborationBridge({
         db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
@@ -128,7 +217,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
           harnessVersion: "1.0.0",
         },
       });
-      return enableOwnerCollaborationSurfaces(runtime, {
+      const surfaces = await enableOwnerCollaborationSurfaces(runtime, {
         homePath,
         ownerId: collaborationConfig.ownerId,
         appRegistry,
@@ -139,6 +228,16 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         projectGitDriver,
         terminalWorkspaces: terminalWorkspaceRuntime,
       });
+      if (!collaborationConfig.ownerId) throw new Error("Collaborative app owner is unavailable");
+      runtime.enableCollaborativeAppReadiness({
+        ownerId: collaborationConfig.ownerId,
+        homePath,
+        appRegistry,
+        repository: collaborativeApps.readiness,
+        shares: collaborativeApps.shares,
+        builds: collaborativeApps.builds,
+      });
+      return surfaces;
     } },
   );
   return construction;

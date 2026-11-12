@@ -1,13 +1,13 @@
 /** Dedicated native harness boundary: one run bearer, one trusted loopback route, no owner auth fallback. */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SharedBrowserActionSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES } from "@matrix-os/contracts";
+import { SharedBrowserActionSchema, SharedBrowserMcpActionInputSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES } from "@matrix-os/contracts";
 const MAX_BYTES = 192 * 1024;
 export const SHARED_BROWSER_DESCRIPTION = SHARED_BROWSER_TOOL_DESCRIPTION;
 export function createSharedBrowserMcpServer(options: { gatewayPort: number; token: string; fetcher?: typeof fetch }) {
   if (!Number.isInteger(options.gatewayPort) || options.gatewayPort < 1 || options.gatewayPort > 65535 || !/^[A-Za-z0-9_-]{43}$/.test(options.token)) throw new Error("Browser tool unavailable");
   const endpoint = `http://127.0.0.1:${options.gatewayPort}/apps/browser-lab/api/agent-action`;
   const server = new McpServer({ name: "matrix-shared-browser", version: "1.0.0" });
-  server.registerTool("shared_browser", { description: SHARED_BROWSER_DESCRIPTION, inputSchema: SharedBrowserActionSchema }, async (raw, extra) => {
+  server.registerTool("shared_browser", { description: SHARED_BROWSER_DESCRIPTION, inputSchema: SharedBrowserMcpActionInputSchema }, async (raw, extra) => {
     const signal = AbortSignal.any([extra.signal, AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]);
     try {
       const action = SharedBrowserActionSchema.parse(raw);

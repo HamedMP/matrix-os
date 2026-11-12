@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SharedBrowserActionResultSchema } from '@matrix-os/contracts';
 import { rig } from '../helpers/shared-browser-cdp.js';
 import { createSharedBrowserBroker } from '../../packages/gateway/src/shared-browser/broker.js';
 
@@ -30,6 +31,64 @@ describe('Chrome related-session lifecycle', () => {
     } finally {
       await broker.close();
       await result;
+    }
+  });
+
+  it('releases the browser and stops the run when a recovered tab needs the same handoff again', async () => {
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { driver, fake, signal } = await rig();
+    fake.enforceChildSessions();
+    const gates: boolean[] = [];
+    const broker = createSharedBrowserBroker({ ownerId: 'owner', driver,
+      setHumanControl: async enabled => { gates.push(enabled); } });
+    const binding = { ownerId: 'owner', chatId: 'chat', runId: 'run', harness: 'pi' as const };
+    const { token } = broker.openRun(binding, signal);
+    const attachWorker = (sessionId: string) => fake.event('Target.attachedToTarget', {
+      sessionId, waitingForDebugger: false,
+      targetInfo: { targetId: 'owner-worker', type: 'service_worker', url: fixture + '/worker.js' },
+    });
+    let pending: Promise<unknown> | undefined;
+    try {
+      await broker.execute(binding, { action: 'tab_new', url: fixture }, signal);
+      attachWorker('worker-first');
+      const first = broker.execute(binding, { action: 'snapshot' }, signal);
+      pending = first.catch(error => error);
+      await vi.waitFor(() => expect(broker.status().phase).toBe('human'));
+      await broker.control('owner', { action: 'resume' });
+      const recovered = await first;
+      expect(SharedBrowserActionResultSchema.parse(recovered)).toMatchObject({
+        success: true, targetId: 'agent-tab', observationId: expect.any(String), content: 'Two invoices',
+      });
+
+      attachWorker('worker-again');
+      const repeated = broker.execute(binding, { action: 'snapshot' }, signal);
+      pending = repeated.catch(error => error);
+      await vi.waitFor(() => expect(broker.status()).toMatchObject({ phase: 'idle', run: null }));
+      const stopped = SharedBrowserActionResultSchema.parse(await repeated);
+      expect(stopped).toMatchObject({
+        success: false, targetId: 'agent-tab', automation: { phase: 'idle', run: null },
+        content: expect.stringContaining('This run has ended and cannot be resumed.'),
+      });
+      expect(stopped).not.toHaveProperty('handoffRequested');
+      expect(gates).toEqual([false, true, false, true]);
+      expect(broker.resolveCapability(token)).toBeNull();
+      await expect(broker.execute(binding, { action: 'snapshot' }, signal)).rejects.toMatchObject({ code: 'run_unavailable' });
+      await expect(broker.control('owner', { action: 'resume' })).rejects.toMatchObject({ code: 'run_unavailable' });
+      expect(fake.messages.filter(row => row.method === 'Page.navigate')).toHaveLength(1);
+      expect(fake.messages.some(row => row.method === 'Runtime.runIfWaitingForDebugger' && row.sessionId?.startsWith('worker-'))).toBe(false);
+      expect(fake.messages.filter(row => row.method === 'Target.detachFromTarget').map(row => row.params.sessionId))
+        .toEqual(['worker-first', 'agent-session', 'worker-again', 'agent-session']);
+      expect(warnings.mock.calls.filter(([message]) => message === '[shared-browser] Chrome handoff required')).toEqual(Array.from({ length: 2 }, () => [
+        '[shared-browser] Chrome handoff required', 'unsupported_target', 'service_worker',
+      ]));
+
+      const next = { ...binding, runId: 'next' };
+      broker.openRun(next, signal);
+      await expect(broker.execute(next, { action: 'tab_new', url: fixture }, signal))
+        .resolves.toMatchObject({ success: true, targetId: 'agent-tab-2' });
+    } finally {
+      await broker.close();
+      await pending;
     }
   });
   it('detaches an auto-attached iframe through its parent without making owner handoff unavailable', async () => {

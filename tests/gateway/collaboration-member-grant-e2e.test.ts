@@ -105,6 +105,7 @@ describe("member-addressed grants end to end", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       resolveInvitationIdentifier: async () => null,
       listOrganizationIds: async () => [organizationId],
+      isCurrentOrganizationMember: async () => true,
       now: () => now,
     });
 

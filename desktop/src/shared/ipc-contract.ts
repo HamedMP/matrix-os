@@ -7,6 +7,7 @@ import { DesktopPreviewSummarySchema } from "./preview-pair";
 import { z } from "zod/v4";
 import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
+import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
 import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
@@ -44,6 +45,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   MatrixComputerListSchema,
+  CollaborativeAppDirectoryItemSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -65,6 +67,8 @@ import {
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
+import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
+import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 
 const Empty = z.object({}).strict();
 
@@ -81,7 +85,15 @@ const CodingAgentCreateThreadResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), snapshot: AgentThreadSnapshotSchema }).strict(),
   z.object({ ok: z.literal(false), error: SafeClientErrorSchema }).strict(),
 ]);
-const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
+const EmbedStateSchema = z.enum([
+  "loading",
+  "ready",
+  "auth-required",
+  "host-offline",
+  "access-ended",
+  "needs-recheck",
+  "failed",
+]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
@@ -91,6 +103,7 @@ const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
 const NativeAppVersionResultSchema = z.object({
   version: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   source: BuildSourceSchema.nullable(),
+  channel: z.enum(["stable", "beta", "canary", "dev"]),
 }).strict();
 
 const ProfileSchema = z
@@ -146,9 +159,12 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...TERMINAL_WINDOW_INVOKE,
+  ...LOCAL_TERMINAL_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
+  ...AI_USAGE_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
@@ -404,6 +420,12 @@ export const INVOKE_CHANNELS = {
         active: z.boolean().optional(),
       }),
       z.strictObject({
+        kind: z.literal("shared-app"),
+        target: CollaborativeAppDirectoryItemSchema,
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
         kind: z.literal("browser"),
         url: z.string().min(1).max(2_048),
         bounds: BoundsSchema,
@@ -513,6 +535,7 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_TERMINAL_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,

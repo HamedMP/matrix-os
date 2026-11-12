@@ -152,6 +152,63 @@ describe("S05 direct sessions on the home", () => {
     await expect(service.create(body)).rejects.toMatchObject({ code: "replayed" });
   });
 
+  it("renews evidence during a long download and ends the session after membership removal", async () => {
+    const session = await service.create(sessionRequest(collaborationActors.editor).body);
+    const requireMembership = vi.spyOn(authority.organizationPrecondition, "require");
+    clock = new Date(clock.getTime() + 18_000);
+    const refreshed = await service.keepEvidenceFresh(session.id);
+    expect(Date.parse(refreshed.evidenceExpiresAt)).toBeGreaterThan(Date.parse(session.evidenceExpiresAt));
+    expect(requireMembership).toHaveBeenCalled();
+    members.delete(collaborationActors.editor);
+    clock = new Date(clock.getTime() + 18_000);
+    await expect(service.keepEvidenceFresh(session.id)).rejects.toThrow();
+    expect(service.describe(session.id)).toBeNull();
+  });
+
+  it("normalizes stored app scopes to app_instance tickets for sessions and streams", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ kind: "app" })
+      .where("id", "=", scopeId).execute();
+    vi.spyOn(authority, "authorize").mockResolvedValue({
+      actorId: collaborationActors.editor,
+      ownerId: collaborationActors.owner,
+      organizationId,
+      scopeId,
+      membershipScopeId: scopeId,
+      resourceKind: "app",
+      resourceId: "app_catalog_id",
+      role: "editor",
+      authEpoch: 1,
+      authorityRuntimeId: runtimeId,
+      authorityGeneration: 1,
+      capability: "read",
+    });
+    const key = clientKey();
+    const { body } = sessionRequest(collaborationActors.editor, key, {
+      overrides: { resource: { scopeId, kind: "app_instance" } },
+    });
+    const session = await service.create(body);
+    const streamTicket = service["options"].verifier.verifyTicket(ticketFor({
+      actorId: collaborationActors.editor,
+      key,
+      purpose: "events",
+      overrides: { resource: { scopeId, kind: "app_instance" } },
+    }));
+
+    const opened = await service.openStream({
+      ticket: streamTicket,
+      handshake: {
+        sessionId: session.id,
+        ticketNonce: streamTicket.nonce,
+        possession: key.sign(possessionPayload({
+          ticketNonce: streamTicket.nonce,
+          purpose: "events",
+          sessionId: session.id,
+        })),
+      },
+    });
+    opened.release();
+  });
+
   it("notifies revocation enforcement only after a fresh session creation or renewal succeeds", async () => {
     const { body, key } = sessionRequest(collaborationActors.editor);
     const session = await service.create(body);

@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
-import { isGitAncestor, readGitChangedPaths } from '../../scripts/ci/git-coverage.mjs';
+import { sourceChangeScript } from '../../scripts/ci/changes.mjs';
 
 const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
 const job = workflow.jobs.changes;
@@ -54,9 +53,8 @@ describe('change detector checkout', () => {
     expect(git(f.target, 'rev-parse', 'HEAD')).toBe(f.sha);
     expect(git(f.target, 'rev-parse', '--is-shallow-repository')).toBe('false');
     expect(readFileSync(join(f.target, 'scripts/ci/helper.mjs'), 'utf8')).toContain('version = 2');
-    const spawnGit = (command: string, args: string[], options: object) => spawnSync(command, args, { ...options, cwd: f.target });
-    expect(isGitAncestor(f.base, f.sha, { spawnGit })).toBe(true);
-    expect(readGitChangedPaths(f.base, f.sha, { spawnGit })).toEqual(['historical.bin', 'scripts/ci/helper.mjs', 'unrelated.bin']);
+    git(f.target, 'merge-base', '--is-ancestor', f.base, f.sha);
+    expect(git(f.target, 'diff', '--no-renames', '--name-only', f.base, f.sha).split('\n')).toEqual(['historical.bin', 'scripts/ci/helper.mjs', 'unrelated.bin']);
     expect(existsSync(join(f.target, 'unrelated.bin'))).toBe(false);
     const missing = git(f.target, 'rev-list', '--objects', '--all', '--missing=print').split('\n');
     expect(missing).toContain(`?${f.historicalBlob}`); expect(missing).toContain(`?${f.unrelatedBlob}`);
@@ -82,11 +80,53 @@ describe('change detector checkout', () => {
     expect(missing).toContain(`?${f.historicalBlob}`); expect(missing).toContain(`?${f.unrelatedBlob}`);
   });
 
+  it('classifies a main push against the commit before it without fetching omitted blobs', () => {
+    const f = fixture(), checkoutResult = execute(f);
+    expect(checkoutResult.status, checkoutResult.stderr).toBe(0);
+    const output = join(f.root, 'github-output'); writeFileSync(output, '');
+    const result = spawnSync('bash', ['-c', sourceChangeScript], {
+      cwd: f.target, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: f.sha, GITHUB_OUTPUT: output, MAIN_BEFORE: f.base },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const outputs = readFileSync(output, 'utf8');
+    expect(outputs).toContain(`base_sha=${f.base}`); expect(outputs).toContain('bootstrap=false');
+    expect(outputs).toContain('should_run=true');
+    expect(git(f.target, 'rev-parse', '--is-shallow-repository')).toBe('false');
+    const missing = git(f.target, 'rev-list', '--objects', '--all', '--missing=print').split('\n');
+    expect(missing).toContain(`?${f.historicalBlob}`); expect(missing).toContain(`?${f.unrelatedBlob}`);
+  });
+
+  it('scans the whole tree when a main push has no reachable previous commit', () => {
+    const f = fixture(), checkoutResult = execute(f);
+    expect(checkoutResult.status, checkoutResult.stderr).toBe(0);
+    const output = join(f.root, 'github-output'); writeFileSync(output, '');
+    const classified = spawnSync('bash', ['-c', sourceChangeScript], {
+      cwd: f.target, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: f.sha, GITHUB_OUTPUT: output, MAIN_BEFORE: '0'.repeat(40) },
+    });
+    expect(classified.status, classified.stderr).toBe(0);
+    const outputs = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')));
+    expect(outputs).toMatchObject({ bootstrap: 'true', should_run: 'true' });
+    const scan = workflow.jobs.patterns.steps.find((step: { name?: string }) => step.name === 'Run CLAUDE.md pattern scanner on changed files');
+    const work = join(f.root, 'scan'), calls = join(f.root, 'scanner-calls');
+    mkdirSync(join(work, 'scripts/review'), { recursive: true });
+    writeFileSync(join(work, 'scripts/review/check-patterns.sh'), `#!/bin/sh\necho "args:$*" >> ${JSON.stringify(calls)}\n`);
+    chmodSync(join(work, 'scripts/review/check-patterns.sh'), 0o755);
+    const run = scan.run.replaceAll('${{ github.event_name }}', 'push').replaceAll('${{ github.ref }}', 'refs/heads/main');
+    const result = spawnSync('bash', ['-c', run], { cwd: work, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, COVERAGE_BASE_SHA: outputs.base_sha ?? '', COVERAGE_BOOTSTRAP: outputs.bootstrap } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(calls, 'utf8')).toBe('args:\n');
+  });
+
   it('keeps the complete fetch and materialization attempt bounded within the job budget', () => {
     const seconds = Number(checkout.env.CHECKOUT_TIMEOUT_SECONDS), attempts = Number(checkout.env.CHECKOUT_MAX_ATTEMPTS);
     expect(seconds).toBeGreaterThanOrEqual(120); expect(seconds).toBeLessThanOrEqual(180);
     const backoff = Number(checkout.env.CHECKOUT_BACKOFF_SECONDS) * attempts * (attempts - 1) / 2;
-    const classifier = readFileSync(join(process.cwd(), 'scripts/ci/dedicated-changes.mjs'), 'utf8');
+    const classifier = readFileSync(join(process.cwd(), 'scripts/ci/changes.mjs'), 'utf8');
     const classifierSeconds = Number(classifier.match(/timeout:\s*(\d+)/)?.[1]) / 1000;
     expect(classifierSeconds).toBeGreaterThan(0);
     expect(job['timeout-minutes'] * 60).toBeGreaterThan(attempts * (seconds + 5) + backoff + classifierSeconds + 60);
@@ -126,11 +166,5 @@ exec "$REAL_GIT" "$@"
     };
     try { expect(result.status).toBe(1); expect(running()).toBe(false); }
     finally { if (running()) process.kill(pid, 'SIGKILL'); }
-  });
-
-  it('cleans partial coverage receipts only after the source helpers were checked out', () => {
-    const cleanup = job.steps.find((step: { name?: string }) => step.name === 'Clean temporary main coverage decision');
-    expect(checkout.id).toBe('checkout');
-    expect(cleanup.if).toBe("always() && steps.checkout.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'");
   });
 });

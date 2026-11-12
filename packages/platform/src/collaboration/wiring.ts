@@ -9,6 +9,8 @@ import { loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-is
 import type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 import type { PlatformOrganizations } from "../organizations/wiring.js";
 import type { PlatformCollaborationDirect } from "./direct-wiring.js";
+import { CollaborativeAppLaunchSessions } from "./app-launch-sessions.js";
+import { createCollaborativeAppLaunchUpstreamFactory } from "./app-launch-upstream.js";
 
 export type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 
@@ -82,15 +84,28 @@ export async function createPlatformCollaboration(options: {
   const listOrganizationIds = organizations
     ? async (actorId: string) => (await organizations.repository.listOrganizationsForActor(actorId)).map((row) => row.organization.organizationId)
     : undefined;
+  const isCurrentOrganizationMember = organizations
+    ? (input: { organizationId: string; actorId: string }) => organizations.projection.isCurrentMember(input)
+    : undefined;
+  const launchSessions = options.direct ? new CollaborativeAppLaunchSessions({
+    open: createCollaborativeAppLaunchUpstreamFactory({
+      issuer: options.direct.issuer,
+      relay: options.direct.relay,
+      clientOrigin: options.direct.relayOrigin,
+      ...(options.now ? { now: options.now } : {}),
+    }),
+  }) : undefined;
   const routes = createPlatformCollaborationRoutes({
     repository,
     ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
+    ...(launchSessions ? { launchSessions } : {}),
     ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveParticipant: options.resolveParticipant,
     resolveInvitationIdentifier: options.resolveInvitationIdentifier,
     ...(listOrganizationIds ? { listOrganizationIds } : {}),
+    ...(isCurrentOrganizationMember ? { isCurrentOrganizationMember } : {}),
     now: options.now,
   });
   let registered = false;
@@ -110,7 +125,7 @@ export async function createPlatformCollaboration(options: {
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
-      await Promise.allSettled([options.direct?.shutdown(), options.organizations?.shutdown()]);
+      await Promise.allSettled([launchSessions?.close(), options.direct?.shutdown(), options.organizations?.shutdown()]);
     },
   };
 }

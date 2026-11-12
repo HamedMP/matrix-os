@@ -54,9 +54,20 @@ Affected Browser renderers share this backend. No live frontend evidence or
 production rollout is claimed. Ask the Browser/security maintainer to review
 session ownership and the pre-navigation interception invariant before merge.
 
+## Public documentation deliverable
+
+Deliver the public documentation for the host-bundle release through a separate
+PR in `FinnaAI/matrix-os-site` under `content/docs/`. Update the shared Browser
+guide to explain when a run uses a separate Chrome context for public sites and
+how that context stays separate from the owner's signed-in profile. Describe how
+the action fails when Chrome confirms the public context is gone. Explain how to
+stop the affected run and start a new one with a fresh context. The interrupted
+action is never replayed automatically.
+
 ## Deferred scope
 
-ENG-396 still tracks unavailable-state recovery, error-message/diagnostic changes,
-the eight-tab capability limit, and any expansion of supported worker automation.
-Those are separate from this session-lifecycle fix. Ship through a reviewed PR
-and normal host-bundle release; do not patch the running customer gateway.
+The [shared Browser contract](../627-browser-vps-comparison/shared-chat-security.md)
+covers the related-target retry limit, the twelve-tab bound, and the separate
+public context for HTTPS browsing and its Service Workers. ENG-396 still tracks
+general recovery from an unavailable session and support for additional worker
+types. Use the normal host-bundle release to deliver this change.

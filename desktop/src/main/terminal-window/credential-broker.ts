@@ -1,0 +1,199 @@
+// Holds at most one computer-scoped access token per computer in the owner's
+// inventory, for the Terminal window only (spec 651 FR-003/FR-005). Tokens are
+// minted lazily, live in memory only, and never reach a renderer.
+import { RUNTIME_SLOT_PATTERN as SLOT, TERMINAL_WINDOW_MAX_COMPUTERS as MAX_TOKENS } from "../../shared/terminal-window";
+
+const EXPIRY_SKEW_MS = 60_000;
+const INVENTORY_TTL_MS = 60_000;
+const BACKOFF_BASE_MS = 1_000;
+const BACKOFF_MAX_MS = 30_000;
+// The platform allows each owner 30 credential requests a minute, shared with
+// computer switches in the main window. The broker keeps well under that.
+const MINT_WINDOW_MS = 60_000;
+const MAX_MINTS_PER_WINDOW = 12;
+
+interface BrokerAuth {
+  getStatus(): { signedIn: boolean; authGeneration: number; runtimeSlot: string };
+  getToken(): string | null;
+  issueRuntimeToken(slot: string): Promise<{ accessToken: string; expiresAt: number; handle: string }>;
+  listRuntimeComputers(): Promise<{ items: ReadonlyArray<{ runtimeSlot: string }> }>;
+}
+
+export interface ComputerCredentialBrokerOptions {
+  auth: BrokerAuth;
+  now?: () => number;
+  random?: () => number;
+}
+
+interface Entry { token: string; expiresAt: number }
+interface Failure { count: number; retryAt: number }
+
+/**
+ * "denied": this session may not reach that computer (signed out, or not in
+ * the owner's inventory). "unavailable": it may, but no bearer can be had
+ * right now (platform unreachable, mint failed, backing off).
+ */
+export type ComputerCredential = { token: string } | { token: null; reason: "denied" | "unavailable" };
+const DENIED: ComputerCredential = { token: null, reason: "denied" };
+const UNAVAILABLE: ComputerCredential = { token: null, reason: "unavailable" };
+
+export type ComputerCredentialBroker = ReturnType<typeof createComputerCredentialBroker>;
+
+export function createComputerCredentialBroker(options: ComputerCredentialBrokerOptions) {
+  const now = options.now ?? Date.now;
+  const random = options.random ?? Math.random;
+  // All three maps are keyed by inventory slot and cleared together; the
+  // inventory itself is capped at 20 computers by the platform contract.
+  const tokens = new Map<string, Entry>();
+  const pending = new Map<string, Promise<string | null>>();
+  const failures = new Map<string, Failure>();
+  // A fresh token that was refused once; a second refusal means reconnect.
+  const strikes = new Set<string>();
+  let generation = -1;
+  let inventory: { slots: Set<string>; fetchedAt: number } | null = null;
+  let inventoryPending: Promise<Set<string> | null> | null = null;
+  // Start times of recent mints (at most MAX_MINTS_PER_WINDOW entries), and
+  // the time before which the platform asked for no more requests.
+  let mintTimes: number[] = [];
+  let pausedUntil = 0;
+
+  function clear(): void {
+    tokens.clear();
+    pending.clear();
+    failures.clear();
+    strikes.clear();
+    inventory = null;
+    inventoryPending = null;
+    // The request budget and any pause belong to the owner's account on the
+    // platform, not to this session, so they survive a session change.
+  }
+
+  /** Whether one more mint fits the shared budget right now; counts it if so. */
+  function takeMintSlot(): boolean {
+    const time = now();
+    if (time < pausedUntil) return false;
+    mintTimes = mintTimes.filter((started) => time - started < MINT_WINDOW_MS);
+    if (mintTimes.length >= MAX_MINTS_PER_WINDOW) return false;
+    mintTimes.push(time);
+    return true;
+  }
+
+  function syncSession(): { signedIn: boolean; runtimeSlot: string } {
+    const status = options.auth.getStatus();
+    if (status.authGeneration !== generation) {
+      clear();
+      generation = status.authGeneration;
+    }
+    return status;
+  }
+
+  function fail(slot: string): void {
+    const count = (failures.get(slot)?.count ?? 0) + 1;
+    const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (count - 1));
+    failures.set(slot, { count, retryAt: now() + delay * (0.5 + random() * 0.5) });
+  }
+
+  async function loadInventory(): Promise<Set<string> | null> {
+    if (inventory && now() - inventory.fetchedAt < INVENTORY_TTL_MS) return inventory.slots;
+    const startedIn = generation;
+    inventoryPending ??= options.auth.listRuntimeComputers()
+      .then((list) => {
+        if (startedIn !== generation) return null;
+        const slots = new Set(list.items.slice(0, MAX_TOKENS).map((item) => item.runtimeSlot));
+        inventory = { slots, fetchedAt: now() };
+        return slots;
+      })
+      .catch((error: unknown) => {
+        console.warn("[terminal-window] inventory unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return null;
+      })
+      .finally(() => { inventoryPending = null; });
+    return inventoryPending;
+  }
+
+  function mint(slot: string): Promise<string | null> {
+    const startedIn = generation;
+    const request = options.auth.issueRuntimeToken(slot)
+      .then((issued) => {
+        // A mint that outlives its session is discarded, never stored.
+        if (startedIn !== generation || options.auth.getStatus().authGeneration !== startedIn) return null;
+        if (tokens.size >= MAX_TOKENS && !tokens.has(slot)) {
+          const oldest = tokens.keys().next().value;
+          if (oldest !== undefined) tokens.delete(oldest);
+        }
+        tokens.set(slot, { token: issued.accessToken, expiresAt: issued.expiresAt });
+        failures.delete(slot);
+        return issued.accessToken;
+      })
+      .catch((error: unknown) => {
+        console.warn("[terminal-window] computer credential unavailable:", error instanceof Error ? error.name : "UnknownError");
+        // A rate limit is the account's, so it pauses every computer's mints.
+        const retryAfter = (error as { retryAfterMs?: unknown } | null)?.retryAfterMs;
+        if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) {
+          pausedUntil = Math.max(pausedUntil, now() + Math.min(retryAfter, 5 * 60_000));
+        }
+        if (startedIn === generation) fail(slot);
+        return null;
+      })
+      .finally(() => { if (pending.get(slot) === request) pending.delete(slot); });
+    pending.set(slot, request);
+    return request;
+  }
+
+  /** The bearer for one of the owner's computers, or why there is none (fail closed). */
+  async function credential(slot: string): Promise<ComputerCredential> {
+    if (!SLOT.test(slot)) return DENIED;
+    if (!syncSession().signedIn) return DENIED;
+    const slots = await loadInventory();
+    // Read again after the wait: the app may have signed out or selected
+    // another computer meanwhile, and the app's own bearer follows that
+    // selection. Comparing against an older selection would attach the newly
+    // selected computer's bearer to a request for the previous one.
+    const status = syncSession();
+    if (!status.signedIn) return DENIED;
+    if (!slots) return UNAVAILABLE;
+    if (!slots.has(slot)) return DENIED;
+    const found = (token: string | null): ComputerCredential => (token ? { token } : UNAVAILABLE);
+    if (slot === status.runtimeSlot) return found(options.auth.getToken());
+    const cached = tokens.get(slot);
+    if (cached && cached.expiresAt - EXPIRY_SKEW_MS > now()) return { token: cached.token };
+    // Close to expiry a replacement is tried first, but the token in hand
+    // stays usable until it really expires: near the end of the parent
+    // session the platform no longer issues replacements.
+    const stillValid = (): ComputerCredential | null => {
+      const held = tokens.get(slot);
+      return held && held.expiresAt > now() ? { token: held.token } : null;
+    };
+    if (cached && cached.expiresAt <= now()) tokens.delete(slot);
+    const failure = failures.get(slot);
+    if (failure && failure.retryAt > now()) return stillValid() ?? UNAVAILABLE;
+    const inFlight = pending.get(slot);
+    if (!inFlight && !takeMintSlot()) return stillValid() ?? UNAVAILABLE;
+    const minted = await (inFlight ?? mint(slot));
+    return minted ? { token: minted } : stillValid() ?? UNAVAILABLE;
+  }
+
+  return {
+    credential,
+
+    async token(slot: string): Promise<string | null> {
+      return (await credential(slot)).token;
+    },
+
+    /** A gateway answered 401 for this token: drop it; a second refusal backs off. */
+    unauthorized(slot: string, token: string): void {
+      if (tokens.get(slot)?.token !== token) return;
+      tokens.delete(slot);
+      if (strikes.has(slot)) fail(slot);
+      else strikes.add(slot);
+    },
+
+    /** A gateway accepted this computer's token. */
+    confirmed(slot: string): void {
+      strikes.delete(slot);
+    },
+
+    clear,
+    size: (): number => tokens.size,
+  };
+}

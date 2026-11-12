@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { opendir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
+import { createPinnedFetch } from "@matrix-os/kernel/security/pinned-fetch";
 import { PROJECT_SLUG_REGEX, type WorkspaceError } from "./project-manager.js";
 import { atomicCreateJson, atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
@@ -184,9 +185,22 @@ async function safePreviewUrl(rawUrl: string, resolvePreviewHost: ResolvePreview
   return addresses.length > 0 && addresses.every((entry) => isPublicIpAddress(entry.address)) ? rawUrl : null;
 }
 
-async function defaultProbeUrl(url: string, options: { timeoutMs: number }): Promise<ProbeResult> {
+function createDefaultProbeUrl(resolvePreviewHost: ResolvePreviewHost): ProbeUrl {
+  const publicFetch = createPinnedFetch({ resolve: resolvePreviewHost, isAllowedAddress: isPublicIpAddress });
+  // Loopback previews are local development servers by design; every other
+  // host connects only to an address the pinned transport re-validated.
+  const transport = (url: string, init: RequestInit) =>
+    (isLoopbackPreviewHost(new URL(url).hostname) ? fetch : publicFetch)(url, init);
+  return (url, options) => probeWith(transport, url, options);
+}
+
+async function probeWith(
+  fetchImpl: (url: string, init: RequestInit) => Promise<Response>,
+  url: string,
+  options: { timeoutMs: number },
+): Promise<ProbeResult> {
   try {
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       method: "HEAD",
       redirect: "manual",
       signal: AbortSignal.timeout(options.timeoutMs),
@@ -301,8 +315,8 @@ export function createPreviewManager(options: {
   now?: () => string;
 }) {
   const homePath = resolve(options.homePath);
-  const probeUrl = options.probeUrl ?? defaultProbeUrl;
   const resolvePreviewHost = options.resolvePreviewHost ?? ((hostname: string) => lookup(hostname, { all: true, verbatim: true }));
+  const probeUrl = options.probeUrl ?? createDefaultProbeUrl(resolvePreviewHost);
   const projectCap = options.maxPreviewsPerProject ?? DEFAULT_PROJECT_CAP;
   const taskCap = options.maxPreviewsPerTask ?? DEFAULT_TASK_CAP;
 

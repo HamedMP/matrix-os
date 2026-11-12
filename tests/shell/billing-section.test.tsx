@@ -813,6 +813,33 @@ describe("BillingSection", () => {
     window.history.replaceState({}, "", "/");
   });
 
+  it("offers Finland in onboarding and submits Helsinki for checkout", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    expect(screen.getByText("Finland")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Helsinki, Finland/ }));
+    expect(screen.getByRole("button", { name: "Change server location" }).textContent).toContain("Helsinki, Finland");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() => {
+      const checkoutCall = fetchMock.mock.calls.find(([url]) => url === "/billing/checkout");
+      expect(checkoutCall).toBeDefined();
+      expect(JSON.parse((checkoutCall![1] as RequestInit).body as string).regionSlug).toBe("region_hel1");
+    });
+  });
+
   it("opens secure checkout while computer preparation continues in the background", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

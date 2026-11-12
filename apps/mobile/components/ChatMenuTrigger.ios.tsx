@@ -1,5 +1,5 @@
 import { cloneElement, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
-import { View, type LayoutChangeEvent } from "react-native";
+import { View, type LayoutChangeEvent, type ViewInstance } from "react-native";
 import { Button, ContextMenu, Group, Host, RNHostView, ShareLink } from "@expo/ui/swift-ui";
 import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 import { StyleSheet } from "react-native-unistyles";
@@ -25,7 +25,7 @@ export function ChatMenuTrigger({
   backgroundColor,
   children,
 }: ChatMenuTriggerProps) {
-  const row = useRef<View>(null);
+  const row = useRef<ViewInstance>(null);
   // SwiftUI sizes hosted content by itself, so the content is given its
   // width from the row's; its height then follows the content.
   const [rowWidth, setRowWidth] = useState<number | null>(null);

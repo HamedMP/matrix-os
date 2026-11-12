@@ -1,8 +1,11 @@
 const mockDispatch = jest.fn();
+const mockTabNavigate = jest.fn();
 const mockNavigate = jest.fn();
-const mockNavigation = { dispatch: mockDispatch, navigate: mockNavigate };
+const mockDismissTo = jest.fn();
+const mockNavigation = { dispatch: mockDispatch, navigate: mockTabNavigate };
+const mockRouter = { navigate: mockNavigate, dismissTo: mockDismissTo };
 
-jest.mock("expo-router", () => ({ useNavigation: () => mockNavigation }));
+jest.mock("expo-router", () => ({ useNavigation: () => mockNavigation, useRouter: () => mockRouter }));
 
 import { renderHook } from "@testing-library/react-native";
 
@@ -34,27 +37,26 @@ describe("useOpenSidePanel", () => {
 });
 
 describe("useShowChatScreen", () => {
-  it("switches to the Chats tab and returns its stack to the chat screen", () => {
+  it("switches to the Chats tab, then closes what is open above the chat screen", () => {
     const { result } = renderHook(() => useShowChatScreen());
 
     result.current();
 
-    expect(mockNavigate).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith("(tabs)", {
-      screen: "(chats)",
-      params: { screen: "index", pop: true },
-    });
+    // A tab switch by name keeps the Chats tab's own stack; navigating to the
+    // chat screen's href would push a second chat screen instead.
+    expect(mockTabNavigate).toHaveBeenCalledWith("(chats)");
+    expect(mockDismissTo).toHaveBeenCalledWith("/(drawer)");
+    expect(mockTabNavigate.mock.invocationCallOrder[0]).toBeLessThan(mockDismissTo.mock.invocationCallOrder[0]);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it("hands React Navigation new params each time, since it ignores ones it has used", () => {
-    const { result } = renderHook(() => useShowChatScreen());
+  it("keeps the same function between renders", () => {
+    const { result, rerender } = renderHook(() => useShowChatScreen());
+    const first = result.current;
 
-    result.current();
-    result.current();
+    rerender({});
 
-    const [first, second] = mockNavigate.mock.calls.map((call) => call[1]);
-    expect(first).not.toBe(second);
-    expect(first.params).not.toBe(second.params);
+    expect(result.current).toBe(first);
   });
 });
 
@@ -65,18 +67,7 @@ describe("useShowTab", () => {
     result.current(tab);
 
     expect(mockNavigate).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith("(tabs)", { screen: tab });
-  });
-
-  it("hands React Navigation new params each time, since it ignores ones it has used", () => {
-    const { result } = renderHook(() => useShowTab());
-
-    result.current("terminal");
-    result.current("terminal");
-
-    const [first, second] = mockNavigate.mock.calls.map((call) => call[1]);
-    expect(first).toEqual(second);
-    expect(first).not.toBe(second);
+    expect(mockNavigate).toHaveBeenCalledWith(`/${tab}`);
   });
 
   it("keeps the same function between renders", () => {

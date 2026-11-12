@@ -7,7 +7,7 @@ import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ChevronRightIcon from "@hugeicons/core-free-icons/ChevronRightIcon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
-import { Swipeable } from "react-native-gesture-handler";
+import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import {
   ListRow,
@@ -310,7 +310,7 @@ function SwipeableTerminalRow({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const swipeableRef = useRef<Swipeable>(null);
+  const swipeableRef = useRef<SwipeableMethods>(null);
   const { theme } = useUnistyles();
   const triggerAction = (action: () => void) => {
     swipeableRef.current?.close();

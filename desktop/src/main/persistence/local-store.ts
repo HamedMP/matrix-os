@@ -91,6 +91,7 @@ const DesktopUpdateReleaseSchema = DesktopReleaseNotesSchema.extend({
 const KEY_SCHEMAS = {
   profile: ProfileSchema,
   windowBounds: WindowBoundsSchema,
+  terminalWindowBounds: WindowBoundsSchema,
   lastProjectSlug: z.string().max(256),
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,

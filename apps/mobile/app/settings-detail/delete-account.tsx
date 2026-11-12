@@ -4,9 +4,9 @@ import {
   Alert,
   Linking,
   Pressable,
-  ScrollView,
   Text as NativeText,
   View,
+  type ScrollViewInstance,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import ArrowTurnBackwardIcon from "@hugeicons/core-free-icons/ArrowTurnBackwardIcon";
@@ -83,7 +83,7 @@ export default function DeleteAccountScreen() {
 
 function DeletionDetails({ status, deletion }: { status: AccountDeletionStatus; deletion: AccountDeletion }) {
   const [actionError, setActionError] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const scheduled = isDeletionScheduled(status);
   const closed = isDeletionClosed(status);
   const busy = deletion.isScheduling || deletion.isCancelling;

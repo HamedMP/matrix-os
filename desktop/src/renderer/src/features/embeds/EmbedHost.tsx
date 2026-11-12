@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -6,6 +6,8 @@ import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -24,9 +26,11 @@ type EmbedHostProps = EmbedHostCommonProps & (
   | { kind: "hosted-shell" }
   | { kind: "code-editor" }
   | { kind: "app"; slug: string; appIdentity?: string }
+  | { kind: "shared-app"; target: CollaborativeAppDirectoryItem }
   | { kind: "browser"; url: string }
 );
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- Native embed lifecycle, fallback states, and window chrome share one host and must stay synchronized.
 export default function EmbedHost({
   ...props
 }: EmbedHostProps) {
@@ -44,19 +48,37 @@ export default function EmbedHost({
   const active = requestedActive && !overlayOpen;
   const slug = props.kind === "app" ? props.slug : undefined;
   const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
+  const sharedAppTarget = props.kind === "shared-app" ? props.target : undefined;
   const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
   const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  const surfaceChromeHost = useSurfaceChromeHost();
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
   const lastRefreshRequestRef = useRef(refreshRequest);
-  activeRef.current = active;
+  useLayoutEffect(() => { activeRef.current = active; }, [active]);
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
-  const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
+  const publishingChrome = useMemo(() => slug && visible && !product ? ({
+    rightActions: (
+      <DesktopAppSiteButton
+        key={`${runtimeSlot}:${authGeneration}:${slug}`}
+        appSlug={slug}
+        portalContainer={portalContainer}
+      />
+    ),
+  }) : null, [authGeneration, portalContainer, product, runtimeSlot, slug, visible]);
+
+  useLayoutEffect(() => {
+    if (!surfaceChromeHost) return;
+    surfaceChromeHost.setChrome(publishingChrome);
+    return () => surfaceChromeHost.setChrome(null);
+  }, [publishingChrome, surfaceChromeHost]);
 
   const reportBounds = useCallback((): void => {
     const id = embedIdRef.current;
@@ -93,6 +115,8 @@ export default function EmbedHost({
       ? { kind, bounds, active: activeRef.current }
       : kind === "browser"
         ? { kind, url: url!, bounds, active: activeRef.current }
+        : kind === "shared-app"
+          ? { kind, target: sharedAppTarget!, bounds, active: activeRef.current }
         : {
             kind,
             slug: slug!,
@@ -136,7 +160,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url, authGeneration]);
+  }, [appIdentity, kind, retryRevision, runtimeSlot, sharedAppTarget, slug, url, authGeneration]);
 
   // Native views always paint above renderer windows. Keep a bounded local
   // frame under the detached view so obscured Matrix windows do not go blank.
@@ -172,6 +196,15 @@ export default function EmbedHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
+  // Retained WebContentsViews survive transient failures, but native views
+  // always paint above React. Detach the retained view while a recovery or
+  // terminal-state overlay is visible so the user can actually use it.
+  useEffect(() => {
+    if (state !== "failed" && state !== "host-offline" && state !== "access-ended" && state !== "needs-recheck") return;
+    const id = embedIdRef.current;
+    if (id) void invoke("embed:set-active", { embedId: id, active: false });
+  }, [state]);
+
   // ResizeObserver sees size changes but not a pure move of the renderer host.
   // Native desktop surfaces pass their layout identity so position-only drags
   // also synchronize the main-process WebContentsView bounds.
@@ -201,70 +234,92 @@ export default function EmbedHost({
   }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {slug && visible && !product ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
-    <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
-      {snapshotDataUrl ? (
-        <img
-          data-testid="embed-retained-frame"
-          src={snapshotDataUrl}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute inset-0 size-full object-fill"
-        />
-      ) : null}
-      {state === "loading" ? (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
-            Loading…
-          </span>
-        </div>
-      ) : null}
-      {state === "auth-required" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            This surface needs you to sign in again.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => {
-              const id = embedIdRef.current;
-              if (id) {
+    <div ref={setPortalContainer} data-testid="created-app-surface" className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
+        {snapshotDataUrl ? (
+          <img
+            data-testid="embed-retained-frame"
+            src={snapshotDataUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none absolute inset-0 size-full object-fill"
+          />
+        ) : null}
+        {state === "loading" ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
+              Loading…
+            </span>
+          </div>
+        ) : null}
+        {state === "auth-required" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              This surface needs you to sign in again.
+            </p>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const id = embedIdRef.current;
+                if (id) {
+                  setState("loading");
+                  void invoke("embed:retry-auth", { embedId: id })
+                    .then((result) => {
+                      if (embedIdRef.current !== id) return;
+                      if (result.ok) reportBounds();
+                      else setState((current) => current === "loading" ? "auth-required" : current);
+                    })
+                    .catch(() => {
+                      if (embedIdRef.current === id) setState("auth-required");
+                    });
+                }
+              }}
+            >
+              Retry sign-in
+            </Button>
+          </div>
+        ) : null}
+        {state === "failed" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
+            </span>
+            <Button
+              variant="primary"
+              onClick={() => {
                 setState("loading");
-                void invoke("embed:retry-auth", { embedId: id })
-                  .then((result) => {
-                    if (embedIdRef.current !== id) return;
-                    if (result.ok) reportBounds();
-                    else setState((current) => current === "loading" ? "auth-required" : current);
-                  })
-                  .catch(() => {
-                    if (embedIdRef.current === id) setState("auth-required");
-                  });
-              }
-            }}
-          >
-            Retry sign-in
-          </Button>
-        </div>
-      ) : null}
-      {state === "failed" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                setRetryRevision((revision) => revision + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : null}
+      {state === "host-offline" || state === "access-ended" || state === "needs-recheck" ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--bg-app)]">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
+            {state === "host-offline"
+              ? "The owner’s computer is offline. This app is still open."
+              : state === "needs-recheck"
+                ? "The owner needs to check this app again."
+                : "Access to this shared app has ended."}
           </span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setState("loading");
-              setRetryRevision((revision) => revision + 1);
-            }}
-          >
-            Try again
-          </Button>
+          {state === "host-offline" ? <Button variant="primary" onClick={() => {
+            const id = embedIdRef.current;
+            if (!id) return;
+            setState("loading");
+            void invoke("embed:reload", { embedId: id }).then((result) => {
+              if (embedIdRef.current !== id) return;
+              if (result.ok) reportBounds();
+              else setState("host-offline");
+            }).catch(() => {
+              if (embedIdRef.current === id) setState("host-offline");
+            });
+          }}>Try again</Button> : null}
         </div>
       ) : null}
-    </div>
+      </div>
     </div>
   );
 }

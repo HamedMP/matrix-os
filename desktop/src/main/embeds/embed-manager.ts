@@ -3,6 +3,7 @@
 // but restorable. Total records are capped so a runaway open loop can't grow
 // unbounded.
 import { randomUUID } from "node:crypto";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { isNavigationAllowed } from "./origin-policy";
 import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 
@@ -24,7 +25,7 @@ export interface EmbedViewLike {
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "shared-app" | "browser";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }
@@ -39,6 +40,8 @@ export type EmbedManagerOptions = {
     allowedOrigins: string[];
     resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
     allowPublicNavigation?: boolean;
+    sharedAppTarget?: CollaborativeAppDirectoryItem;
+    ownerAppParticipant?: import("@matrix-os/contracts").CollaborativeAppParticipant | null;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -62,6 +65,7 @@ interface EmbedRecord {
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
   onDispose?: () => void;
+  retainOnFailure: boolean;
 }
 
 function isAbortedLoadError(err: unknown): boolean {
@@ -109,6 +113,9 @@ export class EmbedManager {
       allowedOrigins?: string[];
       resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
       allowPublicNavigation?: boolean;
+      sharedAppTarget?: CollaborativeAppDirectoryItem;
+      ownerAppParticipant?: import("@matrix-os/contracts").CollaborativeAppParticipant | null;
+      retainOnFailure?: boolean;
       onState?: (state: "loading" | "ready" | "failed") => void;
       onDispose?: () => void;
     },
@@ -126,6 +133,8 @@ export class EmbedManager {
           ? "persist:code-editor"
         : kind === "browser"
           ? "persist:browser"
+          : kind === "shared-app"
+            ? this.sharedAppPartition(slug, id)
           : this.appPartition(options?.routeSlug ?? slug);
 
     const active = options?.active ?? true;
@@ -137,7 +146,7 @@ export class EmbedManager {
       if (state === "failed" && record) {
         if (record.loadFailed) return;
         record.loadFailed = true;
-        if (record.live) {
+        if (record.live && !record.retainOnFailure) {
           record.view.detach();
           record.live = false;
         }
@@ -152,6 +161,8 @@ export class EmbedManager {
       allowedOrigins,
       resolveNavigation: options?.resolveNavigation,
       allowPublicNavigation: options?.allowPublicNavigation,
+      sharedAppTarget: options?.sharedAppTarget,
+      ownerAppParticipant: options?.ownerAppParticipant,
       onState: emitState,
     });
     record = {
@@ -166,6 +177,7 @@ export class EmbedManager {
       lastUsed: ++this.tick,
       onState: emitState,
       onDispose: options?.onDispose,
+      retainOnFailure: options?.retainOnFailure ?? false,
     };
     if (active) view.attach();
     view.setBounds(bounds);
@@ -321,6 +333,13 @@ export class EmbedManager {
       throw new Error("invalid app slug for embed partition");
     }
     return `persist:app-${slug}`;
+  }
+
+  private sharedAppPartition(scopeId: string | null, embedId: string): string {
+    if (!scopeId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scopeId)) {
+      throw new Error("invalid shared app scope for embed partition");
+    }
+    return `shared-app-${embedId}`;
   }
 
   private loadInto(record: EmbedRecord): void {
