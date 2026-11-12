@@ -3,6 +3,7 @@ import { sql, type Updateable } from 'kysely';
 import type { PlatformDB, UserMachinesTable } from '../db.js';
 import { ContainerProviderError, type ContainerProvider, type ContainerUnit } from './container-provider.js';
 import type { EnsureRunningResult } from './types.js';
+import { countRunningContainers, lockCapacity } from '../free-tier/capacity.js';
 
 /**
  * Container runtime status machine (data-model.md). Every transition is one
@@ -64,6 +65,8 @@ export interface ContainerLifecycleDeps {
    */
   minResumeLifetimeMs?: number;
   maxConcurrentLaunches?: number;
+  /** Global ceiling on runtimes holding compute; a start beyond it answers busy. */
+  maxRunning?: number;
   logError?: (message: string, detail: Record<string, string | number>) => void;
 }
 
@@ -115,6 +118,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   const now = deps.now ?? (() => new Date());
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   const maxLaunches = deps.maxConcurrentLaunches ?? DEFAULT_MAX_CONCURRENT_LAUNCHES;
+  if (deps.maxRunning !== undefined && (!Number.isSafeInteger(deps.maxRunning) || deps.maxRunning < 1)) {
+    throw new Error('Container running ceiling is invalid');
+  }
   const launches = new Set<Promise<void>>();
   /** Launch slots held by starts whose claim is still in flight, so a burst cannot overshoot the cap. */
   let claiming = 0;
@@ -293,6 +299,22 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     launches.add(tracked);
   }
 
+  /** The running ceiling is counted and the claim made under one capacity lock, so concurrent starts cannot pass it. */
+  async function claimStart(machineId: string, from: ContainerStatus, generation: number): Promise<boolean | 'busy'> {
+    const set = { status: 'starting', started_at: now(), failure_code: null, failure_at: null, status_changed_at: now() };
+    if (deps.maxRunning === undefined) return transition(machineId, [from], generation, set);
+    const maxRunning = deps.maxRunning;
+    return db.transaction(async (trx): Promise<boolean | 'busy'> => {
+      await lockCapacity(trx.executor, 'running_runtimes');
+      if (await countRunningContainers(trx.executor) >= maxRunning) return 'busy';
+      const updated = await trx.executor.updateTable('user_machines').set(set)
+        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
+        .where('status', '=', from).where('generation', '=', generation)
+        .returning('machine_id').executeTakeFirst();
+      return Boolean(updated);
+    });
+  }
+
   async function ensureStarted(machineId: string): Promise<EnsureRunningResult> {
     const row = await load(machineId);
     if (!row) return { state: 'failed', code: 'needs_recovery' };
@@ -330,9 +352,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (launches.size + claiming >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
     claiming += 1;
     try {
-      const claimed = await transition(machineId, [status], row.generation, {
-        status: 'starting', started_at: now(), failure_code: null, failure_at: null,
-      });
+      const claimed = await claimStart(machineId, status, row.generation);
+      if (claimed === 'busy') return { state: 'busy' };
       if (claimed) track(launch({ ...row, status: 'starting' }, status === 'needs_recovery'));
     } finally {
       claiming -= 1;
