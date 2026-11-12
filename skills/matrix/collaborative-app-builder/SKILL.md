@@ -40,6 +40,8 @@ Read [troubleshooting](references/troubleshooting.md) when a concrete check fail
 2. Use the existing **Share app** readiness check with the owner's normal Matrix
    session when available; otherwise guide them to that control. A manifest flag,
    local build, or example test does not establish runtime readiness.
+   If the check needs an organization that has not been selected, ask the
+   organization question at this point and reuse the answer for sharing.
 3. Report separately: **Build passed**, **Matrix readiness passed**, and
    **Two-account behavior verified**, each with evidence or an explicit pending reason.
 4. Once preparation passes, ask which organization to share with unless specified.

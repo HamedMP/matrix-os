@@ -62,4 +62,6 @@ separately. Provide copyable Slack text only; no automatic channel post.
 - Live Matrix login is available, but this skill/example is not installed there
   and a second account was not exercised. Four-surface evidence remains pending.
   The local public-guide preview failed during Next compilation when disk space
-  was exhausted; its generated cache was removed. Responsive captures remain pending.
+  was exhausted; its generated cache was removed. The hosted PR #356 preview then
+  passed visual checks at 375, 768 and 1280 pixels, with no root horizontal overflow.
+  Captures are attached to ENG-29; these guide captures do not qualify app runtime surfaces.
