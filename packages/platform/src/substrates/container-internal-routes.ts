@@ -6,6 +6,7 @@ import { SyncRuntimeSlotSchema } from '@matrix-os/contracts';
 import { getActiveUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformContainerRuntimeToken, timingSafeTokenEquals } from '../platform-token.js';
 import type { ContainerLifecycleService } from './container-lifecycle-service.js';
+import { ManifestDigestSchema } from './container-runtime-client.js';
 
 /**
  * Routes a container runtime calls on the platform (contracts/lifecycle.md).
@@ -25,10 +26,16 @@ const RegisterBodySchema = z.strictObject({
   generation: z.number().int().min(1).max(2_147_483_647),
   bundleVersion: z.string().regex(/^[A-Za-z0-9._+-]{1,64}$/),
 });
+const FlushedBodySchema = z.strictObject({
+  generation: z.number().int().min(1).max(2_147_483_647),
+  manifestDigest: ManifestDigestSchema,
+});
+/** Advisory only: idleness is decided from traffic the platform observes, so this report never extends a session. */
+const ActivityBodySchema = z.strictObject({ unsettledRuns: z.number().int().min(0).max(100_000) });
 
 export interface ContainerInternalRoutesDeps {
   db: PlatformDB;
-  lifecycle: Pick<ContainerLifecycleService, 'markRegistered'>;
+  lifecycle: Pick<ContainerLifecycleService, 'markRegistered' | 'recordFlush'>;
   platformSecret: string;
   /** Post-registration setup (funded AI). Must be idempotent: a failure asks the runtime to retry. */
   onRegistered?: (machineId: string) => Promise<void>;
@@ -59,6 +66,15 @@ function createRateLimiter() {
   };
 }
 
+async function readJson(c: Context): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) throw err;
+    return c.json({ error: 'invalid_request' }, 400);
+  }
+}
+
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'unknown';
 }
@@ -75,7 +91,7 @@ export function createContainerInternalRoutes(deps: ContainerInternalRoutesDeps)
   });
 
   /** Unauthorized for every mismatch, so callers learn nothing about which part was wrong. */
-  async function authenticate(c: Context): Promise<AuthenticatedRuntime | Response> {
+  async function authenticate(c: Context, route: string): Promise<AuthenticatedRuntime | Response> {
     if (deps.platformSecret.length < MIN_SECRET_LENGTH) return c.json({ error: 'unavailable' }, 503);
     const handle = HandleSchema.safeParse(c.req.param('handle'));
     const machineId = MachineIdSchema.safeParse(c.req.header('x-matrix-machine-id')?.trim());
@@ -91,21 +107,16 @@ export function createContainerInternalRoutes(deps: ContainerInternalRoutesDeps)
       { handle: machine.handle, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot },
       deps.platformSecret, machine.runtimeTokenEpoch);
     if (!timingSafeTokenEquals(token, expected)) return c.json({ error: 'unauthorized' }, 401);
-    if (!allow(machine.machineId, Date.now())) return c.json({ error: 'rate_limited' }, 429);
+    if (!allow(`${route}:${machine.machineId}`, Date.now())) return c.json({ error: 'rate_limited' }, 429);
     return { machineId: machine.machineId };
   }
 
   app.post('/internal/containers/:handle/register', bodyLimit({ maxSize: BODY_LIMIT }), async (c) => {
     c.header('Cache-Control', 'no-store');
-    const runtime = await authenticate(c);
+    const runtime = await authenticate(c, 'register');
     if (runtime instanceof Response) return runtime;
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) throw err;
-      return c.json({ error: 'invalid_request' }, 400);
-    }
+    const body = await readJson(c);
+    if (body instanceof Response) return body;
     const parsed = RegisterBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const outcome = await deps.lifecycle.markRegistered(runtime.machineId, parsed.data.generation, {
@@ -127,6 +138,29 @@ export function createContainerInternalRoutes(deps: ContainerInternalRoutesDeps)
       }
     }
     return c.json({ ok: true }, 200);
+  });
+
+  app.post('/internal/containers/:handle/lifecycle/flushed', bodyLimit({ maxSize: BODY_LIMIT }), async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const runtime = await authenticate(c, 'flushed');
+    if (runtime instanceof Response) return runtime;
+    const body = await readJson(c);
+    if (body instanceof Response) return body;
+    const parsed = FlushedBodySchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const outcome = await deps.lifecycle.recordFlush(runtime.machineId, parsed.data.generation, parsed.data.manifestDigest);
+    if (outcome !== 'ok') return c.json({ error: outcome }, 409);
+    return c.body(null, 204);
+  });
+
+  app.post('/internal/containers/:handle/lifecycle/activity', bodyLimit({ maxSize: BODY_LIMIT }), async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const runtime = await authenticate(c, 'activity');
+    if (runtime instanceof Response) return runtime;
+    const body = await readJson(c);
+    if (body instanceof Response) return body;
+    if (!ActivityBodySchema.safeParse(body).success) return c.json({ error: 'invalid_request' }, 400);
+    return c.body(null, 204);
   });
 
   return app;
