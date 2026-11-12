@@ -9,6 +9,7 @@
  * arguments and the client name are deliberately not exposed, so the owner
  * reviews which tool on which service is asking, never upstream payloads.
  */
+import { ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../Button.js";
 import {
@@ -85,6 +86,21 @@ function ApprovalRow({ approval, busy, onDecide }: { approval: ExternalMcpApprov
   );
 }
 
+/** Onboarding empty state: how an external client reaches this screen, plus a manual re-check. */
+function EmptyState({ onCheck }: { onCheck: () => void }) {
+  return (
+    <div data-empty-state className="flex flex-col items-center rounded-lg border border-dashed border-border/60 p-5 text-center">
+      <ShieldCheck aria-hidden="true" className="size-6" style={muted} />
+      <p className="mt-2 text-sm font-medium">No external writes are waiting</p>
+      <p className="mt-1 max-w-md text-xs" style={muted}>
+        When Claude Code, Codex, or another MCP client connected to Matrix asks to run a write tool, it waits here for you.
+        Connect a client with <code>matrix mcp login</code>, or bridge a stdio-only client with <code>matrix mcp bridge</code>.
+      </p>
+      <Button className="mt-3" size="sm" variant="secondary" onClick={onCheck}>Check again</Button>
+    </div>
+  );
+}
+
 /** Settings → Integrations: pending external writes with Approve and Decline. */
 export function ExternalMcpApprovalsPanel({ transport }: { transport: ExternalMcpApprovalsTransport | null }) {
   const { state, reload } = useExternalMcpApprovals(transport);
@@ -116,10 +132,7 @@ export function ExternalMcpApprovalsPanel({ transport }: { transport: ExternalMc
       {state.status === "loading" ? <p role="status" className="text-sm" style={muted}>Loading approvals…</p> : null}
       {state.status === "failed" ? <div role="alert" className="rounded-lg border border-border/60 p-3 text-sm">{EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
         {transport ? <div className="mt-2"><Button size="sm" variant="secondary" onClick={() => { void reload(); }}>Try again</Button></div> : null}</div> : null}
-      {state.status === "loaded" && state.approvals.length === 0 ? <div className="rounded-lg border border-dashed border-border/60 p-4 text-center">
-        <p className="text-sm font-medium">No external writes are waiting</p>
-        <p className="mt-1 text-xs" style={muted}>When Claude Code, Codex, or another MCP client asks to run a write tool through Matrix, it appears here.</p>
-      </div> : null}
+      {state.status === "loaded" && state.approvals.length === 0 ? <EmptyState onCheck={() => { void reload(); }} /> : null}
       {state.status === "loaded" && state.approvals.length > 0 ? <ul aria-label="Pending external MCP approvals" className="space-y-2">
         {state.approvals.map(approval => <ApprovalRow key={approval.approvalId} approval={approval} busy={busyId !== null}
           onDecide={(decision) => { void decide(approval.approvalId, decision); }} />)}

@@ -66,7 +66,13 @@ describe("External MCP approvals panel", () => {
   it("shows an empty state, and a retryable error when the list cannot load or is malformed", async () => {
     const empty = fakeTransport([{ approvals: [] }]);
     render(<ExternalMcpApprovalsPanel transport={empty} />);
-    expect(await screen.findByText("No external writes are waiting")).toBeTruthy();
+    const headline = await screen.findByText("No external writes are waiting");
+    const card = headline.closest("[data-empty-state]")!;
+    expect(card.querySelector("svg[aria-hidden='true']")).toBeTruthy();
+    expect(card.textContent).toContain("matrix mcp login");
+    expect(card.textContent).toContain("matrix mcp bridge");
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(empty.list).toHaveBeenCalledTimes(2));
     cleanup();
     const malformed = fakeTransport([{ approvals: [{ ...approval(A), arguments: { secret: "x" } }] }, { approvals: [] }]);
     render(<ExternalMcpApprovalsPanel transport={malformed} />);
@@ -118,5 +124,21 @@ describe("External MCP approvals transport", () => {
     await expect(transport.decide("../../admin", "approve")).rejects.toThrow();
     fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ error: "x" }), { status: 409, headers: { "content-type": "application/json" } }));
     await expect(transport.decide(A, "approve")).rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  // Fault: an oversized or endless body is buffered whole before the size check.
+  it("stops reading and cancels the stream once the body passes 256 KB", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const chunk = new Uint8Array(64 * 1024);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls += 1; controller.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    });
+    const fetchImpl = vi.fn(async () => new Response(body, { headers: { "content-type": "application/json" } }));
+    const transport = createExternalMcpApprovalsFetchTransport({ baseUrl: "https://app.matrix-os.test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    await expect(transport.list()).rejects.toThrow("ExternalMcpApprovalsUnavailable");
+    expect(cancelled).toBe(true);
+    expect(pulls).toBeLessThanOrEqual(8);
   });
 });
