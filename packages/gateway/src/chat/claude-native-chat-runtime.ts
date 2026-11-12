@@ -139,10 +139,16 @@ export function createGatewayClaudeChatRuntime(options: Omit<Parameters<typeof c
     // Same-session refresh requires its exact claim. A distinct session is checked against the latest source by the store.
     const prior = known?.sessionId === checkpoint.sessionId ? known : undefined;
     if (prior && !sameScope(prior, checkpoint)) return;
+    // A job due beyond the original session deadline cannot be recovered. Keep the
+    // protected transcript and the persisted job inventory in sync.
+    const deadlineMs = Date.parse(checkpoint.deadlineAt);
+    const jobs = checkpoint.jobs.filter(({ replay }) => !replay || replay.nextFireAtMs <= deadlineMs);
+    if (!jobs.length) return;
+    const recoverable = { ...checkpoint, jobs };
     const signal = AbortSignal.timeout(10_000);
     try {
-      if (!await config.host.checkpointAfterClose(checkpoint, signal) || signal.aborted) return;
-      const saved = await saveCheckpoint(config.store, checkpoint, prior);
+      if (!await config.host.checkpointAfterClose(recoverable, signal) || signal.aborted) return;
+      const saved = await saveCheckpoint(config.store, recoverable, prior);
       if (saved) await config.store.release(saved);
     } catch (error: unknown) {
       // Child cleanup remains confirmed. A failed checkpoint or write never releases ownership.

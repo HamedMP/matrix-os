@@ -12,6 +12,7 @@ vi.mock("../../packages/gateway/src/chat/claude-native-session.js", () => ({ cre
 vi.mock("../../packages/gateway/src/server/initial-chat-adapters.js", () => ({ createInitialChatAdapters: mocks.createInitial }));
 vi.mock("../../packages/gateway/src/chat/coding-provider-adapter.js", () => ({ createCanonicalCodingChatProviderAdapter: mocks.createCoding }));
 import { createGatewayClaudeChatRuntime, type ClaudeNativeRecoveryHost } from "../../packages/gateway/src/chat/claude-native-chat-runtime.js";
+import { buildClaudeNativeReplayJsonl } from "../../packages/gateway/src/chat/claude-native-recovery-replay.js";
 import type { ClaudeNativeIdleRestoreOptions } from "../../packages/gateway/src/chat/claude-native-session.js";
 import type { ClaudeNativeRecoveryInput, ClaudeNativeRecoveryReceipt } from "../../packages/gateway/src/chat/claude-native-recovery-store.js";
 import { createGatewayChatAdapters } from "../../packages/gateway/src/server/canonical-chat-adapters.js";
@@ -262,6 +263,45 @@ describe("gateway protected Claude native recovery", () => {
     await f.runtime.close();
     expect(f.store.saveActive).toHaveBeenCalledExactlyOnceWith(f.checkpoint, undefined);
     expect(f.store.release).toHaveBeenCalledExactlyOnceWith({ ...f.checkpoint, status: "active", generation: 1 });
+  });
+
+  it.each([true, false])("hands off only jobs that can fire within the native session (eligible job: %s)", async includeEligible => {
+    const f = recoveryFixture();
+    f.store.listRecoverable.mockResolvedValueOnce([]);
+    const now = Date.now();
+    const soon = { ...job, replay: {
+      toolUseId: "toolu_minutely", assistantMessageId: "msg_schedule",
+      prompt, receivedAtMs: now, nextFireAtMs: now + 10_000,
+    } };
+    const monthlyPrompt = "Run the next monthly check";
+    const monthly = {
+      ...soon, id: "abcdef02", cron: "0 0 1 * *",
+      promptSha256: createHash("sha256").update(monthlyPrompt).digest("hex"),
+      receiptUuid: "40c465b2-37e0-4eb4-b51d-d8bef1c69a1c",
+      replay: { ...soon.replay, toolUseId: "toolu_monthly", prompt: monthlyPrompt,
+        nextFireAtMs: Date.parse(f.checkpoint.deadlineAt) + 86_400_000 },
+    };
+    const checkpoint = { ...f.checkpoint, jobs: includeEligible ? [monthly, soon] : [monthly] };
+    let transcript: Buffer | undefined;
+    f.host.checkpointAfterClose.mockImplementationOnce(async candidate => {
+      transcript = buildClaudeNativeReplayJsonl({ sessionId: candidate.sessionId, root: "/owner", nowMs: now,
+        deadlineMs: Date.parse(candidate.deadlineAt), jobs: candidate.jobs });
+      return true;
+    });
+    await f.start();
+    mocks.pool.close.mockImplementationOnce(async onConfirmedHandoff => { await onConfirmedHandoff(checkpoint); });
+    await f.runtime.close();
+    if (!includeEligible) {
+      expect(f.host.checkpointAfterClose).not.toHaveBeenCalled();
+      expect(f.store.saveActive).not.toHaveBeenCalled();
+      expect(f.store.release).not.toHaveBeenCalled();
+      return;
+    }
+    expect(transcript?.toString("utf8")).toContain("Scheduled recurring job abcdef01.");
+    expect(transcript?.toString("utf8")).not.toContain(monthlyPrompt);
+    const expected = { ...checkpoint, jobs: [soon] };
+    expect(f.store.saveActive).toHaveBeenCalledExactlyOnceWith(expected, undefined);
+    expect(f.store.release).toHaveBeenCalledExactlyOnceWith({ ...expected, status: "active", generation: 1 });
   });
 
   it("permits a separately verified newer session to supersede an old local claim", async () => {
