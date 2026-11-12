@@ -2,7 +2,7 @@
   "name": "Notes",
   "description": "Rich markdown notes with Tiptap editing, tags, search, and pinning",
   "category": "productivity",
-  "icon": "notes",
+  "icon": "v3-notes",
   "author": "system",
   "version": "3.0.0",
   "storage": {
