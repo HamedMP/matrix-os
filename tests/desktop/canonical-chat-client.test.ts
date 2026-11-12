@@ -195,6 +195,7 @@ describe("canonical Chat client", () => {
 
     await client.search("release plan", { projectId: "project_1", limit: 10 });
     await client.search("release plan", { projectId: null });
+    await client.search("release plan", { cursor: "chatcur_next" });
 
     expect(get).toHaveBeenNthCalledWith(
       1,
@@ -203,6 +204,10 @@ describe("canonical Chat client", () => {
     expect(get).toHaveBeenNthCalledWith(
       2,
       "/api/chats/search?query=release+plan&scope=global&readStateVersion=1&importSourceVersion=1",
+    );
+    expect(get).toHaveBeenNthCalledWith(
+      3,
+      "/api/chats/search?query=release+plan&cursor=chatcur_next&readStateVersion=1&importSourceVersion=1",
     );
   });
 
@@ -647,7 +652,7 @@ it("refreshes only the rejected route after live provider admission fails and pr
 it("opts navigation into immutable import source projection", async () => {
   const get = vi.fn(async () => ({ version: 1, items: [], truncated: false }));
   await createCanonicalChatClient(api({ get })).navigation!();
-  expect(get).toHaveBeenCalledWith("/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
+  expect(get).toHaveBeenCalledWith("/api/chat-navigation?version=1&limit=100", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
 
 it("forwards navigation provenance opt-in through the actual Electron API transport",async()=>{

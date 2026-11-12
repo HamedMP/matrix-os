@@ -67,6 +67,16 @@ const projects: Project[] = [
 ];
 
 describe("buildWorkRailModel", () => {
+  it("shows a project chat in both its project and current status group using one record", () => {
+    const record = chat("chat_project_status", "Project work", {
+      projectId: "project_alpha_id", updatedAt: "2026-08-28T12:00:00.000Z",
+    });
+    const model = buildWorkRailModel([record], projects);
+    expect(model.projects[0]?.chats).toEqual([record]);
+    expect(model.recents).toEqual([record]);
+    expect(model.projects[0]?.chats[0]).toBe(model.recents[0]);
+  });
+
   it("excludes authenticated Bot bindings from every ordinary group, including older project histories", () => {
     const records = [
       chat("chat_bot_current", "Same title", { pinned: true, updatedAt: "2026-10-02T12:00:00Z" }),
@@ -115,7 +125,7 @@ describe("buildWorkRailModel", () => {
       .toEqual(cases.map(([, expected]) => expected));
   });
 
-  it("places every chat once across Pinned, Projects, and Recents", () => {
+  it("places each chat once per group while sharing project and status placements", () => {
     const pinnedProject = chat("chat_pinned_project", "Pinned project", {
       pinned: true,
       projectId: "project_alpha_id",
@@ -137,10 +147,10 @@ describe("buildWorkRailModel", () => {
       project.slug,
       project.chats.map((record) => record.chat.id),
     ])).toEqual([
-      ["project_alpha_id", "alpha", ["chat_alpha"]],
+      ["project_alpha_id", "alpha", ["chat_pinned_project", "chat_alpha"]],
       ["project_beta_id", "beta", []],
     ]);
-    expect(model.recents.map((record) => record.chat.id)).toEqual(["chat_recent"]);
+    expect(model.recents.map((record) => record.chat.id)).toEqual(["chat_alpha", "chat_recent"]);
   });
 
   it("moves pinned projects into the Pinned section instead of sorting them atop Projects", () => {
@@ -186,6 +196,8 @@ describe("buildWorkRailModel", () => {
       "chat_pinned_newer",
     ]);
     expect(model.recents.map((record) => record.chat.id)).toEqual([
+      "chat_id_match",
+      "chat_slug_match",
       "chat_recent_older",
       "chat_recent_newer",
     ]);

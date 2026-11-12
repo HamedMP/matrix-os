@@ -396,7 +396,7 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chat-navigation?version=1&limit=1000") {
+      if (path === "/api/chat-navigation?version=1&limit=100") {
         return CanonicalChatNavigationResponseSchema.parse({
           version: 1,
           truncated: false,
@@ -670,7 +670,8 @@ describe("WorkTab rail integration", () => {
     }));
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
+    expect(screen.getAllByRole("button", { name: "Alpha chat" })).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "Alpha chat" })[0]!);
     await waitFor(() => expect(activeWorkTab()).toMatchObject({
       kind: "work",
       workRoute: "project",
@@ -815,12 +816,12 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" }).className).not.toContain("border-r-0");
     expect(inspectorSeparator.getAttribute("aria-valuemin")).toBe("240");
     expect(inspectorSeparator.getAttribute("aria-valuemax")).toBe("800");
-    expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("380");
+    expect(inspectorSeparator.getAttribute("aria-valuenow")).toBe("400");
     expect(inspectorSeparator.querySelector("span")?.style.background).toBe("transparent");
 
     fireEvent.keyDown(inspectorSeparator, { key: "ArrowRight" });
 
-    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("364");
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("384");
   });
 
   it("stops resizing the Chat inspector when an extreme pointer drag is cancelled", async () => {
@@ -857,7 +858,7 @@ describe("WorkTab rail integration", () => {
     await showGlobalChatRow();
     const divider = () => screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.keyDown(divider(), { key: "ArrowLeft" });
-    expect(divider().getAttribute("aria-valuenow")).toBe("396");
+    expect(divider().getAttribute("aria-valuenow")).toBe("416");
     for (let i = 0; i < 80; i += 1) fireEvent.keyDown(divider(), { key: "ArrowLeft" });
     expect(divider().getAttribute("aria-valuenow")).toBe("800");
     divider().focus();
@@ -1125,7 +1126,7 @@ describe("WorkTab rail integration", () => {
     expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
     expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
-    expect(screen.getByTestId("right-pane-width").textContent).toBe("380");
+    expect(screen.getByTestId("right-pane-width").textContent).toBe("400");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
     const hideInspector = screen.getByRole("button", { name: "Hide inspector" });
     expect(within(chromeTitle.closest("header")!).queryByRole("button", { name: /Chat navigation/ })).toBeNull();

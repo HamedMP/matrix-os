@@ -19,21 +19,28 @@ import SidebarBrowser from "../browser/SidebarBrowser";
 import { resolveWorkFilesScope, type WorkFilesScope } from "./work-files-scope";
 import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
+import { Dialog } from "../../design/primitives";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
+import { SideChatPanel } from "@matrix-os/ui";
+import { useScopedCanonicalChatClient } from "../chat/CanonicalChatClientContext";
+import { useSideChatDraft } from "./SideChatDraftContext";
 
 const MAX_TERMINAL_SUMMARY_REFRESH_ATTEMPTS = 4;
 const TERMINAL_SUMMARY_REFRESH_DELAY_MS = 1_000;
 const MAX_TERMINAL_BINDING_ACTIVITIES = 500;
-const MIN_FILE_LIST_WIDTH = 220;
-const MIN_FILE_PREVIEW_WIDTH = 240;
-const FILE_LIST_DIVIDER_WIDTH = 8;
+const MIN_FILE_TREE_HEIGHT = 120;
+const MIN_FILE_PREVIEW_HEIGHT = 160;
+const FILE_SPLIT_DIVIDER_HEIGHT = 8;
 
 type WorkInspectorTab =
   | { id: "files"; kind: "files"; label: "Files" }
   | { id: "browser"; kind: "browser"; label: "Browser" }
+  | { id: "side-chat"; kind: "side-chat"; label: "Side chat" }
   | { id: string; kind: "terminal"; label: string; sessionId: string };
 
 const FILES_TAB: WorkInspectorTab = { id: "files", kind: "files", label: "Files" };
 const BROWSER_TAB: WorkInspectorTab = { id: "browser", kind: "browser", label: "Browser" };
+const SIDE_CHAT_TAB: WorkInspectorTab = { id: "side-chat", kind: "side-chat", label: "Side chat" };
 
 function collectTerminalBindingIds(detail: CanonicalChatDetailResponse): string[] {
   const bindingIds = [...(detail.terminalSessionIds ?? [])];
@@ -103,6 +110,7 @@ export function WorkFilesInspector({
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
+  const userId = useConnection((state) => state.userId);
   const resolvedScope = scope ?? (detail
     ? resolveWorkFilesScope(detail, projects)
     : { kind: "unavailable", chatId: "draft" });
@@ -111,6 +119,7 @@ export function WorkFilesInspector({
       key={`${inspectorFileViewKey(resolvedScope)}:${runtimeSlot}:${authGeneration}`}
       detail={detail}
       scope={resolvedScope}
+      layoutKey={userId && detail?.record.chat.id ? chatInspectorLayoutKey(userId, runtimeSlot || "default", detail.record.chat.id) : null}
       initialTerminal={initialTerminal}
       resolveDraftChatId={resolveDraftChatId}
       onDraftTerminalCreated={onDraftTerminalCreated}
@@ -126,6 +135,7 @@ export function WorkFilesInspector({
 function WorkInspectorContent({
   detail,
   scope,
+  layoutKey,
   initialTerminal,
   resolveDraftChatId,
   onDraftTerminalCreated,
@@ -137,6 +147,7 @@ function WorkInspectorContent({
 }: {
   detail?: CanonicalChatDetailResponse;
   scope: WorkFilesScope;
+  layoutKey: string | null;
   initialTerminal?: { chatId: string; session: TerminalSessionSummary };
   resolveDraftChatId?: () => Promise<string | null>;
   onDraftTerminalCreated?: (chatId: string, session: TerminalSessionSummary) => void;
@@ -147,6 +158,10 @@ function WorkInspectorContent({
   closeButtonRef?: Ref<HTMLButtonElement>;
 }) {
   const api = useConnection((state) => state.api);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const chatClient = useScopedCanonicalChatClient(api, runtimeSlot, authGeneration);
+  const sideDraft = useSideChatDraft();
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
     if (!menuOpen) return;
@@ -161,6 +176,7 @@ function WorkInspectorContent({
   const [closedSessionIds, setClosedSessionIds] = useState<string[]>([]);
   const [terminalCreateStatus, setTerminalCreateStatus] = useState<"idle" | "creating" | "error">("idle");
   const [terminalCloseError, setTerminalCloseError] = useState(false);
+  const [terminalCloseTarget, setTerminalCloseTarget] = useState<string | null>(null);
   const [closingSessionIds, setClosingSessionIds] = useState<string[]>([]);
   const sessionCandidates = [
     ...(detail ? projectWorkTerminalSessions(detail, summary) : []),
@@ -176,10 +192,30 @@ function WorkInspectorContent({
     label: initialTerminal.session.name,
     sessionId: initialTerminal.session.id,
   } : null;
-  const [tabs, setTabs] = useState<WorkInspectorTab[]>(
-    initialTerminalTab ? [FILES_TAB, initialTerminalTab] : [FILES_TAB],
-  );
-  const [selectedId, setSelectedId] = useState(initialTerminalTab?.id ?? FILES_TAB.id);
+  const savedLayout = layoutKey ? useChatInspectorLayout.getState().get(layoutKey) : null;
+  const [tabs, setTabs] = useState<WorkInspectorTab[]>(() => {
+    const restored = (savedLayout?.openTabIds ?? []).flatMap((id): WorkInspectorTab[] => {
+      if (id === "files") return [FILES_TAB];
+      if (id === "browser") return [BROWSER_TAB];
+      if (id === "side-chat") return [SIDE_CHAT_TAB];
+      if (!id.startsWith("terminal:")) return [];
+      const sessionId = id.slice("terminal:".length);
+      const session = sessions.find(candidate => candidate.id === sessionId);
+      return sessionId ? [{ id, kind: "terminal", sessionId, label: session?.name ?? "Terminal" }] : [];
+    });
+    const withFiles = [FILES_TAB, ...restored.filter(tab => tab.id !== FILES_TAB.id)];
+    return initialTerminalTab && !withFiles.some(tab => tab.id === initialTerminalTab.id)
+      ? [...withFiles, initialTerminalTab] : withFiles;
+  });
+  const [selectedId, setSelectedId] = useState(() => initialTerminalTab?.id ??
+    (tabs.some(tab => tab.id === savedLayout?.selectedTabId) ? savedLayout!.selectedTabId : FILES_TAB.id));
+  useEffect(() => {
+    if (!layoutKey) return;
+    useChatInspectorLayout.getState().update(layoutKey, {
+      selectedTabId: selectedId,
+      openTabIds: tabs.map(tab => tab.id).slice(0, 12),
+    });
+  }, [layoutKey, selectedId, tabs]);
   const viewKey = inspectorFileViewKey(scope);
   const savedFile = useInspectorFileViews((state) => state.views.find((entry) => entry.key === viewKey)?.view.selectedFile ?? null);
   const selectedFile = useMemo<InspectorFileTarget | null>(() => savedFile && savedFile.kind !== "artifact"
@@ -271,7 +307,7 @@ function WorkInspectorContent({
     });
   };
 
-  const closeTab = async (id: string) => {
+  const stopTerminalTab = async (id: string) => {
     const tab = tabs.find((candidate) => candidate.id === id);
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find((candidate) => candidate.id === tab.sessionId);
@@ -293,40 +329,52 @@ function WorkInspectorContent({
       setTerminalCloseError(true);
     } finally {
       setClosingSessionIds((current) => current.filter((sessionId) => sessionId !== tab.sessionId));
+      setTerminalCloseTarget(null);
     }
+  };
+  const closeTab = (id: string) => {
+    const tab = tabs.find(candidate => candidate.id === id);
+    if (!tab || tab.kind !== "terminal") return;
+    const session = sessions.find(candidate => candidate.id === tab.sessionId);
+    if (!session) return;
+    if (session.attachable && (session.status === "starting" || session.status === "running" || session.status === "idle")) {
+      setTerminalCloseTarget(id);
+      return;
+    }
+    void stopTerminalTab(id);
   };
 
   const splitRef = useRef<HTMLDivElement>(null);
-  const [fileListWidth, setFileListWidth] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view.treeWidth ?? 300);
-  useEffect(() => { useInspectorFileViews.getState().update(viewKey, { treeWidth: fileListWidth }); }, [viewKey, fileListWidth]);
-  const clampFileListWidth = (nextWidth: number, splitWidth: number) => Math.max(
-    MIN_FILE_LIST_WIDTH,
+  const [fileTreeHeight, setFileTreeHeight] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view.treeHeight ?? 240);
+  useEffect(() => { useInspectorFileViews.getState().update(viewKey, { treeHeight: fileTreeHeight }); }, [viewKey, fileTreeHeight]);
+  const clampFileTreeHeight = (nextHeight: number, splitHeight: number) => Math.max(
+    MIN_FILE_TREE_HEIGHT,
     Math.min(
-      Math.max(MIN_FILE_LIST_WIDTH, splitWidth - MIN_FILE_PREVIEW_WIDTH - FILE_LIST_DIVIDER_WIDTH),
-      nextWidth,
+      Math.max(MIN_FILE_TREE_HEIGHT, splitHeight - MIN_FILE_PREVIEW_HEIGHT - FILE_SPLIT_DIVIDER_HEIGHT),
+      nextHeight,
     ),
   );
-  const resizeFileList = (nextWidth: number) => {
-    const measuredWidth = splitRef.current?.getBoundingClientRect().width ?? 0;
-    const width = measuredWidth > 0 ? measuredWidth : 760;
-    setFileListWidth(clampFileListWidth(nextWidth, width));
+  const resizeFileTree = (nextHeight: number) => {
+    const measuredHeight = splitRef.current?.getBoundingClientRect().height ?? 0;
+    const height = measuredHeight > 0 ? measuredHeight : 640;
+    setFileTreeHeight(clampFileTreeHeight(nextHeight, height));
   };
   useEffect(() => {
     const split = splitRef.current;
     if (!split || typeof ResizeObserver !== "function") return;
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (typeof width !== "number" || width <= 0) return;
-      setFileListWidth((current) => clampFileListWidth(current, width));
+      const height = entries[0]?.contentRect.height;
+      if (typeof height !== "number" || height <= 0) return;
+      setFileTreeHeight((current) => clampFileTreeHeight(current, height));
     });
     observer.observe(split);
     return () => observer.disconnect();
   }, []);
-  const startFileListResize = (event: React.PointerEvent<HTMLDivElement>) => {
+  const startFileTreeResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const bounds = splitRef.current?.getBoundingClientRect();
     if (!bounds) return;
-    const move = (moveEvent: PointerEvent) => resizeFileList(moveEvent.clientX - bounds.left);
+    const move = (moveEvent: PointerEvent) => resizeFileTree(moveEvent.clientY - bounds.top);
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
@@ -372,7 +420,7 @@ function WorkInspectorContent({
                     className="flex size-7 items-center justify-center rounded-r-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                     style={{ color: "var(--text-tertiary)" }}
                     disabled={closingSessionIds.includes(tab.sessionId)}
-                    onClick={() => { void closeTab(tab.id); }}
+                    onClick={() => closeTab(tab.id)}
                   >
                     <X size={12} aria-hidden />
                   </button>
@@ -401,6 +449,10 @@ function WorkInspectorContent({
                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
               >
                 <InspectorMenuItem label="Files" icon={<FileCode2 size={14} />} onSelect={() => setSelectedId(FILES_TAB.id)} />
+                {detail ? <InspectorMenuItem label="Side chat" icon={<FileCode2 size={14} />} onSelect={() => {
+                  setTabs(current => current.some(tab => tab.id === SIDE_CHAT_TAB.id) ? current : [...current, SIDE_CHAT_TAB]);
+                  setSelectedId(SIDE_CHAT_TAB.id);
+                }} /> : null}
                 <InspectorMenuItem label="Browser" icon={<FileCode2 size={14} />} onSelect={() => {
                   setTabs((current) => current.some((tab) => tab.id === BROWSER_TAB.id) ? current : [...current, BROWSER_TAB]);
                   setSelectedId(BROWSER_TAB.id);
@@ -452,7 +504,7 @@ function WorkInspectorContent({
         <div
           ref={splitRef}
           data-layout={selected.kind === "terminal" ? "terminal" : selectedFile ? "split" : "files-only"}
-          className="flex min-h-0 flex-1"
+          className="flex min-h-0 flex-1 flex-col"
         >
           {selected.kind === "files" ? (
             <section
@@ -462,7 +514,7 @@ function WorkInspectorContent({
                 ? "flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
                 : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
               style={{
-                ...(selectedFile ? { width: fileListWidth } : {}),
+                ...(selectedFile ? { height: fileTreeHeight } : {}),
                 background: "var(--bg-sunken)",
               }}
             >
@@ -473,20 +525,20 @@ function WorkInspectorContent({
             <div
               role="separator"
               aria-label="Resize file list"
-              aria-orientation="vertical"
-              aria-valuemin={MIN_FILE_LIST_WIDTH}
-              aria-valuemax={820}
-              aria-valuenow={Math.round(fileListWidth)}
+              aria-orientation="horizontal"
+              aria-valuemin={MIN_FILE_TREE_HEIGHT}
+              aria-valuemax={1200}
+              aria-valuenow={Math.round(fileTreeHeight)}
               tabIndex={0}
-              className="group/file-resize relative z-10 w-2 shrink-0 cursor-col-resize outline-none"
-              onPointerDown={startFileListResize}
+              className="group/file-resize relative z-10 h-2 shrink-0 cursor-row-resize outline-none"
+              onPointerDown={startFileTreeResize}
               onKeyDown={(event) => {
-                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
                 event.preventDefault();
-                resizeFileList(fileListWidth + (event.key === "ArrowRight" ? 16 : -16));
+                resizeFileTree(fileTreeHeight + (event.key === "ArrowDown" ? 16 : -16));
               }}
             >
-              <span className="absolute inset-y-0 left-[3px] w-px bg-[var(--border-subtle)] group-hover/file-resize:bg-[var(--accent)]" />
+              <span className="absolute inset-x-0 top-[3px] h-px bg-[var(--border-subtle)] group-hover/file-resize:bg-[var(--accent)]" />
             </div>
           ) : null}
           <div
@@ -497,6 +549,11 @@ function WorkInspectorContent({
           >
             {tabs.some((tab) => tab.kind === "browser") ? <div hidden={selected.kind !== "browser"} className={selected.kind === "browser" ? "flex min-h-0 flex-1 flex-col" : "hidden"} role="tabpanel" aria-label="Browser" id="work-inspector-panel-browser">
               <SidebarBrowser active={active && selected.kind === "browser"} />
+            </div> : null}
+            {selected.kind === "side-chat" ? <div role="tabpanel" aria-label="Side chat" id="work-inspector-panel-side-chat" className="flex min-h-0 flex-1 flex-col">
+              {detail && chatClient && sideDraft ? <SideChatPanel chatId={detail.record.chat.id} client={chatClient}
+                onSendToMain={text => sideDraft.request(detail.record.chat.id, text)}/>
+                : <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>Side chat is unavailable.</p>}
             </div> : null}
             {selected.kind === "files" && selectedFile ? (
               <div
@@ -530,6 +587,16 @@ function WorkInspectorContent({
           </div>
         </div>
       </aside>
+      <Dialog open={terminalCloseTarget !== null} onClose={() => setTerminalCloseTarget(null)} width={400} title="Stop this terminal?">
+        <div className="space-y-4 p-4 text-sm" style={{ color: "var(--text-primary)" }}>
+          <p>Closing this tab stops its terminal session.</p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="rounded-md px-3 py-1.5" onClick={() => setTerminalCloseTarget(null)}>Cancel</button>
+            <button type="button" className="rounded-md px-3 py-1.5" style={{ background: "var(--danger)", color: "var(--bg-surface)" }}
+              onClick={() => { if (terminalCloseTarget) void stopTerminalTab(terminalCloseTarget); }}>Stop terminal</button>
+          </div>
+        </div>
+      </Dialog>
     </Tooltip.Provider>
   );
 }
