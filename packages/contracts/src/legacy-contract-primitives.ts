@@ -48,3 +48,7 @@ export function safeRelativePath(max = 512) {
       message: "Path traversal is not allowed",
     });
 }
+
+export const FileLeafNameSchema = z.string().trim().min(1).max(128).refine((name) =>
+  name !== "." && name !== ".." && !/[/\\\u0000-\u001f\u007f]/.test(name) && byteLength(name) <= 255,
+);

@@ -3,22 +3,17 @@
 import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
-import { getGatewayUrl } from "@/lib/gateway";
 import { Button } from "@/components/ui/button";
 import { FileDownloadAction } from "./FileDownloadProvider";
 import { XIcon } from "@/lib/hugeicons";
 
-const GATEWAY_URL = getGatewayUrl();
 const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;
 
-export function QuickLook() {
+export function QuickLook({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(path: string): void }) {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
   const entries = useFileBrowser((s) => s.entries);
   const currentPath = useFileBrowser((s) => s.currentPath);
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
-  const openFile = usePreviewWindow((s) => s.openFile);
-  const [content, setContent] = useState<string | null>(null);
 
   const fullPath = quickLookPath
     ? currentPath
@@ -26,44 +21,10 @@ export function QuickLook() {
       : quickLookPath
     : null;
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async preview-load for the selected Quick Look file (fullPath/quickLookPath): the clear -> text transition is one fetch React batches, the fetch carries an AbortController whose signal gates every setState and is aborted in cleanup, and the file text is not derivable in render.
-  useEffect(() => {
-    if (!fullPath) {
-      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- clears stale preview when nothing is selected; the next content value is the async result of the fetch below, not derivable in render.
-      setContent(null);
-      return;
-    }
-
-    if (isImage(quickLookPath!)) {
-      setContent(null);
-      return;
-    }
-
-    let active = true;
-
-    fetch(`${GATEWAY_URL}/files/${fullPath}`, {
-      signal: AbortSignal.timeout(QUICK_LOOK_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => (r.ok ? r.text() : null))
-      .then((text) => {
-        if (!active) return;
-        if (text) setContent(text.split("\n").slice(0, 50).join("\n"));
-        else setContent(null);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        console.warn("Failed to load quick look preview", error);
-        setContent(null);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [fullPath, quickLookPath]);
-
   useGettingStartedBlocker(Boolean(quickLookPath && fullPath));
 
   if (!quickLookPath || !fullPath) return null;
+  const fileUrl = `${gatewayUrl}/files/${fullPath}`;
 
   return (
     <div
@@ -90,7 +51,7 @@ export function QuickLook() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                openFile(fullPath);
+                onOpenFile(fullPath);
                 setQuickLookPath(null);
               }}
             >
@@ -111,24 +72,18 @@ export function QuickLook() {
           {isImage(quickLookPath) ? (
             // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs
             <img
-              src={`${GATEWAY_URL}/files/${fullPath}`}
+              src={fileUrl}
               alt={quickLookPath}
               className="max-w-full max-h-full mx-auto object-contain"
             />
           ) : isAudio(quickLookPath) ? (
             // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user audio file preview; no caption track exists
-            <audio controls aria-label={`Audio preview: ${quickLookPath}`} className="w-full" src={`${GATEWAY_URL}/files/${fullPath}`} />
+            <audio controls aria-label={`Audio preview: ${quickLookPath}`} className="w-full" src={fileUrl} />
           ) : isVideo(quickLookPath) ? (
             // react-doctor-disable-next-line react-doctor/media-has-caption -- arbitrary user video file preview; no caption track exists
-            <video controls aria-label={`Video preview: ${quickLookPath}`} className="w-full max-h-96" src={`${GATEWAY_URL}/files/${fullPath}`} />
-          ) : content !== null ? (
-            <pre className="text-xs font-mono whitespace-pre-wrap break-all">
-              {content}
-            </pre>
+            <video controls aria-label={`Video preview: ${quickLookPath}`} className="w-full max-h-96" src={fileUrl} />
           ) : (
-            <div className="text-muted-foreground text-center">
-              No preview available
-            </div>
+            <QuickLookText key={fileUrl} fileUrl={fileUrl} />
           )}
         </div>
 
@@ -138,6 +93,30 @@ export function QuickLook() {
       </div>
     </div>
   );
+}
+
+function QuickLookText({ fileUrl }: { fileUrl: string }) {
+  const [content, setContent] = useState<string | null>(null);
+
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- load the selected file with a bounded request and cancel it when the selection changes.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(fileUrl, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(QUICK_LOOK_FETCH_TIMEOUT_MS)]) })
+      .then((response) => response.ok ? response.text() : null)
+      .then((text) => {
+        if (!controller.signal.aborted && text) setContent(text.split("\n").slice(0, 50).join("\n"));
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("Failed to load quick look preview", error instanceof Error ? error.name : "UnknownError");
+        }
+      });
+    return () => controller.abort();
+  }, [fileUrl]);
+
+  return content === null
+    ? <div className="text-muted-foreground text-center">No preview available</div>
+    : <pre className="text-xs font-mono whitespace-pre-wrap break-all">{content}</pre>;
 }
 
 function isImage(name: string): boolean {

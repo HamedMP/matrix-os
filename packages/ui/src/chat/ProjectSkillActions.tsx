@@ -19,6 +19,7 @@ import {
 } from "./project-skill-file.js";
 
 type Action = "installed" | "new" | "import";
+export type NewSkillDraft = { name: string; description: string; instructions: string };
 type BuildDraft = (signal: AbortSignal) => ProjectSkillDraft | Promise<ProjectSkillDraft>;
 type SkillList = { kind: "loading" | "error" } | { kind: "ready"; skills: readonly ProjectInstalledSkill[] };
 
@@ -45,12 +46,14 @@ const secondaryStyle = { color: "var(--text-secondary, var(--muted-foreground))"
 interface Props extends ProjectSkillSourceActions {
   filesPending: boolean;
   onCreate: (draft: ProjectAgentConfigurationTemplate) => Promise<boolean>;
+  newSkillDraft: NewSkillDraft | null;
+  onNewSkillDraftChange: (draft: NewSkillDraft | null) => void;
 }
 
-export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkills, readInstalledSkill }: Props) {
+export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkills, readInstalledSkill, newSkillDraft, onNewSkillDraftChange }: Props) {
   const id = useId();
-  const [open, setOpen] = useState(false);
-  const [action, setAction] = useState<Action | null>(null);
+  const [open, setOpen] = useState(newSkillDraft !== null);
+  const [source, setSource] = useState<"installed" | "import" | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const active = useRef<AbortController | null>(null);
@@ -58,8 +61,10 @@ export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkill
   useLayoutEffect(() => () => active.current?.abort(), []);
 
   const busy = filesPending || pending;
+  const action = newSkillDraft ? "new" : source;
   const choose = (next: Action | null) => {
-    setAction(next);
+    setSource(next === "new" ? null : next);
+    onNewSkillDraftChange(next === "new" ? { name: "", description: "", instructions: "" } : null);
     setError(null);
   };
 
@@ -118,7 +123,7 @@ export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkill
           onSubmit={skill => { void submit(async signal => copyProjectSkill(await readInstalledSkill(skill.file, signal), skill.name), PROJECT_SKILL_COPY_ERROR); }}>
           {actions}
         </InstalledSkillForm> : null}
-        {open && action === "new" ? <NewSkillForm busy={busy}
+        {open && newSkillDraft ? <NewSkillForm busy={busy} draft={newSkillDraft} onChange={onNewSkillDraftChange}
           onSubmit={(name, description, instructions) => { void submit(() => newProjectSkill(name, description, instructions), PROJECT_AGENT_CONFIG_CREATE_ERROR); }}>
           {actions}
         </NewSkillForm> : null}
@@ -197,28 +202,29 @@ function InstalledSkillForm({ busy, load, onSubmit, children }: {
   );
 }
 
-function NewSkillForm({ busy, onSubmit, children }: {
+function NewSkillForm({ busy, draft, onChange, onSubmit, children }: {
   busy: boolean;
+  draft: NewSkillDraft;
+  onChange: (draft: NewSkillDraft) => void;
   onSubmit: (name: string, description: string, instructions: string) => void;
   children: ReactNode;
 }) {
   const id = useId();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [instructions, setInstructions] = useState("");
+  const { name, description, instructions } = draft;
 
   return (
     <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!busy) onSubmit(name, description, instructions); }}>
       <Input id={`${id}-name`} label="Skill name" type="text" autoFocus value={name} maxLength={64}
         placeholder="release-review" className={sharedInputClass} style={sharedInputStyle}
-        disabled={busy} onChange={event => setName(event.target.value)} />
+        disabled={busy} onChange={event => onChange({ ...draft, name: event.target.value })} />
       <Input id={`${id}-description`} label="Description" type="text" value={description}
         maxLength={PROJECT_SKILL_DESCRIPTION_LIMIT} placeholder="When should the agent use this skill?"
-        className={sharedInputClass} style={sharedInputStyle} disabled={busy} onChange={event => setDescription(event.target.value)} />
+        className={sharedInputClass} style={sharedInputStyle} disabled={busy}
+        onChange={event => onChange({ ...draft, description: event.target.value })} />
       <label className="block space-y-1 text-xs">
         <span>Instructions</span>
         <textarea value={instructions} rows={4} maxLength={PROJECT_SKILL_FILE_MAX_BYTES} placeholder="What should the agent do?"
-          className={`${inputClass} resize-y`} style={borderStyle} disabled={busy} onChange={event => setInstructions(event.target.value)} />
+          className={`${inputClass} resize-y`} style={borderStyle} disabled={busy} onChange={event => onChange({ ...draft, instructions: event.target.value })} />
       </label>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}>Create skill</Button>

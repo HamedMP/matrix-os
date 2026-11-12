@@ -18,7 +18,8 @@ vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
 const auth = vi.hoisted(() => ({ userId: "owner", sessionId: "session" }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => auth }));
 
-const config: PreviewTab = { id: "config", path: "projects/example/.mcp.json", name: ".mcp.json", type: "code" };
+const authority = organizationDriveNavigationIdentity("owner", "session", window.location.origin);
+const config: PreviewTab = { id: "config", path: "projects/example/.mcp.json", name: ".mcp.json", type: "code", authority };
 
 function renderConfigEditor() {
   const authority = organizationDriveNavigationIdentity(auth.userId, auth.sessionId, getGatewayUrl());
@@ -96,7 +97,7 @@ it("does not clear the unsaved indicator for edits made while a save is pending"
 it("keeps an unsaved project config draft when switching preview tabs", async () => {
   const read = vi.fn(async (url: string) => new Response(url.includes(".mcp.json") ? "original" : "instructions"));
   vi.stubGlobal("fetch", read);
-  const instructions: PreviewTab = { id: "instructions", path: "projects/example/AGENTS.md", name: "AGENTS.md", type: "markdown", mode: "source" };
+  const instructions: PreviewTab = { id: "instructions", path: "projects/example/AGENTS.md", name: "AGENTS.md", type: "markdown", mode: "source", authority };
   usePreviewWindow.setState({ tabs: [config, instructions], activeTabId: config.id });
   render(<PreviewWindow />);
 
@@ -154,6 +155,11 @@ it("aborts a pending old-authority save and never restores that draft into a new
   auth.sessionId = "second-session";
   rerender(<PreviewWindow />);
   expect(fetch.mock.calls[1]?.[1]?.signal.aborted).toBe(true);
+  expect(screen.getByText("No files open")).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: config.name })).toBeNull();
+
+  const newAuthority = organizationDriveNavigationIdentity(auth.userId, auth.sessionId, getGatewayUrl());
+  act(() => usePreviewWindow.getState().openFile(config.path, { authority: newAuthority }));
   expect(await screen.findByRole("textbox")).toHaveValue("second session's file");
   await act(async () => { finishSave(Response.json({ ok: true })); });
   expect(screen.getByRole("textbox")).toHaveValue("second session's file");
@@ -168,7 +174,7 @@ it("keeps all edited files accessible at the draft limit and allows media previe
   const configs = Array.from({ length: 4 }, (_, index): PreviewTab => ({
     ...config, id: String(index), name: `config-${index}.toml`, path: `projects/example/config-${index}.toml`,
   }));
-  const media: PreviewTab = { id: "pdf", path: "projects/example/manual.pdf", name: "manual.pdf", type: "pdf" };
+  const media: PreviewTab = { id: "pdf", path: "projects/example/manual.pdf", name: "manual.pdf", type: "pdf", authority };
   usePreviewWindow.setState({ tabs: [...configs, media], activeTabId: configs[0].id });
   render(<PreviewWindow />);
 

@@ -36,7 +36,7 @@ export interface PreviewTab {
   name: string;
   type: PreviewFileType;
   mode?: PreviewMode;
-  authority?: string;
+  authority: string;
 }
 
 const EXT_TYPE_MAP: Record<string, PreviewFileType> = {
@@ -93,7 +93,7 @@ interface PreviewWindowState {
 }
 
 interface PreviewWindowActions {
-  openFile(path: string, options?: { authority: string; mode?: PreviewMode; focus?: boolean }): void;
+  openFile(path: string, options: { authority: string; mode?: PreviewMode; focus?: boolean }): void;
   consumeTabFocus(id: string): void;
   closeTab(id: string): void;
   setActiveTab(id: string): void;
@@ -117,9 +117,8 @@ export const usePreviewWindow = create<
   drafts: [],
   lastSavedTabId: null,
 
-  openFile(path: string, options) {
+  openFile(path, { authority, mode, focus }) {
     const { tabs } = get();
-    const { authority, mode, focus } = options ?? {};
     const existing = tabs.find((t) => t.path === path && t.authority === authority);
     if (existing) {
       set({
@@ -133,7 +132,7 @@ export const usePreviewWindow = create<
     const name = path.split("/").pop() ?? path;
     const type = detectFileType(name);
     const id = crypto.randomUUID();
-    const tab: PreviewTab = { id, path, name, type, mode: mode ?? defaultMode(type), ...(authority ? { authority } : {}) };
+    const tab: PreviewTab = { id, path, name, type, mode: mode ?? defaultMode(type), authority };
 
     set((s) => ({
       tabs: [...s.tabs, tab],
@@ -227,7 +226,7 @@ export const usePreviewWindow = create<
     const state = get();
     const tab = state.tabs.find(tab => tab.id === id);
     const existing = state.drafts.find(draft => draft.tabId === id);
-    if (!tab || state.draftAuthority !== authority || (tab.authority && tab.authority !== authority)
+    if (!tab || state.draftAuthority !== authority || tab.authority !== authority
       || (existing ? existing.url !== url : state.drafts.length >= MAX_DIRTY_PREVIEW_EDITORS)) return false;
     const draft: PreviewDraft = { tabId: id, url, content, status: existing?.status === "saving" ? "saving" : "editing" };
     set({
@@ -242,7 +241,7 @@ export const usePreviewWindow = create<
     const state = get();
     const tab = state.tabs.find(tab => tab.id === id);
     const draft = state.drafts.find(draft => draft.tabId === id);
-    if (!tab || !draft || state.draftAuthority !== authority || (tab.authority && tab.authority !== authority)
+    if (!tab || !draft || state.draftAuthority !== authority || tab.authority !== authority
       || pendingSaves.has(id)) return;
     const updateStatus = (status: PreviewDraft["status"]) => set(s => ({
       drafts: s.drafts.map(item => item.tabId === id ? { ...item, status } : item),

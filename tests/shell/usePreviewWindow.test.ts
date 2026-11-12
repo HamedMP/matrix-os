@@ -4,6 +4,8 @@ import {
   detectFileType,
 } from "../../shell/src/hooks/usePreviewWindow.js";
 
+const openFile = (path: string) => usePreviewWindow.getState().openFile(path, { authority: "owner-session" });
+
 describe("usePreviewWindow store", () => {
   beforeEach(() => {
     usePreviewWindow.setState({
@@ -15,7 +17,7 @@ describe("usePreviewWindow store", () => {
 
   describe("openFile", () => {
     it("opens a new tab and sets it active", () => {
-      usePreviewWindow.getState().openFile("agents/builder.md");
+      openFile("agents/builder.md");
       const state = usePreviewWindow.getState();
       expect(state.tabs).toHaveLength(1);
       expect(state.tabs[0].path).toBe("agents/builder.md");
@@ -26,9 +28,9 @@ describe("usePreviewWindow store", () => {
     });
 
     it("focuses existing tab instead of duplicating", () => {
-      usePreviewWindow.getState().openFile("a.md");
-      usePreviewWindow.getState().openFile("b.ts");
-      usePreviewWindow.getState().openFile("a.md");
+      openFile("a.md");
+      openFile("b.ts");
+      openFile("a.md");
       const state = usePreviewWindow.getState();
       expect(state.tabs).toHaveLength(2);
       expect(state.activeTabId).toBe(
@@ -36,8 +38,22 @@ describe("usePreviewWindow store", () => {
       );
     });
 
+    it("opens a separate tab for the same path under a different authority", () => {
+      const path = "projects/example/AGENTS.md";
+      openFile(path);
+      const previous = usePreviewWindow.getState().tabs[0];
+      usePreviewWindow.getState().markUnsaved(previous.id);
+      usePreviewWindow.getState().openFile(path, { authority: "other-session" });
+
+      const state = usePreviewWindow.getState();
+      expect(state.tabs).toHaveLength(2);
+      expect(state.tabs[1]).toMatchObject({ path, authority: "other-session" });
+      expect(state.activeTabId).toBe(state.tabs[1].id);
+      expect(state.unsavedTabs.has(state.tabs[1].id)).toBe(false);
+    });
+
     it("detects file types correctly", () => {
-      usePreviewWindow.getState().openFile("app.tsx");
+      openFile("app.tsx");
       expect(usePreviewWindow.getState().tabs[0].type).toBe("code");
       expect(usePreviewWindow.getState().tabs[0].mode).toBe("source");
     });
@@ -45,7 +61,7 @@ describe("usePreviewWindow store", () => {
 
   describe("closeTab", () => {
     it("removes the tab", () => {
-      usePreviewWindow.getState().openFile("a.md");
+      openFile("a.md");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().closeTab(tab.id);
       expect(usePreviewWindow.getState().tabs).toHaveLength(0);
@@ -53,9 +69,9 @@ describe("usePreviewWindow store", () => {
     });
 
     it("selects adjacent tab when closing active", () => {
-      usePreviewWindow.getState().openFile("a.md");
-      usePreviewWindow.getState().openFile("b.md");
-      usePreviewWindow.getState().openFile("c.md");
+      openFile("a.md");
+      openFile("b.md");
+      openFile("c.md");
       const tabs = usePreviewWindow.getState().tabs;
       // Active is c.md (last opened)
       usePreviewWindow.getState().setActiveTab(tabs[1].id);
@@ -67,8 +83,8 @@ describe("usePreviewWindow store", () => {
     });
 
     it("selects last tab when closing last position", () => {
-      usePreviewWindow.getState().openFile("a.md");
-      usePreviewWindow.getState().openFile("b.md");
+      openFile("a.md");
+      openFile("b.md");
       const tabs = usePreviewWindow.getState().tabs;
       usePreviewWindow.getState().setActiveTab(tabs[1].id);
       usePreviewWindow.getState().closeTab(tabs[1].id);
@@ -78,7 +94,7 @@ describe("usePreviewWindow store", () => {
     });
 
     it("clears unsaved state for closed tab", () => {
-      usePreviewWindow.getState().openFile("a.md");
+      openFile("a.md");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().markUnsaved(tab.id);
       usePreviewWindow.getState().closeTab(tab.id);
@@ -88,7 +104,7 @@ describe("usePreviewWindow store", () => {
 
   describe("setMode", () => {
     it("changes mode for text/code/markdown tabs", () => {
-      usePreviewWindow.getState().openFile("readme.md");
+      openFile("readme.md");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().setMode(tab.id, "source");
       expect(usePreviewWindow.getState().tabs[0].mode).toBe("source");
@@ -97,7 +113,7 @@ describe("usePreviewWindow store", () => {
     });
 
     it("no-ops for image/pdf/audio/video tabs", () => {
-      usePreviewWindow.getState().openFile("photo.png");
+      openFile("photo.png");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().setMode(tab.id, "source");
       expect(usePreviewWindow.getState().tabs[0].mode).toBeUndefined();
@@ -106,14 +122,14 @@ describe("usePreviewWindow store", () => {
 
   describe("unsaved state", () => {
     it("markUnsaved adds to unsavedTabs", () => {
-      usePreviewWindow.getState().openFile("a.md");
+      openFile("a.md");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().markUnsaved(tab.id);
       expect(usePreviewWindow.getState().unsavedTabs.has(tab.id)).toBe(true);
     });
 
     it("markSaved removes from unsavedTabs", () => {
-      usePreviewWindow.getState().openFile("a.md");
+      openFile("a.md");
       const tab = usePreviewWindow.getState().tabs[0];
       usePreviewWindow.getState().markUnsaved(tab.id);
       usePreviewWindow.getState().markSaved(tab.id);
@@ -123,9 +139,9 @@ describe("usePreviewWindow store", () => {
 
   describe("reorderTabs", () => {
     it("reorders tabs by index", () => {
-      usePreviewWindow.getState().openFile("a.md");
-      usePreviewWindow.getState().openFile("b.md");
-      usePreviewWindow.getState().openFile("c.md");
+      openFile("a.md");
+      openFile("b.md");
+      openFile("c.md");
       usePreviewWindow.getState().reorderTabs(2, 0);
       const names = usePreviewWindow.getState().tabs.map((t) => t.name);
       expect(names).toEqual(["c.md", "a.md", "b.md"]);

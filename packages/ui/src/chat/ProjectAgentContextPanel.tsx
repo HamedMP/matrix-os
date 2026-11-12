@@ -1,6 +1,6 @@
 import { ChevronRight, FileCode, FolderOpen, Plug, SlidersHorizontal, Sparkles } from "lucide-react";
-import { useId, useRef, useState } from "react";
-import { ProjectSkillActions, type ProjectSkillSourceActions } from "./ProjectSkillActions.js";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { ProjectSkillActions, type NewSkillDraft, type ProjectSkillSourceActions } from "./ProjectSkillActions.js";
 import {
   PROJECT_AGENT_CONFIG_CREATE_ERROR,
   PROJECT_AGENT_CONTEXT_FILE_HANDOFF,
@@ -26,7 +26,7 @@ interface ProjectAgentContextPanelProps extends ProjectSkillSourceActions {
   onOpenMcpSettings?: () => void;
 }
 
-type ConfigurationActions = ProjectSkillSourceActions & Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings">;
+type ConfigurationActions = Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings">;
 
 const disclosureClass = "flex min-h-10 w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 const actionClass = "min-h-8 max-w-full rounded-md border px-2.5 py-1 text-left text-xs font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
@@ -60,21 +60,27 @@ function ProjectAgentContextDisclosure(props: ProjectAgentContextPanelProps) {
   );
 }
 
-function ProjectAgentContextDetails({ scope, projectId, read, filesError, onCreateFile, ...actions }: ProjectAgentContextPanelProps) {
+function ProjectAgentContextDetails({ scope, projectId, read, filesError, onCreateFile, loadInstalledSkills,
+  readInstalledSkill, ...actions }: ProjectAgentContextPanelProps) {
   const { state, refresh } = useProjectAgentContext({ scope, projectId, read });
   const status = projectAgentContextStatus(state);
   const [openSection, setOpenSection] = useState<ProjectAgentConfigurationSection["id"] | null>("skills");
+  // Inventory refreshes can unmount the sections. Keep the draft within the current project and runtime.
+  const [newSkillDraft, setNewSkillDraft] = useState<NewSkillDraft | null>(null);
   const creating = useRef(false);
   const [creationPending, setCreationPending] = useState(false);
   const [createdPath, setCreatedPath] = useState<string | null>(null);
+  const canCreate = onCreateFile && state.kind === "ready" && state.context.configFiles !== undefined;
+  const filesPending = Boolean(actions.filesPending || creationPending);
 
-  const create = async ({ path, content }: ProjectAgentConfigurationTemplate) => {
+  const create = async ({ path, content }: ProjectAgentConfigurationTemplate, onCreated?: () => void) => {
     if (!onCreateFile || creating.current || actions.filesPending) return false;
     creating.current = true;
     setCreatedPath(null);
     setCreationPending(true);
     try {
       if (!await onCreateFile(path, content)) return false;
+      onCreated?.();
       setCreatedPath(path);
       refresh();
       return true;
@@ -111,8 +117,12 @@ function ProjectAgentContextDetails({ scope, projectId, read, filesError, onCrea
             <ProjectConfigurationSection key={section.id} section={section} {...actions}
               open={openSection === section.id}
               onToggle={() => setOpenSection(current => current === section.id ? null : section.id)}
-              onCreate={onCreateFile && state.context.configFiles !== undefined ? create : undefined}
-              filesPending={actions.filesPending || creationPending} />
+              onCreate={canCreate ? create : undefined}
+              skillActions={canCreate && section.id === "skills" ? <ProjectSkillActions filesPending={filesPending}
+                onCreate={template => create(template, () => setNewSkillDraft(null))}
+                loadInstalledSkills={loadInstalledSkills} readInstalledSkill={readInstalledSkill}
+                newSkillDraft={newSkillDraft} onNewSkillDraftChange={setNewSkillDraft} /> : null}
+              filesPending={filesPending} />
           ))}
         </div>
         {!actions.onOpenFiles && !actions.onOpenFile ? <p className="text-xs" style={secondaryStyle}>{PROJECT_AGENT_CONTEXT_FILE_HANDOFF}</p> : null}
@@ -127,6 +137,7 @@ type CreateTemplate = (template: ProjectAgentConfigurationTemplate) => Promise<b
 type ConfigurationSectionProps = ConfigurationActions & {
   section: ProjectAgentConfigurationSection;
   onCreate?: CreateTemplate;
+  skillActions?: ReactNode;
 };
 
 function ProjectConfigurationSection({ open, onToggle, ...props }: ConfigurationSectionProps & {
@@ -156,7 +167,8 @@ function ProjectConfigurationSection({ open, onToggle, ...props }: Configuration
   );
 }
 
-function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, filesPending, onOpenMcpSettings, onCreate, loadInstalledSkills, readInstalledSkill }: ConfigurationSectionProps) {
+function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, filesPending, onOpenMcpSettings, onCreate,
+  skillActions }: ConfigurationSectionProps) {
   const { id, title, description, rows, partial, emptyMessage, setupHint, browseLabel, createFiles } = section;
   const [createError, setCreateError] = useState<string | null>(null);
   const showBrowse = onOpenFiles && (id === "config" || !onCreate || partial);
@@ -170,8 +182,13 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
     <>
       <div className="space-y-2 px-3 py-2.5">
         <p className="text-xs leading-relaxed" style={secondaryStyle}>{description}</p>
-        {onCreate && id === "skills" ? <ProjectSkillActions filesPending={Boolean(filesPending)} onCreate={onCreate}
-          loadInstalledSkills={loadInstalledSkills} readInstalledSkill={readInstalledSkill} /> : null}
+        {skillActions}
+        {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
+          {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
+            style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>
+            Create {template.path}
+          </button>)}
+        </div> : null}
         {showBrowse ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending}
           onClick={onOpenFiles}>
           <span className="flex items-center gap-1.5"><FolderOpen size={13} aria-hidden className="shrink-0" />{browseLabel}</span>
@@ -183,12 +200,6 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
         {id === "config" && onCreate && onOpenFile && !partial && createFiles.length === 0 ? (
           <p className="text-xs leading-relaxed" style={secondaryStyle}>The starter config files already exist. Open a file to edit it.</p>
         ) : null}
-        {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
-          {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
-            style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>
-            Create {template.path}
-          </button>)}
-        </div> : null}
         {createError ? <p role="alert" className="text-xs">{createError}</p> : null}
       </div>
       {rows.length > 0 ? <ul className="max-h-56 overflow-y-auto">
