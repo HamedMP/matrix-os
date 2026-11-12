@@ -4,6 +4,12 @@ import { z } from "zod/v4";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
 import { MCP_TOOL_STREAM_TYPE } from "./tool-progress.js";
 import { toolProgressResponse } from "./tool-progress-response.js";
+import { REMOTE_MCP_DEPARTMENTS } from "@matrix-os/contracts/remote-mcp-catalog";
+import {
+  RegisteredMcpOAuthClients,
+  listConnectableCatalogPresets,
+  resolveConnectableCatalogPreset,
+} from "./catalog-presets.js";
 
 const MUTATION_BODY_LIMIT = 64 * 1024;
 const UUID = z.uuid();
@@ -27,6 +33,15 @@ const CreateSchema = z.object({
     });
   }
 });
+/** A preset pre-fills URL and auth; the caller may only rename it. */
+const CatalogCreateSchema = z.object({
+  catalogId: z.string().regex(/^[a-z][a-z0-9_]{1,39}$/),
+  name: z.string().trim().min(1).max(100).optional(),
+}).strict();
+const CatalogQuerySchema = z.object({
+  category: z.string().regex(/^[a-z][a-z_]{1,29}$/).optional(),
+  department: z.enum(REMOTE_MCP_DEPARTMENTS).optional(),
+}).strict();
 const PatchSchema = z.object({
   revision: z.number().int().min(1),
   name: z.string().trim().min(1).max(100).optional(),
@@ -55,6 +70,8 @@ export interface CustomMcpRoutesOptions {
   resolveActorId?: (context: Context) => string | null;
   oauth?: CustomMcpOAuthFlow;
   allowToolCalls?: boolean;
+  /** Matrix-owned OAuth apps; without it only DCR and no-auth presets are offered. */
+  catalog?: RegisteredMcpOAuthClients;
   now?: () => number;
 }
 
@@ -64,6 +81,7 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   const app = new Hono();
   const rateStates = new Map<string, RateState>();
   const now = options.now ?? Date.now;
+  const catalog = options.catalog ?? RegisteredMcpOAuthClients.empty();
 
   function checkRateLimit(userId: string): boolean {
     const current = now();
@@ -114,6 +132,17 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     return context.json({ error: "Custom MCP request failed" }, 502);
   }
 
+  function createInput(body: unknown) {
+    if (body && typeof body === "object" && !Array.isArray(body) && Object.hasOwn(body, "catalogId")) {
+      const preset = CatalogCreateSchema.safeParse(body);
+      const entry = preset.success ? resolveConnectableCatalogPreset(catalog, preset.data.catalogId) : undefined;
+      if (!preset.success || !entry) return undefined;
+      return { name: preset.data.name ?? entry.name, url: entry.url, authMode: entry.auth === "none" ? "none" as const : "oauth" as const };
+    }
+    const parsed = CreateSchema.safeParse(body);
+    return parsed.success ? parsed.data : undefined;
+  }
+
   app.get("/", async (context) => {
     const userId = await requireUser(context);
     if (typeof userId !== "string") return userId;
@@ -137,6 +166,15 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     } catch (error) {
       return brokerError(context, error);
     }
+  });
+
+  app.get("/catalog", async (context) => {
+    const userId = await requireUser(context);
+    if (typeof userId !== "string") return userId;
+    const parsed = CatalogQuerySchema.safeParse(context.req.query());
+    if (!parsed.success) return context.json({ error: "Invalid catalog filter" }, 400);
+    context.header("Cache-Control", "private, no-store");
+    return context.json({ presets: listConnectableCatalogPresets(catalog, parsed.data) });
   });
 
   app.get("/:id", async (context) => {
@@ -164,10 +202,10 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
       );
       return context.json({ error: "Invalid request body" }, 400);
     }
-    const parsed = CreateSchema.safeParse(body);
-    if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
+    const input = createInput(body);
+    if (!input) return context.json({ error: "Invalid request body" }, 400);
     try {
-      return context.json(await options.broker.create(userId, parsed.data), 201);
+      return context.json(await options.broker.create(userId, input), 201);
     } catch (error) {
       return brokerError(context, error);
     }
