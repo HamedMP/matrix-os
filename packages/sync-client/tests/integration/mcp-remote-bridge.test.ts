@@ -28,6 +28,7 @@ interface FakePlatform {
   tokenRequests: URLSearchParams[];
   mcpBearers: string[];
   validTokens: Set<string>;
+  invalidGrants: number;
 }
 
 async function body(request: IncomingMessage): Promise<string> {
@@ -38,7 +39,7 @@ async function body(request: IncomingMessage): Promise<string> {
 
 async function startFakePlatform(): Promise<FakePlatform> {
   const state = { authorizeParams: [] as URLSearchParams[], tokenRequests: [] as URLSearchParams[], mcpBearers: [] as string[],
-    validTokens: new Set<string>(), challenge: "", issued: 0 };
+    validTokens: new Set<string>(), challenge: "", issued: 0, spentRefresh: new Set<string>(), invalidGrants: 0 };
   let base = "";
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", base);
@@ -77,8 +78,14 @@ async function startFakePlatform(): Promise<FakePlatform> {
         if (createHash("sha256").update(verifier).digest("base64url") !== state.challenge || form.get("code") !== "auth-code-1") {
           return send(400, { error: "invalid_grant" });
         }
-      } else if (form.get("grant_type") !== "refresh_token" || !form.get("refresh_token")?.startsWith("refresh-")) {
+      } else if (form.get("grant_type") !== "refresh_token" || !form.get("refresh_token")?.startsWith("refresh-")
+        || state.spentRefresh.has(form.get("refresh_token")!)) {
+        state.invalidGrants += 1;
         return send(400, { error: "invalid_grant" });
+      } else {
+        // Rotation: each refresh token is single-use.
+        state.spentRefresh.add(form.get("refresh_token")!);
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
       const access = `access-${++state.issued}`;
       state.validTokens.add(access);
@@ -107,7 +114,8 @@ async function startFakePlatform(): Promise<FakePlatform> {
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { base, resource: `${base}/mcp`, server, ...state, get validTokens() { return state.validTokens; } } as FakePlatform;
+  return { base, resource: `${base}/mcp`, server, ...state, get validTokens() { return state.validTokens; },
+    get invalidGrants() { return state.invalidGrants; } } as FakePlatform;
 }
 
 /** The "browser": follow the authorize redirect into the CLI's loopback callback. */
@@ -227,6 +235,25 @@ describe("matrix mcp bridge over Matrix OAuth", () => {
     stdin.write(`${"x".repeat(2048)}\n`);
     await expect(bridge).rejects.toThrow("frame");
     expect(platform.mcpBearers).toHaveLength(requests);
+  });
+
+  it("lets two bridges on one profile share a rotated refresh token instead of spending it twice", async () => {
+    await loginRemoteMcp({ resource: platform.resource, profileName: "cloud", configDir, openBrowser: browser });
+    const tokens = (await loadRemoteMcpTokens("cloud", configDir))!;
+    await saveRemoteMcpTokens("cloud", { ...tokens, expiresAt: Date.now() + 5_000 }, configDir);
+    const bridges = [0, 1].map(() => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      return { stdin, next: lines(stdout), done: runRemoteMcpBridge({ profileName: "cloud", configDir, stdin, stdout }) };
+    });
+    bridges.forEach((bridge, index) => bridge.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 10 + index, method: "tools/call",
+      params: { name: "echo", arguments: { value: `bridge-${index}` } } })}\n`));
+    const results = await Promise.all(bridges.map(bridge => bridge.next()));
+    expect(results.map(result => (result.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual(["bridge-0", "bridge-1"]);
+    expect(platform.tokenRequests.filter(form => form.get("grant_type") === "refresh_token")).toHaveLength(1);
+    expect(platform.invalidGrants).toBe(0);
+    for (const bridge of bridges) bridge.stdin.end();
+    await Promise.all(bridges.map(bridge => bridge.done));
   });
 
   it("tells the person to log in when the profile has no /mcp token", async () => {
