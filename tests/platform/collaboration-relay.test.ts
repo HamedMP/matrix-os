@@ -161,6 +161,28 @@ describe("CollaborationRelay", () => {
     expect(passthrough.status).toBe(409);
   });
 
+  it("allows the bounded app-asset response class only on exact asset routes", async () => {
+    const fetchImpl = vi.fn(async () => new Response("x".repeat(64), {
+      status: 200,
+      headers: { "content-length": "64", "content-type": "application/octet-stream" },
+    }));
+    const { instance } = relay({ limits: { responseBytes: 32, appAssetBytes: 128 } }, fetchImpl as never);
+    const assetPath = `/api/collaboration/scopes/${scopeId}/apps/tracker/assets/assets/main.wasm`;
+
+    const asset = await instance.forward({
+      actorId: "user_a", method: "GET", path: assetPath, query: "", headers: new Headers(), body: null,
+      responseClass: "app_asset",
+    });
+    expect(asset.status).toBe(200);
+    expect((await asset.arrayBuffer()).byteLength).toBe(64);
+
+    const ordinary = await instance.forward({
+      actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null,
+      responseClass: "app_asset",
+    });
+    expect(ordinary.status).toBe(503);
+  });
+
   it("bounds a chunked request body by its own request limit, not only the declared length", async () => {
     // The declared length is the only thing the 96 KiB check reads, and a chunked upload
     // declares nothing. The relay must hold its own limit against the bytes themselves, so

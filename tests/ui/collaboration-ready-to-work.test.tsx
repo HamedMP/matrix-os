@@ -41,12 +41,22 @@ describe("organization ready-to-work presentation", () => {
     let resolveRefresh!: () => void;
     const accepted = new Promise<unknown>((resolve) => { resolveAccept = resolve; });
     const refreshed = new Promise<void>((resolve) => { resolveRefresh = resolve; });
-    let reads = 0;
+    let inboxReads = 0;
+    let sharedReads = 0;
     const api = { baseUrl: "http://localhost",
       get: vi.fn((path: string) => {
-        reads += 1;
-        if (reads > 2) return refreshed.then(() => ({ items: [] }));
-        return Promise.resolve(path.endsWith("/inbox") ? { items: [pendingOrganizationShare] } : { items: [] });
+        if (path === "/api/collaboration/inbox") {
+          inboxReads += 1;
+          return inboxReads === 1
+            ? Promise.resolve({ items: [pendingOrganizationShare] })
+            : refreshed.then(() => ({ items: [] }));
+        }
+        if (path === "/api/collaboration/shared") {
+          sharedReads += 1;
+          return sharedReads === 1 ? Promise.resolve({ items: [] }) : refreshed.then(() => ({ items: [] }));
+        }
+        if (path === "/api/collaboration/shared-apps?limit=50") return Promise.resolve({ items: [] });
+        throw new Error(`Unexpected discovery request: ${path}`);
       }),
       post: vi.fn(async () => accepted), delete: vi.fn(),
     };
@@ -60,7 +70,10 @@ describe("organization ready-to-work presentation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${pendingGrantId}/accept`, {});
     expect(openProject).not.toHaveBeenCalled();
     await act(async () => { resolveAccept({ state: "active" }); });
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(4));
+    await waitFor(() => {
+      expect(inboxReads).toBeGreaterThan(1);
+      expect(sharedReads).toBeGreaterThan(1);
+    });
     expect(openProject).not.toHaveBeenCalled();
     await act(async () => { resolveRefresh(); });
     await waitFor(() => expect(openProject).toHaveBeenCalledWith(scope.id));

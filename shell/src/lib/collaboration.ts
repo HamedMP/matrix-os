@@ -31,8 +31,10 @@ export function collaborationRuntimeFromSystemInfo(value: unknown): {
 }
 
 const MAX_LIVE_APIS = 32;
-/** Every API created in this tab, so sign-out can end their home sessions (S06 / T034). */
-const liveApis = new Set<CollaborationDirectApi>();
+interface LiveApiEntry { api: CollaborationDirectApi; references: number }
+/** One shared client per platform origin; mounted viewers hold references so LRU pressure never closes a live window. */
+const liveApis = new Map<string, LiveApiEntry>();
+const apiOrigins = new WeakMap<CollaborationDirectApi, string>();
 
 /**
  * S06 / T033: the shell talks to each shared resource's home through the direct
@@ -40,18 +42,22 @@ const liveApis = new Set<CollaborationDirectApi>();
  * lists metadata. The selected computer never influences where a scope is served.
  */
 export function createShellCollaborationApi(baseUrl: string): CollaborationDirectApi {
-  const api = createCollaborationDirectApi({ platformBaseUrl: baseUrl });
-  if (liveApis.size >= MAX_LIVE_APIS) {
-    const oldest = liveApis.values().next().value;
-    if (oldest) { oldest.direct.close(); liveApis.delete(oldest); }
+  const origin = new URL(baseUrl).origin;
+  const existing = liveApis.get(origin);
+  if (existing) {
+    existing.references += 1;
+    return existing.api;
   }
-  liveApis.add(api);
+  if (liveApis.size >= MAX_LIVE_APIS) throw new Error("Too many collaboration origins");
+  const api = createCollaborationDirectApi({ platformBaseUrl: baseUrl });
+  liveApis.set(origin, { api, references: 1 });
+  apiOrigins.set(api, origin);
   return api;
 }
 
 /** Ends every direct session this tab holds; called before the actor signs out or the app session is cleared. */
 export function closeShellCollaborationSessions(): void {
-  for (const api of liveApis) {
+  for (const { api } of liveApis.values()) {
     try {
       api.direct.close();
     } catch (error: unknown) {
@@ -62,6 +68,13 @@ export function closeShellCollaborationSessions(): void {
 }
 
 export function releaseShellCollaborationApi(api: CollaborationDirectApi): void {
- liveApis.delete(api);
- api.direct.close();
+  const origin = apiOrigins.get(api);
+  if (!origin) return;
+  const entry = liveApis.get(origin);
+  if (!entry || entry.api !== api) return;
+  entry.references -= 1;
+  if (entry.references > 0) return;
+  liveApis.delete(origin);
+  apiOrigins.delete(api);
+  api.direct.close();
 }

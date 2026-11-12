@@ -14,10 +14,17 @@ export interface CollaborationDirectoryTable {
   kind: CollaborationDirectoryKind;
   /** S05: owning organization from the directory event; null only for pre-organization rows. */
   organization_id: string | null;
-  /** S06: `organization` when the home reports an active organization-wide grant. */
-  audience: "members" | "organization" | null;
+  /** Explicit grants use `organization`; live app sharing uses fresh current membership directly. */
+  audience: "members" | "organization" | "current_membership" | null;
   /** Opaque owner-home grant pointer used only for an explicit accept request. */
   organization_grant_id: string | null;
+  app_id: string | null;
+  app_catalog_id: string | null;
+  app_readiness_id: string | null;
+  app_registration_incarnation: string | null;
+  app_build_id: string | null;
+  app_share_revision: number | null;
+  app_state: "active" | "needs_recheck" | "stopped" | null;
   /** A shared project's Chat: routed to the same home, admitted from the parent project's membership. */
   parent_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
@@ -146,9 +153,33 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_id TEXT
     CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128)`.execute(trx);
   // S06: organization-wide shares are listed as pending for members from this flag alone.
-  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT
-    CHECK (audience IS NULL OR audience IN ('members', 'organization'))`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT`.execute(trx);
+  await sql`DO $migration$
+    DECLARE constraint_name TEXT;
+    BEGIN
+      SELECT conname INTO constraint_name FROM pg_constraint
+      WHERE conrelid = 'collaboration_directory'::regclass
+        AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%audience%';
+      IF constraint_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE collaboration_directory DROP CONSTRAINT %I', constraint_name);
+      END IF;
+      ALTER TABLE collaboration_directory ADD CONSTRAINT collaboration_directory_audience_check
+        CHECK (audience IS NULL OR audience IN ('members', 'organization', 'current_membership'));
+    END
+  $migration$`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_grant_id UUID`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_id TEXT
+    CHECK (app_id IS NULL OR (char_length(app_id) BETWEEN 1 AND 256 AND app_id ~ '^[A-Za-z0-9_-]+$'))`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_catalog_id UUID`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_readiness_id UUID`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_registration_incarnation TEXT
+    CHECK (app_registration_incarnation IS NULL OR app_registration_incarnation ~ '^[a-f0-9]{64}$')`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_build_id TEXT
+    CHECK (app_build_id IS NULL OR app_build_id ~ '^[a-f0-9]{64}$')`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_share_revision BIGINT
+    CHECK (app_share_revision IS NULL OR app_share_revision > 0)`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_state TEXT
+    CHECK (app_state IS NULL OR app_state IN ('active', 'needs_recheck', 'stopped'))`.execute(trx);
   // A project's Chats are routed beside their project and removed with it.
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS parent_scope_id UUID
     REFERENCES collaboration_directory(scope_id) ON DELETE CASCADE`.execute(trx);

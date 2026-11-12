@@ -1,6 +1,6 @@
 import "@/lib/hermes-polyfills";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { TextInput } from "react-native";
+import type { TextInputInstance } from "react-native";
 
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
@@ -62,7 +62,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
     shownMessages: messages.length,
   });
 
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
   // person asks for a new chat. Opening the screen or a chat leaves the
   // keyboard closed, so the tabs stay in view. A screen that starts its new

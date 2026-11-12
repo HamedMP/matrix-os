@@ -20,7 +20,7 @@ describe("native mobile help settings", () => {
     ["Open terms of service", "https://matrix-os.com/terms"],
     ["Open docs", "https://matrix-os.com/docs"],
   ])("%s opens %s", (label, url) => {
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     render(<HelpSettingsScreen />);
 
     fireEvent.press(screen.getByLabelText(label));

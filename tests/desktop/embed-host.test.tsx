@@ -1,20 +1,43 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { SurfaceChromeContext, type SurfaceChromeSpec } from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceChrome";
 
 const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
+const SHARED_TARGET = {
+  scopeId: "10000000-0000-4000-8000-000000000001",
+  runtimeId: "runtime_owner",
+  organizationId: "org_matrix",
+  authorityGeneration: 2,
+  appId: "team-tracker",
+  catalogId: "30000000-0000-4000-8000-000000000001",
+  readinessId: "40000000-0000-4000-8000-000000000001",
+  registrationIncarnation: "a".repeat(64),
+  buildId: "b".repeat(64),
+  shareRevision: "7",
+  owner: { actorId: "user_owner", displayName: "Nima" },
+};
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => undefined),
 }));
+
+function EmbedHostWithChrome(props: React.ComponentProps<typeof EmbedHost>) {
+  const [chrome, setChrome] = useState<SurfaceChromeSpec | null>(null);
+  const host = useMemo(() => ({ setChrome }), []);
+  return <SurfaceChromeContext.Provider value={host}>
+    <div data-testid="embed-toolbar">{chrome?.rightActions}</div>
+    <EmbedHost {...props} />
+  </SurfaceChromeContext.Provider>;
+}
 
 describe("EmbedHost", () => {
   let openResolve: ((value: { embedId: string; state: "loading" | "auth-required" }) => void) | null = null;
@@ -69,20 +92,23 @@ describe("EmbedHost", () => {
   it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
     useConnection.setState({ api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
-    const view = render(<EmbedHost kind="app" slug="notes" active />);
+    const view = render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
+    expect(screen.getByTestId("embed-toolbar").contains(screen.getByRole("button", { name: "Publish app" }))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     // Overlay-adjusted native activity is false, but the owning surface is still visible.
-    expect(screen.getByRole("dialog", { name: "Publish app" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Share app" })).toBeTruthy();
 
-    view.rerender(<EmbedHost kind="app" slug="notes" active={false} />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active={false} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    view.rerender(<EmbedHost kind="app" slug="notes" active />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active />);
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    await screen.findByRole("dialog", { name: "Share app" });
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     view.unmount();
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -292,6 +318,44 @@ describe("EmbedHost", () => {
     expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
   });
 
+  it("detaches a retained shared app while its retry overlay is visible and reloads it exactly once", async () => {
+    let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "shared-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="shared-app" target={SHARED_TARGET} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: true },
+    ));
+
+    act(() => emitState?.({ embedId: "shared-1", state: "host-offline" }));
+
+    await screen.findByText("The owner’s computer is offline. This app is still open.");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: false },
+    ));
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(invoke).mock.calls;
+      expect(calls).toContainEqual(["embed:reload", { embedId: "shared-1" }]);
+      expect(calls.filter(([channel]) => channel === "embed:reload")).toHaveLength(1);
+      expect(calls).not.toContainEqual(["embed:set-active", { embedId: "shared-1", active: true }]);
+    });
+  });
+
   it("refreshes bounds after a successful auth retry", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {
@@ -381,6 +445,36 @@ describe("EmbedHost", () => {
       bounds: { x: 10, y: 20, width: 300, height: 200 },
       active: true,
     }));
+  });
+
+  it("retries an offline shared app in the retained native view", async () => {
+    let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "shared-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:reload") return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="shared-app" target={SHARED_TARGET} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "shared-app",
+      target: SHARED_TARGET,
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+
+    act(() => emitState?.({ embedId: "shared-1", state: "host-offline" }));
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "shared-1" }));
+    expect(invoke).not.toHaveBeenCalledWith("embed:close", expect.anything());
   });
 
   it("reopens the same runtime Browser URL after an unexpected tunnel failure", async () => {

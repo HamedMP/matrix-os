@@ -27,7 +27,11 @@ export interface WebSocketLike {
 
 export interface ShellSocketEvents {
   onState(state: ShellSocketState, detail?: { code?: string }): void;
-  onOutput(data: string, seq: number): void;
+  /**
+   * `written`, when a source passes it, must be called once the output has
+   * been drawn (or dropped), so the source can let more through.
+   */
+  onOutput(data: string, seq: number, written?: () => void): void;
   onCanonicalSize?(size: { cols: number; rows: number }): void;
   onNativeScroll?(state: TerminalScrollState | null): void;
   onNativeScrollSupported?(supported: boolean): void;

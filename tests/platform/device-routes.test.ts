@@ -148,6 +148,41 @@ describe("device routes", () => {
       expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
     });
 
+    it("signs the Canary desktop callback so both desktop apps can sign in side by side", async () => {
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-desktop",
+          redirectUri: "matrixos-canary://auth?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.searchParams.get("redirect_uri")).toBe(
+        "matrixos-canary://auth?status=approved",
+      );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
+    });
+
+    it("rejects Canary scheme callbacks outside the auth host", async () => {
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-desktop",
+          redirectUri: "matrixos-canary://settings?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const verificationUri = new URL((await res.json()).verificationUri);
+      expect(verificationUri.searchParams.has("redirect_uri")).toBe(false);
+      expect(verificationUri.searchParams.has("redirect_sig")).toBe(false);
+    });
+
     it("rejects arbitrary legacy scheme callbacks even for trusted desktop clients", async () => {
       const res = await app.request("/api/auth/device/code", {
         method: "POST",

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Popover from "@radix-ui/react-popover";
-import { Bell, ChevronDown, CircleCheck, CircleHelp, ExternalLink, LayoutGrid, MessageCircle, Monitor, Search } from "lucide-react";
+import { Bell, ChevronDown, CircleCheck, CircleHelp, ExternalLink, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
 
 const useHelpPopoverScope = Popover.createPopoverScope();
 
@@ -27,11 +27,14 @@ function useMenuOverlay(open: boolean, overlay?: MenuOverlay) {
 }
 
 /** Shared structure and ordering; each renderer supplies authenticated actions. */
-export function DesktopTopBarActions({ onSearch, onSupport, inbox, help, computer, update, account }: {
-  onSearch(): void; onSupport(): void; inbox: ReactNode; help: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
+export function DesktopTopBarActions({ onSearch, onSupport, onTerminal, inbox, help, computer, update, account }: {
+  onSearch(): void; onSupport(): void;
+  /** Opens the native Terminal window. Only Electron Desktop has one, so other renderers omit it. */
+  onTerminal?(): void; inbox: ReactNode; help: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
 }) {
   return <nav aria-label="Desktop controls" className="no-drag flex h-full shrink-0 items-center gap-2" style={{ color: colors.color }}>
     <button type="button" aria-label="Search" title="Search (Cmd+K)" className={actionClass} onClick={onSearch}><Search size={14} aria-hidden="true" /></button>
+    {onTerminal ? <button type="button" aria-label="Terminal window" title="Open Terminal window" className={actionClass} onClick={onTerminal}><SquareTerminal size={14} aria-hidden="true" /></button> : null}
     {inbox}{help}<button type="button" aria-label="Support" title="Support chat" className={actionClass} onClick={onSupport}><MessageCircle size={14} aria-hidden="true" /></button><div className="min-w-0 w-[156px] max-[600px]:w-28">{computer}</div>{update}{account}
   </nav>;
 }

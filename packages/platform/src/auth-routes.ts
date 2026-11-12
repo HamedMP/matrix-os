@@ -150,7 +150,10 @@ function normalizeNativeRedirectUri(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 512) return null;
   try {
     const url = new URL(value);
-    if (url.protocol === 'matrixos:' && url.hostname === 'auth') return url.toString();
+    // matrixos-canary lets Matrix OS Canary run beside the stable desktop app.
+    if ((url.protocol === 'matrixos:' || url.protocol === 'matrixos-canary:') && url.hostname === 'auth') {
+      return url.toString();
+    }
     if (url.protocol === 'matrix-os:' && url.hostname === 'device-auth' && url.search === '') {
       return url.toString();
     }

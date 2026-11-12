@@ -42,6 +42,7 @@ describe("platform collaboration routes", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: `Name ${actorId}` }),
       resolveInvitationIdentifier,
       listOrganizationIds: async () => organizationIds,
+      isCurrentOrganizationMember: async () => true,
       now: () => now,
     }));
   });

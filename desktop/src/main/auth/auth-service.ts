@@ -67,6 +67,22 @@ const EXPIRY_SKEW_MS = 30_000;
 const RUNTIME_SELECTION_TIMEOUT_MS = 10_000;
 const RUNTIME_SELECTION_RESPONSE_LIMIT = 16 * 1024;
 const RUNTIME_SELECTION_ERROR = "Computer switch failed. Try again.";
+const RETRY_AFTER_MIN_MS = 1_000;
+const RETRY_AFTER_MAX_MS = 5 * 60_000;
+
+/** The platform's shared per-owner limit on computer credentials was hit. */
+export class RuntimeTokenRateLimitedError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super(RUNTIME_SELECTION_ERROR);
+    this.name = "RuntimeTokenRateLimitedError";
+  }
+}
+
+function retryAfterMs(response: Response): number {
+  const seconds = Number(response.headers.get("retry-after"));
+  const requested = Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : 60_000;
+  return Math.min(RETRY_AFTER_MAX_MS, Math.max(RETRY_AFTER_MIN_MS, requested));
+}
 
 async function readBoundedResponseText(response: Response): Promise<string> {
   if (!response.body) return "";
@@ -93,6 +109,8 @@ async function readBoundedResponseText(response: Response): Promise<string> {
 
 interface AuthServiceDeps {
   previewContext?: VerifiedDesktopPreviewContext;
+  /** Native callback for this build's channel; defaults to the stable scheme. */
+  authRedirectUri?: string;
   credentialStore: CredentialStore;
   platformHost: string;
   runtimeSelectionOrigin: string;
@@ -223,7 +241,7 @@ export class AuthService {
     this.flowFailureReason = undefined;
     let code: DeviceCodeResponse;
     try {
-      code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : {}) });
+      code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : { redirectUri: this.deps.authRedirectUri }) });
       if (this.deps.previewContext && new URL(code.verificationUri).origin !== this.deps.previewContext.browserOrigin) throw new PreviewPairAuthMismatch(this.deps.previewContext.role);
     } catch (err: unknown) {
       if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
@@ -386,6 +404,7 @@ export class AuthService {
       const appEndpoint = new URL("/api/auth/runtime-selection", this.deps.platformHost);
       response = await fetchFn(appEndpoint.toString(), requestInit());
     }
+    if (response.status === 429) throw new RuntimeTokenRateLimitedError(retryAfterMs(response));
     if (!response.ok) throw new Error("runtime selection rejected");
     const contentLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
@@ -400,6 +419,30 @@ export class AuthService {
       userId: currentCredential.userId,
       handle: replacement.handle,
     };
+  }
+
+  /**
+   * Mints a credential bound to another of the owner's computers without
+   * changing the selected computer and without persisting anything. The
+   * Terminal window's credential broker is the only caller (spec 651 FR-003).
+   */
+  async issueRuntimeToken(slot: string): Promise<{ accessToken: string; expiresAt: number; handle: string }> {
+    if (this.deps.previewContext && slot !== this.deps.previewContext.runtimeSlot) throw new Error(RUNTIME_SELECTION_ERROR);
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    if (!currentCredential) throw new Error(RUNTIME_SELECTION_ERROR);
+    const generation = this.authGeneration;
+    try {
+      const issued = await this.exchangeRuntimeCredential(currentCredential, slot);
+      // A sign-out or credential replacement during the exchange voids the result.
+      if (generation !== this.authGeneration || this.credential !== currentCredential) throw new Error("stale runtime token");
+      return { accessToken: issued.accessToken, expiresAt: issued.expiresAt, handle: issued.handle };
+    } catch (err: unknown) {
+      console.warn("[auth] runtime token issue failed:", err instanceof Error ? err.name : typeof err);
+      // The caller paces itself by the platform's own retry delay.
+      if (err instanceof RuntimeTokenRateLimitedError) throw err;
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
   }
 
   async selectRuntime(slot: string): Promise<void> {

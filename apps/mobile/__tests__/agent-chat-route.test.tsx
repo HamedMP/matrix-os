@@ -262,7 +262,7 @@ describe("agent chat route", () => {
     });
 
     it("opens a consent page only over https", async () => {
-      const openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
 
       await openConsentPage("https://example.com/consent");
       expect(openURL).toHaveBeenCalledWith("https://example.com/consent");

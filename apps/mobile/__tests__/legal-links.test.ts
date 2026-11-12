@@ -13,7 +13,7 @@ describe("legal links", () => {
   });
 
   it("opens the requested page", () => {
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
 
     openLegalLink(PRIVACY_POLICY_URL);
 

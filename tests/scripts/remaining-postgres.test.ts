@@ -144,7 +144,8 @@ describe("remaining real PostgreSQL qualification", () => {
     for (const call of execute.mock.calls) {
       const options = call[2];
       expect(options.timeout).toBeGreaterThan(0);
-      expect(options.timeout).toBeLessThanOrEqual(60_000);
+      expect(options.timeout).toBeGreaterThanOrEqual(65_000);
+      expect(options.timeout).toBeLessThanOrEqual(90_000);
     }
     expect(JSON.parse(readFileSync(join(output, "inventory.json"), "utf8")))
       .toMatchObject({ qualified: true, verifiedPassedAssertions: 17 });
@@ -155,7 +156,7 @@ describe("remaining real PostgreSQL qualification", () => {
     const { root } = fixture({ [remaining]: "// no real database needed", ...Object.fromEntries(files.map(file => [file, "process.env.MATRIX_TEST_POSTGRES_URL;"])) });
     let clock = 0;
     const writeReport = executor(root);
-    const execute = vi.fn((...args: Parameters<typeof writeReport>) => { const result = writeReport(...args); clock = 180_001; return result; });
+    const execute = vi.fn((...args: Parameters<typeof writeReport>) => { const result = writeReport(...args); clock = 240_001; return result; });
     const output = join(root, "output");
     expect(runRemainingPostgres(root, env, execute, output, files, () => clock)).toBe(1);
     expect(execute).toHaveBeenCalledTimes(1);

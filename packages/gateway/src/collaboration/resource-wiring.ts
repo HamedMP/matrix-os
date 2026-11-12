@@ -120,7 +120,8 @@ export function enableGatewaySharedResources<Project>(input: {
         const bridge = createScopedAppBridge({
           resolveApp: async (appId) => {
             const record = await registeredApp(appId);
-            return record ? { storageSchema: normalizeAppStorageSlug(record.slug), tables: Object.keys(record.tables) } : null;
+            return record ? { storageSchema: normalizeAppStorageSlug(record.slug), tables: record.tables,
+              installedVersion: record.installed_version } : null;
           },
         });
         return createAppInstanceAdapter({
