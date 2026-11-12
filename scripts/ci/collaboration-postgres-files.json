@@ -15,6 +15,7 @@
   "tests/gateway/collaboration-direct-terminal-output-postgres.test.ts",
   "tests/gateway/collaboration-membership-races.test.ts",
   "tests/gateway/collaboration-owner-source.test.ts",
+  "tests/gateway/collaboration-project-sharing.test.ts",
   "tests/gateway/collaboration-project-transition.test.ts",
   "tests/gateway/collaboration-repository-postgres.test.ts",
   "tests/gateway/collaboration-scoped-app-bridge-postgres.test.ts",
