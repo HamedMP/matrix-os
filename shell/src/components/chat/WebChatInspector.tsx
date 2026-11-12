@@ -183,7 +183,7 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
     target.addEventListener("pointerup", end);
   };
   return <><aside ref={panelRef} aria-label="Chat inspector" className={`${overlay ? "absolute inset-y-0 right-0 z-30" : "relative shrink-0"} flex min-h-0 flex-col border-l bg-background shadow-lg`}
-    style={{ width: overlay ? Math.min(layout.width, rootWidth) : width }}>
+    style={{ width: overlay ? Math.max(240, rootWidth - railWidth) : width }}>
     {!overlay ? <div role="separator" aria-label="Resize Chat inspector" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={maxWidth} aria-valuenow={Math.round(width)} tabIndex={0}
       className="absolute -left-1 inset-y-0 z-20 w-2 cursor-col-resize" onPointerDown={resize} onDoubleClick={() => setLayout(current => ({ ...current, width: 400 }))}
       onKeyDown={event => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setLayout(current => ({ ...current, width: Math.max(240, Math.min(maxWidth, current.width + (event.key === "ArrowLeft" ? 16 : -16))) })); } }}/>: null}
