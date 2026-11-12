@@ -58,7 +58,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       // A Private Preview may pass only while spec 537 P5 holds for it.
       const restricted = await getPersonalAccountRestrictedMachineByHandle(db, handle);
       if (restricted && !(await options.privatePreviewEligibility?.(restricted))) {
-        c.res = c.json({ error: 'Forbidden' }, 403);
+        c.res = c.json({ error: 'Forbidden', code: 'preview_integrations_unavailable' }, 403);
         return;
       }
       // Customer VPSes are persisted in user_machines. Keep the legacy
