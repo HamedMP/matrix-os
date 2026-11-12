@@ -25,6 +25,8 @@ export interface CoreRepoObjectsTable {
   organization_id: string;
   commit_sha: string;
   created_at: Timestamp;
+  /** Refreshed by every upload and every pin of this commit; retention measures its grace from here. */
+  updated_at: Timestamp;
 }
 
 export interface CoreRepoWebhookDeliveriesTable {
@@ -38,7 +40,7 @@ export interface CoreRepoDatabase {
   core_repo_objects: CoreRepoObjectsTable;
 }
 
-export const CORE_REPO_SCHEMA_REVISION = { generation: 2, fingerprint: "core-repo-pins-deliveries-objects-v2" } as const;
+export const CORE_REPO_SCHEMA_REVISION = { generation: 3, fingerprint: "core-repo-pins-deliveries-objects-touched-v3" } as const;
 export const CORE_REPO_FAILURES = ["token", "ref", "download", "too_large", "archive", "storage"] as const;
 export type CoreRepoFailure = typeof CORE_REPO_FAILURES[number];
 const DELIVERY_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -73,6 +75,8 @@ async function createCoreRepoTables(db: Transaction<CoreRepoDatabase>): Promise<
       PRIMARY KEY (organization_id, commit_sha)
     )
   `.execute(db);
+  // Generation 3: retention claims rows by last touch, not by first upload.
+  await sql`ALTER TABLE core_repo_objects ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`.execute(db);
 }
 
 export async function bootstrapCoreRepoDatabase(db: Kysely<CoreRepoDatabase>): Promise<void> {
@@ -96,36 +100,50 @@ export function createCoreRepoRepository(db: Kysely<CoreRepoDatabase>, now: () =
       return rows.map(row => ({ organizationId: row.organization_id, commit: row.commit_sha!, sha256: row.sha256!, bytes: row.bytes! }));
     },
 
-    /** Moves the pin in one statement, remembers the commit it replaced, and clears the failure. */
+    /**
+     * Moves the pin, remembers the commit it replaced, clears the failure, and
+     * refreshes the commit's object row, all in one transaction, so a
+     * concurrent retention sweep cannot claim a commit that was just pinned.
+     */
     async pin(record: CoreRepoPinRecord): Promise<void> {
       const at = now();
-      await db.insertInto("core_repo_pins").values({ organization_id: record.organizationId, commit_sha: record.commit,
-        sha256: record.sha256, bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null, previous_commit_sha: null })
-        .onConflict(conflict => conflict.column("organization_id").doUpdateSet({ commit_sha: record.commit, sha256: record.sha256,
-          bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null,
-          previous_commit_sha: sql<string | null>`CASE WHEN core_repo_pins.commit_sha IS DISTINCT FROM excluded.commit_sha
-            THEN core_repo_pins.commit_sha ELSE core_repo_pins.previous_commit_sha END` })).execute();
+      await db.transaction().execute(async (trx) => {
+        await trx.insertInto("core_repo_pins").values({ organization_id: record.organizationId, commit_sha: record.commit,
+          sha256: record.sha256, bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null, previous_commit_sha: null })
+          .onConflict(conflict => conflict.column("organization_id").doUpdateSet({ commit_sha: record.commit, sha256: record.sha256,
+            bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null,
+            previous_commit_sha: sql<string | null>`CASE WHEN core_repo_pins.commit_sha IS DISTINCT FROM excluded.commit_sha
+              THEN core_repo_pins.commit_sha ELSE core_repo_pins.previous_commit_sha END` })).execute();
+        await trx.insertInto("core_repo_objects").values({ organization_id: record.organizationId, commit_sha: record.commit, updated_at: at })
+          .onConflict(conflict => conflict.columns(["organization_id", "commit_sha"]).doUpdateSet({ updated_at: at })).execute();
+      });
     },
 
-    /** Recorded before the upload, so a failed upload or pin write still leaves a row to clean up. */
+    /** Recorded (or refreshed) before each upload, so a failed upload or pin write still leaves a row to clean up. */
     async recordObject(organizationId: string, commit: string): Promise<void> {
-      await db.insertInto("core_repo_objects").values({ organization_id: organizationId, commit_sha: commit })
-        .onConflict(conflict => conflict.columns(["organization_id", "commit_sha"]).doNothing()).execute();
+      const at = now();
+      await db.insertInto("core_repo_objects").values({ organization_id: organizationId, commit_sha: commit, updated_at: at })
+        .onConflict(conflict => conflict.columns(["organization_id", "commit_sha"]).doUpdateSet({ updated_at: at })).execute();
     },
 
-    /** Stored commits that are neither the current nor the previous pin and are older than `before`. */
-    async listUnreferencedObjects(organizationId: string, before: Date): Promise<string[]> {
-      const pin = await db.selectFrom("core_repo_pins").select(["commit_sha", "previous_commit_sha"])
-        .where("organization_id", "=", organizationId).executeTakeFirst();
-      const keep = [pin?.commit_sha, pin?.previous_commit_sha].filter((value): value is string => Boolean(value));
-      let query = db.selectFrom("core_repo_objects").select("commit_sha")
-        .where("organization_id", "=", organizationId).where("created_at", "<", before);
-      if (keep.length > 0) query = query.where("commit_sha", "not in", keep);
-      return (await query.orderBy("created_at").limit(CORE_REPO_MAX_TRACKED_OBJECTS).execute()).map(row => row.commit_sha);
-    },
-
-    async forgetObject(organizationId: string, commit: string): Promise<void> {
-      await db.deleteFrom("core_repo_objects").where("organization_id", "=", organizationId).where("commit_sha", "=", commit).execute();
+    /**
+     * Deletes and returns, in one statement, rows that are neither the
+     * current nor the previous pin and were not touched since `before`. The
+     * caller deletes each object only after its row is gone.
+     */
+    async claimUnreferencedObjects(organizationId: string, before: Date): Promise<string[]> {
+      const result = await sql<{ commit_sha: string }>`
+        DELETE FROM core_repo_objects AS o
+        WHERE o.organization_id = ${organizationId}
+          AND (o.organization_id, o.commit_sha) IN (
+            SELECT c.organization_id, c.commit_sha FROM core_repo_objects AS c
+            WHERE c.organization_id = ${organizationId} AND c.updated_at < ${before}
+              AND NOT EXISTS (SELECT 1 FROM core_repo_pins AS p WHERE p.organization_id = c.organization_id
+                AND (p.commit_sha = c.commit_sha OR p.previous_commit_sha = c.commit_sha))
+            ORDER BY c.updated_at LIMIT ${CORE_REPO_MAX_TRACKED_OBJECTS}
+            FOR UPDATE SKIP LOCKED)
+        RETURNING o.commit_sha`.execute(db);
+      return result.rows.map(row => row.commit_sha).sort();
     },
 
     /** Records why a sync failed without touching the last good pin. */

@@ -115,7 +115,7 @@ describe("Matrix Core repo webhook fan-out", () => {
     const service = createCoreRepoSyncService({
       config: { sources },
       github: { headCommit: async (source) => { synced.push(source.orgId); throw new CoreRepoUpstreamError("ref"); }, downloadTarball: vi.fn() },
-      store: { putObject: vi.fn(), getObject: vi.fn(), deleteObject: vi.fn() },
+      store: { putObject: vi.fn(), getObject: vi.fn(), headObject: vi.fn(), deleteObject: vi.fn() },
       repository: { getPin: async () => null, recordFailure: async () => {} } as never,
     });
     const secret = "s".repeat(40);
@@ -167,6 +167,7 @@ describe("Matrix Core repo tarball retention", () => {
         store: {
           putObject: async (key, body) => { objects.set(key, body); return {}; },
           getObject: vi.fn(),
+          headObject: async (key) => ({ exists: objects.has(key) }),
           deleteObject: async (key) => { objects.delete(key); },
         },
         repository: repository as never,
@@ -186,6 +187,12 @@ describe("Matrix Core repo tarball retention", () => {
       head = "c".repeat(40);
       await service.syncAll();
       expect([...objects.keys()].sort()).toEqual([key("b".repeat(40)), key("c".repeat(40))]);
+
+      // Fault: a pinned tarball deleted by a racing sweep is never restored.
+      objects.delete(key("c".repeat(40)));
+      expect(await service.syncOrg("org_acme1")).toEqual({ status: "pinned", commit: "c".repeat(40) });
+      expect(objects.has(key("c".repeat(40)))).toBe(true);
+      expect(await service.syncOrg("org_acme1")).toEqual({ status: "unchanged", commit: "c".repeat(40) });
       await service.stop();
     } finally {
       await db.destroy();
@@ -255,6 +262,34 @@ describe("Matrix Core repo pins beyond one membership page", () => {
       const response = await request();
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ pins: [] });
+    } finally {
+      await db.destroy();
+    }
+  });
+});
+
+describe("Matrix Core repo retention claims", () => {
+  // Fault: a sweep deletes the tarball of a commit another instance has just re-pinned (for example a rollback).
+  it("claims only rows still unreferenced and untouched, in one statement", async () => {
+    const { KyselyPGlite } = await import("kysely-pglite");
+    const { Kysely, sql } = await import("kysely");
+    const { bootstrapCoreRepoDatabase, createCoreRepoRepository } = await import("../../packages/platform/src/core-repo/database.js");
+    const db = new Kysely<never>({ dialect: (await KyselyPGlite.create()).dialect });
+    try {
+      await bootstrapCoreRepoDatabase(db as never);
+      const repository = createCoreRepoRepository(db as never);
+      const pin = (char: string) => repository.pin({ organizationId: "org_acme1", commit: char.repeat(40), sha256: "f".repeat(64), bytes: 1 });
+      for (const char of ["a", "b", "c", "d"]) await repository.recordObject("org_acme1", char.repeat(40));
+      await sql`UPDATE core_repo_objects SET updated_at = now() - interval '2 hours'`.execute(db);
+      // a is pinned after the rows aged: the pin write itself must refresh its row.
+      await pin("b");
+      await pin("a");
+      await sql`UPDATE core_repo_objects SET updated_at = now() - interval '2 hours' WHERE commit_sha <> ${"a".repeat(40)}`.execute(db);
+      const grace = new Date(Date.now() - 60 * 60_000);
+      expect(await repository.claimUnreferencedObjects("org_acme1", grace)).toEqual(["c".repeat(40), "d".repeat(40)].sort());
+      const left = await sql<{ commit_sha: string }>`SELECT commit_sha FROM core_repo_objects ORDER BY commit_sha`.execute(db);
+      expect(left.rows.map(row => row.commit_sha)).toEqual(["a".repeat(40), "b".repeat(40)]);
+      expect(await repository.claimUnreferencedObjects("org_acme1", grace)).toEqual([]);
     } finally {
       await db.destroy();
     }

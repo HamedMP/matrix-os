@@ -21,6 +21,7 @@ const STORE_TIMEOUT_MS = 30_000;
 export interface CoreRepoObjectStore {
   putObject(key: string, body: Uint8Array, options?: { signal?: AbortSignal }): Promise<unknown>;
   getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: ReadableStream | null; contentLength?: number }>;
+  headObject(key: string, options?: { signal?: AbortSignal }): Promise<{ exists: boolean }>;
   deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
 }
 
@@ -65,7 +66,8 @@ export function createCoreRepoSyncService(options: {
     try { head = await options.github.headCommit(source); }
     catch (error: unknown) { return fail(source.orgId, failureOf(error), error); }
     const current = await options.repository.getPin(source.orgId);
-    if (current?.commit === head.commit) return { status: "unchanged", commit: head.commit };
+    // Self-heal: a pinned tarball lost to a racing sweep (or by hand) is fetched and stored again.
+    if (current?.commit === head.commit && await pinnedObjectExists(source.orgId, head.commit)) return { status: "unchanged", commit: head.commit };
     let bytes: Uint8Array;
     try {
       bytes = await options.github.downloadTarball(source, head.commit, head.token);
@@ -83,22 +85,35 @@ export function createCoreRepoSyncService(options: {
   /**
    * Deletes tarballs that are neither the current nor the previous pin,
    * including uploads whose pin write failed. Best effort: a failed delete
-   * keeps its row and is retried by the next sweep.
+   * restores its row and is retried by the next sweep.
    */
   async function collectGarbage(organizationId: string): Promise<void> {
     let commits: string[];
-    try { commits = await options.repository.listUnreferencedObjects(organizationId, new Date(now().getTime() - objectGraceMs)); }
+    // The row is claimed (deleted) first; the object goes only after that, so a re-pin that refreshed the row is never touched.
+    try { commits = await options.repository.claimUnreferencedObjects(organizationId, new Date(now().getTime() - objectGraceMs)); }
     catch (error: unknown) {
-      console.warn("[core-repo] retention listing failed", error instanceof Error ? error.name : "UnknownError");
+      console.warn("[core-repo] retention claim failed", error instanceof Error ? error.name : "UnknownError");
       return;
     }
     for (const commit of commits) {
       try {
         await options.store.deleteObject(coreRepoObjectKey(organizationId, commit), { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
-        await options.repository.forgetObject(organizationId, commit);
       } catch (error: unknown) {
         console.warn("[core-repo] tarball delete failed; retried next sweep", { organizationId, error: error instanceof Error ? error.name : "UnknownError" });
+        await options.repository.recordObject(organizationId, commit).catch((retry: unknown) => {
+          console.warn("[core-repo] retention row restore failed", retry instanceof Error ? retry.name : "UnknownError");
+        });
       }
+    }
+  }
+
+  /** True unless storage positively reports the object missing; a probe error keeps the pin as is. */
+  async function pinnedObjectExists(organizationId: string, commit: string): Promise<boolean> {
+    try {
+      return (await options.store.headObject(coreRepoObjectKey(organizationId, commit), { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) })).exists;
+    } catch (error: unknown) {
+      console.warn("[core-repo] tarball probe failed", { organizationId, error: error instanceof Error ? error.name : "UnknownError" });
+      return true;
     }
   }
 

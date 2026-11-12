@@ -103,6 +103,7 @@ describe("Matrix Core repo checkpoint", () => {
       store: {
         putObject: async (key, body) => { objects.set(key, Buffer.from(body)); return {}; },
         getObject: async (key) => ({ body: objects.has(key) ? new Response(objects.get(key)).body : null }),
+        headObject: async (key) => ({ exists: objects.has(key) }),
         deleteObject: async (key) => { objects.delete(key); },
       },
       organizations: { repository: organizations, projection: {
