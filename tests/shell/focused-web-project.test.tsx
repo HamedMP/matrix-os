@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { StrictMode, useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FocusedWebProject } from "../../shell/src/components/chat/FocusedWebProject";
 import { WebProjectHome } from "../../shell/src/components/chat/WebProjectHome";
@@ -11,6 +11,7 @@ import { usePreviewWindow } from "../../shell/src/hooks/usePreviewWindow";
 import { PreviewWindow } from "../../shell/src/components/preview-window/PreviewWindow";
 import { organizationDriveNavigationIdentity } from "../../shell/src/stores/organization-drive-navigation";
 import { FileBrowser } from "../../shell/src/components/file-browser/FileBrowser";
+import { QuickLook } from "../../shell/src/components/file-browser/QuickLook";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => {
@@ -18,6 +19,11 @@ vi.mock("@clerk/nextjs", () => ({ useAuth: () => {
   return { userId: "owner", sessionId: "session" };
 } }));
 vi.mock("@/hooks/useFileWatcher", () => ({ useFileWatcher: vi.fn() }));
+vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
+  CodeEditor: ({ content, filename, onChange }: {
+    content: string; filename: string; onChange(value: string): void;
+  }) => <textarea aria-label={filename} value={content} onChange={e => onChange(e.target.value)} />,
+}));
 // Every fetched Chat is already listed, and paging has reached its cap.
 vi.mock("../../shell/src/components/chat/usePagedProjectChats", async original => ({
   ...await original<typeof import("../../shell/src/components/chat/usePagedProjectChats")>(),
@@ -144,6 +150,99 @@ it("hands keyboard focus to the requested Preview tab each time a project file i
     await waitFor(() => expect(document.activeElement).toBe(tab));
   }
   expect(screen.getAllByRole("tab", { name: "AGENTS.md" })).toHaveLength(1);
+});
+
+it.each(["Files", "Agent configuration"] as const)("keeps one draft when a project file is first opened from %s", async (first) => {
+  const folder = "Projects/france";
+  const path = `${folder}/AGENTS.md`;
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/agent-context")) {
+      return Response.json({ instructions: ["AGENTS.md"], skills: [], mcpServers: [], incompleteSources: [] });
+    }
+    if (url.includes("/files-location?")) return Response.json({ path: url.includes("&file=") ? path : folder });
+    if (url.includes("/api/files/list?")) return Response.json({ entries: [{ name: "AGENTS.md", type: "file" }] });
+    if (init?.method === "PUT") return Response.json({ ok: true });
+    if (url.includes("/api/files/blob?") || url.includes("/files/Projects/france/AGENTS.md")) return new Response("original");
+    return Response.json({});
+  });
+  vi.stubGlobal("fetch", fetch);
+  function ShellFixture() {
+    const [filesOpen, setFilesOpen] = useState(false);
+    const windows = useWindowManager(state => state.windows);
+    return <WebProjectAgentContextNavigation.Provider value={{
+      openFiles: () => {
+        useWindowManager.setState({ focusedWindowId: "files" });
+        setFilesOpen(true);
+      },
+      openMcpSettings: vi.fn(),
+      openPreview: () => useWindowManager.getState().openWindow("Preview", "__preview-window__", 0),
+    }}>
+      <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
+      {filesOpen && <FileBrowser windowId="files" />}
+      {windows.map(window => window.path === "__preview-window__" && <PreviewWindow key={window.id} />)}
+    </WebProjectAgentContextNavigation.Provider>;
+  }
+  render(<ShellFixture />);
+  fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  const openProjectFile = await screen.findByRole("button", { name: "Open AGENTS.md" });
+  fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
+  const file = await screen.findByRole("gridcell", { name: "AGENTS.md" });
+
+  if (first === "Files") {
+    fireEvent.doubleClick(file);
+    fireEvent.click(await screen.findByRole("button", { name: "Source" }));
+  } else {
+    fireEvent.click(openProjectFile);
+  }
+  const editor = await screen.findByRole("textbox", { name: "AGENTS.md" });
+  fireEvent.change(editor, { target: { value: "unsaved draft" } });
+  const originalTabId = usePreviewWindow.getState().activeTabId;
+
+  if (first === "Files") {
+    await act(async () => fireEvent.click(openProjectFile));
+  } else {
+    fireEvent.doubleClick(file);
+  }
+  await waitFor(() => expect(usePreviewWindow.getState().tabs).toHaveLength(1));
+  expect(usePreviewWindow.getState().activeTabId).toBe(originalTabId);
+
+  fireEvent.click(file);
+  fireEvent.keyDown(screen.getByRole("group", { name: "File browser" }), { key: " " });
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Open", exact: true }));
+  expect(usePreviewWindow.getState().tabs).toHaveLength(1);
+  expect(usePreviewWindow.getState().activeTabId).toBe(originalTabId);
+  expect(screen.getByRole("textbox", { name: "AGENTS.md" })).toBe(editor);
+  expect((editor as HTMLTextAreaElement).value).toBe("unsaved draft");
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByText("Saved")).toBeTruthy());
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === "PUT")).toEqual([[
+    expect.stringContaining("/api/files/blob?path=Projects%2Ffrance%2FAGENTS.md&force=true"),
+    expect.objectContaining({ body: "unsaved draft" }),
+  ]]);
+});
+
+it("loads Quick Look from the current computer and aborts the previous preview", async () => {
+  const firstGateway = `${window.location.origin}/vm/first`;
+  const secondGateway = `${window.location.origin}/vm/second`;
+  let finishFirst!: (response: Response) => void;
+  const fetch = vi.fn((url: string, _init?: RequestInit) => {
+    if (url.startsWith(firstGateway)) return new Promise<Response>(resolve => { finishFirst = resolve; });
+    return Promise.resolve(new Response("second computer contents"));
+  });
+  vi.stubGlobal("fetch", fetch);
+  useFileBrowser.setState({ currentPath: "Projects/france", quickLookPath: "AGENTS.md" });
+  const onOpenFile = vi.fn();
+  const { rerender } = render(<QuickLook gatewayUrl={firstGateway} onOpenFile={onOpenFile} />);
+  const firstRequest = fetch.mock.calls[0];
+  expect(firstRequest?.[0]).toBe(`${firstGateway}/files/Projects/france/AGENTS.md`);
+
+  rerender(<QuickLook gatewayUrl={secondGateway} onOpenFile={onOpenFile} />);
+  expect(firstRequest?.[1]?.signal?.aborted).toBe(true);
+  expect(await screen.findByText("second computer contents")).toBeTruthy();
+  await act(async () => finishFirst(new Response("first computer contents")));
+  expect(screen.queryByText("first computer contents")).toBeNull();
 });
 
 it("creates a project MCP config with an empty server map", async () => {

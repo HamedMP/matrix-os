@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
 import { ProjectAgentContextPanel } from "@matrix-os/ui";
 import {
@@ -11,12 +11,12 @@ import {
   projectAgentContextFileLocationRequest,
   projectAgentContextFilesPath,
 } from "@matrix-os/ui/project-agent-context";
-import { AppError } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
+import { useDesktopProjectAgentContextReader } from "./desktop-project-slash-scope";
 
 function openMcpSettings(): void {
   useUi.getState().requestSettingsSection("mcps");
@@ -52,17 +52,7 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
   const [fileError, setFileError] = useState<string | null>(null);
   useLayoutEffect(() => () => fileRequest.current?.abort(), []);
 
-  const read = useCallback(async (path: string, signal: AbortSignal) => {
-    if (!api) return null;
-    try {
-      return await api.forRuntime(runtimeSlot).get<unknown>(path, {
-        signal, cache: "no-store", maxBytes: PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT, omitErrorBody: true,
-      });
-    } catch (error: unknown) {
-      if (error instanceof AppError && [403, 404].includes(error.httpStatus ?? 0)) return null;
-      throw error;
-    }
-  }, [api, runtimeSlot]);
+  const { read } = useDesktopProjectAgentContextReader();
 
   const isCurrentAuthority = (runtime: number, signal: AbortSignal) => {
     const connection = useConnection.getState();
@@ -134,7 +124,7 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
   return <ProjectAgentContextPanel
     scope={scope}
     projectId={projectId}
-    read={api ? read : null}
+    read={read}
     onOpenFiles={api ? onOpenFiles : undefined}
     onOpenFile={api ? file => { void openFile(file); } : undefined}
     onCreateFile={api ? openFile : undefined}

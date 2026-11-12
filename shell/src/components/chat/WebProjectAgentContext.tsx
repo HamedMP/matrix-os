@@ -60,6 +60,15 @@ function request(gatewayUrl: string, path: string, signal: AbortSignal, init?: R
   });
 }
 
+export async function readWebProjectAgentContext(gatewayUrl: string, path: string, signal: AbortSignal, isCurrentAuthority?: () => boolean): Promise<unknown> {
+  if (signal.aborted || (isCurrentAuthority && !isCurrentAuthority())) return null;
+  const response = await request(gatewayUrl, path, signal, { redirect: "error" });
+  if ([403, 404].includes(response.status)) return null;
+  if (!response.ok) throw new Error("Project context request failed");
+  const result = await readJson(response);
+  return signal.aborted || (isCurrentAuthority && !isCurrentAuthority()) ? null : result;
+}
+
 interface WebProjectAgentContextProps {
   gatewayUrl: string;
   identity: string;
@@ -85,14 +94,9 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
   const [filesError, setFilesError] = useState<string | null>(null);
   useLayoutEffect(() => () => filesRequest.current?.abort(), []);
 
-  const read = useCallback(async (path: string, signal: AbortSignal) => {
-    if (isCurrentAuthority && !isCurrentAuthority()) return null;
-    const response = await request(gatewayUrl, path, signal);
-    if ([403, 404].includes(response.status)) return null;
-    if (!response.ok) throw new Error("Project context request failed");
-    const result = await readJson(response);
-    return isCurrentAuthority && !isCurrentAuthority() ? null : result;
-  }, [gatewayUrl, isCurrentAuthority]);
+  const read = useCallback((path: string, signal: AbortSignal) => (
+    readWebProjectAgentContext(gatewayUrl, path, signal, isCurrentAuthority)
+  ), [gatewayUrl, isCurrentAuthority]);
 
   // The existing Files store is bound to the mounted OS view's gateway.
   // A separately routed chat must not send a folder path to that computer.

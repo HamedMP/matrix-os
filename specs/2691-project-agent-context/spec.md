@@ -18,6 +18,10 @@ Within Skills, **Add skill** opens three options. **Choose installed skill** sea
 
 Config files offers a Create action for each missing starter. When all starters exist, the section explains that they can be opened for editing.
 
+In a personal primary-checkout Chat, `/` shows skills from the selected project and commands from the selected runtime. No installed computer skills replace a missing, unavailable, or empty project list. Selecting a skill adds a removable item bound to the current draft, project and runtime. On Send, the user message asks the agent to read that exact relative manifest in the admitted project. The action does not alter runtime permissions. Chats using a different execution root do not offer primary-checkout skills.
+
+The **Config files** section offers explicit **Create** buttons for missing starters. In a writable Files folder on Electron Desktop, Web Desktop and Web Canvas, the toolbar **+** opens **New Folder** and **New File**. Both ask for a name in the current folder. New File creates exclusively and opens the new file in the existing editor or preview. In Electron Desktop, **Open in Editor** from a file preview opens the exact selected file and brings the existing Editor window to the front, restoring it if it was closed or minimized.
+
 The inventory is available in Electron Desktop, Web Desktop and Web Canvas. Mobile is outside this feature’s scope. The list describes project files. Skill availability, config trust, and MCP connection status depend on the selected runtime. Worktree-specific inventory, automatic Markdown injection, and shared project inventory are deferred.
 
 ## Wiring and authorization
@@ -42,7 +46,12 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 - Valid Codex TOML and Claude JSON declarations appear with distinct source labels. Credentials, URLs, headers, executable arguments, instruction bodies, and skill bodies never appear in the response.
 - Exact file actions reach the existing editor or preview. Creation only writes an allowlisted path in the same active project and rejects overwrites. Files and computer MCP actions reach existing surfaces where supported. Loading, empty, partial, error and retry states remain legible at narrow widths.
 - Opening a project file on Web raises Preview and places keyboard focus on the selected file tab. When switching from Canvas to Desktop, a Preview window without a previous Desktop position starts centered in the Desktop work area. An existing Desktop position is restored and adjusted only as needed to keep the editor inside the Desktop work area.
+- Opening the same file from Files, Quick Look, or Agent configuration on Web reuses its Preview tab and unsaved edits within the current account, session, and computer.
+- A pending Preview save and newer unsaved text survive switching between Web Desktop and Web Canvas. Switching account, session, or computer clears the old draft and cancels its pending write.
 - Verify all three Add skill actions create the expected Markdown in the selected project, preserve copied or imported content, and reject duplicates. The installed picker loads only the selected file.
+- A New skill draft survives an inventory refresh and retry. Switching the project, account, or computer discards that draft.
+- A message accepts up to five project skills. Trying to add another keeps the typed slash text and explains how to make room.
+- Web Desktop, Web Canvas, and Electron Desktop can queue a selected project skill during a run in the same primary checkout.
 - Verify the actual editor can create, modify and save a project skill, MCP declaration and instruction file. Refresh shows the new declarations only in their project. A failed read cannot be saved as an empty file, and a failed write preserves the draft.
 - Verify instruction behavior using the pinned native process and synthetic local inference, plus Gateway tests for project/worktree dispatch, retry/resume provenance and intentional suppression. Keep local runtime and release/production evidence separate.
 

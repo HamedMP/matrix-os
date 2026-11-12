@@ -9,7 +9,7 @@ import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigati
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
-import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
+import type { ChatAgentDraftRequest, ChatCollaborationView, ProjectChatSlashScope, StartAgentChat } from "@matrix-os/ui";
 
 import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
@@ -30,6 +30,7 @@ import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
 import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { WebProjectHome } from "./chat/WebProjectHome";
+import { readWebProjectAgentContext } from "./chat/WebProjectAgentContext";
 import { projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
@@ -189,6 +190,7 @@ interface ChatAppProps {
   canSteerQueuedTurns?: boolean;
   /** The Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  projectSkillRootAvailable?: boolean;
   /** Puts a new Chat in a project or moves the active one; null removes it. */
   onSetChatProject?: (projectId: string | null) => void;
   providerSelection?: CanonicalChatModelSelection;
@@ -234,7 +236,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -369,6 +371,13 @@ function ChatAppContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
   const slashCatalogLoading = botBinding.loading || providerState.loading;
+  const projectSlash: ProjectChatSlashScope | undefined = !mobile && chatProjectId ? {
+    projectId: chatProjectId,
+    scope: webProjects.identity,
+    read: projectSkillRootAvailable && !collaborationView && !directBotId && !botIdentityUnknown && isCurrentAuthority
+      ? (path, signal) => readWebProjectAgentContext(projectGatewayUrl, path, signal, isCurrentAuthority)
+      : null,
+  } : undefined;
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
@@ -416,6 +425,7 @@ function ChatAppContent({
       interactionMode: providerState.selected.interactionMode,
       permissionMode: mentionOptions?.permissionMode ?? providerState.selected.permissionMode,
       ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources } : {}),
+      ...(mentionOptions?.projectSkillProjectId ? { projectSkillProjectId: mentionOptions.projectSkillProjectId } : {}),
       ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
       ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       modelOptions: providerState.selected.selectedOptions,
@@ -715,7 +725,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
-            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, projectSlash, isCurrentAuthority, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -832,6 +842,8 @@ function ChatAppContent({
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}
                 slashCatalogLoading={slashCatalogLoading}
+                projectSlash={projectSlash}
+                isCurrentAuthority={isCurrentAuthority}
                 botContext={Boolean(directBotId)}
                 botControls={botComposerControls}
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
@@ -881,7 +893,7 @@ function EmptyState({
   attachmentsEnabled,
   projectHome,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "projectSlash" | "isCurrentAuthority" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   mobile: boolean;

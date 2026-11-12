@@ -28,11 +28,18 @@ beforeAll(async () => {
         function Fixture() {
           const [value, setValue] = useState("");
           const [tokens, setTokens] = useState([]);
+          const [sent, setSent] = useState("");
+          const inProject = new URLSearchParams(location.search).has("project");
+          const projectSlashScope = inProject ? {
+            scope: "isolated-fixture", projectId: "fixture",
+            read: async () => ({ skills: [{ name: "release-check", source: ".agents/skills" }], instructions: [], mcpServers: [], incompleteSources: [] }),
+          } : undefined;
           return <main className="flex h-[420px] w-[640px] flex-col overflow-hidden">
-            <header className="flex-1 overflow-y-auto">Project home</header>
+            <header className="flex-1 overflow-y-auto">Project home {sent && <output>{sent}</output>}</header>
             <section className="relative flex min-h-0 shrink flex-col overflow-hidden">
               <SharedChatComposer value={value} onChange={setValue} referenceTokens={tokens}
-                onReferenceTokensChange={setTokens} onSubmit={() => { throw new Error("Unexpected send"); }}
+                onReferenceTokensChange={setTokens} projectSlashScope={projectSlashScope}
+                onSubmit={submission => { if (!inProject) throw new Error("Unexpected send"); setSent(submission.text); }}
                 busy={false} catalog={catalog} selection={createCanonicalComposerSelection(catalog)}
                 onSelectionChange={() => {}} instanceLocked={false} resources={[{kind:"file",id:"readme",label:"README.md"}]}
                 ariaLabel="Start a chat" menuSide="bottom" />
@@ -108,6 +115,37 @@ it.each([
       await page.locator("main").evaluate(element => { element.style.display = "none"; });
       await popup.waitFor({ state: "hidden" });
     }
+  } finally {
+    await page.close();
+  }
+});
+
+
+it("selects the project Skill through the real composer without sending an installed Skill", async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 460 } });
+  page.setDefaultTimeout(4500);
+  try {
+    const origin = "https://matrix-fixture.invalid/?project";
+    await page.route("**/*", route => route.request().url() === origin
+      ? route.fulfill({ contentType: "text/html", body: `<!doctype html><style>${css}
+      :root{--bg-overlay:#fff;--border-default:#ccc;--text-primary:#222;--text-tertiary:#555}
+      body{margin:20px;font:14px Arial}
+      </style><div id="root"></div>` }) : route.abort());
+    await page.goto(origin);
+    await page.addScriptTag({ content: script });
+    const editor = page.getByRole("textbox", { name: "Start a chat" });
+    await editor.pressSequentially("/");
+    const list = page.getByRole("listbox", { name: "Skills and commands" });
+    await list.getByRole("option", { name: /release-check/ }).waitFor();
+    expect(await list.getByRole("option", { name: /review/ }).count()).toBe(0);
+    const evidence = process.env.MATRIX_PROJECT_COMPOSER_EVIDENCE_DIR;
+    if (evidence) await page.screenshot({ path: join(evidence, "project-only-skill-slash-menu.png") });
+    await list.getByRole("option", { name: /release-check/ }).click();
+    await page.getByRole("button", { name: "Remove skill release-check" }).waitFor();
+    expect(await page.locator("output").count()).toBe(0);
+    await editor.press("Enter");
+    await page.locator("output").waitFor();
+    expect(await page.locator("output").textContent()).toContain(".agents/skills/release-check/SKILL.md");
   } finally {
     await page.close();
   }
