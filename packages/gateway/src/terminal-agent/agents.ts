@@ -264,14 +264,23 @@ export function createTerminalAgents(options: {
         ...(command ? { command } : {}),
       });
       const ref = { workspaceId: workspace.id, tabId: tab.id };
-      await options.registry.upsert(ref, (current) => ({
-        ...current,
-        ...(tab.incarnation ? { incarnation: tab.incarnation } : {}),
-        labels: { ...current.labels, ...input.labels },
-        ...(parent ? { parent } : {}),
-        outliveParent: input.outliveParent === true,
-        ...(template ? { template: template.name } : {}),
-      }));
+      try {
+        await options.registry.upsert(ref, (current) => ({
+          ...current,
+          ...(tab.incarnation ? { incarnation: tab.incarnation } : {}),
+          labels: { ...current.labels, ...input.labels },
+          ...(parent ? { parent } : {}),
+          outliveParent: input.outliveParent === true,
+          ...(template ? { template: template.name } : {}),
+        }));
+      } catch (error: unknown) {
+        // An unregistered helper would run with no parent or cleanup, and a retry would
+        // start a second copy: end exactly this incarnation, then report the failure.
+        await options.runtime.terminateTab(ref, tab.incarnation).catch((cleanupError: unknown) => {
+          console.warn("[gateway] terminal launch cleanup failed", cleanupError instanceof Error ? cleanupError.name : "unknown_error");
+        });
+        throw error;
+      }
       if (!wrapped) return { ref, tab, ...(parent ? { parent } : {}) };
       // A caller with its own request deadline (hosted MCP) shortens the readiness wait.
       const readyTimeoutMs = Math.min(READY_TIMEOUT_MS, Math.max(1_000, input.readyTimeoutMs ?? READY_TIMEOUT_MS));
