@@ -58,7 +58,7 @@ export function createManagedPiOwnerTools(deps: {
     ...(deps.githubDeveloper ? ["github.developer"] as const : []),
     ...(deps.sharedBrowser ? ["browser.action"] as const : []),
     ...(deps.integrations ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
-    ...(deps.mcp && deps.approvals ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
+    ...(deps.mcp && deps.approvals ? ["mcp.inventory", "mcp.describe", "mcp.search", "mcp.call"] as const : []),
   ];
   const browserBinding = (binding: ManagedPiRuntimeBinding): SharedBrowserBinding => ({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, harness: "pi" });
   function revoke(run: Run): Promise<boolean> {
@@ -242,6 +242,7 @@ export function createManagedPiOwnerTools(deps: {
       }
       if (request.capability === "mcp.inventory") return text(await deps.mcp!.inventory(binding.ownerId, signal));
       if (request.capability === "mcp.describe") return text(await deps.mcp!.describe(binding.ownerId, request.args.serverId, signal));
+      if (request.capability === "mcp.search") return text(await deps.mcp!.search(binding.ownerId, request.args, signal));
       if (request.capability === "mcp.call") {
         if (permissionMode !== "full_access" || !run.generation) throw new BotBrokerActionError("denied");
         const evidence = botToolDisplayInput("mcp_call", request.args);

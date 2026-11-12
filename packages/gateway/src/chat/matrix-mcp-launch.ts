@@ -8,6 +8,8 @@ const LIFETIME_MS = 35 * 60_000;
 const SERVER_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const DETAIL_PATH = new RegExp(`^/api/mcp-servers/${SERVER_ID}$`);
 const CALL_PATH = new RegExp(`^/api/mcp-servers/${SERVER_ID}/call$`);
+const CORE_DISCOVERY_PATHS = new Set(["/api/mcp-servers/core/services", "/api/mcp-servers/core/search", "/api/mcp-servers/core/describe"]);
+const CORE_APPROVAL_PATH = new RegExp(`^/api/mcp-servers/core/approvals/${SERVER_ID}$`);
 
 /** Set only by Gateway auth after a live scoped Run bearer resolves. */
 export const MATRIX_MCP_RUN_CONTEXT_KEY = "matrixMcpRunCapability";
@@ -104,8 +106,10 @@ function permitted(method: string, path: string, scope: MatrixMcpRunScope, integ
     return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
       || (method === "POST" && path === "/api/integrations/read-call");
   }
-  return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
-    || ((scope === "call" || scope === "chat_call") && method === "POST" && CALL_PATH.test(path));
+  const call = scope === "call" || scope === "chat_call";
+  return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path) || CORE_DISCOVERY_PATHS.has(path)))
+    || (call && method === "POST" && (CALL_PATH.test(path) || path === "/api/mcp-servers/core/call"))
+    || (call && method === "GET" && CORE_APPROVAL_PATH.test(path));
 }
 
 /** A bounded, owner-bound, run-lifetime capability with explicit tool authority. */

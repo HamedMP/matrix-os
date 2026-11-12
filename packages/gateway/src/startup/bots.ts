@@ -368,7 +368,7 @@ export async function startBots(options: {
     "github.developer",
     ...(options.sharedBrowser ? ["browser.action"] as const : []),
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
-    ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
+    ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.search", "mcp.call"] as const : []),
   ];
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
     supervisedBrowser: typeof options.sharedBrowser?.authorizeAction === "function", toolCapabilities: managedCapabilities });

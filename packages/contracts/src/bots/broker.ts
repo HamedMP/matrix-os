@@ -39,6 +39,7 @@ export const BotToolCapabilitySchema = z.enum([
   "jev.inbox",
   "mcp.inventory",
   "mcp.describe",
+  "mcp.search",
   "mcp.call",
   "memory.propose",
   "memory.search",
@@ -64,6 +65,9 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
   capability("mcp.inventory", z.object({}).strict()),
   capability("mcp.describe", z.object({ serverId: z.uuid() }).strict()),
+  // Matrix Core MCP progressive discovery; results carry the serverId mcp_describe/mcp_call take.
+  capability("mcp.search", z.object({ query: canonicalBoundedText(200, 800),
+    service: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/).optional() }).strict()),
   capability("mcp.call", z.object({ serverId: z.uuid(), tool: canonicalBoundedText(128, 512),
     arguments: z.record(z.string().min(1).max(128), z.unknown())
       .refine((params) => canonicalEncodedByteLength(params) <= MAX_INTEGRATION_PARAMS_BYTES, { message: "Parameters are too large" }),

@@ -60,6 +60,7 @@ export class CoreToolsError extends Error {
 }
 
 export interface CoreService {
+  serverId: string;
   service: string;
   name: string;
   status: CustomMcpStatus | "degraded";
@@ -156,6 +157,7 @@ export class CoreToolService {
 
   async listServices(userId: string): Promise<CoreService[]> {
     return (await this.resolveAll(userId)).map(({ server, service, catalog, reason }) => ({
+      serverId: server.id,
       service,
       name: server.name,
       status: catalog ? server.status : (reason === "catalog_too_large" || reason === "invalid_catalog" ? "degraded" : server.status),
