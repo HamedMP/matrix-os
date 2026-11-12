@@ -14,12 +14,23 @@ export function useWorkRailPage(client: CanonicalChatClient | null, query: Pick<
   useEffect(() => {
     if (!client?.navigationPage) return;
     const current = ++generation.current;
+    const targetCount = state.key === key ? Math.max(initialSize, state.rows.length) : initialSize;
     setState(previous => previous.key === key ? { ...previous, loading: true, error: false }
       : { key, rows: [], count: 0, loading: true, error: false });
-    void client.navigationPage({ ...query, limit: initialSize }).then(page => {
+    void (async () => {
+      const rows: ChatNavigationRecord[] = [];
+      let cursor: string | undefined;
+      let count = 0;
+      do {
+        const page = await client.navigationPage!({ ...query, limit: cursor ? 20 : initialSize, ...(cursor ? { cursor } : {}) });
+        if (generation.current !== current) return;
+        rows.push(...page.items.filter(item => !rows.some(row => row.chat.id === item.chat.id)));
+        count = page.totalCount;
+        cursor = page.nextCursor;
+      } while (cursor && rows.length < targetCount);
       if (generation.current !== current) return;
-      setState({ key, rows: page.items, count: page.totalCount, cursor: page.nextCursor, loading: false, error: false });
-    }).catch((cause: unknown) => {
+      setState({ key, rows, count, cursor, loading: false, error: false });
+    })().catch((cause: unknown) => {
       if (generation.current !== current) return;
       console.warn("[work-rail] Navigation page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
       setState(previous => ({ ...previous, loading: false, error: true }));

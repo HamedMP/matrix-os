@@ -209,6 +209,17 @@ function WorkInspectorContent({
   });
   const [selectedId, setSelectedId] = useState(() => initialTerminalTab?.id ??
     (tabs.some(tab => tab.id === savedLayout?.selectedTabId) ? savedLayout!.selectedTabId : FILES_TAB.id));
+  const knownSessionIds = sessions.map(session => session.id).join("\0");
+  useEffect(() => {
+    if (!summary) return;
+    const known = new Set(knownSessionIds.split("\0").filter(Boolean));
+    setTabs(current => {
+      const next = current.filter(tab => tab.kind !== "terminal" || known.has(tab.sessionId));
+      if (next.length === current.length) return current;
+      if (!next.some(tab => tab.id === selectedId)) setSelectedId(FILES_TAB.id);
+      return next;
+    });
+  }, [summary, knownSessionIds, selectedId]);
   useEffect(() => {
     if (!layoutKey) return;
     useChatInspectorLayout.getState().update(layoutKey, {
@@ -311,7 +322,8 @@ function WorkInspectorContent({
     const tab = tabs.find((candidate) => candidate.id === id);
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find((candidate) => candidate.id === tab.sessionId);
-    if (!api || !session || closingSessionIds.includes(tab.sessionId)) return;
+    if (!session) { removeTab(id); return; }
+    if (!api || closingSessionIds.includes(tab.sessionId)) return;
     setTerminalCloseError(false);
     setClosingSessionIds((current) => [...current, tab.sessionId]);
     try {
@@ -336,7 +348,7 @@ function WorkInspectorContent({
     const tab = tabs.find(candidate => candidate.id === id);
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find(candidate => candidate.id === tab.sessionId);
-    if (!session) return;
+    if (!session) { removeTab(id); return; }
     if (session.attachable && (session.status === "starting" || session.status === "running" || session.status === "idle")) {
       setTerminalCloseTarget(id);
       return;
@@ -350,6 +362,7 @@ function WorkInspectorContent({
   const clampFileTreeHeight = (nextHeight: number, splitHeight: number) => Math.max(
     MIN_FILE_TREE_HEIGHT,
     Math.min(
+      1200,
       Math.max(MIN_FILE_TREE_HEIGHT, splitHeight - MIN_FILE_PREVIEW_HEIGHT - FILE_SPLIT_DIVIDER_HEIGHT),
       nextHeight,
     ),

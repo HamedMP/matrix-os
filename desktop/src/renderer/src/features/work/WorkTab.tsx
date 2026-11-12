@@ -278,8 +278,9 @@ function WorkTabContent({
   const requestedInspectorWidth = inspectorWidthState.key === inspectorLayoutKey
     ? inspectorWidthState.width : savedInspectorWidth ?? DEFAULT_INSPECTOR_WIDTH;
   const setInspectorWidth = (width: number) => {
-    setInspectorWidthState({ key: inspectorLayoutKey, width });
-    if (inspectorLayoutKey) useChatInspectorLayout.getState().update(inspectorLayoutKey, { width });
+    const roundedWidth = Math.round(width);
+    setInspectorWidthState({ key: inspectorLayoutKey, width: roundedWidth });
+    if (inspectorLayoutKey) useChatInspectorLayout.getState().update(inspectorLayoutKey, { width: roundedWidth });
   };
   const [surfaceWidth, setSurfaceWidth] = useState(0);
   const [draftTerminalLaunch, setDraftTerminalLaunch] = useState<{

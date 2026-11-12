@@ -10,6 +10,7 @@ import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/rend
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/chat-inspector-layout";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -115,6 +116,15 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("removes saved terminal tabs that are absent after session discovery", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]) });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: "terminal:missing", openTabIds: ["files", "terminal:missing"] });
+    render(<WorkFilesInspector detail={detail("chat_stale")} projects={[]} active />);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+  });
   it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
     const reveal = vi.fn();
     const { chatDetail, project } = projectDetail("chat_message");
