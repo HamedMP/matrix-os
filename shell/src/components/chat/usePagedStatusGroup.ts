@@ -28,13 +28,24 @@ export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?
   useEffect(() => {
     if (!loadPage) return;
     const current = ++generation.current;
+    const targetCount = state.key === key ? Math.max(10, state.rows.length) : 10;
     setState(previous => previous.key === key
       ? { ...previous, loading: true, error: false }
       : { key, rows: [], count: 0, loading: true, error: false });
-    void loadPage({ group, limit: 10 }).then(page => {
+    void (async () => {
+      const rows: RenameableConversation[] = [];
+      let cursor: string | undefined;
+      let count = 0;
+      do {
+        const page = await loadPage({ group, limit: cursor ? 20 : 10, ...(cursor ? { cursor } : {}) });
+        if (generation.current !== current) return;
+        for (const item of page.items.map(conversation)) if (!rows.some(row => row.id === item.id)) rows.push(item);
+        count = page.totalCount;
+        cursor = page.nextCursor;
+      } while (cursor && rows.length < targetCount);
       if (generation.current !== current) return;
-      setState({ key, rows: page.items.map(conversation), count: page.totalCount, cursor: page.nextCursor, loading: false, error: false });
-    }).catch((error: unknown) => {
+      setState({ key, rows, count, cursor, loading: false, error: false });
+    })().catch((error: unknown) => {
       if (generation.current !== current) return;
       console.warn("[chat-navigation] Status page unavailable:", error instanceof Error ? error.name : "UnknownError");
       setState(previous => ({ ...previous, loading: false, error: true }));

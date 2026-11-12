@@ -165,6 +165,16 @@ describe("Chat canonical provider state", () => {
     expect(container.querySelector(".is-user")?.children).toHaveLength(1);
   });
 
+  it("opens a standalone file preview on Web Mobile", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    render(<ChatApp mobile messages={[{ id: "mobile-file", role: "user", content: "", timestamp: 1000,
+      attachments: [{ id: "mobile-attachment", kind: "file", label: "notes.txt", path: "temporary/notes.txt" }] }]}
+      sessionId="chat_mobile_file" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Preview notes.txt" }));
+    expect(screen.getByRole("complementary", { name: "Chat file preview" })).toBeTruthy();
+  });
+
   it("opens Agents & providers directly from Settings even while the model catalog is pending", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const openSettings = vi.fn();

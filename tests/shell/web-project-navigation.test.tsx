@@ -579,7 +579,7 @@ it("lays out projects like the other rail sections and older chats like ordinary
   expect(older.closest(".matrix-web-project-chats")).toBeTruthy();
 });
 
-it("continues paging older project chats beyond 1,000 rows", async () => {
+it("continues paging older project chats beyond 1,000 rows with a bounded window", async () => {
   let page = 0;
   const request = vi.fn(async (url: string) => {
     // Every page is full and claims more, as a very large project would.
@@ -595,7 +595,8 @@ it("continues paging older project chats beyond 1,000 rows", async () => {
     act(() => result.current.loadMore());
   }
   await waitFor(() => expect(result.current.loading).toBe(false));
-  expect(result.current.fetched.length).toBeGreaterThan(1_000);
+  expect(result.current.fetched).toHaveLength(500);
+  expect(result.current.fetched.some(row => row.id === "chat_i11_99")).toBe(true);
   expect(result.current.capped).toBe(false);
   expect(result.current.hasMore).toBe(true);
   expect(request).toHaveBeenCalledTimes(22);

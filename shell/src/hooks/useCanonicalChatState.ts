@@ -787,14 +787,12 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const renameConversation = useCallback(async (chatId: string, title: string) => {
     if (!isCurrent()) return false;
-    const current = detailRef.current?.record.chat.id === chatId
+    let current = detailRef.current?.record.chat.id === chatId
       ? detailRef.current.record
       : records.find((record) => record.chat.id === chatId);
-    if (!current) {
-      setSafeError("The Chat could not be renamed. Refresh and try again.");
-      return false;
-    }
     try {
+      current ??= (await client.detail(chatId)).record;
+      if (!isCurrent()) return false;
       const updated = await client.updateTitle(chatId, {
         expectedTitleVersion: current.chat.titleVersion ?? 0,
         title,
@@ -880,9 +878,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const archiveConversation = useCallback(async (chatId: string) => {
     if (!isCurrent()) return null;
-    const current = recordsRef.current.find((item) => item.chat.id === chatId);
-    if (!current || current.activeRun) return null;
     try {
+      const current = recordsRef.current.find((item) => item.chat.id === chatId)
+        ?? (await client.detail(chatId)).record;
+      if (!isCurrent() || current.activeRun) return null;
       const updated = await client.updateLifecycle(chatId, { lifecycle: "archived", baseRevision: current.chat.revision });
       if (!isCurrent()) return null;
       setRecords((existing) => existing.filter((record) => record.chat.id !== chatId));

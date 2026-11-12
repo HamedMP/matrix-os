@@ -8,6 +8,7 @@ export interface TerminalPaneProps {
   isFocused: boolean;
   focusRequestId?: number;
   sessionId?: string;
+  chatId?: string;
   claudeMode?: boolean;
   startupCommand?: string;
   compatMode?: TerminalCompatMode;

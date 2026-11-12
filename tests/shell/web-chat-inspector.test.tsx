@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import { WebChatInspector } from "../../shell/src/components/chat/WebChatInspector";
 
-vi.mock("../../shell/src/components/terminal/TerminalPane", () => ({ TerminalPane: () => <div>Connected terminal</div> }));
+const terminalProps = vi.hoisted(() => vi.fn());
+vi.mock("../../shell/src/components/terminal/TerminalPane", () => ({ TerminalPane: (props: unknown) => { terminalProps(props); return <div>Connected terminal</div>; } }));
 vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -22,6 +23,7 @@ it("asks before stopping an active terminal and keeps it running when canceled",
     sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
   fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
   expect(screen.getByText("Connected terminal")).toBeTruthy();
+  expect(terminalProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_one" }));
   fireEvent.click(screen.getByRole("button", { name: "Close terminal tab" }));
   expect(screen.getByRole("alertdialog", { name: "Stop this terminal?" })).toBeTruthy();
   expect(request.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);

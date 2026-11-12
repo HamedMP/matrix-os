@@ -21,7 +21,10 @@ function readLayout(key: string | null): SavedLayout {
     return { width: typeof value?.width === "number" && Number.isFinite(value.width) ? Math.max(240, Math.min(820, value.width)) : 400,
       treeHeight: typeof value?.treeHeight === "number" && Number.isFinite(value.treeHeight) ? Math.max(120, Math.min(1200, value.treeHeight)) : 240,
       selected: value?.selected === "terminal" || value?.selected === "side-chat" ? value.selected : "files" };
-  } catch { return { width: 400, treeHeight: 240, selected: "files" }; }
+  } catch (error: unknown) {
+    console.warn("[chat-inspector] Layout read unavailable:", error instanceof Error ? error.name : "UnknownError");
+    return { width: 400, treeHeight: 240, selected: "files" };
+  }
 }
 
 function FileTree({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(path: string): void }) {
@@ -167,7 +170,7 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
     </div> : null}
     {layout.selected === "side-chat" ? <div role="tabpanel" aria-label="Side chat" className="flex min-h-0 flex-1 flex-col"><SideChatPanel chatId={chatId} client={sideChatClient} onSendToMain={onSendToMain}/></div> : null}
     {layout.selected === "terminal" ? <div role="tabpanel" aria-label="Terminal" className="relative flex min-h-0 flex-1 flex-col">
-      {terminalRef ? <TerminalPane paneId={`chat-${chatId}`} cwd="" theme={theme} isFocused sessionId={terminalRef} shouldCacheOnUnmount={() => false}/>
+      {terminalRef ? <TerminalPane paneId={`chat-${chatId}`} cwd="" theme={theme} isFocused sessionId={terminalRef} chatId={chatId} shouldCacheOnUnmount={() => false}/>
         : <div className="p-3 text-sm"><p>No terminal is open for this chat.</p><button type="button" className="mt-2 rounded border px-3 py-1" disabled={terminalPending} onClick={() => { void createTerminal(); }}>New terminal</button></div>}
       {terminalError ? <p role="alert" className="px-3 text-xs text-destructive">The terminal could not be updated. Try again.</p> : null}
     </div> : null}

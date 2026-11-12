@@ -14,6 +14,7 @@ export type FetchedProjectChat = { id: string; title: string; titleVersion: numb
   importSource?: { harness: "claude" | "codex" }; canonicalRecord?: CanonicalChatNavigationItem };
 type LoadNavigationPage = (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 type PageCursors = { id?: string | null; slug?: string | null };
+const MAX_RETAINED_PROJECT_ROWS = 500;
 async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: string | null, unreadOnly: boolean, signal: AbortSignal) {
   const query = new URLSearchParams({ projectId, limit: cursor ? "20" : "5" });
   if (cursor) query.set("cursor", cursor);
@@ -65,7 +66,8 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
         for (const row of rows) {
           if (!previous.some(item => item.id === row.id) && !additions.some(item => item.id === row.id)) additions.push(row);
         }
-        return [...previous, ...additions];
+        // Keep a bounded window while the cursor continues through full history.
+        return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};
       for (const { key, nextCursor } of pages) next[key] = nextCursor ?? undefined;

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ArchivedChatsDialog } from "../../shell/src/components/chat/ArchivedChatsDialog";
 
@@ -25,4 +25,20 @@ it("restores selected archived chats and confirms permanent deletion", async () 
   expect(remove).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
   await waitFor(() => expect(remove).toHaveBeenCalledWith("chat_one"));
+});
+
+it("ignores a late archive page after the dialog reopens", async () => {
+  const row = (id: string) => ({ chat: { id, title: id, revision: 1, archivedAt: "2026-11-12T00:00:00.000Z" } });
+  let finishOld!: (value: unknown) => void;
+  const oldPage = new Promise(resolve => { finishOld = resolve; });
+  const list = vi.fn(async (cursor?: string) => cursor ? oldPage : { items: [row("Recent")], nextCursor: "next" });
+  const props = { onClose: vi.fn(), list: list as never, restore: vi.fn(async () => true), remove: vi.fn(async () => true) };
+  const view = render(<ArchivedChatsDialog open {...props}/>);
+  await screen.findByRole("checkbox", { name: "Select Recent" });
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  view.rerender(<ArchivedChatsDialog open={false} {...props}/>);
+  view.rerender(<ArchivedChatsDialog open {...props}/>);
+  await screen.findByRole("checkbox", { name: "Select Recent" });
+  await act(async () => finishOld({ items: [row("Stale")], nextCursor: undefined }));
+  expect(screen.queryByRole("checkbox", { name: "Select Stale" })).toBeNull();
 });

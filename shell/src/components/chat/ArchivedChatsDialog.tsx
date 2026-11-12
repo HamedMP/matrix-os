@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CanonicalChatListResponse } from "@matrix-os/contracts";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,36 +22,40 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const generation = useRef(0);
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
+    const current = ++generation.current;
     setRows([]);
     setSelected([]);
     setCursor(undefined);
     setLoading(true);
     setError(null);
     void list().then(page => {
-      if (cancelled) return;
+      if (generation.current !== current) return;
       setRows(page.items);
       setCursor(page.nextCursor);
     }).catch((cause: unknown) => {
-      if (cancelled) return;
+      if (generation.current !== current) return;
       console.warn("[chat] Archived chats unavailable:", cause instanceof Error ? cause.name : "UnknownError");
       setError("Archived chats could not be loaded. Try again.");
-    }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    }).finally(() => { if (generation.current === current) setLoading(false); });
+    return () => { generation.current++; };
   }, [open, list]);
   const more = () => {
     if (!cursor || loading) return;
+    const current = generation.current;
     setLoading(true);
     setError(null);
     void list(cursor).then(page => {
+      if (generation.current !== current) return;
       setRows(current => [...current, ...page.items.filter(item => !current.some(row => row.chat.id === item.chat.id))]);
       setCursor(page.nextCursor);
     }).catch((cause: unknown) => {
+      if (generation.current !== current) return;
       console.warn("[chat] Archived chats page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
       setError("More archived chats could not be loaded. Try again.");
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (generation.current === current) setLoading(false); });
   };
   const apply = async (action: "restore" | "delete") => {
     if (busy || selected.length === 0) return;
