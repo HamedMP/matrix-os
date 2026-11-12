@@ -189,6 +189,51 @@ describe("Chat canonical provider state", () => {
     expect(screen.queryByRole("complementary", { name: "Chat file preview" })).toBeNull();
   });
 
+  it("keeps archive Undo available if restoring the chat rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const restore = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(true);
+    render(<ChatApp messages={[]} busy={false} connected
+      conversations={[{ id: "chat_undo", title: "Chat to archive", preview: "", messageCount: 0, updatedAt: Date.now() }]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onArchiveConversation={vi.fn(async () => ({ chatId: "chat_undo", revision: 2 }))}
+      onRestoreConversation={restore} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Chat to archive" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+    expect(await screen.findByText("Chats could not be restored. Try again.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+  });
+
+  it("does not show an old restore error on a newer archive", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    let rejectFirstRestore: (error: Error) => void = () => {};
+    const restore = vi.fn().mockImplementationOnce(() => new Promise<boolean>((_resolve, reject) => {
+      rejectFirstRestore = reject;
+    })).mockResolvedValue(true);
+    render(<ChatApp messages={[]} busy={false} connected
+      conversations={[
+        { id: "chat_first", title: "First chat", preview: "", messageCount: 0, updatedAt: Date.now() },
+        { id: "chat_second", title: "Second chat", preview: "", messageCount: 0, updatedAt: Date.now() },
+      ]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onArchiveConversation={vi.fn(async (chatId: string) => ({ chatId, revision: 2 }))}
+      onRestoreConversation={restore} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "First chat" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledOnce());
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Second chat" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
+    expect(await screen.findByText("Archived Second chat")).toBeTruthy();
+    await act(async () => rejectFirstRestore(new Error("offline")));
+    expect(screen.getByText("Archived Second chat")).toBeTruthy();
+    expect(screen.queryByText("Chats could not be restored. Try again.")).toBeNull();
+  });
+
   it("opens Agents & providers directly from Settings even while the model catalog is pending", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const openSettings = vi.fn();
