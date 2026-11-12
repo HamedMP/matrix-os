@@ -256,6 +256,27 @@ describe("matrix mcp bridge over Matrix OAuth", () => {
     await Promise.all(bridges.map(bridge => bridge.done));
   });
 
+  it("stops instead of using another server's login saved to the same profile", async () => {
+    const tokens = await loginRemoteMcp({ resource: platform.resource, profileName: "cloud", configDir, openBrowser: browser });
+    await saveRemoteMcpTokens("cloud", { ...tokens, expiresAt: Date.now() + 5_000 }, configDir);
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const next = lines(stdout);
+    const bridge = runRemoteMcpBridge({ profileName: "cloud", configDir, stdin, stdout });
+    const startedBearers = platform.mcpBearers.length;
+    // Another terminal runs `matrix mcp login --url B` on the same profile.
+    await saveRemoteMcpTokens("cloud", { ...tokens, resource: "https://other.example.test/mcp", issuer: "https://other.example.test/oauth",
+      tokenEndpoint: "https://other.example.test/oauth/token", clientId: "other-client", accessToken: "other-bearer",
+      refreshToken: "other-refresh", expiresAt: Date.now() + 3_600_000 }, configDir);
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list" })}\n`);
+    const reply = await next();
+    expect(reply).toMatchObject({ id: 9, error: { code: -32603 } });
+    expect(JSON.stringify(reply)).not.toContain("other-bearer");
+    await expect(bridge).rejects.toThrow("restart the bridge");
+    expect(platform.mcpBearers.slice(startedBearers)).not.toContain("other-bearer");
+    expect(platform.tokenRequests.filter(form => form.get("grant_type") === "refresh_token")).toHaveLength(0);
+  });
+
   it("tells the person to log in when the profile has no /mcp token", async () => {
     await writeFile(join(configDir, "placeholder"), "");
     await expect(runRemoteMcpBridge({ profileName: "cloud", configDir, stdin: new PassThrough(), stdout: new PassThrough() }))

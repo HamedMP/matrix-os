@@ -35,13 +35,14 @@ export const RemoteMcpTokensSchema = z.object({
 export type RemoteMcpTokens = z.infer<typeof RemoteMcpTokensSchema>;
 
 export class RemoteMcpAuthError extends Error {
-  constructor(readonly code: "login_required" | "oauth_failed" | "invalid_resource", message: string) {
+  constructor(readonly code: "login_required" | "oauth_failed" | "invalid_resource" | "profile_changed", message: string) {
     super(message);
     this.name = "RemoteMcpAuthError";
   }
 }
 
 const loginRequired = () => new RemoteMcpAuthError("login_required", "Matrix MCP sign-in is required. Run `matrix mcp login` first.");
+const profileChanged = () => new RemoteMcpAuthError("profile_changed", "Matrix MCP profile login changed; restart the bridge.");
 const oauthFailed = () => new RemoteMcpAuthError("oauth_failed", "Matrix MCP sign-in failed. Run `matrix mcp login` again.");
 
 /** https everywhere; plain http only on loopback (local development and tests). */
@@ -247,7 +248,15 @@ export function createRemoteMcpTokenSource(options: { profileName: string; confi
   let refreshing: Promise<RemoteMcpTokens> | null = null;
   const usable = (tokens: RemoteMcpTokens | null, stale: RemoteMcpTokens): tokens is RemoteMcpTokens =>
     Boolean(tokens && tokens.accessToken !== stale.accessToken && tokens.expiresAt - REFRESH_MARGIN_MS > now());
-  const reread = () => loadRemoteMcpTokens(options.profileName, options.configDir);
+  // The bridge is bound to the login it started with: a different resource,
+  // issuer, or client saved later (another `matrix mcp login --url`) is never used.
+  let binding: Pick<RemoteMcpTokens, "resource" | "issuer" | "clientId"> | null = null;
+  const bound = (tokens: RemoteMcpTokens | null): RemoteMcpTokens | null => {
+    if (tokens && binding && (tokens.resource !== binding.resource || tokens.issuer !== binding.issuer
+      || tokens.clientId !== binding.clientId)) throw profileChanged();
+    return tokens;
+  };
+  const reread = async () => bound(await loadRemoteMcpTokens(options.profileName, options.configDir));
   const refresh = (stale: RemoteMcpTokens) => refreshing ??= (async () => {
     try {
       current = await withProfileRefreshLock(`${remoteMcpTokenPath(options.profileName, options.configDir)}.lock`, async () => {
@@ -272,6 +281,7 @@ export function createRemoteMcpTokenSource(options: { profileName: string; confi
     async load(): Promise<RemoteMcpTokens> {
       current ??= await loadRemoteMcpTokens(options.profileName, options.configDir);
       if (!current) throw loginRequired();
+      binding ??= { resource: current.resource, issuer: current.issuer, clientId: current.clientId };
       return current;
     },
     async accessToken(): Promise<string> {

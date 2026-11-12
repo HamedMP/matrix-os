@@ -8,7 +8,7 @@ import { Transform, type Readable, type Writable } from "node:stream";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { createRemoteMcpTokenSource, trustedUrl } from "./remote-oauth.js";
+import { RemoteMcpAuthError, createRemoteMcpTokenSource, trustedUrl } from "./remote-oauth.js";
 
 /** Matches the platform `/mcp` request body limit. */
 export const DEFAULT_MAX_FRAME_BYTES = 2 * 1024 * 1024;
@@ -105,10 +105,11 @@ export async function runRemoteMcpBridge(options: {
         // Never echo upstream or OAuth detail into the protocol stream.
         console.error("Matrix MCP bridge request failed.", error instanceof Error ? error.name : "UnknownError");
         const id = requestId(message);
-        if (id !== undefined) {
-          void stdio.send({ jsonrpc: "2.0", id, error: { code: -32603, message: "Matrix MCP is unavailable. Run `matrix mcp login` if this persists." } })
-            .catch(finish);
-        }
+        const changed = error instanceof RemoteMcpAuthError && error.code === "profile_changed";
+        const reply = id === undefined ? Promise.resolve() : stdio.send({ jsonrpc: "2.0", id, error: { code: -32603,
+          message: changed ? "Matrix MCP profile login changed; restart the bridge." : "Matrix MCP is unavailable. Run `matrix mcp login` if this persists." } });
+        // This process is bound to its starting login; a different saved login ends the bridge.
+        void reply.then(() => { if (changed) finish(error); }, finish);
       });
     };
     void Promise.all([remote.start(), stdio.start()]).catch(finish);

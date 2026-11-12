@@ -4,7 +4,7 @@
  * 404 aborts discovery before the OpenID fallback; two bridge processes on
  * one profile spend each other's rotated refresh token.
  */
-import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readdir, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ import {
   saveRemoteMcpTokens,
   type RemoteMcpTokens,
 } from "../../src/mcp/remote-oauth.js";
+import { withProfileRefreshLock } from "../../src/mcp/remote-oauth-lock.js";
 
 const resource = "https://app.matrix-os.test/mcp";
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -115,5 +116,73 @@ describe("remote MCP refresh across bridge processes", () => {
     const server = rotatingServer();
     const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: server.fetchStub });
     expect(await source.accessToken()).toBe("access-1");
+  });
+});
+
+describe("remote MCP refresh lock", () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "matrix-mcp-lock-")); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it("never reclaims a just-created lock whose content is not written yet", async () => {
+    // Fault: a racer saw an empty lock as torn and deleted a live holder's lock.
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, "");
+    let ran = false;
+    await expect(withProfileRefreshLock(path, async () => { ran = true; }, { waitMs: 300 })).rejects.toThrow("busy");
+    expect(ran).toBe(false);
+    expect((await stat(path)).size).toBe(0);
+  });
+
+  it("reclaims an unreadable lock only after its grace period", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, "{\"pid\":");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(path, old, old);
+    await expect(withProfileRefreshLock(path, async () => "ran", { waitMs: 300 })).resolves.toBe("ran");
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("publishes the lock with its full content in one step", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await withProfileRefreshLock(path, async () => {
+      const held = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8")) as { pid: number; nonce: string };
+      expect(held.pid).toBe(process.pid);
+      expect(held.nonce).toMatch(/^[a-f0-9]{32}$/);
+    });
+    expect((await readdir(dir))).toEqual([]);
+  });
+});
+
+describe("remote MCP token source binding", () => {
+  let configDir: string;
+  beforeEach(async () => { configDir = await mkdtemp(join(tmpdir(), "matrix-mcp-bind-")); });
+  afterEach(async () => { await rm(configDir, { recursive: true, force: true }); });
+
+  const tokensFor = (host: string, expiresAt: number): RemoteMcpTokens => ({ version: 1, resource: `https://${host}/mcp`,
+    issuer: `https://${host}/oauth`, tokenEndpoint: `https://${host}/oauth/token`, clientId: `client-${host}`,
+    accessToken: `access-${host}`, refreshToken: `refresh-${host}`, expiresAt });
+
+  it("refuses to adopt or refresh tokens a different login saved to the same profile", async () => {
+    // Fault: `matrix mcp login --url B` on the profile hands B's bearer to a bridge talking to A.
+    await saveRemoteMcpTokens("cloud", tokensFor("a.matrix-os.test", Date.now() + 1_000), configDir);
+    const requested: string[] = [];
+    const fetchStub: typeof fetch = async input => { requested.push(String(input)); return json({ error: "unexpected" }, 500); };
+    const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: fetchStub });
+    expect((await source.load()).resource).toBe("https://a.matrix-os.test/mcp");
+    await saveRemoteMcpTokens("cloud", tokensFor("b.matrix-os.test", Date.now() + 3_600_000), configDir);
+    await expect(source.accessToken()).rejects.toThrow("profile login changed; restart the bridge");
+    await expect(source.afterRejected("access-a.matrix-os.test")).rejects.toThrow("profile login changed; restart the bridge");
+    expect(requested).toEqual([]);
+  });
+
+  it("refuses a mismatched login saved while its own refresh failed", async () => {
+    await saveRemoteMcpTokens("cloud", tokensFor("a.matrix-os.test", Date.now() + 1_000), configDir);
+    const fetchStub: typeof fetch = async () => {
+      await saveRemoteMcpTokens("cloud", tokensFor("b.matrix-os.test", Date.now() + 3_600_000), configDir);
+      return json({ error: "invalid_grant" }, 400);
+    };
+    const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: fetchStub });
+    await expect(source.accessToken()).rejects.toThrow("profile login changed; restart the bridge");
   });
 });
