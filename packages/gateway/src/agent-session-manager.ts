@@ -38,6 +38,7 @@ import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environ
 import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 import { confirmStoppedCodexSession } from "./coding-agents/confirm-stopped-codex-session.js";
+import { createCoreMcpSessionGrants } from "./coding-agents/core-mcp-session-grants.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -517,7 +518,10 @@ export function createAgentSessionManager(options: {
           runtime: lockedRuntime ?? options.backgroundRuntime!, session, launch,
           persist: (value) => writeSession(homePath, value),
         });
-        if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
+        if (started.ok) {
+          if (coreMcp) trackCoreMcp(sessionId, coreMcp.revoke);
+          return { ok: true, status: 201, session: decorateSession(started.session) };
+        }
         coreMcp?.revoke();
         if (!started.retainWorkspace && leaseAcquired) await releaseSessionLease(options.worktreeManager, session);
         scheduleStartupReconciliation();
@@ -549,6 +553,7 @@ export function createAgentSessionManager(options: {
       }
 
       session.terminalRef = terminalRef;
+      if (coreMcp) trackCoreMcp(sessionId, coreMcp.revoke);
       try {
         await writeSession(homePath, session);
       } catch (err: unknown) {
@@ -566,6 +571,10 @@ export function createAgentSessionManager(options: {
     return request.runtimePreference === "background" && options.backgroundRuntime?.withLock
       ? options.backgroundRuntime.withLock(startAdmitted) : startAdmitted();
   }
+
+  const coreMcpGrants = createCoreMcpSessionGrants();
+  const trackCoreMcp = coreMcpGrants.track;
+  const revokeCoreMcp = coreMcpGrants.revoke;
 
   const manager = {
     async startSession(input: unknown): Promise<
@@ -737,6 +746,8 @@ export function createAgentSessionManager(options: {
       if (!SessionIdSchema.safeParse(sessionId).success) {
         return failure(400, "invalid_session_id", "Session identifier is invalid");
       }
+      // A stop request ends Core MCP access even if the runtime stop itself fails.
+      revokeCoreMcp(sessionId);
       const session = await readSession(homePath, sessionId);
       if (!session) return failure(404, "not_found", "Session was not found");
       if (session.runtime.type === "background" && !lockedRuntime && options.backgroundRuntime?.withLock) {
@@ -830,6 +841,7 @@ export function createAgentSessionManager(options: {
               writeMode: "closed", lastActivityAt: nowIso(options.now),
             };
             await writeSession(homePath, stoppedSession);
+            revokeCoreMcp(session.id);
             stoppedSessions.push(decorateSession(stoppedSession));
             degraded++;
           } catch (error: unknown) {
@@ -896,6 +908,8 @@ export function createAgentSessionManager(options: {
           lastActivityAt: nowIso(options.now),
         };
         await writeSession(homePath, stoppedSession);
+        // The tab reported exit on its own: its Core MCP bearer ends with it.
+        revokeCoreMcp(session.id);
         stoppedSessions.push(decorateSession(stoppedSession));
       }
       if (reconciliationPending) scheduleStartupReconciliation();
@@ -904,6 +918,7 @@ export function createAgentSessionManager(options: {
 
     shutdown(): void {
       stopped = true;
+      coreMcpGrants.revokeAll();
       if (startupReconcileTimer !== null) clearTimeout(startupReconcileTimer);
       startupReconcileTimer = null;
     },
