@@ -44,7 +44,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by two useEffect dependency arrays (the mount-load effect and the WebSocket-listener effect); removing useCallback would re-run both effects on every render and reopen the websocket in a loop.
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (backgroundSync = true) => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `loading` on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
       const readJson = async (url: string) => {
@@ -84,7 +84,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         // row missing an email.
         const hasMissingEmail = connections.some((c) => !c.account_email);
         const shouldSync = connections.length === 0 || hasMissingEmail;
-        if (shouldSync) {
+        if (backgroundSync && shouldSync) {
           fetch(`${GATEWAY}/api/integrations/sync`, {
             method: "POST",
             signal: AbortSignal.timeout(30_000),
@@ -101,9 +101,11 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
             });
         }
       }
+      return results.every(result => result.status === "fulfilled");
     } catch (err) {
       setError("Failed to load integrations");
       console.error("Failed to load integrations:", err);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -118,10 +120,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     setError(null);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `refreshing` on every path; the code is correct and the finalizer must run whether the sync resolves, rejects, or throws.
     try {
-      if (appsUnavailable) {
-        await loadData();
-        return;
-      }
+      if (appsUnavailable && !(await loadData(false))) return;
       const res = await fetch(`${GATEWAY}/api/integrations/sync`, {
         method: "POST",
         signal: AbortSignal.timeout(30_000),
