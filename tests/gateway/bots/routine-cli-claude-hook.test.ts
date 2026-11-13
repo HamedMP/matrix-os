@@ -123,7 +123,7 @@ it("drops queued routine and ordinary Bash replies for cancelled native callback
   expect(frames.slice(1).map(frame => frame.response)).toEqual(["ordinary", "after-cancel"].map(request_id => ({ subtype: "success", request_id, response: {} })));
   expect(fail).not.toHaveBeenCalled();
 });
-it.each(["2.1.240", "2.1.280"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
   const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false, nativeMode: string | undefined;
   let complete!: (command: string) => void;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); },
@@ -139,7 +139,7 @@ it.each(["2.1.240", "2.1.280"])("%s ACK before input; matching partial tool exec
   complete("/bin/cat -- '/tmp/safe-result'"); await new Promise(resolve => setTimeout(resolve, 0));
   expect(frames.filter(frame => frame.response?.response?.hookSpecificOutput?.permissionDecision === "allow")).toEqual([]);
 });
-it.each(["2.1.279", "2.1.281", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
+it.each(["2.1.279", "2.1.281", "2.1.316", "2.1.318", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "unsafe"; } });
   closers.push(hook.close); await hook.start(); const request = frames[0]; const cb = request.request.hooks.PreToolUse[0].hookCallbackIds[0];
@@ -192,7 +192,7 @@ it("allows overlapping cleaners to create and use separate result stores", async
   }
   await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 });
-it.each(["2.1.240", "2.1.280"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });
   closers.push(hook.close); await hook.start(); const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
