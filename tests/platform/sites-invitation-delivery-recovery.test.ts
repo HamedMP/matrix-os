@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { insertUserMachine } from '../../packages/platform/src/db.js';
-import { createSiteEmailInvitations } from '../../packages/platform/src/sites/email-invitations.js';
+import { acceptSiteEmailInvitation, createSiteEmailInvitations } from '../../packages/platform/src/sites/email-invitations.js';
 import { createSiteInvitationDeliveryWorker } from '../../packages/platform/src/sites/invitation-delivery.js';
 
 async function fixture() {
@@ -49,7 +49,10 @@ it('caps one owner\'s outstanding mail across repeated invitation requests',asyn
    available_at:now,lease_token:null,lease_until:null,provider_message_id:null,failure_code:null,sent_at:null,created_at:now,updated_at:now}))).execute();
   await expect(createSiteEmailInvitations(db,owner,{baseRevision:1,emailAddresses:['new@example.com']})).rejects.toMatchObject({code:'unavailable'});
   expect(await db.executor.selectFrom('public_site_email_invitations').select('id').where('normalized_email','=','new@example.com').executeTakeFirst()).toBeUndefined();
-  await db.executor.updateTable('public_site_invitation_deliveries').set({state:'sent',sent_at:now}).where('invitation_id','=',invitations[0]!.id).execute();
+  await acceptSiteEmailInvitation({db,siteId,secret:'mail-capacity-recipient-secret-32-bytes',
+   identity:{clerkUserId:'user_mail_guest',clerkSessionId:'sess_mail_guest',verifiedEmails:['guest0@example.com']}});
+  expect((await db.executor.selectFrom('public_site_invitation_deliveries').select('state')
+   .where('invitation_id','=',invitations[0]!.id).executeTakeFirst())?.state).toBe('cancelled');
   const result=await createSiteEmailInvitations(db,owner,{baseRevision:1,emailAddresses:['new@example.com']});
   expect(result.results[0]?.outcome).toBe('queued');
  }finally{await destroyTestPlatformDb(db);}
