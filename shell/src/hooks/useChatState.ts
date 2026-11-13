@@ -88,6 +88,7 @@ export interface ChatState {
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
+  setPermissionMode?: (runId: string, mode: "supervised" | "full_access", clientRequestId: string) => Promise<void | import("@matrix-os/ui").ChatPermissionModeChangeResult>;
   submitApproval?: (
     runId: string,
     approvalId: string,

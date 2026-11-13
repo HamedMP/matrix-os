@@ -110,6 +110,7 @@ export function useChatProviderState(
   const [boundDraft, setBoundDraft] = useState<{
     bindingKey: string;
     selection: SavedProviderSelection;
+    acceptedPermissionMode?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -235,6 +236,12 @@ export function useChatProviderState(
     : "";
   const restoredModes = context?.executionControls?.chatId === context?.chatId
     ? canonicalChatTurnModes(catalog, currentSelection, context?.executionControls) : null;
+  const acceptedPermissionMode = restoredModes?.permissionMode;
+  if (boundDraft?.bindingKey === bindingKey && acceptedPermissionMode
+    && boundDraft.acceptedPermissionMode !== acceptedPermissionMode) {
+    setBoundDraft({ ...boundDraft, acceptedPermissionMode,
+      selection: { ...boundDraft.selection, permissionMode: acceptedPermissionMode } });
+  }
   const effectiveSaved = currentSelection
     ? boundDraft?.bindingKey === bindingKey
       ? boundDraft.selection
@@ -273,7 +280,7 @@ export function useChatProviderState(
 
   const save = (next: SavedProviderSelection) => {
     if (currentSelection) {
-      setBoundDraft({ bindingKey, selection: next });
+      setBoundDraft({ bindingKey, selection: next, acceptedPermissionMode });
       return;
     }
     setSavedChoice(next);

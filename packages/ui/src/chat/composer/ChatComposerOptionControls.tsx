@@ -11,6 +11,8 @@ export interface ChatComposerOptionControl {
   value: string;
   options: ChatComposerSelectOption[];
   openRequest?: number;
+  disabled?: boolean;
+  disabledReason?: string;
   onChange: (value: string) => void;
 }
 
@@ -37,6 +39,8 @@ export function ChatComposerOptionControls({
     <ChatComposerSelect
       key={control.id}
       openRequest={control.openRequest}
+      disabled={control.disabled}
+      disabledReason={control.disabledReason}
       label={control.label}
       value={control.value}
       options={control.options}

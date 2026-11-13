@@ -24,22 +24,23 @@ export function pendingSupervisedTool(turns: Transcript): { id: string; bar: str
   return null;
 }
 
-/** Always allow changes the next request's mode, and only for an agent that offers Full access. */
+/** Always allow is offered only when the active run supports an owner-confirmed mode mutation. */
 export function supervisedToolCallbacks(input: {
   selection: CanonicalComposerSelection | null | undefined;
   catalog: CanonicalProviderCatalog | null | undefined;
   directBot: boolean;
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
+  onLivePermissionMode?: (mode: "supervised" | "full_access") => Promise<void>;
   draft: string;
   setDraft: (text: string) => void;
 }): Pick<ConversationPresentationCallbacks, "permissionMode" | "onPermissionMode" | "onTryAgain"> {
-  const { selection, catalog, directBot, onSelectionChange, draft, setDraft } = input;
-  const fullAccess = !directBot && selection && catalog?.instances.some((instance) => (
+  const { selection, catalog, directBot, onLivePermissionMode, draft, setDraft } = input;
+  const fullAccess = onLivePermissionMode && !directBot && selection && catalog?.instances.some((instance) => (
     instance.id === selection.instanceId && instance.supports.permissionModes.includes("full_access")
   ));
   return {
     permissionMode: selection?.permissionMode,
-    ...(fullAccess ? { onPermissionMode: (mode) => onSelectionChange({ ...selection, permissionMode: mode }) } : {}),
+    ...(fullAccess ? { onPermissionMode: onLivePermissionMode } : {}),
     // Try again adds to the composer so the owner can resend; unsent text stays and nothing is sent for them.
     onTryAgain: (prompt) => {
       setDraft(supervisedToolRetryDraft(draft, prompt));

@@ -1,3 +1,4 @@
+import { useLiveChatPermissionMode, liveChatPermissionModes } from "@matrix-os/ui";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
@@ -300,6 +301,14 @@ function CanonicalChatWorkspaceContent({
     return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
   }, [explicitSharedRoute, routedComposerChatId, client, reportBotHeaderBinding, botBinding.status, directBotId]);
   const botExecution = useBotExecution(directBotId, client.agents, providerCatalog, botEventRevision);
+  const permissionControl = useLiveChatPermissionMode({
+    scope: `${desktopProviderIdentityKey(useConnection.getState())}:${controller.detail?.record.chat.id ?? ""}:${controller.detail?.record.activeRun?.runId ?? ""}`,
+    activeRunId: controller.detail?.record.activeRun?.runId,
+    liveModes: liveChatPermissionModes(providerCatalog, executionControls, controller.detail?.record.activeRun?.runId, !directBotId && !explicitSharedRoute
+      && controller.detail?.record.chat.ownerScope.type === "personal" && controller.detail.record.chat.collaboration?.mode !== "shared"),
+    change: directBotId ? undefined : controller.setPermissionMode,
+    changeDraft: mode => { if (providerSelection) onSelectionChange({ ...providerSelection, permissionMode: mode }); },
+  });
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
@@ -791,6 +800,7 @@ function CanonicalChatWorkspaceContent({
       <BrowserPermissionReminder/>
       <SharedChatComposer
         permissionModeRequest={permissionModeRequest}
+        permissionControl={permissionControl}
         value={draft}
         onChange={setDraft}
         draftScopeKey={draftScope}
@@ -1054,7 +1064,8 @@ function CanonicalChatWorkspaceContent({
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
-              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, draft, setDraft }),
+              permissionModePending: permissionControl.pending,
+              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, onLivePermissionMode: permissionControl.supported && controller.detail?.record.activeRun ? permissionControl.select : undefined, draft, setDraft }),
             }} />
             </div>
             </ChatContextMenu>

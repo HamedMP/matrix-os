@@ -1,6 +1,6 @@
 /** Opt in to additive funding states only in clients with the matching contracts. */
 export function canonicalChatProviderCatalogPath(refresh = false, settingsSetup = false): string {
-  return `/api/chat-providers?${refresh ? "refresh=true&" : ""}includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true${settingsSetup ? "&includeSettingsSetupActions=true" : ""}`;
+  return `/api/chat-providers?${refresh ? "refresh=true&" : ""}includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true&includeLivePermissionModes=true${settingsSetup ? "&includeSettingsSetupActions=true" : ""}`;
 }
 
 export function providerSettingsSnapshotPath(refresh = false): string {

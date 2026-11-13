@@ -25,7 +25,7 @@ export type ChatCommandPreviewWireVersion = z.infer<typeof ChatCommandPreviewWir
 const LegacyToolPreviewSchema = canonicalSafeLabel(1_000, 4_000);
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1`;
+  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&permissionModeVersion=1`;
 }
 
 function commandPreviewActivities(activities: CanonicalChatRunActivity[], version: ChatCommandPreviewWireVersion): CanonicalChatRunActivity[] {

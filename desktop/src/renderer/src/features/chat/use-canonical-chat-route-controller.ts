@@ -1,3 +1,4 @@
+import { setCanonicalChatPermissionMode, type ChatPermissionMode } from "@matrix-os/ui";
 import { useDesktopRoutineConfirmation } from "./use-desktop-routine-confirmation";
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
@@ -980,6 +981,11 @@ export function useCanonicalChatRouteController({
     steerQueuedTurn,
     reorderQueuedTurns,
     cancelQueuedTurn,
+    setPermissionMode: async (runId: string, permissionMode: ChatPermissionMode, clientRequestId: string) => {
+      const scope = routeScopeRef.current;
+      return await setCanonicalChatPermissionMode({ client, runId, permissionMode, clientRequestId, getDetail: () => detailRef.current,
+        isCurrent: () => Boolean(scope?.active && routeScopeRef.current === scope), commit: updateDetail, refresh: loadDetail });
+    },
     submitApproval,
     submitInput,
     retryTurn,
