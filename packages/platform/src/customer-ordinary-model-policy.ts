@@ -1,6 +1,7 @@
 import { MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
+import { FREE_MANAGED_MODEL_ID } from './free-tier/funded-policy.js';
 
 /** Ordinary models are shared customer entitlement. Specialized routes such as
  * Jev and funded-native Opus retain their explicit per-runtime authorization. */
@@ -9,9 +10,9 @@ export function ordinaryCustomerModelIds(globalModels: readonly string[]): strin
     .filter(model => globalModels.includes(model));
 }
 
-/** Free container runtimes get the managed default models only. */
+/** Free container runtimes get the managed default model only (spec 2691 D2). */
 export function freeRuntimeModelIds(globalModels: readonly string[]): string[] {
-  return MANAGED_WORKERS_AI_MODEL_IDS.filter(model => globalModels.includes(model));
+  return [FREE_MANAGED_MODEL_ID].filter(model => globalModels.includes(model));
 }
 
 /** Run inside the global-policy transaction: a failed alignment must roll back

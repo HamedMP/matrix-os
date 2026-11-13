@@ -25,6 +25,7 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
+import type { FreeFundingConfig } from "./free-tier/funded-policy.js";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
@@ -107,6 +108,7 @@ export interface AiFundedMeteringRepositoryOptions {
   reservationTtlMs: number;
   inFlightTtlMs: number;
   reservationIdFactory?: () => string;
+  freeFunding?: FreeFundingConfig;
 }
 
 // Monetary and cleanup responsibilities live in focused modules.
@@ -511,6 +513,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationIdFactory,
     reservationTtlMs: options.reservationTtlMs,
     policyFreshnessMs: options.policyFreshnessMs,
+    freeFunding: options.freeFunding ?? {},
+    grantCreditInTransaction,
   });
 
   async function startReservation(

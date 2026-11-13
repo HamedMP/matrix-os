@@ -45,7 +45,7 @@ describe('funded AI for a free container runtime', () => {
     expect(await initialize(db)).toBe(true);
     const policy = await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().executeTakeFirstOrThrow();
     expect(policy).toMatchObject({ machine_id: CONTAINER, owner_id: OWNER, runtime_slot: 'primary', enabled: true });
-    expect(JSON.parse(policy.allowed_model_ids)).toEqual([...MANAGED_WORKERS_AI_MODEL_IDS]);
+    expect(JSON.parse(policy.allowed_model_ids)).toEqual(['@cf/zai-org/glm-5.3-flash']);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select(['entry_id', 'amount_microusd']).execute())
       .toEqual([{ entry_id: STARTER_ENTRY, amount_microusd: 5_000_000 }]);
     expect(await db.executor.selectFrom('ai_funded_runtime_balances').select('credit_balance_microusd').executeTakeFirst())

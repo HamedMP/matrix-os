@@ -35,6 +35,7 @@ import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBi
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import { admitFreeDailySpend, assertFreeModel, grantFreeMonthlyAllowance, type FreeFundingConfig } from "./free-tier/funded-policy.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -47,6 +48,9 @@ export interface FundedAuthorizeDependencies {
   reservationIdFactory(): string;
   reservationTtlMs: number;
   policyFreshnessMs: number;
+  /** Read once at startup; free runtimes are refused funded work without it. */
+  freeFunding: FreeFundingConfig;
+  grantCreditInTransaction: Parameters<typeof grantFreeMonthlyAllowance>[3];
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
@@ -113,6 +117,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       }
       const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
       if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
+      const free = machine.provisioning_class === "free";
+      if (free) assertFreeModel(request.modelId);
 
       const identity = {
         ownerId: credential.owner_id,
@@ -120,6 +126,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
+      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
       const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: periodStart,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
@@ -139,9 +146,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }
 
-      if (machine.provisioning_class !== "customer" && !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
+      if (machine.provisioning_class !== "customer" && !free && !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
         throw new AiFundedPolicyError("access_disabled");
       }
+      // A free runtime is never charged after the fact.
+      if (free && request.billingPolicy === "postpaid") throw new AiFundedPolicyError("access_disabled");
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
@@ -215,6 +224,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
       if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
+      if (free) await admitFreeDailySpend(trx.executor, deps.freeFunding, holdMicrousd, checked);
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,
