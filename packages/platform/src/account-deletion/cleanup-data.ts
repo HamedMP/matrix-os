@@ -40,14 +40,14 @@ export async function assertDeletionOwnershipSafe(db: PlatformDB, owner: string)
 /** All platform writes share one transaction; accounting keeps only anonymous amounts and timestamps. */
 export async function eraseOwnerPlatformData(db: PlatformDB, owner: string,
   ownerHash?: (owner: string) => string, recipientSecret?: string): Promise<void> {
-  if (recipientSecret) {
-    await recordSiteRecipientLifecycle(db, {
-      userId: owner, state: 'deleted', eventId: `matrix_erasure_${randomUUID()}`,
-      eventAt: new Date(), secret: recipientSecret,
-    });
-  }
   await db.transaction(async (trx) => {
     if (ownerHash) await lockAccountDeletionOwner(trx.executor,ownerHash(owner));
+    if (recipientSecret) {
+      await recordSiteRecipientLifecycle(trx, {
+        userId: owner, state: 'deleted', eventId: `matrix_erasure_${randomUUID()}`,
+        eventAt: new Date(), secret: recipientSecret,
+      });
+    }
     // Financial lifecycle changes take the same lock before deciding whether
     // unknown platform expense remains. Do not erase between a check and receipt.
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${owner}`}, 0))`.execute(trx.executor);
