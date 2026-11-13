@@ -2,6 +2,7 @@
 
 import { LoaderCircleIcon, PlusIcon, SearchIcon, SquareTerminalIcon } from "@/lib/hugeicons";
 import { TerminalSharing } from "./TerminalSharing";
+import type { DesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 
 export function DesktopTerminalEmptyState({
   ready,
@@ -83,7 +84,12 @@ export function DesktopTerminalEmptyState({
   );
 }
 
-export function DesktopTerminalSessionHeader({ title, terminalId = null }: { title: string; terminalId?: string | null }) {
+export function DesktopTerminalSessionHeader({ title, terminalId = null, sessionState }: {
+  title: string;
+  terminalId?: string | null;
+  sessionState?: DesktopTerminalSessionState;
+}) {
+  const displayTitle = sessionState?.sessionId === terminalId && sessionState?.name ? sessionState.name : title;
   return (
     <header
       data-testid="terminal-desktop-session-header"
@@ -95,7 +101,7 @@ export function DesktopTerminalSessionHeader({ title, terminalId = null }: { tit
       }}
     >
       <div className="min-w-0">
-        <h2 className="truncate text-sm font-medium">{title}</h2>
+        <h2 className="truncate text-sm font-medium">{displayTitle}</h2>
         <p className="mt-1 text-xs" style={{ color: "var(--terminal-chrome-muted)" }}>Connected to this Matrix OS runtime</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
