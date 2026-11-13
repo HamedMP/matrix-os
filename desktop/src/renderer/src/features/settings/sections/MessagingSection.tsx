@@ -1,4 +1,4 @@
-import { SlackInstallPanel, WhatsAppSettingsPanel } from "@matrix-os/ui";
+import { WhatsAppSettingsPanel } from "@matrix-os/ui";
 import { WHATSAPP_SETTINGS_PATH } from "@matrix-os/contracts";
 import { useConnection } from "../../../stores/connection";
 import { invoke } from "../../../lib/operator";
@@ -28,12 +28,6 @@ export default function MessagingSection() {
           return api.get(WHATSAPP_SETTINGS_PATH, { maxBytes: 4096 });
         }}
         onOpen={open}
-      />
-      <SlackInstallPanel
-        platformOrigin={platformOrigin}
-        allowDevelopmentOrigin={allowDevelopmentOrigin}
-        showHeading={false}
-        onInstall={open}
       />
     </>
   );

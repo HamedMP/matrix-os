@@ -224,9 +224,3 @@ it("does not overlap requests when return events repeat while checking", async (
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(load).toHaveBeenCalledTimes(1);
 });
-import { SlackInstallPanel } from "../../packages/ui/src/messaging/SlackInstallPanel";
-it("embeds Slack beneath the shared Messaging heading without repeating it", () => {
-  render(<SlackInstallPanel showHeading={false} />);
-  expect(screen.queryByRole("heading", { name: "Messaging" })).toBeNull();
-  expect(screen.getByRole("heading", { name: "Slack" })).toBeTruthy();
-});

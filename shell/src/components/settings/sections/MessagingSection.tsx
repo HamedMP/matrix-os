@@ -1,5 +1,5 @@
 "use client";
-import { SlackInstallPanel, WhatsAppSettingsPanel } from "@matrix-os/ui";
+import { WhatsAppSettingsPanel } from "@matrix-os/ui";
 import { useAuth } from "@clerk/nextjs";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 import { WHATSAPP_SETTINGS_PATH } from "@matrix-os/contracts";
@@ -30,7 +30,6 @@ function MessagingContent({ children }: { children: React.ReactNode }) {
         Your own Matrix, in the apps you already use.
       </p>
       {children}
-      <SlackInstallPanel showHeading={false} platformOrigin={platformOrigin} allowDevelopmentOrigin={allowDevelopmentOrigin} />
     </div>
   );
 }

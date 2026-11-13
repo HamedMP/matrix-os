@@ -56,6 +56,7 @@ import OrganizationSection from "./settings/sections/OrganizationSection";
 const sections = [
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "integrations", label: "Connect Apps", icon: CableIcon },
+  { id: "messaging", label: "Messaging", icon: MessageSquareIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "ai-usage", label: "AI usage", icon: SparklesIcon },

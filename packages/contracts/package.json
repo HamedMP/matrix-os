@@ -30,6 +30,7 @@
     "./ai-usage/node": "./src/ai-usage/node.ts"
   },
   "imports": {
+    "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",

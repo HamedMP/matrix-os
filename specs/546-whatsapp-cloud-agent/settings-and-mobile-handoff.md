@@ -2,8 +2,8 @@
 
 ## User behavior
 
-Settings → Messaging exposes WhatsApp and Slack on Web Canvas, Web Desktop,
-Electron Desktop, Web Mobile and Native Mobile. Connection status describes the
+Settings → Messaging exposes WhatsApp on Web Canvas, Web Desktop, Electron
+Desktop and Web Mobile. Native Mobile follows separately in #2374 / ENG-372. Connection status describes the
 owner's current WhatsApp consent, separately from the main computer's AI
 readiness. It never claims an AI account is ready based on a messaging link.
 Web Mobile uses a full-screen Settings list with Back navigation.
@@ -85,3 +85,21 @@ Native nonproduction runtime/Chat persistence is origin-scoped without changing
 production keys or Clerk credentials. In-app Native Chat navigation stays local
 and continues to select the owner's primary computer. Public setup documentation
 must be updated in the existing companion site documentation PR before release.
+
+## Independent WhatsApp release
+
+PR #2373 targets main independently of Slack installer PR #2275. Only shared
+operator-origin validation is reused; no Slack installer, Slack auth return,
+Slack pilot routing or Slack permissions change ships in this layer. Existing
+Connect Apps behavior stays on main. The Slack branch and PR are preserved.
+
+ENG-124 tracks live WhatsApp qualification; ENG-372 tracks native-device work.
+Hamed approved this separation and optional test Clerk membership on November 13,
+2026, and waived recordings on November 12. Attach current-head screenshots for
+Web Canvas, Web Desktop, Web Mobile and Electron Desktop, with QA fixture limits,
+before merge. Publish Canary after merge and same-SHA CI; promote Stable only
+after verification of the exact released bundle. Public docs: site PR #214.
+
+The Slack-only nested-heading assertion is excluded with SlackInstallPanel,
+which is absent from this release. Its original implementation and test remain
+in the preserved pre-split history; all WhatsApp state/recovery assertions remain.

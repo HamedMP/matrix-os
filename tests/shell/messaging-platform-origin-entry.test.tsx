@@ -10,7 +10,6 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({ invoke }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "synthetic-owner", sessionId: "synthetic-session", getToken: async () => "synthetic-token" }) }));
 vi.mock("@/lib/self-host-mode", () => ({ isSelfHostedRuntime: () => false }));
 vi.mock("@matrix-os/ui", async () => ({
-  ...await import("../../packages/ui/src/messaging/SlackInstallPanel"),
   ...await import("../../packages/ui/src/messaging/WhatsAppSettingsPanel"),
 }));
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.clearAllMocks(); state.platformHost = "https://messaging-stage.example.com"; });
@@ -21,11 +20,13 @@ it("keeps Electron platform links disabled until main-owned authority is availab
   const { default: MessagingSection } = await import("../../desktop/src/renderer/src/features/settings/sections/MessagingSection");
   const view = render(<MessagingSection />);
   expect(screen.queryByRole("link", { name: "Add to Slack" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Add to Slack" }).hasAttribute("disabled")).toBe(true);
+  await screen.findByText("Not connected");
+  expect(screen.queryByRole("link", { name: "Connect WhatsApp" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add to Slack" })).toBeNull();
   state.platformHost = "https://messaging-stage.example.com";
   view.rerender(<MessagingSection />);
   await screen.findByText("Not connected");
-  expect(screen.getByRole("link", { name: "Add to Slack" }).getAttribute("href")).toBe("https://messaging-stage.example.com/slack/install");
+  expect(screen.queryByRole("link", { name: "Add to Slack" })).toBeNull();
   expect(screen.getByRole("link", { name: "Connect WhatsApp" }).getAttribute("href")).toBe("https://messaging-stage.example.com/whatsapp/connect");
 });
 
@@ -36,7 +37,7 @@ it("injects the Web build origin into real shared Settings links and preserves s
   const { MessagingSection } = await import("../../shell/src/components/settings/sections/MessagingSection");
   render(<MessagingSection />);
   await screen.findByText("Not connected");
-  expect(screen.getByRole("link", { name: "Add to Slack" }).getAttribute("href")).toBe("https://messaging-stage.example.com/slack/install");
+  expect(screen.queryByRole("link", { name: "Add to Slack" })).toBeNull();
   expect(screen.getByRole("link", { name: "Connect WhatsApp" }).getAttribute("href")).toBe("https://messaging-stage.example.com/whatsapp/connect");
   expect(fetcher).toHaveBeenCalledWith("/api/whatsapp/settings", expect.objectContaining({ headers: { authorization: "Bearer synthetic-token" } }));
 });
@@ -46,10 +47,7 @@ it("injects Electron's main-owned auth authority independently of selected compu
   const { default: MessagingSection } = await import("../../desktop/src/renderer/src/features/settings/sections/MessagingSection");
   render(<MessagingSection />);
   await screen.findByText("Connected");
-  const slack = screen.getByRole("link", { name: "Add to Slack" });
-  expect(slack.getAttribute("href")).toBe("https://messaging-stage.example.com/slack/install");
-  fireEvent.click(slack);
-  expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: slack.getAttribute("href") });
+  expect(screen.queryByRole("link", { name: "Add to Slack" })).toBeNull();
   const chat = screen.getByRole("link", { name: "Open Matrix Chat" });
   expect(chat.getAttribute("href")).toBe("https://messaging-stage.example.com/open?chat=chat_stage");
   fireEvent.click(chat);
