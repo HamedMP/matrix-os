@@ -7,7 +7,6 @@ import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-export const NODE = "/opt/matrix/runtime/node/bin/node";
 export const safeCode = error => /^[a-z][a-z0-9_]{0,95}$/.test(error?.message) ? error.message : "native_acceptance_failed";
 export function assert(value, code) { if (!value) throw new Error(code); }
 export async function stat(path) {
@@ -38,8 +37,11 @@ export function parseOptions(argv) {
   return input;
 }
 export function resolveConfig(input, resolver) {
-  return resolver({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: input.namespace,
-    MATRIX_SCOPE_RUNTIME_APP_ROOT: input["app-root"], MATRIX_HOME: input.home }, homePath: input.home });
+  const config = resolver({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: input.namespace,
+    MATRIX_SCOPE_RUNTIME_APP_ROOT: input["app-root"], MATRIX_HOME: input.home,
+    MATRIX_SCOPE_RUNTIME_NODE_ROOT: `/var/lib/matrix-devstack/${input.namespace}/runtime/node` }, homePath: input.home });
+  assert(config.ownedNode, "owned_node_configuration_required");
+  return config;
 }
 export async function noSymlinkAncestors(path, protectedSource = false) {
   assert(resolve(path) === path, "path_noncanonical");
@@ -116,12 +118,21 @@ export async function assertVacant(config, run = command, heldLock) {
   const lock = await stat(`${dirname(config.stateRoot)}/.native-acceptance-active`);
   assert(!lock || heldLock && lock.ino === heldLock.ino && lock.dev === heldLock.dev, "ambiguous_partial_state");
 }
-export async function preflight(config, run = command) {
+export async function preflight(config, attestHarness, run = command) {
+  // Fail before any placement, lock, or manager operation even if another
+  // dependency on this host is missing as well.
+  let harnessNode;
+  try {
+    harnessNode = await attestHarness(config.ownedNode.root);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message === "node_executable_mismatch") throw error;
+    throw new Error("owned_node_unprotected_or_unavailable", { cause: error });
+  }
   const blockers = [];
   if (process.platform !== "linux" || process.arch !== "x64" || process.getuid?.() !== 0) blockers.push("linux_x64_root_required");
   const { preparePlacement } = await import("./placement.mjs");
   try { await preparePlacement(config, { readOnly: true }); await assertVacant(config, run); } catch (error) { blockers.push(safeCode(error)); }
-  for (const path of [NODE, "/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/bin/nsenter", "/usr/bin/env", "/usr/bin/systemd-notify"]) {
+  for (const path of [config.ownedNode.binary, "/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/bin/nsenter", "/usr/bin/env", "/usr/bin/systemd-notify"]) {
     try { await access(path, constants.X_OK); } catch (error) {
       if (!["ENOENT", "EACCES"].includes(error.code)) throw error; blockers.push("native_dependency_missing");
     }
@@ -138,7 +149,7 @@ export async function preflight(config, run = command) {
     }
     assert((await stat("/sys/fs/cgroup/cgroup.controllers"))?.isFile(), "cgroup_v2_required");
   } catch (error) { blockers.push(["worker_not_world_readable", "sdk_not_world_readable", "cgroup_v2_required"].includes(error.message) ? error.message : "native_build_missing"); }
-  return { mode: "preflight", ready: blockers.length === 0, blockers: [...new Set(blockers)], config };
+  return { mode: "preflight", ready: blockers.length === 0, blockers: [...new Set(blockers)], config, harnessNode };
 }
 export async function waitFor(check, code, timeout = 30_000) {
   const deadline = Date.now() + timeout;

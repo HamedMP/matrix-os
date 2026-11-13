@@ -20,7 +20,7 @@ async function fixture(workspace = false) {
 describe("owned native acceptance boundaries", () => {
   it("refuses foreign and noncanonical paths before commands", async () => {
     const { parseOptions, resolveConfig } = await subject();
-    expect(() => resolveConfig(parseOptions(args), resolveScopeRuntimeHostConfig)).not.toThrow();
+    expect(resolveConfig(parseOptions(args), resolveScopeRuntimeHostConfig).ownedNode.binary).toBe("/var/lib/matrix-devstack/proof/runtime/node/bin/node");
     for (const replacement of ["--app-root=/opt/matrix/app", "--home=/home/matrix/home", "--namespace=../../foreign", "--mode=destroy"]) {
       const key = replacement.split("=")[0];
       expect(() => resolveConfig(parseOptions(args.map(v => v.startsWith(`${key}=`) ? replacement : v)), resolveScopeRuntimeHostConfig)).toThrow();
@@ -49,10 +49,15 @@ describe("owned native acceptance boundaries", () => {
     const { preflight } = await subject(); const f = await fixture(true);
     const before = await readdir(f.root);
     const commands: string[][] = [];
-    const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
+    const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_SCOPE_RUNTIME_NODE_ROOT: "/var/lib/matrix-devstack/proof/runtime/node", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
     Object.assign(config, { runtimeDirectory: join(f.root, "run", "scope-runtime"), commandSocketRoot: join(f.root, "run", "c"), stateRoot: join(f.root, "state", "scope-runtime"), appRoot: join(f.root, "app") });
-    const result = await preflight(config, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
-    expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
+    await expect(preflight(config, async () => { throw Error("unsafe"); }, async () => {
+      commands.push(["unexpected"]); throw Error("must not reach discovery");
+    })).rejects.toThrow("owned_node_unprotected_or_unavailable");
+    expect(commands).toEqual([]);
+    const harnessNode = { inode: "123", device: "4", sha256: "5".repeat(64) };
+    const result = await preflight(config, async (path: string) => { expect(path).toBe("/var/lib/matrix-devstack/proof/runtime/node"); return harnessNode; }, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
+    expect(result.harnessNode).toEqual(harnessNode); expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
     expect(commands).toHaveLength(3);
     expect(commands.every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
     expect(await readFile(f.path, "utf8")).toContain('"namespace":"proof"');
@@ -88,10 +93,14 @@ describe("native proof transport and fixed service profile", () => {
   it("retains every service restriction while moving only owned placement", async () => {
     const { supervisorArgs } = await import("../../scripts/ops/devstack-native/proof.mjs");
     const template = await readFile(new URL("../../distro/customer-vps/systemd/matrix-scope-runtime.service", import.meta.url), "utf8");
-    const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
+    const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_SCOPE_RUNTIME_NODE_ROOT: "/var/lib/matrix-devstack/proof/runtime/node", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
     const result = supervisorArgs(config, "matrix-native-proof-token", template);
     expect(result).toContain("--property=StandardError=append:/var/lib/matrix-devstack/proof/.matrix-native-proof-token.stderr");
     expect(result).toContain("--property=LimitFSIZE=65536");
+    expect(result).toContain("MATRIX_SCOPE_RUNTIME_NODE_ROOT=/var/lib/matrix-devstack/proof/runtime/node");
+    expect(result).toContain("PATH=/var/lib/matrix-devstack/proof/runtime/node/bin:/usr/bin:/bin");
+    expect(result).toContain("/var/lib/matrix-devstack/proof/runtime/node/bin/node");
+    expect(result).not.toContain("/opt/matrix/runtime/node/bin/node");
     expect(result).toContain("--property=PrivateNetwork=yes");
     expect(result).toContain("--property=CapabilityBoundingSet=");
     expect(result).toContain("--property=RestrictAddressFamilies=AF_UNIX");
@@ -184,4 +193,15 @@ it("fails closed on an overlong private bind path and removes only its empty sta
   await expect(startBroker(join(f.root, "public.sock"), parent)).rejects.toThrow("broker_bind_path_capacity");
   expect(await readdir(parent)).toEqual([]);
   await expect(lstat(join(f.root, "public.sock"))).rejects.toThrow();
+});
+
+it("rejects an atomic same-path Node replacement before and after auditing the harness process", async () => {
+  const { attestRunningNode, verifyExecutableEvidence } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
+  const { rename, link } = await import("node:fs/promises");
+  const f = await fixture(), host = join(f.root, "node"), running = join(f.root, "running-image");
+  await writeFile(host, "same bytes"); await link(host, running);
+  const preflightNode = await attestRunningNode(host, running);
+  const replacement = join(f.root, "next"); await writeFile(replacement, "same bytes"); await rename(replacement, host);
+  await expect(attestRunningNode(host, running)).rejects.toThrow("node_executable_mismatch");
+  await expect(verifyExecutableEvidence(host, preflightNode)).rejects.toThrow("node_executable_mismatch");
 });

@@ -114,6 +114,7 @@ export interface ScopeRuntimeReconciledRuntime {
 }
 
 export interface ScopeRuntimeLauncher {
+  profileDigest?(baseDigest: string): string;
   /** Adapters the host can launch for a profile (the shared-chat profile when omitted); empty disables it. */
   supportedAdapters?(profileId?: string): Promise<ScopeRuntimeCapabilityProfile["adapters"]>;
   list(): Promise<ScopeRuntimeReconciledRuntime[]>;
@@ -196,7 +197,9 @@ export async function createScopeRuntimeController(options: {
       ? await options.launcher.supportedAdapters(profile.profileId)
       : profile === SCOPE_RUNTIME_PROFILE ? profile.adapters : [];
     // The shared-chat profile is always advertised; others only when the host can launch them.
-    if (profile === SCOPE_RUNTIME_PROFILE || adapters.length > 0) availableProfiles.push({ ...profile, adapters });
+    if (profile === SCOPE_RUNTIME_PROFILE || adapters.length > 0) availableProfiles.push({
+      ...profile, adapters, profileDigest: options.launcher.profileDigest?.(profile.profileDigest) ?? profile.profileDigest,
+    });
   }
   const availableProfile = availableProfiles[0]!;
   const existing = await options.launcher.list();
