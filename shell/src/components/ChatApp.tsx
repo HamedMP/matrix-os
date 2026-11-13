@@ -417,6 +417,8 @@ function ChatAppContent({
     if (archived.length) {
       setDeletedChatIds(current => [...current, ...archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
       setProjectArchiveVersion(version => version + 1);
+    }
+    if (archived.length || skippedCount) {
       setArchiveUndoError(null);
       setArchiveUndo({ chats: archived,
         label: `Archived ${archived.length} chats in ${projectName}${skippedCount ? `; ${skippedCount} running skipped` : ""}` });
@@ -651,9 +653,9 @@ function ChatAppContent({
         openMessageFile(target.path);
       }
     }}>
-      {archiveUndo && onRestoreConversation ? <div role="status" className="absolute bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-lg">
+      {archiveUndo ? <div role="status" className="absolute bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-lg">
         <span>{archiveUndoError === archiveUndo ? "Chats could not be restored. Try again." : archiveUndo.label}</span>
-        <button type="button" className="font-semibold text-primary" disabled={archiveUndoPending} onClick={async () => {
+        {onRestoreConversation && archiveUndo.chats.length > 0 ? <button type="button" className="font-semibold text-primary" disabled={archiveUndoPending} onClick={async () => {
           if (archiveUndoPending) return;
           const undo = archiveUndo;
           const chats = undo.chats;
@@ -682,7 +684,7 @@ function ChatAppContent({
           } finally {
             setArchiveUndoPending(false);
           }
-        }}>Undo</button>
+        }}>Undo</button> : null}
       </div> : null}
       {providerSetupError && (
         <ShellNotificationPortal>
@@ -801,7 +803,7 @@ function ChatAppContent({
         {onListArchivedConversations && onRestoreConversation && onDeleteConversation ? <ArchivedChatsDialog open={archivesOpen} onClose={() => setArchivesOpen(false)}
           list={onListArchivedConversations} search={searchConversations} restore={async (chatId, revision) => {
             const restored = await onRestoreConversation(chatId, revision);
-            if (restored) { setDeletedChatIds(current => current.filter(id => id !== chatId)); setSearchRefreshVersion(version => version + 1); }
+            if (restored) { setDeletedChatIds(current => current.filter(id => id !== chatId)); setSearchRefreshVersion(version => version + 1); setProjectArchiveVersion(version => version + 1); }
             return restored;
           }} remove={onDeleteConversation}/> : null}
       </aside></ChatRailOrderContext.Provider>
