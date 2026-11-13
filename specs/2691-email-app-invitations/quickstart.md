@@ -350,14 +350,14 @@ production-domain Clerk result or a live release qualification.
   as above. The full suite has **not** passed at this checkpoint, and the
   focused lanes do not replace it. `bun` was unavailable here, so `pnpm run`
   invoked the same package scripts.
-- A 45-file Sites/Gateway/UI/contracts run finished with 353 passing and three
-  failing assertions. One exposed a regression in the Gateway's existing
-  rollback timeout: it had been shortened from 30 to 10 seconds. The rollback
-  budget was restored while new invitation mutations keep 10 seconds; the
-  complete Gateway platform-client file then passed all eight tests. The other
-  two failures are deployment-script tests that require `jq`, which is absent
-  from this host. The 45-file run was not repeated after the timeout fix, and
-  these two deployment assertions remain unqualified locally.
+- A 45-file Sites/Gateway/UI/contracts run first exposed a rollback timeout
+  regression and two deployment-script failures caused by missing `jq`. The
+  existing 30-second rollback budget was restored while new invitation
+  mutations keep 10 seconds, and `jq` was installed on this test host. The
+  complete Gateway platform-client file passed (8 tests), the deployment file
+  passed (8 tests), and the full 45-file feature run then passed **356/356**
+  assertions at the updated worktree head. This does not replace the unfinished
+  repository-wide suite.
 - The site docs PR passed its 540-test suite and hosted Vercel build. The
   hosted page was inspected at 375, 768, and 1440 px without horizontal
   overflow. Documentation captures remain outside the repo under
