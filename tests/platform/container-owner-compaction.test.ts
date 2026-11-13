@@ -72,7 +72,7 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
   }
 
   /** An owner over its limit and blocked, with a bulk table of 8,000 rows. */
-  async function blockedOwner(adminOverride: PgOwnerClusterAdmin = admin) {
+  async function blockedOwner(adminOverride: PgOwnerClusterAdmin = admin, extraSetup: string[] = []) {
     const owner = `user_compact_${randomUUID().slice(0, 8)}`;
     const probe = createContainerOwnerDatabases({ db, admin, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
     const credentials = await probe.ensure(owner, 1, signal());
@@ -90,6 +90,7 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
     await setup.query('CREATE TABLE bulk (id int PRIMARY KEY, body text)');
     await setup.query(`INSERT INTO bulk SELECT g, string_agg(md5(random()::text || g::text || s::text), '')
       FROM generate_series(1, 8000) g, generate_series(1, 20) s GROUP BY g`);
+    for (const statement of extraSetup) await setup.query(statement);
     await setup.end();
     expect(await service.enforceSizeLimit(owner, signal())).toMatchObject({ writesBlocked: true });
     return { owner, credentials, service };
@@ -104,7 +105,9 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
   }
 
   it('compacts a blocked owner who deleted most rows, and writes come back without a TRUNCATE', async () => {
-    const { owner, credentials, service } = await blockedOwner();
+    const { owner, credentials, service } = await blockedOwner(admin, [
+      `CREATE INDEX notes_lower ON notes (lower(body)) WHERE body <> ''`,
+    ]);
     await deleteMostRows(credentials);
     const before = Number((await superuser.query('SELECT pg_database_size($1)::bigint AS n', [credentials.databaseName])).rows[0].n);
     const sweeper = createOwnerDatabaseSizeSweeper({
@@ -174,6 +177,28 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
     await expect(second.compactFirst([owner], aborting.signal)).rejects.toThrow();
     expect(await holderMemberships()).toEqual([]);
     expect(await blockedAt(owner)).toBeInstanceOf(Date);
+  });
+
+  it('refuses to compact when an index would run owner-authored code, without running VACUUM', async () => {
+    const statements: string[] = [];
+    const logged: Array<{ message: string; detail: Record<string, string> }> = [];
+    const { owner, credentials, service } = await blockedOwner(admin, [
+      'CREATE FUNCTION fold_case(text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT lower($1) $$',
+      'CREATE INDEX bulk_folded ON bulk (fold_case(body))',
+    ]);
+    await deleteMostRows(credentials);
+    const compactor = createOwnerDatabaseCompactor({
+      admin: recording(admin, statements), ownerDatabases: service,
+      logError: (message, detail) => { logged.push({ message, detail }); },
+    });
+    expect(await compactor.compactFirst([owner], signal())).toEqual({ owner, outcome: 'unsafe_to_compact' });
+    expect(statements.some((statement) => statement.startsWith('VACUUM'))).toBe(false);
+    expect(statements.some((statement) => statement.startsWith('SET ROLE'))).toBe(false);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain(owner);
+    expect(JSON.stringify(logged)).not.toContain(credentials.databaseName);
+    expect(await blockedAt(owner)).toBeInstanceOf(Date);
+    expect(await holderMemberships()).toEqual([]);
   });
 
   it('revokes a holder membership left behind by an earlier crash before compacting', async () => {

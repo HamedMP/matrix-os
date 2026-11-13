@@ -25,9 +25,20 @@ import type { DatabaseSessionQuery, OwnerDatabaseSessions } from './container-ow
  * used: plain VACUUM only returns trailing empty pages, so scattered deletes
  * would never show up in it. The estimate only gates the rewrite; the block is
  * lifted solely by the real re-measurement that follows it.
+ *
+ * ANALYZE and VACUUM FULL evaluate index expressions and predicates (and
+ * ANALYZE extended-statistics expressions) as the table owner, which is the
+ * holder while blocked. If any of them on a holder-owned table references a
+ * function, operator or domain outside pg_catalog, the owner wrote code that
+ * would run as the holder, so compaction returns unsafe_to_compact and runs
+ * no VACUUM at all; only a TRUNCATE lifts that owner's block. Remaining risk:
+ * Postgres maintenance the platform does not control (autovacuum and
+ * autoanalyze) still runs such code as the holder between sweeps. Each block
+ * re-application revokes whatever it granted, which bounds that to one sweep
+ * interval; data it writes as the holder counts against the size limit.
  */
 
-export type CompactionOutcome = 'would_not_fit' | 'compacted' | 'still_blocked';
+export type CompactionOutcome = 'would_not_fit' | 'compacted' | 'still_blocked' | 'unsafe_to_compact';
 
 export interface OwnerDatabaseCompactorDeps {
   admin: OwnerDatabaseSessions & Pick<OwnerClusterAdmin, 'query'>;
@@ -73,6 +84,28 @@ const LIVE_ESTIMATE = `WITH rels AS (
     COALESCE(sum(heap_live + toast_live
       + CASE WHEN heap_bytes > 0 THEN ceil(index_bytes * heap_live / heap_bytes) ELSE index_bytes END), 0)::bigint AS live_bytes
   FROM live`;
+
+/** Index and extended-statistics expressions on holder tables that reference non-catalog code. */
+const OWNER_CODE_IN_EXPRESSIONS = `WITH trees AS (
+    SELECT i.indexprs::text AS tree FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+      WHERE c.relowner = $1::text::regrole AND i.indexprs IS NOT NULL
+    UNION ALL SELECT i.indpred::text FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+      WHERE c.relowner = $1::text::regrole AND i.indpred IS NOT NULL
+    UNION ALL SELECT s.stxexprs::text FROM pg_statistic_ext s JOIN pg_class c ON c.oid = s.stxrelid
+      WHERE c.relowner = $1::text::regrole AND s.stxexprs IS NOT NULL
+  ), refs AS (
+    SELECT m[1] AS key, m[2]::oid AS ref FROM trees,
+      regexp_matches(tree, ':(funcid|opfuncid|hashfuncid|negfuncid|opno|resulttype) ([0-9]+)', 'g') m
+  )
+  SELECT 1 FROM refs
+    LEFT JOIN pg_proc p ON refs.key IN ('funcid', 'opfuncid', 'hashfuncid', 'negfuncid') AND p.oid = refs.ref
+    LEFT JOIN pg_operator o ON refs.key = 'opno' AND o.oid = refs.ref
+    LEFT JOIN pg_proc op ON op.oid = o.oprcode
+    LEFT JOIN pg_type t ON refs.key = 'resulttype' AND t.oid = refs.ref AND t.typtype = 'd'
+  WHERE p.pronamespace <> 'pg_catalog'::regnamespace
+    OR o.oprnamespace <> 'pg_catalog'::regnamespace OR op.pronamespace <> 'pg_catalog'::regnamespace
+    OR t.typnamespace <> 'pg_catalog'::regnamespace
+  LIMIT 1`;
 
 const DATABASE_SIZE = 'SELECT pg_database_size(current_database())::bigint AS size_bytes';
 
@@ -120,9 +153,12 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
   }
 
   /** Runs in one session as the holder; returns null when another session holds locks. */
-  async function rewrite(query: DatabaseSessionQuery, target: CompactionTarget): Promise<'would_not_fit' | 'rewritten' | null> {
+  async function rewrite(
+    query: DatabaseSessionQuery, target: CompactionTarget,
+  ): Promise<'would_not_fit' | 'unsafe_to_compact' | 'rewritten' | null> {
     for (const statement of SESSION_LIMITS) await query(statement);
     if ((await query(OTHER_SESSION_LOCKS)).length > 0) return null;
+    if ((await query(OWNER_CODE_IN_EXPRESSIONS, [target.holderName])).length > 0) return 'unsafe_to_compact';
     await query(`GRANT ${target.holderSql} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`);
     await query(`SET ROLE ${target.holderSql}`);
     const names = await tables(query, target);
@@ -151,6 +187,10 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
     }
     if (result === null) return null;
     remember(owner);
+    if (result === 'unsafe_to_compact') {
+      logError('[container-owner-db] compaction skipped: an index or statistics expression runs owner code', {});
+      return result;
+    }
     if (result === 'would_not_fit') return 'would_not_fit';
     const { writesBlocked } = await deps.ownerDatabases.enforceSizeLimit(owner, signal);
     return writesBlocked ? 'still_blocked' : 'compacted';
