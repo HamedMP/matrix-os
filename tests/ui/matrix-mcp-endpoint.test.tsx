@@ -30,7 +30,7 @@ describe("MatrixMcpEndpointCard", () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     render(<MatrixMcpEndpointCard endpointUrl="https://app.matrix-os.com/mcp" connectedServices={[{ presetId: "linear", name: "Linear" }]} />);
 
-    expect(screen.getByText("Routes to 1 service")).toBeTruthy();
+    expect(screen.getByText("Routes to 1 MCP server")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Copy Matrix MCP URL" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://app.matrix-os.com/mcp"));
 
@@ -44,7 +44,7 @@ describe("MatrixMcpEndpointCard", () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn(async () => { throw new DOMException("denied", "NotAllowedError"); }) } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     render(<MatrixMcpEndpointCard endpointUrl="https://app.matrix-os.com/mcp" connectedServices={[]} />);
-    expect(screen.getByText("No services yet")).toBeTruthy();
+    expect(screen.getByText("No MCP servers yet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Copy Matrix MCP URL" }));
     expect(await screen.findByText("Copy failed")).toBeTruthy();
     warn.mockRestore();
