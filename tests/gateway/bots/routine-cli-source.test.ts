@@ -15,6 +15,28 @@ const consume = (svc: ReturnType<typeof service>, token: string | undefined, ope
 
 // Lifecycle/operation validators are fixtures. No source adapter or owner action approval is implemented by them.
 describe("routine source generation and exact invocation capability", () => {
+  it("keeps one canonical host invocation UUID across issuance policy and stored-capability consumption", async () => {
+    const seen: string[] = [], expected = invocation(1);
+    const svc = createRoutineCliSourceService({ db, scope, now: () => new Date(clock), validateLifecycle: async () => true,
+      authorizeOperation: async (_source, _operation, _trx, verified) => { seen.push(verified.invocationId); return true; } });
+    const ref = await svc.register(context());
+    const token = (await svc.issue(ref, { invocationId: expected.toUpperCase(), operation: list })).takeToken();
+    expect(await db.transaction().execute(trx => svc.consumeWithin(trx, { token, operation: list }, async (_source, _executor, verified) => verified.invocationId)))
+      .toBe(expected);
+    expect(seen).toEqual([expected, expected, expected]);
+  });
+  it("correlates identical read approvals by verified host invocation, never a latest operation digest", async () => {
+    const approved = { [invocation(1)]: "target_one", [invocation(2)]: "target_two" };
+    const svc = createRoutineCliSourceService({ db, scope, now: () => new Date(clock), validateLifecycle: async () => true,
+      authorizeOperation: async (_source, _operation, _trx, verified) => !!verified && !!approved[verified.invocationId] });
+    const ref = await svc.register(context());
+    const first = (await svc.issue(ref, { invocationId: invocation(1), operation: list })).takeToken();
+    const second = (await svc.issue(ref, { invocationId: invocation(2), operation: list })).takeToken();
+    for (const [token, expected] of [[first, "target_one"], [second, "target_two"]]) {
+      const result = await db.transaction().execute(trx => svc.consumeWithin(trx, { token, operation: list }, async (_source, _trx, verified) => approved[verified.invocationId]));
+      expect(result).toBe(expected);
+    }
+  });
   it("consumes one exact invocation under a transaction and never returns a general owner principal", async () => {
     const svc = service(), source = await svc.register(context());
     const delivery = await svc.issue(source, { invocationId: invocation(1), operation: list });
