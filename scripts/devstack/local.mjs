@@ -34,7 +34,7 @@ function boundedText(value, limit = 8192, tail = false) {
   // A suffix must not begin midway through a UTF-16 surrogate pair.
   return tail && /[\uDC00-\uDFFF]/.test(result[0] ?? '') ? result.slice(1) : result;
 }
-async function plainFile(path, limit = recordLimit) {
+export async function readPrivateDevStackFile(path, limit = recordLimit) {
   if (!isAbsolute(path)) throw new Error('File path must be absolute');
   if (await realpath(path) !== path) throw new Error('Canonical paths required; symlink paths are not accepted');
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -83,33 +83,37 @@ async function validate(manifest) {
   return manifest;
 }
 
+export async function initDevStackRegistry(registry) {
+  await mkdir(registry, { recursive: true, mode: 0o700 });
+  if (await realpath(registry) !== resolve(registry)) throw new Error('Registry symlinks are not accepted');
+  const stat = await lstat(registry);
+  if (!stat.isDirectory() || (stat.mode & 0o077) || stat.uid !== process.getuid?.()) throw new Error('Registry must be owned and private (0700)');
+}
+
+export async function withDevStackRegistryLock(registry, action, name = '.lock') {
+  await initDevStackRegistry(registry);
+  const path = join(registry, name);
+  let lock; const deadline = Date.now() + 2000;
+  while (!lock) {
+    try { lock = await open(path, 'wx', 0o600); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (name !== '.lock' || Date.now() >= deadline) throw new Error(`Registry locked (${name}); inspect the owner process before removing a stale lock`);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  try { await lock.writeFile(JSON.stringify({ pid: process.pid })); return await action(); }
+  finally { await lock.close(); await unlink(path); }
+}
+
 export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? join(homedir(), '.matrixos', 'devstack'), capacity = Number(process.env.DEVSTACK_CAPACITY ?? 3), runner = commandRunner } = {}) {
   if (typeof registry !== 'string' || !isAbsolute(registry)) throw new Error('Registry path must be absolute');
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100) throw new Error('Invalid local capacity');
-  async function init() {
-    await mkdir(registry, { recursive: true, mode: 0o700 });
-    if (await realpath(registry) !== resolve(registry)) throw new Error('Registry symlinks are not accepted');
-    const stat = await lstat(registry);
-    if (!stat.isDirectory() || (stat.mode & 0o077) || stat.uid !== process.getuid?.()) throw new Error('Registry must be owned and private (0700)');
-  }
-  async function locked(action, name = '.lock') {
-    await init();
-    const path = join(registry, name);
-    let lock; const deadline = Date.now() + 2000;
-    while (!lock) {
-      try { lock = await open(path, 'wx', 0o600); }
-      catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        if (name !== '.lock' || Date.now() >= deadline) throw new Error(`Registry locked (${name}); inspect the owner process before removing a stale lock`);
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-    }
-    try { await lock.writeFile(JSON.stringify({ pid: process.pid })); return await action(); }
-    finally { await lock.close(); await unlink(path); }
-  }
+  const init = () => initDevStackRegistry(registry);
+  const locked = (action, name) => withDevStackRegistryLock(registry, action, name);
   function statePath(id) { if (typeof id !== 'string' || !slug.test(id)) throw new Error('Invalid instance id'); return join(registry, `${id}.json`); }
   async function claim(id) {
-    const record = await plainFile(statePath(id));
+    const record = await readPrivateDevStackFile(statePath(id));
     if (record?.manifest?.id !== id || typeof record.manifest.worktree !== 'string' || typeof record.manifest.machine !== 'string'
       || !['registered', 'starting', 'running', 'stopping', 'stopped', 'failed'].includes(record.state)
       || (record.activeLease !== undefined && typeof record.activeLease !== 'boolean')) throw new Error('Invalid retained claim');
@@ -147,7 +151,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     if (result.code !== 0 || marker.version !== 1 || marker.machine !== manifest.machine || marker.purpose !== purpose || marker.id !== manifest.id || marker.worktree !== manifest.worktree) throw new Error('Machine owner marker mismatch');
   }
   async function preflight(file) {
-    const manifest = await validate(await plainFile(file, manifestLimit));
+    const manifest = await validate(await readPrivateDevStackFile(file, manifestLimit));
     await owner(manifest);
     for (const unit of manifest.managedUnits) {
       const result = await invoke(manifest, 'root', ['systemctl', 'show', '--property=LoadState', '--value', unit]);

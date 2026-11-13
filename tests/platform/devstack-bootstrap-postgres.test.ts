@@ -222,6 +222,11 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
       observe(req);
       socket.send('registered gateway socket');
     });
+    const shellSockets = new WebSocketServer({ server: shell });
+    shellSockets.on('connection', (socket, req) => {
+      observe(req);
+      socket.send('registered shell socket');
+    });
     const platform = createServer();
     const httpHosts: string[] = [];
     const dispatcher = new Agent({ connect: { lookup(host, options, callback) {
@@ -343,7 +348,19 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
       expect.soft(await ws(`${explicit}/ws?kept=1&token=${encodeURIComponent(issued.token)}`)).toBe('registered gateway socket');
       expect.soft(requests.at(-1)?.path).toBe('/ws?kept=1');
 
+      const hmrPrefix = `${explicit}/~runtime/primary/_next`;
+      for (const path of [`${hmrPrefix}/hmr`, `${hmrPrefix}/webpack-hmr`]) {
+        expect.soft(await ws(`${path}?id=fixture&runtime=primary`, 'synthetic-clerk-session'))
+          .toBe('registered shell socket');
+        expect.soft(requests.at(-1)?.path).toBe(`${path}?id=fixture`);
+      }
+      expect.soft(await ws(`${hmrPrefix}/hmr-extra`, owner)).toBe('registered gateway socket');
+      expect.soft(requests.at(-1)?.path).toBe('/_next/hmr-extra');
+
       const attempts = requests.length;
+      expect.soft(await ws(`${hmrPrefix}/hmr`)).toBe(401);
+      expect.soft(await ws(`${hmrPrefix}/hmr`, await token('user_wrong'))).toBe(401);
+      expect.soft(await ws(`${explicit}/~runtime/other-slot/_next/hmr`, owner)).toBe(404);
       const deny = async (prefix: string, jwt: string) => {
         expect.soft((await http(`${prefix}/api/probe`, jwt)).status).toBeGreaterThanOrEqual(400);
         const result = await ws(`${prefix}/ws`, jwt);
@@ -371,6 +388,7 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
       expect.soft((await http(`${explicit}/api/probe`, owner)).status).toBe(402);
       expect.soft((await http(`${explicit}/api/auth/ws-token`, owner)).status).toBe(402);
       expect.soft(await ws(`${explicit}/ws`, owner)).toBe(403);
+      expect.soft(await ws(`${hmrPrefix}/hmr`, owner)).toBe(403);
       entitlementStatus = 'active';
 
       for (const change of [{ container_id: 'matrixos-stale' }, { container_id: null }, { status: 'stopped' }]) {
@@ -401,6 +419,8 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
     } finally {
       for (const socket of sockets.clients) socket.terminate();
       sockets.close();
+      for (const socket of shellSockets.clients) socket.terminate();
+      shellSockets.close();
       upstream.closeAllConnections();
       shell.closeAllConnections();
       platform.closeAllConnections();

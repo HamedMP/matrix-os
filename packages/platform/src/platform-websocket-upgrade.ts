@@ -412,13 +412,14 @@ export function registerPlatformWebSocketUpgradeHandler(
       upstream: Socket,
       upstreamHostHeader: string,
       headers: string,
+      requestPath = webSocketProxyPath,
     ): void => {
-      if (!isSafeWebSocketUpgradePath(webSocketProxyPath)) {
+      if (!isSafeWebSocketUpgradePath(requestPath)) {
         refuse(400);
         upstream.destroy();
         return;
       }
-      const upstreamPath = stripWebSocketUpgradeToken(webSocketProxyPath);
+      const upstreamPath = stripWebSocketUpgradeToken(requestPath);
       upstream.write(
         `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`,
       );
@@ -501,7 +502,13 @@ export function registerPlatformWebSocketUpgradeHandler(
       }
 
       let connected = false;
-      const targetPort = isCodeDomain ? codeServerPort : registeredEndpoint?.port ?? 4000;
+      // Next matches the WebSocket against its configured asset prefix, unlike
+      // the Gateway routes that receive the path with the VM prefix stripped.
+      const shellHmrPort = explicitVmRoute?.upstreamPath === '/_next/hmr'
+        || explicitVmRoute?.upstreamPath === '/_next/webpack-hmr'
+        ? registeredEndpoint?.shellPort
+        : undefined;
+      const targetPort = isCodeDomain ? codeServerPort : shellHmrPort ?? registeredEndpoint?.port ?? 4000;
       const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
         if (!adoptUpstream(upstream)) return;
@@ -511,6 +518,7 @@ export function registerPlatformWebSocketUpgradeHandler(
           upstreamHostHeader,
           buildUpgradeHeaders(record.handle, !isCodeDomain
             && !(registeredEndpoint && explicitVmRoute && isNativeAppStreamPath(explicitVmRoute.upstreamPath))),
+          shellHmrPort === undefined ? webSocketProxyPath : path,
         );
       });
 
