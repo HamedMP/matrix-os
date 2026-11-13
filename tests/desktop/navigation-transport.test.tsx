@@ -45,7 +45,7 @@ describe("navigation through the actual runtime transport", () => {
     const { fetchFn, requests } = transport(app);
     const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
     expect(await client.navigation!()).toEqual(empty);
-    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=100"]);
+    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=1000"]);
   });
   it("reaches the existing legacy loader only for a confirmed unsupported 404", async () => {
     const app = new Hono();
