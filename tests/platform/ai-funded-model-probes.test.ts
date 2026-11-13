@@ -42,12 +42,12 @@ describe("fleet funded model probe budget", () => {
   it("can admit one bounded cold fanout for every reviewed text model", async () => {
     const reserved = await Promise.all(FUNDED_PROBE_MODELS.map(() =>
       reserveFundedModelProbe({ db, now, dailyLimit: 3000, minuteLimit: 20 })));
-    expect(reserved).toHaveLength(10);
+    expect(reserved).toHaveLength(11);
     expect(reserved.every(Boolean)).toBe(true);
     const rows = await sql<{ day_used: number; minute_used: number }>`
       select day_used, minute_used from ai_funded_model_probe_budget
     `.execute(db.executor);
-    expect(rows.rows).toEqual([{ day_used: 10, minute_used: 10 }]);
+    expect(rows.rows).toEqual([{ day_used: 11, minute_used: 11 }]);
   });
 
   it("coalesces repeated probes and retains the fleet count after service restart", async () => {
@@ -196,7 +196,7 @@ describe("fleet funded model probe budget", () => {
         : new Response(null, { status: 503 });
     });
     const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
-      dailyLimit: 12, minuteLimit: 12, fetchFn, now: () => clock,
+      dailyLimit: 12, minuteLimit: FUNDED_PROBE_MODELS.length + 2, fetchFn, now: () => clock,
       readPricingReview: async () => ({ version: "reviewed-rate", validThrough: pricedReady.priceValidThrough }),
       reserveProbe: (request: Parameters<typeof reserveFundedModelProbe>[0]) => reserveFundedModelProbe({ ...request, now: clock }) };
     const first = createFundedModelProbeService(input);

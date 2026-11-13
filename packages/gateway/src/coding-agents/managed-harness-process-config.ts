@@ -68,6 +68,7 @@ export function buildOpenCodeRunConfiguration(
           models: Object.fromEntries(MANAGED_WORKERS_AI_MODELS.map((model) => [model.id, {
             name: model.displayName,
             reasoning: model.reasoning,
+            ...(model.vision ? { attachment: true, modalities: { input: ["text", "image"], output: ["text"] } } : {}),
             interleaved: { field: "reasoning_content" },
             variants: openCodeReasoningVariants(model.reasoningEfforts),
           }])),
@@ -140,7 +141,7 @@ export async function preparePiRunEnvironment(input: {
         models: MANAGED_WORKERS_AI_MODELS.map((model) => ({
           id: model.id,
           name: model.displayName,
-          input: ["text"],
+          input: model.vision ? ["text", "image"] : ["text"],
           reasoning: model.reasoning,
           thinkingLevelMap: model.reasoningEfforts.length === 0
             ? { ...piThinkingLevelMap(model.reasoningEfforts), off: undefined }
