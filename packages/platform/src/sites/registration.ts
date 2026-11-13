@@ -20,7 +20,12 @@ export async function readSiteEmailCapability(db: PlatformDB, env: NodeJS.Proces
     await db.ready;
     if (env.MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED !== 'true'
         || !readiness.edgeExchange || !readiness.clerkInline
-        || !readiness.lifecycleWebhook || !readiness.mailDelivery) return false;
+        || !readiness.lifecycleWebhook || !readiness.mailDelivery
+        || !env.SITES_EDGE_SECRET || env.SITES_EDGE_SECRET.length < 32
+        || env.SITES_EDGE_SECRET.trim() !== env.SITES_EDGE_SECRET
+        || !/^sk_(?:live|test)_[A-Za-z0-9_-]{8,512}$/.test(env.CLERK_SECRET_KEY ?? '')
+        || !/^pk_(?:live|test)_[A-Za-z0-9_-]{8,512}$/.test(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '')
+        || !env.ACCOUNT_DELETION_SECRET || Buffer.byteLength(env.ACCOUNT_DELETION_SECRET) < 32) return false;
     const marker = await sql<{ generation: number; fingerprint: string }>`
       SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'sites'`.execute(db.executor);
     return marker.rows[0]?.generation === 3
@@ -54,4 +59,12 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret,
         edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options),
         captureEvent: options.captureEvent, email }));
+}
+
+/** Proxy-only deployments do not mount Sites; explicit Sites startup still validates its secret. */
+export function registerSiteRoutesIfConfigured(
+    app: Hono<any>, options: Parameters<typeof registerSiteRoutes>[1],
+) {
+    if (!options.platformSecret && (options.env ?? process.env).MATRIX_PUBLIC_SITES_ENABLED !== 'true') return;
+    registerSiteRoutes(app, options);
 }

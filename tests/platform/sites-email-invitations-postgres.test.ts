@@ -121,6 +121,20 @@ postgres('site email invitations across independent PostgreSQL connections', () 
       .rejects.toMatchObject({code:'conflict'});
   });
 
+  it('accepts a 100-address owner batch within ten seconds without sending mail inside the transaction',async()=>{
+    const {siteId}=await seed('existing-batch@example.com');
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const addresses=Array.from({length:100},(_,index)=>`recipient-${String(index).padStart(3,'0')}@example.com`);
+    const started=performance.now();
+    const result=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:addresses});
+    expect(performance.now()-started).toBeLessThan(10_000);
+    expect(result.results).toHaveLength(100);
+    expect(result.results.every(row=>row.outcome==='queued')).toBe(true);
+    expect((await dbB.executor.selectFrom('public_site_invitation_deliveries').select('id')
+      .where('invitation_id','in',dbB.executor.selectFrom('public_site_email_invitations').select('id').where('site_id','=',siteId))
+      .execute())).toHaveLength(100);
+  });
+
   it('resends a failed invitation with one new generation and cancels stale delivery work', async () => {
     const {siteId,invitationId}=await seed('retry@example.com');
     const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};

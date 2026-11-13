@@ -120,8 +120,8 @@ states that sign-in and sign-up complete on the primary domain; this is not
 proof of the required inline Matrix.page behavior. Obtain a disposable
 Matrix.page app URL configured with the existing Clerk instance and test
 accounts from the Clerk/domain owner, then run every case above. Until that
-evidence passes, do not start production feature code or substitute another
-authentication path.
+evidence passes, keep the production capability disabled and do not substitute
+another authentication path.
 
 ## 2. Mail adapter qualification
 
@@ -319,3 +319,52 @@ Rollback:
 5. retain additive columns/tables and historical rows;
 6. never narrow the access-mode constraint while a `private_email` publication
    exists and never resurrect revoked grants.
+
+## 8. Local implementation checkpoint (2026-11-13)
+
+The draft [native code stack](https://github.com/HamedMP/matrix-os/pull/3341)
+and separate [site documentation PR](https://github.com/FinnaAI/matrix-os-site/pull/358)
+are linked from ENG-29. This checkpoint is local code verification, not a
+production-domain Clerk result or a live release qualification.
+
+- Real PostgreSQL focused checks passed for owner export/deletion (15 tests),
+  full-path visitor and Gateway isolation (17 tests before the later
+  performance additions), 100-address batch latency, built private-email app
+  admission, and capability schema/readiness gating. The later performance
+  assertions also passed individually. The proxy-only Platform regression was
+  reproduced red in `tests/platform/proxy-routing.test.ts` and passed green
+  after optional Sites registration was moved into the focused registration
+  module; the complete proxy-routing and Sites-management suites then passed
+  (149 tests).
+- Platform, Gateway, and Edge Worker typechecks passed. Gateway's first check
+  found a missing installed workspace link for the already locked `smol-toml`
+  dependency; `pnpm install --frozen-lockfile` restored it without a lockfile
+  change, and the rerun passed. The production shell
+  build passed with a synthetic build-only Clerk publishable key. The first
+  build reached prerender and failed because this worktree had no Clerk key;
+  the synthetic key proves packaging only and cannot prove real sign-in.
+- A full `pnpm run test --maxWorkers=2` attempt started the repository's test
+  script against 3,780 test files. It was interrupted after the host reached
+  7.3 of 8 GiB swap while the shell build was also running. Before interruption,
+  the existing proxy-only test failed; it was reproduced in isolation and fixed
+  as above. The full suite has **not** passed at this checkpoint, and the
+  focused lanes do not replace it. `bun` was unavailable here, so `pnpm run`
+  invoked the same package scripts.
+- A 45-file Sites/Gateway/UI/contracts run first exposed a rollback timeout
+  regression and two deployment-script failures caused by missing `jq`. The
+  existing 30-second rollback budget was restored while new invitation
+  mutations keep 10 seconds, and `jq` was installed on this test host. The
+  complete Gateway platform-client file passed (8 tests), the deployment file
+  passed (8 tests), and the full 45-file feature run then passed **356/356**
+  assertions at the updated worktree head. This does not replace the unfinished
+  repository-wide suite.
+- The site docs PR passed its 540-test suite and hosted Vercel build. The
+  hosted page was inspected at 375, 768, and 1440 px without horizontal
+  overflow. Documentation captures remain outside the repo under
+  `/tmp/matrix-page-email-evidence/docs/`; these are not product-surface
+  evidence for T058–T064.
+
+T001 exact-URL Clerk qualification, T002 approved provider and sender, the
+concrete mail adapter, full test-suite completion, and all five live product
+surface captures remain open. `privateEmailInvitations` is disabled; PR #3200's
+email row must remain disabled until those gates and rollout readiness pass.

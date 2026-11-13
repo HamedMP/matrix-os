@@ -46,6 +46,8 @@ it('exchanges one verified Clerk identity through the exact Worker route without
  }});
  const edgeSecret='email-edge-proof-secret-1234567890123456';
  let activeSessionId='sess_viewer_browser';
+ const clerkBackend=vi.fn(async()=>Response.json({id:'user_viewer',banned:false,locked:false,deprovisioned:false,email_addresses:[
+   {email_address:'viewer@example.com',verification:{status:'verified'}}]}));
  const gateway=createSiteSubmitRoutes({serviceSecret:'fixture-email-submit-secret',submissions});
  const platformRoutes=createSitePublicRoutes({service,edgeSecret,submit:async(site,_trx,formId,input)=>{
   const raw=JSON.stringify({siteId:site.id,appSlug:site.appSlug,versionId:site.activeVersion,config:site.config,formId,...input});
@@ -59,8 +61,7 @@ it('exchanges one verified Clerk identity through the exact Worker route without
  },email:{db,
   enabled:async()=>true,secret:'site-email-fullpath-secret-long-enough',clerkSecretKey:'sk_test_disposable',publishableKey:'pk_test_existing_matrix_instance',
   verify:async()=>({authenticated:true,userId:'user_viewer',sessionId:activeSessionId,tokenExpiresAt:Math.floor(Date.now()/1000)+60}),
-  fetchImpl:async()=>Response.json({id:'user_viewer',banned:false,locked:false,deprovisioned:false,email_addresses:[
-   {email_address:'viewer@example.com',verification:{status:'verified'}}]}),
+  fetchImpl:clerkBackend,
  }});
  const platform=new Hono(); platform.route('/public/sites',platformRoutes);
  const forward=vi.fn(async(request:Request)=>platform.request(new Request(request.url,request)));
@@ -78,6 +79,7 @@ it('exchanges one verified Clerk identity through the exact Worker route without
   expect(await db.executor.selectFrom('user_machines').select('machine_id').where('clerk_user_id','=','user_viewer').execute()).toEqual([]);
   expect(await db.executor.selectFrom('users').select('clerk_id').where('clerk_id','=','user_viewer').execute()).toEqual([]);
   const cookie=exchange.headers.get('set-cookie')!.split(';')[0]!;
+  const clerkCallsAfterExchange=clerkBackend.mock.calls.length;
   const get=async(path:string)=>worker.fetch(new Request(`https://matrix.page${path}`,{headers:{cookie}}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret});
   const alias=await get('/email-app-canonical');
@@ -102,6 +104,7 @@ it('exchanges one verified Clerk identity through the exact Worker route without
    body:JSON.stringify({fields:{name:'Ada'},idempotencyKey:'email-visitor-request-0001'})}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret});
   expect(form.status).toBe(200);
+  expect(clerkBackend).toHaveBeenCalledTimes(clerkCallsAfterExchange);
   expect((await submissions.list(siteId,'email-app',50,null)).items.map(row=>row.fields)).toEqual([{name:'Ada'}]);
   const ownerGateway=new Hono();ownerGateway.use('*',async(c,next)=>{
    markAuthContextReady(c);setPlatformVerifiedPrincipal(c,'user_viewer');await next();
@@ -118,8 +121,10 @@ it('exchanges one verified Clerk identity through the exact Worker route without
   expect((await get(`/${siteId}/frame`)).status).toBe(404);
   expect((await exchangeRequest()).status).toBe(404);
   activeSessionId='sess_viewer_other_browser';
+  const secondBrowserStarted=performance.now();
   const otherExchange=await exchangeRequest();
   expect(otherExchange.status).toBe(200);
+  expect(performance.now()-secondBrowserStarted).toBeLessThan(30_000);
   const otherCookie=otherExchange.headers.get('set-cookie')!.split(';')[0]!;
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:otherCookie}}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(200);
@@ -130,10 +135,19 @@ it('exchanges one verified Clerk identity through the exact Worker route without
   expect(bearerOnlySignOut.status).toBe(200);
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:otherCookie}}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(404);
+  activeSessionId='sess_viewer_revocation_browser';
+  const revokeExchange=await exchangeRequest();
+  expect(revokeExchange.status).toBe(200);
+  const revokeCookie=revokeExchange.headers.get('set-cookie')!.split(';')[0]!;
+  const currentFrame=()=>worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:revokeCookie}}),
+   {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret});
+  expect((await currentFrame()).status).toBe(200);
   await db.executor.updateTable('public_site_viewer_grants').set({revoked_at:new Date(),revocation_reason:'owner'}).where('site_id','=',siteId).execute();
-  expect((await get(`/${siteId}/frame`)).status).toBe(404);
+  const revokedAt=performance.now();
+  expect((await currentFrame()).status).toBe(404);
+  expect(performance.now()-revokedAt).toBeLessThan(5_000);
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/forms/rsvp`,{method:'POST',
-   headers:{origin:'https://matrix.page',cookie,'content-type':'application/json'},
+   headers:{origin:'https://matrix.page',cookie:revokeCookie,'content-type':'application/json'},
    body:JSON.stringify({fields:{name:'After revoke'},idempotencyKey:'email-visitor-request-0002'})}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(404);
   expect((await submissions.list(siteId,'email-app',50,null)).items).toHaveLength(1);
