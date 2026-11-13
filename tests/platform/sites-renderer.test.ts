@@ -35,6 +35,40 @@ it('reuses an existing Matrix Clerk session and exchanges only at that app URL',
   expect(dom.window.document.querySelector('.error')?.textContent).toContain('does not have access');
  }finally{dom.window.close()}
 });
+it('lets the same Clerk session retry a temporary exchange failure without reloading', async () => {
+ const exchange=vi.fn().mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:404}));
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:vi.fn(),mountSignUp:vi.fn()};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});Object.defineProperty(window,'fetch',{value:exchange});
+ }});
+ try{
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledOnce());
+  const retry=dom.window.document.getElementById('retry-access') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(retry.hidden).toBe(false));
+  retry.click();
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledTimes(2));
+  expect(clerk.session.getToken).toHaveBeenCalledTimes(2);
+ }finally{dom.window.close()}
+});
+it('bounds a stalled Clerk account switch and keeps a visible retry path', async () => {
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:vi.fn(),mountSignUp:vi.fn(),signOut:vi.fn(()=>new Promise<void>(()=>{}))};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async(url:unknown)=>{
+   if(String(url).includes('/sign-out')){
+    window.setTimeout=((handler: TimerHandler)=>{queueMicrotask(()=>{if(typeof handler==='function')handler()});return 1}) as typeof window.setTimeout;
+    return new Response('{}',{status:200});
+   }
+   return new Response('{}',{status:404});
+  })});
+ }});
+ try{
+  await vi.waitFor(()=>expect((dom.window.document.getElementById('switch-account') as HTMLButtonElement).hidden).toBe(false));
+  (dom.window.document.getElementById('switch-account') as HTMLButtonElement).click();
+  await vi.waitFor(()=>expect(clerk.signOut).toHaveBeenCalledOnce());
+  await vi.waitFor(()=>expect(dom.window.document.querySelector('.error')?.textContent).toContain('Unable to switch accounts'));
+ }finally{dom.window.close()}
+});
 it('claims the current fragment when a fresh one-time link replaces a failed link in the same tab', async () => {
  const firstId='11111111-1111-4111-8111-111111111111', secondId='22222222-2222-4222-8222-222222222222';
  const firstToken='a'.repeat(43), secondToken='b'.repeat(43), bodies:string[]=[];
