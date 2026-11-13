@@ -88,6 +88,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#provider-managed-credit";
 export * from "#funded-ai";
+export * from "#funded-ai-pricing";
 export * from "#jev";
 export * from "#jev-inbox";
 export * from "#get-started";

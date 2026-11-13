@@ -2,12 +2,17 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { FUNDED_PROBE_CACHE_REVISION } from "../../packages/platform/src/database/funded-probe-cache-revision.js";
+import { FUNDED_PRICING_REVIEW_REVISION } from "../../packages/platform/src/database/funded-pricing-review-revision.js";
 import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/migration-revision.js";
 
 describe("platform schema revision", () => {
   it("binds the independent shared probe cache schema to its own revision", async () => {
     const source = await readFile("packages/platform/src/database/funded-probe-cache-migration.ts");
     expect(FUNDED_PROBE_CACHE_REVISION.fingerprint).toBe(createHash("sha256").update(source).digest("hex"));
+  });
+  it("binds the independent pricing review schema to its own revision", async () => {
+    const source = await readFile("packages/platform/src/database/funded-pricing-review-migration.ts");
+    expect(FUNDED_PRICING_REVIEW_REVISION.fingerprint).toBe(createHash("sha256").update(source).digest("hex"));
   });
   it("changes whenever the ordered schema migrations change", async () => {
     const base = "packages/platform/src/database";
