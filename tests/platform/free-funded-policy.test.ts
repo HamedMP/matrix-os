@@ -1,4 +1,5 @@
-import { MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
+import { FundedAiSafeErrorSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
+import { createAiFundedRelayRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
@@ -14,6 +15,7 @@ const ENV = {
   AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32),
 };
 const USD = 1_000_000;
+const RELAY_TOKEN = 'r'.repeat(40);
 let sequence = 0;
 
 async function enableGlobalPolicy(db: PlatformDB) {
@@ -111,11 +113,29 @@ describe('free funded policy', () => {
     const a = await free.credential(await addRuntime(db, 1, 'free', NOV));
     const b = await free.credential(await addRuntime(db, 2, 'free', NOV));
     await free.spend(a, 2 * USD);
-    await expect(free.authorize(b, USD + 1)).rejects.toThrow(refusal('rate_limited'));
+    await expect(free.authorize(b, USD + 1)).rejects.toThrow(expect.objectContaining({
+      code: 'busy', retry: { at: '2026-11-21T00:00:00.000Z', afterSeconds: 12 * 3600 },
+    }));
     await expect(free.authorize(b, USD)).resolves.toBeDefined();
     clock.now = new Date('2026-11-21T00:00:00.000Z');
     const c = await free.credential(await addRuntime(db, 3, 'free', clock.now));
     await expect(free.authorize(c, 3 * USD)).resolves.toBeDefined();
+  });
+
+  it('answers the relay with 503, a Retry-After until UTC midnight, and a busy body over the daily ceiling', async () => {
+    const free = harness(db, USD, clock);
+    const a = await free.credential(await addRuntime(db, 1, 'free', NOV));
+    await free.spend(a, USD);
+    const routes = createAiFundedRelayRoutes({ relayControlToken: RELAY_TOKEN, repository: free.repo });
+    const response = await routes.request('/authorize', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${RELAY_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ credential: a.token, requestId: 'request_busy', modelId: FREE_MANAGED_MODEL_ID, maxCostMicrousd: 1 }),
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe(String(12 * 3600));
+    const body = FundedAiSafeErrorSchema.parse(await response.json());
+    expect(body).toEqual({ error: { code: 'busy', message: 'Matrix AI is busy; try again later', retryAt: '2026-11-21T00:00:00.000Z' } });
   });
 
   it('answers a free runtime that asks for credentials too often as rate limited, not disabled', async () => {
@@ -128,7 +148,7 @@ describe('free funded policy', () => {
   it('refuses all free funded work when no daily ceiling is configured', async () => {
     const free = harness(db, undefined, clock);
     const credential = await free.credential(await addRuntime(db, 1, 'free', NOV));
-    await expect(free.authorize(credential, 1)).rejects.toThrow(refusal('rate_limited'));
+    await expect(free.authorize(credential, 1)).rejects.toThrow(refusal('unavailable'));
   });
 
   it('never applies the free ceiling, allowance, or model limit to a paid owner', async () => {
@@ -166,7 +186,7 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
     const results = await Promise.allSettled(credentials.map((credential, index) => apps[index % 2]!.authorize(credential, USD)));
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(3);
     for (const result of results) {
-      if (result.status === 'rejected') expect(result.reason).toMatchObject({ code: 'rate_limited' });
+      if (result.status === 'rejected') expect(result.reason).toMatchObject({ code: 'busy' });
     }
   });
 

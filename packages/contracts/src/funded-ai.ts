@@ -511,6 +511,11 @@ const SafeErrorSchema = z.discriminatedUnion("code", [
     message: z.literal("Try again later"),
     reason: FundedAiPriorityReasonSchema.optional(),
   }).strict(),
+  z.object({
+    code: z.literal("busy"),
+    message: z.literal("Matrix AI is busy; try again later"),
+    retryAt: IsoTimestampSchema,
+  }).strict(),
   z.object({ code: z.literal("revision_conflict"), message: z.literal("Policy changed; refresh and try again") }).strict(),
   z.object({ code: z.literal("insufficient_credit"), message: z.literal("Not enough Matrix AI credit") }).strict(),
   z.object({ code: z.literal("budget_exceeded"), message: z.literal("Monthly AI budget reached") }).strict(),

@@ -176,7 +176,7 @@ async function authenticatedRuntimeMachine(
   return timingSafeTokenEquals(token, expected) ? machine : undefined;
 }
 
-function safeError(code: FundedAiSafeError["error"]["code"]): FundedAiSafeError {
+function safeError(code: Exclude<FundedAiSafeError["error"]["code"], "busy">): FundedAiSafeError {
   const message = {
     unauthorized: "Unauthorized",
     access_disabled: "Matrix-funded AI is unavailable",
@@ -203,6 +203,13 @@ function policyErrorResponse(c: Context, error: unknown) {
     if (error.code === "rate_limited") {
       return c.json(error.reason ? { error: { ...safeError("rate_limited").error, reason: error.reason } } : safeError("rate_limited"), 429);
     }
+    if (error.code === "busy" && error.retry) {
+      c.header("Retry-After", String(error.retry.afterSeconds));
+      return c.json(FundedAiSafeErrorSchema.parse({
+        error: { code: "busy", message: "Matrix AI is busy; try again later", retryAt: error.retry.at },
+      }), 503);
+    }
+    if (error.code === "busy") return c.json(safeError("unavailable"), 503);
     if (error.code === "revision_conflict") return c.json(safeError("revision_conflict"), 409);
     if (error.code === "idempotency_conflict") return c.json(safeError("idempotency_conflict"), 409);
     if (error.code === "reservation_expired") return c.json(safeError("reservation_expired"), 409);

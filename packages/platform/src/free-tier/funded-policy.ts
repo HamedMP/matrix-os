@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { PlatformDB } from '../db.js';
 import { AiFundedPolicyError } from '../ai-funded-policy-errors.js';
-import { admitDailyFundedSpend } from './capacity.js';
+import { admitDailyFundedSpend, utcDayStart } from './capacity.js';
 
 /**
  * Funded AI for free runtimes (spec 2691 D2): the once-per-owner starter
@@ -54,12 +54,23 @@ export async function grantFreeMonthlyAllowance(
   }, at.toISOString());
 }
 
-/** Takes the global daily-spend lock last, after every owner and balance lock, so the order never cycles. */
+/** The daily ceiling resets at the next UTC midnight; that is when a busy refusal clears. */
+export function nextUtcDay(now: Date): { at: string; afterSeconds: number } {
+  const next = new Date(Date.parse(utcDayStart(now)) + 86_400_000);
+  return { at: next.toISOString(), afterSeconds: Math.max(1, Math.ceil((next.getTime() - now.getTime()) / 1000)) };
+}
+
+/**
+ * Takes the global daily-spend lock last, after every owner and balance lock,
+ * so the order never cycles. Over the ceiling is busy until the next UTC day;
+ * an unset ceiling is a configuration gap, so it is unavailable, not busy.
+ */
 export async function admitFreeDailySpend(
   executor: PlatformDB['executor'], config: FreeFundingConfig, holdMicrousd: number, now: Date,
 ): Promise<void> {
   const ceiling = config.dailyFundedSpendMicrousd;
-  if (ceiling === undefined || !await admitDailyFundedSpend(executor, { holdMicrousd, ceilingMicrousd: ceiling, now })) {
-    throw new AiFundedPolicyError('rate_limited');
+  if (ceiling === undefined) throw new AiFundedPolicyError('unavailable');
+  if (!await admitDailyFundedSpend(executor, { holdMicrousd, ceilingMicrousd: ceiling, now })) {
+    throw new AiFundedPolicyError('busy', undefined, nextUtcDay(now));
   }
 }
