@@ -53,7 +53,7 @@ key alongside the older minute-precision names.
 Lambda delivers per-unit data only through hooks: HTTP `POST` to
 `/aws/lambda-microvms/runtime/v1/<hook>` on a hook port set on the image. The `/run` body
 is `{ microvmId, runHookPayload }`, where `runHookPayload` is the platform's boot payload
-(version 1, at most 16 KB). Environment variables are fixed per image version, so per-owner
+(version 2, at most 16 KB; shape in `tests/fixtures/container-boot-payload-v2.json`). Environment variables are fixed per image version, so per-owner
 configuration cannot arrive through them. The endpoint forwards no traffic until `/run`
 returns 200.
 
@@ -61,7 +61,7 @@ returns 200.
 | --- | --- |
 | `run` | Accept the payload once, validate it, store it with mode 0600 outside the home, start the gateway; 200 once it listens |
 | `suspend`, `terminate` | Bounded final flush as a safety net behind the platform's quiesce, flush, stop; always 200 |
-| `resume` | Re-check credentials |
+| `resume` | Lift the platform quiesce that survived the suspend, through the gateway's own `resume` route, within 10 s; 503 `resume_failed` otherwise |
 | `ready`, `validate` | Image health at build time only; no owner data exists yet |
 
 The platform owns idleness. Units are started with an explicit `idlePolicy`: the idle

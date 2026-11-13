@@ -248,7 +248,8 @@ failing, at capacity, and being migrated.
 - **FR-010**: Built app output MUST survive a stop, so reopening an app does not require
   a rebuild.
 - **FR-019**: Template setup MUST NOT write over any owner file present in the accepted
-  manifest, on any substrate. `system/soul.md` is owner-owned.
+  manifest, on any substrate. `system/soul.md` is seed-only: written when absent, never
+  overwritten.
 - **FR-020**: The container profile MUST NOT run boot-time `git init` on the home. How
   project history is persisted, and whether `.git` counts against the home size limit,
   is open (D8).
@@ -266,6 +267,8 @@ failing, at capacity, and being migrated.
 
 - **FR-011**: A free plan MUST exist as an entitlement that allows exactly one container
   runtime and no VPS. Signup MAY be gated by invite and by a global capacity ceiling.
+  An owner whose paid plan has ended MAY take the free plan; an owner with an active,
+  trialing, past-due, or grace-period paid plan MUST NOT.
 - **FR-012**: Funded AI MUST reuse the existing owner-serialized admission, holds, and
   settlement. A container runtime gets its own runtime policy with a model allowlist and
   a budget. Starter credit stays once per owner across substrates.
@@ -511,7 +514,7 @@ Provisional per-owner defaults, configuration-driven, so limit tests can be writ
 | Maximum session | 4 h |
 | Home size | 2 GiB |
 | Home files | 50,000 |
-| Database size and connections | 500 MB, 5 connections |
+| Database size and connections | 500 MB, 5 connections; size is held by a platform sweep that revokes writes, because the owner role can switch off its own read-only setting |
 
 **Connection budget.** Running containers times 5 connections must stay under the
 shared cluster's limit with headroom; the global running-container ceiling is derived
@@ -563,7 +566,7 @@ N/A without architectural rationale and reviewer approval.
 | --- | --- | --- |
 | D0 | Linear ticket | Decided: [ENG-446](https://linear.app/matrix-os/issue/ENG-446/runtime-substrates-container-based-free-tier-alongside-vps); stacks share it |
 | D1 | Container provider | Decided 2026-11-10: AWS Lambda MicroVMs, with Cloud Run gen2 as fallback (research.md R4) |
-| D2 | Free AI allowance | Once-per-owner starter credit plus a small monthly allowance limited to the managed default model; own-account sources stay available |
+| D2 | Free AI allowance | Decided 2026-11-13: once-per-owner starter credit plus $5 per month limited to the managed default model; own-account sources stay available |
 | D3 | Limits and retention | Set after Phase 0 measurement; propose 90 days inactivity, 30 days notice |
 | D4 | Signup gate | Invite-only until SC-004 and SC-007 hold in production for two weeks |
 | D5 | Free capability set | Chat (Matrix AI), Files, app build and use, Settings. Terminal, coding CLIs, channels, cron, bots, integrations with platform secrets: paid |

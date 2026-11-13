@@ -73,6 +73,26 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
     auto-resume off, so the platform decides idleness (see `contracts/lifecycle.md`).
   - The docs give no timeout for any hook.
   - Source: AWS Lambda developer guide, "Running and using MicroVMs".
+- **Cost per free owner (estimate 2026-11-13)**: eu-central-1 ARM, 1 vCPU and 2 GB at
+  $0.159 per active hour, the 10 minute idle tail on every session, and the $5 monthly AI
+  allowance (D2) as the AI ceiling. Launch reads use the Ireland rate ($0.0049 per launch);
+  logs, transfer, shared Postgres, and object storage come to about $0.01 to $0.03 per
+  active hour, from the S1 desk figures.
+
+  | Owner | Use per month | Compute | Launches | Other | AI (at most) | Total (at most) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Light | 8 sessions of 15 min (3.3 h billed) | $0.53 | $0.04 | $0.05 | $5 | about $5.60 |
+  | Typical | 1 session of 20 min a day (15 h billed) | $2.39 | $0.15 | $0.30 | $5 | about $7.85 |
+  | Heavy | 2 sessions a day, 3 h active in all (100 h billed) | $15.90 | $0.29 | $2.00 | $5 | about $23 |
+
+  - Compute, not AI, decides the heavy case, and nothing yet caps an owner's monthly
+    compute hours. An owner who re-wakes the runtime all day could reach about $116 a
+    month (730 h). D3 needs a monthly compute-hour limit before invites widen.
+  - Most free owners will not spend the full AI allowance, so these totals are upper
+    bounds for AI. Burst CPU (up to about $0.64 per hour) is billed only while used and is
+    left out.
+  - Not checked: the eu-central-1 launch-read price, and whether MicroVMs SKUs count
+    against the AWS credits.
 
 
 ## Spike log
