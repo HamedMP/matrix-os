@@ -22,8 +22,11 @@ export function builtinToolPermissionModeCallback<T>(approvalId: string, callbac
   return approvalId.startsWith("tool_") ? callback : undefined;
 }
 
-class PermissionModeIntentSupersededError extends Error {
-  constructor() { super(CHAT_PERMISSION_MODE_ERROR); this.name = "PermissionModeIntentSupersededError"; }
+class PermissionModeAcknowledgedStateUnavailableError extends Error {
+  constructor() { super(CHAT_PERMISSION_MODE_ERROR); this.name = "PermissionModeAcknowledgedStateUnavailableError"; }
+}
+class PermissionModeIntentSupersededError extends PermissionModeAcknowledgedStateUnavailableError {
+  constructor() { super(); this.name = "PermissionModeIntentSupersededError"; }
 }
 
 /** Missing sequence information never proves that another accepted change came later. */
@@ -39,6 +42,15 @@ function permissionIntentWasSuperseded(detail: CanonicalChatDetailResponse | nul
   return Boolean(latest && latest.sequence! > original.sequence && latest.clientRequestId !== clientRequestId
     && latest.permissionMode !== mode && latest.permissionMode === currentMode
     && !events.some(event => event.id !== latest.id && event.sequence === latest.sequence));
+}
+
+/** A bounded canonical-state watermark also detects changes when older receipts left the history window. */
+function permissionStateWatermark(detail: CanonicalChatDetailResponse | null, runId: string): string {
+  const run = detail?.runs.find(candidate => candidate.id === runId);
+  const events = detail?.activities.filter(event => event.type === "run.permission_mode"
+    && event.chatId === detail.record.chat.id && event.runId === runId)
+    .map(event => [event.id, event.sequence, event.occurredAt]);
+  return JSON.stringify([run?.permissionMode, events]);
 }
 
 /** An accepted response changes this exact run only; another Chat/runtime never receives it. */
@@ -58,6 +70,7 @@ export async function setCanonicalChatPermissionMode(input: {
     || initial.record.chat.collaboration?.mode === "shared" || !input.isCurrent() || !input.client.setPermissionMode) {
     throw new Error(CHAT_PERMISSION_MODE_ERROR);
   }
+  const requestWatermark = permissionStateWatermark(initial, input.runId);
   const current = () => input.isCurrent() && input.getDetail()?.record.chat.id === chatId
     && input.getDetail()?.record.activeRun?.runId === input.runId;
   const clientRequestId = input.clientRequestId ?? `req_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -81,20 +94,40 @@ export async function setCanonicalChatPermissionMode(input: {
     }
     throw new Error(CHAT_PERMISSION_MODE_ERROR);
   }
-  if (accepted.chatId !== chatId || accepted.runId !== input.runId || accepted.permissionMode !== input.permissionMode || !current()) {
+  if (accepted.chatId !== chatId || accepted.runId !== input.runId || accepted.permissionMode !== input.permissionMode) {
     throw new Error(CHAT_PERMISSION_MODE_ERROR);
   }
-  input.commit(detail => current() && detail ? { ...detail, runs: detail.runs.map(run => run.id === input.runId
-    ? { ...run, permissionMode: accepted.permissionMode } : run) } : detail);
-  // The permission is already confirmed. A failed approval refresh must not report a failed grant.
+  if (!current()) throw new PermissionModeAcknowledgedStateUnavailableError();
+  const contradictsAcknowledgement = (detail: CanonicalChatDetailResponse | null) =>
+    detail?.runs.find(run => run.id === input.runId)?.permissionMode !== accepted.permissionMode
+    && permissionStateWatermark(detail, input.runId) !== requestWatermark;
+  if (permissionIntentWasSuperseded(input.getDetail(), input.runId, clientRequestId, accepted.permissionMode)) {
+    throw new PermissionModeIntentSupersededError();
+  }
+  // A response contains no ordering token. Observed concurrency requires a fresh canonical read.
+  const needsCanonicalResolution = contradictsAcknowledgement(input.getDetail());
+  if (!needsCanonicalResolution) input.commit(detail => {
+    if (!current() || detail?.record.chat.id !== chatId || detail.record.activeRun?.runId !== input.runId
+      || permissionIntentWasSuperseded(detail, input.runId, clientRequestId, accepted.permissionMode)
+      || contradictsAcknowledgement(detail)) return detail;
+    return { ...detail, runs: detail.runs.map(run => run.id === input.runId
+      ? { ...run, permissionMode: accepted.permissionMode } : run) };
+  });
+  let refreshFailed = false;
   if (current()) {
-    try { return { refreshFailed: await input.refresh(chatId) === null }; }
+    try { refreshFailed = await input.refresh(chatId) === null; }
     catch (error: unknown) {
       console.warn("[chat] Approval refresh unavailable:", error instanceof Error ? error.name : "UnknownError");
-      return { refreshFailed: true };
+      refreshFailed = true;
     }
   }
-  return { refreshFailed: false };
+  if (current() && contradictsAcknowledgement(input.getDetail())) {
+    if (refreshFailed) throw new PermissionModeAcknowledgedStateUnavailableError();
+    throw new PermissionModeIntentSupersededError();
+  }
+  if (needsCanonicalResolution && refreshFailed) throw new PermissionModeAcknowledgedStateUnavailableError();
+  // A confirmed grant survives an unrelated approval refresh failure, with a visible recovery notice.
+  return { refreshFailed };
 }
 
 /** Keep next-turn drafts separate from owner-authorized changes to an active run. */
@@ -133,10 +166,10 @@ export function useLiveChatPermissionMode(input: {
       }
       attemptedRequestId = intent.current.requestId;
       const result = await input.change!(input.activeRunId, mode, attemptedRequestId);
-      if (intent.current?.scope === scope && intent.current.mode === mode) intent.current = null;
+      if (intent.current?.requestId === attemptedRequestId) intent.current = null;
       if (owner.current === ownerAtStart) setAttempt({ scope, pending: false, error: null, notice: result?.refreshFailed ? CHAT_PERMISSION_MODE_REFRESH_NOTICE : null });
     } catch (error: unknown) {
-      if (error instanceof PermissionModeIntentSupersededError && owner.current === ownerAtStart
+      if (error instanceof PermissionModeAcknowledgedStateUnavailableError
         && intent.current?.requestId === attemptedRequestId) intent.current = null;
       console.warn("[chat] Permission mode change failed:", error instanceof Error ? error.name : "UnknownError");
       if (owner.current === ownerAtStart) setAttempt({ scope, pending: false, error: CHAT_PERMISSION_MODE_ERROR, notice: null });

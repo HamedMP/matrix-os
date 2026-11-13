@@ -242,3 +242,121 @@ it.each(["other_run", "unsequenced", "same_sequence", "older_sequence"])("preser
   }
   expect(setPermissionMode.mock.calls[1]?.[2].clientRequestId).toBe(originalRequestId);
 });
+
+function receiveConcurrentSupervised(state: ReturnType<typeof context>, history: "complete" | "missing_original" | "unsequenced" = "complete") {
+  state.input.commit(current => current ? { ...current, runs: current.runs.map(run => ({ ...run, permissionMode: "supervised", updatedAt: "2026-08-25T00:00:02.000Z" })), activities: [
+    ...(history === "missing_original" ? [] : [{ id: "activity_own_full", chatId: state.chatId, runId: state.runId,
+      type: "run.permission_mode" as const, sequence: 10, occurredAt: "2026-08-25T00:00:01.000Z",
+      permissionMode: "full_access" as const, clientRequestId: "req_delayed_full" }]),
+    { id: "activity_other_supervised", chatId: state.chatId, runId: state.runId, type: "run.permission_mode" as const,
+      sequence: history === "unsequenced" ? undefined : 11, occurredAt: "2026-08-25T00:00:02.000Z",
+      permissionMode: "supervised" as const, clientRequestId: "req_other_tab" },
+  ] } : current);
+}
+
+it.each(["complete", "missing_original", "unsequenced"] as const)("preserves newer Supervised state against a delayed Full Access acknowledgement with %s history", async history => {
+  const state = context();
+  let acknowledge!: (response: typeof state.accepted) => void;
+  const setPermissionMode = vi.fn(() => new Promise<typeof state.accepted>(resolve => { acknowledge = resolve; }));
+  state.input.refresh.mockRejectedValue(new TypeError("RecoveryReadUnavailable"));
+  const pending = setCanonicalChatPermissionMode({ ...state.input, clientRequestId: "req_delayed_full", client: { setPermissionMode } });
+  const observed = pending.catch((error: unknown) => error);
+  receiveConcurrentSupervised(state, history);
+  acknowledge(state.accepted);
+  expect(await observed).toBeInstanceOf(Error);
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("supervised");
+  expect(setPermissionMode).toHaveBeenCalledOnce();
+});
+
+it("uses a fresh canonical read when an acknowledgement may really be newer than the observed change", async () => {
+  const state = context();
+  let acknowledge!: (response: typeof state.accepted) => void;
+  const setPermissionMode = vi.fn(() => new Promise<typeof state.accepted>(resolve => { acknowledge = resolve; }));
+  const pending = setCanonicalChatPermissionMode({ ...state.input, clientRequestId: "req_delayed_full", client: { setPermissionMode } });
+  receiveConcurrentSupervised(state, "missing_original");
+  state.input.refresh.mockImplementation(async () => {
+    // Until the newer server state is read, the local confirmed downgrade stays visible.
+    expect(state.detail()?.runs[0]?.permissionMode).toBe("supervised");
+    state.input.commit(current => current ? { ...current, runs: current.runs.map(run => ({ ...run, permissionMode: "full_access" })), activities: [
+      ...current.activities,
+      { id: "activity_final_full", chatId: state.chatId, runId: state.runId, type: "run.permission_mode", sequence: 12,
+        occurredAt: "2026-08-25T00:00:03.000Z", permissionMode: "full_access", clientRequestId: "req_delayed_full" },
+    ] } : current);
+  });
+  acknowledge(state.accepted);
+  await expect(pending).resolves.toEqual({ refreshFailed: false });
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("full_access");
+  expect(setPermissionMode).toHaveBeenCalledOnce();
+});
+
+it("retires a delayed acknowledged intent when a fresh canonical read confirms a different mode", async () => {
+  const state = context();
+  let acknowledge!: (response: typeof state.accepted) => void;
+  const client = { setPermissionMode: vi.fn(() => new Promise<typeof state.accepted>(resolve => { acknowledge = resolve; })) };
+  const pending = setCanonicalChatPermissionMode({ ...state.input, clientRequestId: "req_delayed_full", client });
+  const observed = pending.catch((error: unknown) => error);
+  receiveConcurrentSupervised(state, "missing_original");
+  acknowledge(state.accepted);
+  expect(await observed).toMatchObject({ name: "PermissionModeIntentSupersededError" });
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("supervised");
+  expect(state.input.refresh).toHaveBeenCalledOnce();
+});
+
+it("guards the actual acknowledgement updater if a newer permission arrives after the pre-check", async () => {
+  const state = context();
+  let queuedUpdate!: Parameters<typeof state.input.commit>[0];
+  let rejectRefresh!: (error: Error) => void;
+  const commit = vi.fn((update: typeof queuedUpdate) => { queuedUpdate = update; });
+  state.input.refresh.mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectRefresh = reject; }));
+  const pending = setCanonicalChatPermissionMode({ ...state.input, commit, clientRequestId: "req_delayed_full",
+    client: { setPermissionMode: vi.fn(async () => state.accepted) } });
+  const observed = pending.catch((error: unknown) => error);
+  await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  receiveConcurrentSupervised(state);
+  state.input.commit(queuedUpdate);
+  rejectRefresh(new Error("RecoveryReadUnavailable"));
+  await observed;
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("supervised");
+});
+
+it.each(["missing_original", "unsequenced"] as const)("retires an acknowledged request after a failed concurrency read with %s history", async history => {
+  const state = context();
+  let firstRequestId = "";
+  let acknowledge!: (response: typeof state.accepted) => void;
+  const setPermissionMode = vi.fn(async (_chatId: string, _runId: string, input: { clientRequestId: string }) => {
+    if (!firstRequestId) {
+      firstRequestId = input.clientRequestId;
+      return await new Promise<typeof state.accepted>(resolve => { acknowledge = resolve; });
+    }
+    if (input.clientRequestId === firstRequestId) throw new Error("CompletedIntentCannotBeReapplied");
+    return state.accepted;
+  });
+  state.input.refresh.mockRejectedValueOnce(new TypeError("RecoveryReadUnavailable")).mockResolvedValue(undefined);
+  const change = (runId: string, permissionMode: "supervised" | "full_access", clientRequestId: string) =>
+    setCanonicalChatPermissionMode({ ...state.input, runId, permissionMode, clientRequestId, client: { setPermissionMode } });
+  const hook = renderHook(() => useLiveChatPermissionMode({ scope: state.chatId, activeRunId: state.runId,
+    liveModes: ["supervised", "full_access"], change, changeDraft: vi.fn() }));
+  let first!: Promise<void>;
+  act(() => { first = hook.result.current.select("full_access"); });
+  const observed = first.catch((error: unknown) => error);
+  receiveConcurrentSupervised(state, history);
+  await act(async () => { acknowledge(state.accepted); await observed; });
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("supervised");
+  expect(setPermissionMode).toHaveBeenCalledOnce();
+  await act(async () => { await hook.result.current.select("full_access"); });
+  expect(setPermissionMode.mock.calls[1]?.[2].clientRequestId).not.toBe(firstRequestId);
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("full_access");
+});
+
+it("keeps an ordinary acknowledged grant when only unrelated run timestamps advance and approval reload fails", async () => {
+  const state = context();
+  let acknowledge!: (response: typeof state.accepted) => void;
+  const client = { setPermissionMode: vi.fn(() => new Promise<typeof state.accepted>(resolve => { acknowledge = resolve; })) };
+  state.input.refresh.mockRejectedValue(new TypeError("ApprovalReadUnavailable"));
+  const pending = setCanonicalChatPermissionMode({ ...state.input, clientRequestId: "req_delayed_full", client });
+  const observed = pending.catch((error: unknown) => error);
+  state.input.commit(current => current ? { ...current, runs: current.runs.map(run => ({ ...run, updatedAt: "2026-08-25T00:00:02.000Z" })) } : current);
+  acknowledge(state.accepted);
+  expect(await observed).toEqual({ refreshFailed: true });
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("full_access");
+});
