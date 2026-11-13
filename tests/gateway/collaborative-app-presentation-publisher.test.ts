@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -310,5 +310,113 @@ describe("owner app presentation reaches the recipient launcher", () => {
       vi.unstubAllGlobals();
       await rm(storeRoot, { recursive: true, force: true });
     }
+  });
+
+  it("retries instead of uploading when the icon changes after it was described", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(11));
+    const replacement = png(12);
+    platformFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      // The owner saves a new icon while the presentation request is in flight.
+      if (url.pathname.endsWith("/presentation") && !platformFetch.mock.calls.some(([seen]) => String(seen).includes("/artwork/"))) {
+        await writeIcon(replacement, "sprint-board.png", 1_700_000_200);
+      }
+      return routes.request(`${url.pathname}${url.search}`, init);
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await publisher.runOnce()).toBe(0);
+    expect(platformFetch.mock.calls.some(([input]) => String(input).includes("/artwork/"))).toBe(false);
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board" });
+
+    currentTime += 60_000;
+    expect(await publisher.runOnce()).toBe(1);
+    expect((await launcher())[0]!.presentation?.iconUrl).toContain(sha256(replacement));
+  });
+
+  it.each([
+    ["the platform is unreachable", async () => { throw new TypeError("fetch failed"); }],
+    ["the platform answers with an unexpected body", async () => new Response(JSON.stringify({ ok: true }), { status: 200 })],
+  ])("backs off when %s", async (_case, failure) => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(13));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    platformFetch.mockImplementation(failure as typeof fetch);
+    expect(await publisher.runOnce()).toBe(0);
+    platformFetch.mockClear();
+    expect(await publisher.runOnce()).toBe(0);
+    expect(platformFetch).not.toHaveBeenCalled();
+  });
+
+  it("retries when the platform rejects the artwork upload", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(14));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    platformFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes("/artwork/")) return new Response(JSON.stringify({ error: "Unavailable" }), { status: 503 });
+      return routes.request(`${url.pathname}${url.search}`, init);
+    });
+    expect(await publisher.runOnce()).toBe(0);
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board" });
+  });
+
+  it("shares one cycle between concurrent callers and stops publishing after shutdown", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(15));
+    const [first, second] = await Promise.all([publisher.runOnce(), publisher.runOnce()]);
+    expect([first, second]).toEqual([1, 1]);
+    await publisher.shutdown();
+    await publisher.shutdown();
+    platformFetch.mockClear();
+    expect(await publisher.runOnce()).toBe(0);
+    expect(platformFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses an insecure platform origin or a missing runtime credential", () => {
+    const base = { db: owner.db, ownerId, runtimeId, source: createOwnerAppPresentationSource(home), startTimer: false };
+    expect(() => new CollaborativeAppPresentationPublisher({ ...base, platformBaseUrl: "http://platform.matrix.test", serviceToken }))
+      .toThrow();
+    expect(() => new CollaborativeAppPresentationPublisher({ ...base, platformBaseUrl: "https://platform.matrix.test", serviceToken: "short" }))
+      .toThrow("Collaboration presentation service token is unavailable");
+  });
+
+  it("publishes nothing for a name that is not safe to show members", async () => {
+    await writeApp("/home/owner/apps/team-tracker");
+    expect(await publisher.runOnce()).toBe(0);
+    expect((await launcher())[0]).not.toHaveProperty("presentation");
+  });
+
+  it("publishes no artwork for an oversized, unreadable, or non-file icon", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const oversized = new Uint8Array(4 * 1024 * 1024 + 1);
+    oversized.set(png(1).slice(0, 8));
+    await writeApp("Sprint Board 1");
+    await writeIcon(oversized);
+    await publisher.runOnce();
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board 1" });
+
+    await writeIcon(png(16), "sprint-board.png", 1_700_000_300);
+    await chmod(join(home, "system/icons", "sprint-board.png"), 0o000);
+    await writeApp("Sprint Board 2");
+    await publisher.runOnce();
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board 2" });
+
+    await rm(join(home, "system/icons", "sprint-board.png"), { force: true });
+    await mkdir(join(home, "system/icons", "sprint-board.png"));
+    await writeApp("Sprint Board 3");
+    await publisher.runOnce();
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board 3" });
+  });
+
+  it("lets shutdown wait for an in-flight cycle", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(17));
+    const pending = publisher.runOnce();
+    await publisher.shutdown();
+    expect(await pending).toBeLessThanOrEqual(1);
+    platformFetch.mockClear();
+    expect(await publisher.runOnce()).toBe(0);
+    expect(platformFetch).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CollaborativeAppDirectoryResponseSchema,
@@ -276,5 +276,46 @@ describe("shared app presentation: owner publication to recipient launcher", () 
 
     expect((await upload(icon)).status).toBe(204);
     expect((await listAs(member)).items[0]!.presentation!.iconUrl).toContain(sha256(icon));
+  });
+
+  it("requires the owner runtime and valid identifiers to upload artwork, and rejects malformed publications", async () => {
+    const icon = png(11);
+    expect((await routes.request(`/internal/collaboration/shared-apps/${scopeId}/artwork/${sha256(icon)}`, {
+      method: "PUT", headers: { "content-type": "image/png" }, body: icon,
+    })).status).toBe(401);
+    expect((await upload(icon, "not-a-digest")).status).toBe(422);
+    expect((await routes.request(`/internal/collaboration/shared-apps/${scopeId}/presentation`, {
+      method: "PUT", headers: { ...runtimeHeaders(), "content-type": "application/json" }, body: "{not json",
+    })).status).toBe(422);
+    // An empty listing with presentation requested stays an exact empty page.
+    expect(await listAs(platformCollaborationActors.outsider)).toEqual({ items: [] });
+  });
+
+  it("limits artwork reads per member", async () => {
+    await publishArtwork(png(12));
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    let status = 200;
+    for (let attempt = 0; attempt < 601 && status !== 429; attempt += 1) {
+      status = (await routes.request(iconUrl, { headers: { "x-test-actor": member, "if-none-match": `"${sha256(png(12))}"` } })).status;
+    }
+    expect(status).toBe(429);
+  });
+
+  it("answers storage failures with a generic error and no internal detail", async () => {
+    await publishArtwork(png(13));
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await fixture.collaborationDb.destroy();
+    const responses = [
+      await publish({ appId: app.appId, name: "Sprint Board", artwork: null }),
+      await upload(png(14)),
+      await routes.request(iconUrl, { headers: { "x-test-actor": member } }),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Collaboration unavailable" });
+    }
+    expect(warn).toHaveBeenCalled();
+    fixture = await createPlatformCollaborationTestDatabase();
   });
 });
