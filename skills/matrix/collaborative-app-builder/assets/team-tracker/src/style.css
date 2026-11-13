@@ -1,0 +1,20 @@
+:root { font-family: var(--matrix-font-sans, system-ui); color: var(--matrix-fg, #17322e); background: var(--matrix-bg, #f4f8f6); }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 48rem; margin: auto; padding: clamp(1rem, 4vw, 3rem); }
+header { margin-bottom: 2rem; }
+header p { font-size: .7rem; letter-spacing: .12em; }
+h1 { font-size: clamp(2rem, 7vw, 3rem); margin: .5rem 0; }
+form > label { display: block; margin-bottom: .5rem; font-weight: 600; }
+.composer { display: flex; gap: .5rem; flex-wrap: wrap; }
+input:not([type=checkbox]) { flex: 1; min-width: 10rem; padding: .8rem; border: 1px solid currentColor; border-radius: .5rem; background: transparent; color: inherit; }
+button { padding: .7rem; border-radius: .5rem; border: 1px solid currentColor; color: inherit; background: transparent; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+:focus-visible { outline: 3px solid var(--matrix-primary, #24766b); outline-offset: 3px; }
+ul { list-style: none; padding: 0; }
+li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--matrix-border, #b6ccc6); }
+li label { display: flex; align-items: center; gap: .7rem; overflow-wrap: anywhere; }
+.done { text-decoration: line-through; }
+[role=alert] { margin: 1rem 0; padding: 1rem; border: 1px solid currentColor; border-radius: .5rem; }
+[role=alert] button { margin: .2rem; }
+footer { font-size: .85rem; line-height: 1.6; margin-top: 2rem; }
