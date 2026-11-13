@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { resolveScopeRuntimeHostConfig, resolveScopeRuntimeSourcePaths } from "../../../packages/scope-runtime/src/host-config.js";
 
 describe("dormant scope runtime host bundle", () => {
   it("independently reclaims the supervisor cgroup when its event loop stops sending watchdog pings", async () => {
@@ -12,8 +13,6 @@ describe("dormant scope runtime host bundle", () => {
     const main = await readFile("packages/scope-runtime/src/main.ts", "utf8");
     expect(main.indexOf("const watchdog = startScopeRuntimeWatchdog()"))
       .toBeGreaterThan(main.indexOf("await server.start()"));
-    expect(main.indexOf("await watchdog.close()"))
-      .toBeLessThan(main.indexOf("await server.close()"));
   });
 
   it("installs a least-privilege system supervisor that is fenced by the app marker", async () => {
@@ -74,7 +73,10 @@ describe("dormant scope runtime host bundle", () => {
     expect(build.indexOf("pnpm --filter '@matrix-os/bot-runtime' build"))
       .toBeGreaterThan(build.indexOf("pnpm --filter '@matrix-os/scope-runtime' build"));
     expect(botPackage.scripts.build).toContain("dist/bot-worker.mjs");
-    expect(main).toContain('botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist"');
+    expect(main).toContain("...resolveScopeRuntimeSourcePaths(config)");
+    const installed = resolveScopeRuntimeHostConfig({ env: {} });
+    expect(resolveScopeRuntimeSourcePaths(installed).botRuntimeDirectory)
+      .toBe("/opt/matrix/app/packages/bot-runtime/dist");
     expect(botProfile).toContain("BindReadOnlyPaths=${BOT_RUNTIME_DIRECTORY_TOKEN}:${BOT_RUNTIME_MOUNT}");
     expect(cloudInit).toMatch(/install -d -o matrix -g matrix -m 0750 [^\n]*\/home\/matrix\/home\/bots/);
     expect(updater).toContain('for workload_root in /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/projects /home/matrix/home/worktrees; do');

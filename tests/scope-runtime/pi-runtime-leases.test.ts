@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ScopeRuntimeRequestSchema } from "../../packages/scope-runtime/src/protocol.js";
-import { FIXED_BOT_SYSTEMD_PROPERTIES } from "../../packages/scope-runtime/src/bot-profile.js";
+import { FIXED_BOT_SYSTEMD_PROPERTIES, materializeBotSystemdProperties } from "../../packages/scope-runtime/src/bot-profile.js";
 import { createScopeRuntimeController, SCOPE_RUNTIME_BOT_PROFILE, SCOPE_RUNTIME_MANAGED_PI_PROFILE, SCOPE_RUNTIME_PROFILE, type ScopeRuntimeLauncher } from "../../packages/scope-runtime/src/supervisor.js";
 
 const handle = `runtime_${"2".repeat(32)}`;
@@ -28,8 +28,10 @@ const run = { version: 1, type: "runtime.bot", requestId, runtimeHandle: handle,
 describe("active Pi runtime leases", () => {
   it("binds the no-wall-clock worker to supervisor lifetime while retaining resource isolation", () => {
     expect(FIXED_BOT_SYSTEMD_PROPERTIES).toContain("RuntimeMaxSec=infinity");
-    expect(FIXED_BOT_SYSTEMD_PROPERTIES).toContain("BindsTo=matrix-scope-runtime.service");
-    expect(FIXED_BOT_SYSTEMD_PROPERTIES).toContain("After=matrix-scope-runtime.service");
+    const materialized = materializeBotSystemdProperties({ scopeRoot: "/test/root", botRuntimeDirectory: "/test/bot",
+      brokerSocket: "/test/broker.sock", readinessFile: "/test/ready", commandDirectory: "/test/command" });
+    expect(materialized).toContain("BindsTo=matrix-scope-runtime.service");
+    expect(materialized).toContain("After=matrix-scope-runtime.service");
     for (const property of ["DynamicUser=yes", "PrivateNetwork=yes", "MemoryMax=1073741824", "CPUQuota=200%", "TasksMax=256", "CapabilityBoundingSet="]) expect(FIXED_BOT_SYSTEMD_PROPERTIES).toContain(property);
   });
   it.each([SCOPE_RUNTIME_BOT_PROFILE.profileId, SCOPE_RUNTIME_MANAGED_PI_PROFILE.profileId])("renews %s past the former 15/16/30 minute cutoffs", async profileId => {

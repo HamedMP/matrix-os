@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/protocol.ts",
     "./broker-protocol": "./src/broker-protocol.ts",
+    "./host-config": "./src/host-config.ts",
     "./profile": "./src/profile.ts",
     "./bot-profile": "./src/bot-profile.ts",
     "./sandbox": "./src/sandbox.ts",

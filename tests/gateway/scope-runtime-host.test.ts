@@ -1,7 +1,7 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScopeRuntimeCapabilityProfile } from "../../packages/scope-runtime/src/protocol.js";
 import { SCOPE_RUNTIME_BOT_PROFILE, SCOPE_RUNTIME_PROFILE } from "../../packages/scope-runtime/src/supervisor.js";
@@ -115,6 +115,26 @@ describe("scope runtime host", () => {
     await expect(stat(upPaths.broker)).rejects.toMatchObject({ code: "ENOENT" });
     expect(() => host.registerAuthorizer(authorizer(RUNTIME_A))).toThrow(new ScopeRuntimeHostError("closed"));
     expect(host.client.capability()).toEqual({ available: false, reason: "supervisor_unavailable" });
+  });
+
+  it("closes the client independently and retries a quarantined broker listener", async () => {
+    const paths = await sockets(), root = dirname(paths.broker);
+    await fakeSupervisor(paths.supervisor);
+    const host = await createScopeRuntimeHost({ homePath: root, profileCatalog: catalog,
+      supervisorSocket: paths.supervisor, brokerSocket: paths.broker, namespaceTrust: { root, uid: process.getuid!() } });
+    expect(host.available).toBe(true);
+    const closeClient = vi.spyOn(host.client, "close");
+    try {
+      await chmod(root, 0o777);
+      const attempts = await Promise.allSettled([host.close(), host.close()]);
+      expect.soft(attempts.map(r => r.status)).toEqual(["rejected", "rejected"]);
+      expect.soft(host.client.capability()).toMatchObject({ available: false });
+      expect.soft(closeClient).toHaveBeenCalledOnce();
+      expect(() => host.registerAuthorizer(authorizer(RUNTIME_A))).toThrow(new ScopeRuntimeHostError("closed"));
+    } finally { await chmod(root, 0o700); await host.close(); }
+    await expect.soft(stat(paths.broker)).rejects.toMatchObject({ code: "ENOENT" });
+    await host.close();
+    expect(closeClient).toHaveBeenCalledOnce();
   });
 
   it("routes bot frames to the bot registry and keeps tools off the shared path", async () => {

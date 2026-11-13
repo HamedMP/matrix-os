@@ -1,3 +1,4 @@
+import { HOST_NAMESPACE_TRUST, resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
 import {
   CanonicalChatModelSelectionSchema,
   type CanonicalChatModelSelection,
@@ -81,8 +82,6 @@ import type { CollaborationExecutionPolicyRepository } from "./execution-policy.
 import { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
 import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "../bots/selection.js";
 export { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
-const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
-const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
 /**
@@ -223,11 +222,17 @@ export async function createSharedAiRuntime(options: {
   executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
   // One broker socket per gateway: use the shared host, or own a private one (tests, legacy wiring).
+  const deployment = options.host ? undefined : resolveScopeRuntimeHostConfig({ env: process.env, homePath: options.homePath });
+  if (deployment?.namespace !== undefined && ((options.supervisorSocket !== undefined && options.supervisorSocket !== deployment.supervisorSocket)
+    || (options.brokerSocket !== undefined && options.brokerSocket !== deployment.brokerSocket))) {
+    throw new Error("Namespaced scope runtime socket configuration disagrees");
+  }
   const ownedHost = options.host ? undefined : await createScopeRuntimeHost({
     homePath: options.homePath,
     profileCatalog: SHARED_AI_PROFILE_CATALOG,
-    supervisorSocket: options.supervisorSocket ?? SUPERVISOR_SOCKET,
-    brokerSocket: options.brokerSocket ?? BROKER_SOCKET,
+    ...(deployment?.namespace !== undefined ? { namespaceTrust: HOST_NAMESPACE_TRUST } : {}),
+    supervisorSocket: options.supervisorSocket ?? deployment!.supervisorSocket,
+    brokerSocket: options.brokerSocket ?? deployment!.brokerSocket,
     ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
     ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
   });

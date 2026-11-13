@@ -1,3 +1,5 @@
+import { closeOwnedListener, retryableClose, socketIdentity } from "./socket-shutdown.js";
+import { assertNamespaceSocket, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { ScopeRuntimeRequestSchema, type ScopeRuntimeRequest, type ScopeRuntimeResponse } from "./protocol.js";
@@ -30,6 +32,7 @@ async function removeStaleSocket(socketPath: string): Promise<void> {
 
 export function createScopeRuntimeServer(options: {
   socketPath: string;
+  namespaceTrust?: NamespacePathTrust;
   controller: ScopeRuntimeController;
   maxConnections?: number;
   requestTimeoutMs?: number;
@@ -50,10 +53,17 @@ export function createScopeRuntimeServer(options: {
   const sockets = new Set<Socket>();
   const operations = new Set<Promise<void>>();
   let server: Server | undefined;
-  let closed = false;
+  let stopping = false;
+  let bound: ReturnType<typeof socketIdentity> | undefined;
+
+  async function closeListener(): Promise<void> {
+    if (!server) return;
+    await closeOwnedListener(server, options.socketPath, options.namespaceTrust, bound);
+    server = undefined;
+  }
 
   function accept(socket: Socket): void {
-    if (closed || sockets.size >= maxConnections) {
+    if (stopping || sockets.size >= maxConnections) {
       socket.destroy();
       return;
     }
@@ -91,7 +101,7 @@ export function createScopeRuntimeServer(options: {
       dispatch();
     });
     function dispatch(): void {
-      if (oversized || closed || operations.size >= maxConnections) {
+      if (oversized || stopping || operations.size >= maxConnections) {
         socket.destroy();
         return;
       }
@@ -109,7 +119,7 @@ export function createScopeRuntimeServer(options: {
             socket.setTimeout(0);
           }
           const response = await options.controller.handle(request, { signal: abort.signal });
-          if (!closed && !socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
+          if (!stopping && !socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
           else socket.destroy();
         } catch (error: unknown) {
           if (!(error instanceof SyntaxError)) {
@@ -126,9 +136,20 @@ export function createScopeRuntimeServer(options: {
     }
   }
 
+  const close = retryableClose(async () => {
+    stopping = true;
+    for (const socket of sockets) socket.destroy();
+    // Controller shutdown stops workers through guarded launcher paths. Retain those
+    // handles until placement is trusted; the transport remains inert on refusal.
+    await closeListener();
+    await options.controller.close();
+    await Promise.allSettled([...operations]);
+  });
+
   return {
     async start(): Promise<void> {
-      if (closed || server) throw new Error("Scope runtime server cannot start");
+      if (stopping || server) throw new Error("Scope runtime server cannot start");
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       await removeStaleSocket(options.socketPath);
       const candidate = createServer({ allowHalfOpen: true }, accept);
       server = candidate;
@@ -137,39 +158,19 @@ export function createScopeRuntimeServer(options: {
           candidate.once("error", reject);
           candidate.listen(options.socketPath, resolve);
         });
+        if (options.namespaceTrust) bound = socketIdentity(options.socketPath);
         await chmod(options.socketPath, 0o660);
       } catch (error: unknown) {
-        server = undefined;
-        candidate.close();
+        if (candidate.listening) {
+          stopping = true;
+          await closeListener();
+        } else { server = undefined; }
         throw error;
       }
     },
     connectionCount(): number {
       return sockets.size;
     },
-    async close(): Promise<void> {
-      if (closed) return;
-      closed = true;
-      const current = server;
-      server = undefined;
-      const serverClosed = current
-        ? new Promise<void>((resolve) => current.close(() => resolve()))
-        : Promise.resolve();
-      for (const socket of sockets) socket.destroy();
-      await serverClosed;
-      // In-flight replies can no longer be delivered. Closing the controller first stops the
-      // runtimes, so a bot relay waiting on a long turn ends now instead of at its timeout.
-      await options.controller.close();
-      await Promise.allSettled([...operations]);
-      try {
-        const entry = await lstat(options.socketPath);
-        if (entry.isSocket()) await unlink(options.socketPath);
-      } catch (error: unknown) {
-        if (!isNotFound(error)) {
-          console.warn("[scope-runtime] supervisor socket cleanup failed:",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-      }
-    },
+    close,
   };
 }

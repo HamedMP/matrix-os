@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, finishCloses, retryableClose, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 /**
  * The gateway's single scope-runtime host (spec 536, research R4): one
  * supervisor client and one broker socket, started whenever the scope
@@ -78,12 +79,18 @@ export async function createScopeRuntimeHost(options: {
   homePath: string;
   profileCatalog: ScopeRuntimeProfileCatalog;
   supervisorSocket?: string;
+  namespaceTrust?: NamespacePathTrust;
   brokerSocket?: string;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   fetchImpl?: typeof fetch;
 }): Promise<ScopeRuntimeHost> {
+  if (options.namespaceTrust) {
+    await assertNamespaceSocket(options.supervisorSocket ?? SUPERVISOR_SOCKET, options.namespaceTrust);
+    await assertNamespaceSocket(options.brokerSocket ?? BROKER_SOCKET, options.namespaceTrust);
+  }
   const client = createScopeRuntimeClient({
+    namespaceTrust: options.namespaceTrust,
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
     profileCatalog: options.profileCatalog,
   });
@@ -91,13 +98,14 @@ export async function createScopeRuntimeHost(options: {
   const authorizers = new Map<string, ScopeRuntimeAuthorizer>();
   let closed = false;
 
+  const closeClient = retryableClose(() => client.close());
   const unavailable = (): ScopeRuntimeHost => ({
     client,
     available: false,
     registerAuthorizer: () => () => undefined,
     async close() {
       closed = true;
-      await client.close();
+      await closeClient();
     },
   });
 
@@ -118,6 +126,7 @@ export async function createScopeRuntimeHost(options: {
   });
   const server = createScopeRuntimeBrokerServer({
     botImageFrames: true,
+    namespaceTrust: options.namespaceTrust,
     socketPath: options.brokerSocket ?? BROKER_SOCKET,
     broker,
     routeFrame(raw, signal) {
@@ -151,13 +160,10 @@ export async function createScopeRuntimeHost(options: {
         if (authorizers.get(authorizer.id) === authorizer) authorizers.delete(authorizer.id);
       };
     },
-    /** Stops new frames first, then drops registrations, then the supervisor connection. */
-    async close() {
-      if (closed) return;
+    close: retryableClose(async () => {
       closed = true;
-      await server.close();
       authorizers.clear();
-      await client.close();
-    },
+      await finishCloses(server.close(), closeClient());
+    }),
   };
 }
