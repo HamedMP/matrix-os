@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CollaborativeAppLaunchSessions } from "../../packages/platform/src/collaboration/app-launch-sessions.js";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { createRealPlatformCollaborationTestDatabase } from "./collaboration-test-support.js";
 
+// The dedicated collaboration PostgreSQL lane supplies this URL and rejects skipped assertions.
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("durable collaborative app launches", () => {
 it("recovers app launches across platform processes and serializes concurrent idempotent admission in real Postgres", async () => {
   const fixture = await createRealPlatformCollaborationTestDatabase();
   const db = fixture.collaborationDb;
@@ -80,4 +82,6 @@ it("enforces shared launch capacity across independent workers and invalidates e
     await Promise.all([left.close(), right.close()]);
     await fixture.destroy();
   }
+});
+
 });
