@@ -7,6 +7,7 @@ import {
 import { useEffect, useState } from "react";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { organizationMembersPath } from "./organization-members-path";
 
 export type DesktopOrganizationDirectory =
   | { state: "loading"; members: []; invitations: [] }
@@ -53,12 +54,8 @@ export function useDesktopOrganizationDirectory(
       let cursor: string | undefined;
       let images = profileImages;
       let complete = false;
-      // 20 full pages cover the 2,000-member organization limit.
       for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-        const query = new URLSearchParams({ limit: "100" });
-        if (cursor) query.set("cursor", cursor);
-        if (images) query.set("include", "imageUrl");
-        const path = `/api/organizations/${organizationId}/members?${query}`;
+        const path = organizationMembersPath(organizationId, { cursor, profileImages: images });
         let raw: unknown;
         try {
           raw = await api.get(path);
