@@ -6,15 +6,20 @@ import { BotRoutineProposalSchema, type BotRoutineProposal, type BotRoutineStatu
 import type { OwnerBotDatabase } from "../database.js";
 import { BotStateError, isoTimestamp, optionalIsoTimestamp, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 import { createBotTasksRepository } from "./tasks.js";
+import { directRoutineOriginLiveSql, lockDirectRoutineSource } from "../routine-direct-chat-lifecycle.js";
 import { nextBotRoutineFire } from "../routine-schedule.js";
 const id = (prefix: string) => `${prefix}_${randomBytes(12).toString("hex")}`;
 const MAX_ROUTINES = 32;
+const LIVE_DIRECT_ORIGIN = directRoutineOriginLiveSql({
+  ownerId: sql.ref("bot_routines.owner_id"), botId: sql.ref("bot_routines.bot_id"), chatId: sql.ref("bot_routines.chat_id"),
+  computerId: sql.ref("bot_routines.origin_computer_id"), requestId: sql.ref("bot_routines.origin_request_id"),
+});
 // Correlated before LIMIT: dead Chats and held occurrences never monopolize a page.
 const LIVE_ROUTINE = sql<boolean>`EXISTS (
  SELECT 1 FROM bot_chat_bindings b JOIN chats c ON c.id=b.chat_id
  WHERE b.owner_id=bot_routines.owner_id AND b.bot_id=bot_routines.bot_id AND b.chat_id=bot_routines.chat_id
  AND b.kind='direct' AND b.removed_at IS NULL AND c.owner_type='personal' AND c.owner_id=bot_routines.owner_id
- AND c.collaboration IS NULL AND c.lifecycle='active')`;
+ AND c.collaboration IS NULL AND c.lifecycle='active') AND ${LIVE_DIRECT_ORIGIN}`;
 const NO_UNFINISHED_FIRE = sql<boolean>`NOT EXISTS (
  SELECT 1 FROM bot_routine_fires f WHERE f.owner_id=bot_routines.owner_id AND f.routine_id=bot_routines.routine_id
  AND f.status IN ('claimed','dispatched','uncertain'))`;
@@ -246,7 +251,11 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
     }) {
       if (input.nextFireAt && Date.parse(input.nextFireAt) <= Date.parse(input.now)) throw new BotStateError("invalid_input");
       return withTransaction(db, async tx => {
-        const r = await tx.selectFrom("bot_routines").selectAll().where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).forUpdate().executeTakeFirst();
+        const target = await tx.selectFrom("bot_routines").select(["bot_id", "chat_id"])
+          .where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).executeTakeFirst();
+        if (!target || !await lockDirectRoutineSource(tx, { ownerId: input.ownerId, botId: target.bot_id, chatId: target.chat_id })) return;
+        const r = await tx.selectFrom("bot_routines").selectAll().where("owner_id", "=", input.ownerId)
+          .where("routine_id", "=", input.routineId).where(LIVE_DIRECT_ORIGIN).forUpdate().executeTakeFirst();
         if (!r || r.status !== "active" || !r.next_fire_at || isoTimestamp(r.next_fire_at) !== input.scheduledFor || Date.parse(input.scheduledFor) > Date.parse(input.now)) return;
         const previous = await tx.selectFrom("bot_routine_fires").select("fire_id").where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).where("scheduled_for", "=", input.scheduledFor).executeTakeFirst();
         if (previous) return;
@@ -328,8 +337,12 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
       return withTransaction(db, async tx => {
         const existing = await tx.selectFrom("bot_routine_fires").selectAll().where("owner_id", "=", input.ownerId).where("fire_id", "=", input.fireId).executeTakeFirst();
         if (!existing) return;
-        // Same lock order as control/claim: routine first, then fire. No stale authorization snapshot dispatch.
-        const r = await tx.selectFrom("bot_routines").select(["status", "bot_id", "chat_id"]).where("owner_id", "=", input.ownerId).where("routine_id", "=", existing.routine_id).forUpdate().executeTakeFirst();
+        const target = await tx.selectFrom("bot_routines").select(["bot_id", "chat_id"])
+          .where("owner_id", "=", input.ownerId).where("routine_id", "=", existing.routine_id).executeTakeFirst();
+        if (!target || !await lockDirectRoutineSource(tx, { ownerId: input.ownerId, botId: target.bot_id, chatId: target.chat_id })) return;
+        // Same lock order as claim: source (when present), routine, then fire.
+        const r = await tx.selectFrom("bot_routines").select(["status", "bot_id", "chat_id"]).where("owner_id", "=", input.ownerId)
+          .where("routine_id", "=", existing.routine_id).where(LIVE_DIRECT_ORIGIN).forUpdate().executeTakeFirst();
         if (!r || r.status !== "active" || !(await liveBinding(input.ownerId, r.bot_id, r.chat_id, tx))) return;
         const row = await tx.updateTable("bot_routine_fires").set({
           status: "dispatched",

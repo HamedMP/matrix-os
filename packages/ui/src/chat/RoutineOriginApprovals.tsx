@@ -22,7 +22,7 @@ export function RoutineOriginApprovals({ state, items = state.view?.pending ?? [
       const exactDecision = state.uncertain?.interactionId === interaction.interactionId ? state.uncertain : null;
       const canRespond = !historicalStatus && state.fresh && !state.pending && (!state.uncertain || Boolean(exactDecision));
       return <div key={interaction.interactionId} data-origin-anchor={item.anchorMessageId}>
-        <InteractionCard interaction={interaction} agentName="Existing Matrix Bot" actionsAvailable={canRespond && !onReviewInBrowser}
+        <InteractionCard interaction={interaction} agentName="Matrix Schedules" actionsAvailable={canRespond && !onReviewInBrowser}
           readOnlyStatus={historicalStatus} approvalDecision={exactDecision?.decision}
           decisionError="Your decision could not be confirmed. Check execution history before retrying."
           unavailableMessage={onReviewInBrowser ? "Review in your browser to respond." : undefined}

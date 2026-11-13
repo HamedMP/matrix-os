@@ -108,3 +108,17 @@ it("offers a current Schedules edit in the newest end of the inverted transcript
  expect(screen.UNSAFE_getByType(FlatList).props.ListFooterComponent).toBeUndefined();
  expect(screen.getByRole("button",{name:"Review in browser"})).toBeTruthy();
 });
+
+it("does not navigate from a Chat-owned result to the internal executor Chat", () => {
+ const onOpenChat = jest.fn();
+ const receipt = { type: "routine_receipt" as const, engine: "matrix" as const, kind: "output" as const,
+   routineId: `rt_${"a".repeat(24)}`, fireId: `fire_${"b".repeat(24)}`, attempt: 1, status: "completed" as const,
+   scheduledFor: "2026-11-06T09:00:00.000Z", canonicalChatId: `chat_routine_${"c".repeat(32)}`,
+   canonicalTaskId: "task_real_execution", model: "gpt-6-luna" };
+ render(<NativeRoutineReceipt receipt={receipt} text="Committed output" sourceChatId="chat_source" onOpenChat={onOpenChat} />);
+ expect(screen.getByText("Committed output")).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Open execution history" })).toBeNull();
+ fireEvent.press(screen.getByRole("button", { name: "Execution details" }));
+ expect(screen.queryByText(new RegExp(receipt.canonicalChatId))).toBeNull();
+ expect(onOpenChat).not.toHaveBeenCalled();
+});

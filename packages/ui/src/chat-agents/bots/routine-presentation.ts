@@ -1,4 +1,4 @@
-import { BotRoutineProposalSchema, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
+import { BotRoutineProposalSchema, isRoutineDirectBotId, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
@@ -35,6 +35,7 @@ export function routineTaskChat(row: BotRoutineCenterItem) {
     return { chatId: row.originChatId, label: "Open source Chat" };
   }
   // Execution availability is separate from read-only access to a saved Bot Chat.
+  if (isRoutineDirectBotId(row.botId)) return null;
   return { chatId: row.chatId, label: row.originChatId ? "Open Bot Chat" : "Open task Chat" };
 }
 

@@ -1,20 +1,29 @@
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Expression, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
-import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type { ChatOwner } from "./records.js";
 import { ChatConflictError } from "./errors.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 
 /** Matches credential authority: a previously published scope never becomes private by deletion. */
+export function hasNonPrivateChatScopeSql(
+  ownerType: Expression<string>,
+  ownerId: Expression<string>,
+  chatId: Expression<string>,
+) {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM collaboration_scopes scope
+    WHERE scope.owner_type = ${ownerType} AND scope.owner_id = ${ownerId}
+      AND scope.kind = 'chat' AND scope.resource_id = ${chatId}
+      AND scope.lifecycle NOT IN ('private', 'preparing')
+  )`;
+}
+
 export async function hasNonPrivateChatScope(executor: Executor, owner: ChatOwner, chatId: string): Promise<boolean> {
-  const scope = await (executor as unknown as Kysely<OwnerCollaborationDatabase>)
-    .selectFrom("collaboration_scopes").select("id")
-    .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
-    .where("kind", "=", "chat").where("resource_id", "=", chatId)
-    .where("lifecycle", "not in", ["private", "preparing"]).executeTakeFirst();
+  const predicate = hasNonPrivateChatScopeSql(sql.val(owner.type), sql.val(owner.ownerId), sql.val(chatId));
+  const result = await sql<{ non_private: boolean }>`SELECT ${predicate} AS non_private`.execute(executor);
   // Missing schema and database failures propagate; neither proves private authority.
-  return Boolean(scope);
+  return result.rows[0]!.non_private;
 }
 
 /** Caller holds the Chat row lock through admission/output commit. Never lock a scope after Chat. */

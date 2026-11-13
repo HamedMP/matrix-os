@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { sql, type Expression, type Kysely, type RawBuilder, type Transaction } from "kysely";
 import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
+import { hasNonPrivateChatScopeSql } from "../chat/private-routine-authority.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerBotDatabase } from "./database.js";
 import { ownerBotExecutor } from "./instantiation.js";
@@ -30,6 +31,7 @@ export function routineDirectChatSourceEligible(ownerId: Expression<string>, sou
     WHERE origin.id = ${sourceChatId} AND origin.owner_id = ${ownerId}
       AND origin.owner_type = 'personal' AND origin.lifecycle = 'active'
       AND origin.collaboration IS NULL AND origin.id !~ ${ROUTINE_DIRECT_CHAT_ID_PATTERN.source}
+      AND NOT ${hasNonPrivateChatScopeSql(sql.ref("origin.owner_type"), sql.ref("origin.owner_id"), sql.ref("origin.id"))}
       AND NOT EXISTS (
         SELECT 1 FROM bot_chat_bindings origin_binding
         WHERE origin_binding.chat_id = origin.id AND origin_binding.removed_at IS NULL

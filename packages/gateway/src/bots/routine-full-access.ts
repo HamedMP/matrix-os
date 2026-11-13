@@ -14,7 +14,7 @@ import type { ChatDatabase } from "../chat/database.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { RoutineFullAccessTurnAdmission } from "../chat/turn-admission.js";
 import type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
-import type { RoutineCliResolvedTarget, RoutineCliTargetService } from "./routine-cli-targets.js";
+import type { RoutineCliRememberedTarget, RoutineCliTargetService } from "./routine-cli-targets.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
@@ -22,14 +22,14 @@ import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
 const MAX_LIFETIME = 30 * 60_000;
 const actions = ["read", "propose", "control"] as const;
 const hash = (input: unknown) => createHash("sha256").update(JSON.stringify(input)).digest("hex");
-type Scope = { id: string; digest: string; revision: number; expiresAt: number; target: RoutineCliResolvedTarget;
+type Scope = { id: string; digest: string; revision: number; expiresAt: number; target: RoutineCliRememberedTarget;
   decision?: RoutineFullAccessDecisionSubmit };
 type Entry = { chatId: string; revision: number; touchedAt: number; scope?: Scope };
 type RunLease = { entry: Entry; scope: Scope; runId: string; turnId: string; controller: AbortController;
   principal: RequestPrincipal; source?: RoutineCliSourceContext; detach(): void };
 /** Opaque host-only lease. No representation is serialized to a provider or accepted over HTTP. */
 export interface RoutineFullAccessSourceLease {
-  readonly target: RoutineCliResolvedTarget;
+  readonly target: RoutineCliRememberedTarget;
   readonly revision: number;
   current(): boolean;
   validateWithin(trx: Transaction<OwnerBotDatabase>): Promise<boolean>;
@@ -97,7 +97,7 @@ export function createRoutineFullAccessService(options: {
       throw new RoutineCliError("permission_denied");
     }
   };
-  const inspect = async (principal: RequestPrincipal, chatId: string, pinned?: RoutineCliResolvedTarget, admission?: RoutineFullAccessTurnAdmission) => {
+  const inspect = async (principal: RequestPrincipal, chatId: string, pinned?: RoutineCliRememberedTarget, admission?: RoutineFullAccessTurnAdmission) => {
     owner(principal); CanonicalChatIdSchema.parse(chatId);
     return options.db.transaction().execute(async trx => {
       await ordinaryWithin(trx, chatId);

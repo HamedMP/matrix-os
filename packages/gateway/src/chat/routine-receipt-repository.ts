@@ -1,4 +1,5 @@
-import { acceptedBinding, beginOriginTransaction, hasAcceptedBinding } from "../bots/routine-chat-origin-target.js";
+import { acceptedRoutineOriginTarget, beginOriginTransaction, hasAcceptedBinding } from "../bots/routine-chat-origin-target.js";
+import { directRoutineOriginLiveSql, isCurrentDirectRoutineOrigin } from "../bots/routine-direct-chat-lifecycle.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { BOT_OUTPUT_MAX_SEGMENTS, CanonicalChatMessageSchema, RoutineChatReceiptPartSchema, canonicalAssistantContinuationId, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId, type CanonicalChatMessage, type CanonicalChatMessagePart, type RoutineChatReceiptPart } from "@matrix-os/contracts";
@@ -33,16 +34,24 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
     .innerJoin("bot_routines as routine", join => join.onRef("routine.owner_id", "=", "fire.owner_id").onRef("routine.routine_id", "=", "fire.routine_id"))
     .innerJoin("routine_cli_requests as receipt", join => join.onRef("receipt.owner_id", "=", "routine.owner_id")
       .onRef("receipt.computer_id", "=", "routine.origin_computer_id").onRef("receipt.client_request_id", "=", "routine.origin_request_id"))
-    .selectAll("fire").select(["routine.chat_id", "routine.bot_id", "routine.proposal", "receipt.source_context", "receipt.target_snapshot"])
+    .selectAll("fire").select(["routine.chat_id", "routine.bot_id", "routine.proposal", "receipt.source_context", "receipt.target_snapshot", "receipt.client_request_id"])
     .where("fire.owner_id", "=", ownerId).where("fire.fire_id", "=", input.fireId).where("routine.origin_computer_id", "=", input.computerId)
-    .where("fire.status", "in", ["completed", "failed", "cancelled", "uncertain"]).executeTakeFirst();
+    .where("fire.status", "in", ["completed", "failed", "cancelled", "uncertain"])
+    .where(directRoutineOriginLiveSql({ ownerId: sql.ref("routine.owner_id"), botId: sql.ref("routine.bot_id"), chatId: sql.ref("routine.chat_id"),
+      computerId: sql.ref("routine.origin_computer_id"), requestId: sql.ref("routine.origin_request_id") }))
+    .executeTakeFirst();
   if (!record || record.chat_id === input.sourceChatId) return null;
   const context = RoutineCliSourceContextSchema.safeParse(parseJson(record.source_context));
   if (!context.success || context.data.ownerId !== ownerId || context.data.computerId !== input.computerId
     || context.data.identity.kind !== "chat_run" || context.data.identity.chatId !== input.sourceChatId) return null;
   // Read locks fence canonical privacy changes through append commit. Only source Chat is written.
-  const binding = acceptedBinding(record.target_snapshot, ownerId, input.computerId, record.bot_id, record.chat_id);
-  if (!binding || !await hasAcceptedBinding(db, ownerId, record.chat_id, record.bot_id, binding)) return null;
+  const target = acceptedRoutineOriginTarget(record.target_snapshot, ownerId, input.computerId, record.bot_id, record.chat_id, input.sourceChatId);
+  if (!target) return null;
+  const bound = "purpose" in target ? await isCurrentDirectRoutineOrigin(db, {
+    ownerId, computerId: input.computerId, requestId: record.client_request_id, sourceChatId: input.sourceChatId,
+    sourceRunId: context.data.identity.runId, canonicalChatId: record.chat_id, botId: record.bot_id, bindingCreatedAt: target.bindingCreatedAt, directChat: true,
+  }, "ordered") : await hasAcceptedBinding(db, ownerId, record.chat_id, record.bot_id, target.bindingCreatedAt);
+  if (!bound) return null;
   const sourceRun = await db.selectFrom("chat_runs").select("id").where("id", "=", context.data.identity.runId).where("chat_id", "=", input.sourceChatId).executeTakeFirst();
   if (!sourceRun) return null;
   const existing = await db.selectFrom("routine_chat_deliveries").select("message_id").where("owner_id", "=", ownerId)

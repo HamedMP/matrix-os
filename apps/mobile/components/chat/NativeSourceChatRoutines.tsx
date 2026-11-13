@@ -82,7 +82,7 @@ export function NativeSourceChatRoutines({ gatewayUrl, chatId, eligible, message
     const review = () => void open(interaction.interactionId);
     return <View key={interaction.interactionId} style={styles.cards}>
       <RoutineApprovalCard preview={interaction.payload?.kind === "approval" ? interaction.payload.preview : ""}
-        botId={interaction.agentId} testID={`origin-${interaction.interactionId}`} sending={null} error={null}
+        botId={interaction.agentId} executionLabel="Matrix Schedules" testID={`origin-${interaction.interactionId}`} sending={null} error={null}
         stale={!state.fresh} closed="Review in your browser to respond." historicalStatus={historicalStatus}
         onAllow={review} onDeny={review} />
       {!historicalStatus ? <Button label="Review in browser" disabled={!state.fresh} onPress={review} /> : null}

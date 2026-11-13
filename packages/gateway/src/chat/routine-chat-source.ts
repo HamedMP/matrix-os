@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { Transaction } from "kysely";
 import type { RoutineCliVerifiedInvocation } from "../bots/routine-cli-source.js";
+import { routineDirectChatSourceIsEligible } from "../bots/routine-direct-chat-contexts.js";
 import { randomBytes } from "node:crypto";
 import type { RoutineSourceProducer, RoutineSourcePolicy } from "../bots/routine-action-source-registry.js";
 import type { ChatDatabase } from "./database.js";
@@ -11,6 +12,7 @@ import type { RoutineFullAccessSourceLease } from "../bots/routine-full-access.j
  * Full-access mode alone does not prove human provenance; only the host's private lease can raise its ceiling. */
 export function createChatRoutineSourceProducer(options: { input: CanonicalProviderRunInput; computerId: string; signal: AbortSignal;
   publish(event: CanonicalProviderRunEvent): void; current(invocation?: RoutineCliVerifiedInvocation): boolean; provider?: "claude" | "codex" | "hermes" | "opencode" | "pi" | "matrix_pi";
+  lockRoutineDirectChatOrigin?: boolean;
   bindFullAccess?: (source: RoutineSourceProducer["source"], signal: AbortSignal) => RoutineFullAccessSourceLease | null }) {
   const input = parseCanonicalProviderRunInput(options.input), generation = `${options.provider === "matrix_pi" ? "managed" : "native"}_${randomBytes(24).toString("hex")}`;
   const provider = options.provider ?? "claude";
@@ -40,6 +42,10 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
       if (action && !actions.includes(action)) return false;
       if (source.generation !== generation || !options.current(invocation) || options.signal.aborted || source.identity.kind !== "chat_run") return false;
       if (narrowed && action !== undefined && action !== "read") return false;
+      if (options.lockRoutineDirectChatOrigin && canPropose && action) {
+        const eligible = await routineDirectChatSourceIsEligible(trx, { ownerId: input.owner.ownerId, sourceChatId: input.chatId }, { lock: true });
+        if (!eligible && action === "propose") return false;
+      }
       // Hold current admission rows through issue/consume. Neither runtimeOwnerId nor model/native IDs supply scope.
       // Canonical Chat mutations acquire Chat before Run. Keep that order across this source boundary.
       const chat = await trx.selectFrom("chats").select("id").where("id", "=", input.chatId)

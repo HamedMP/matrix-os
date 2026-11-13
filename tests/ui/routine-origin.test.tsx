@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import type { BotInteraction, RoutineChatOriginView } from "@matrix-os/contracts";
 import { createRoutineOriginClient } from "../../packages/ui/src/chat/routine-origin-client";
 import { useRoutineOrigin } from "../../packages/ui/src/chat/use-routine-origin";
+import { RoutineReceipt } from "../../packages/ui/src/chat/RoutineReceipt";
 import { RoutineOriginApprovals } from "../../packages/ui/src/chat/RoutineOriginApprovals";
 import { routineReceiptMessage } from "../../packages/ui/src/chat/routine-receipt";
 import { createOwnerBrowserJsonRequest } from "../../packages/ui/src/routine-action/owner-browser-request";
@@ -105,4 +106,17 @@ it("shows the Schedules navigation hint even when only past deliveries overflow 
  const client={get:vi.fn(async()=>({...view(),hasMore:true,pending:[]})),resolve:vi.fn()};
  function Fixture(){return <RoutineOriginApprovals state={useRoutineOrigin({client,chatId:"chat_source",eligible:true})}/>;}
  render(<Fixture/>);expect(await screen.findByText(/More scheduled task items are available in Schedules/)).toBeTruthy();
+});
+
+it("renders a Chat-owned result without exposing its internal executor Chat as a destination", () => {
+ const onOpenChat = vi.fn();
+ const receipt = { type: "routine_receipt" as const, engine: "matrix" as const, kind: "output" as const,
+   routineId: `rt_${"a".repeat(24)}`, fireId: `fire_${"b".repeat(24)}`, attempt: 1, status: "completed" as const,
+   scheduledFor: "2026-11-06T09:00:00.000Z", canonicalChatId: `chat_routine_${"c".repeat(32)}`,
+   canonicalTaskId: "task_real_execution", model: "gpt-6-luna" };
+ render(<RoutineReceipt receipt={receipt} text="Committed output" sourceChatId="chat_source" onOpenChat={onOpenChat} />);
+ expect(screen.getByText("Committed output")).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Open execution history" })).toBeNull();
+ expect(screen.queryByText(receipt.canonicalChatId)).toBeNull();
+ expect(onOpenChat).not.toHaveBeenCalled();
 });
