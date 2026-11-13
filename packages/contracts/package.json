@@ -32,6 +32,7 @@
     "./routine-destination": "./src/routine-destination.ts"
   },
   "imports": {
+    "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
@@ -51,6 +52,7 @@
     "#chat-message-wire": "./src/chat-message-wire.ts",
     "#chat-legacy-assistant-text": "./src/chat-legacy-assistant-text.ts",
     "#chat-links": "./src/chat-links.ts",
+    "#messaging-settings": "./src/messaging-settings.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
     "#project-agent-context": "./src/project-agent-context.ts",

@@ -47,7 +47,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Agents & providers", "AI usage", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
+      "Agents & providers", "AI usage", "Messaging", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
       "Appearance", "Account", "Billing", "Organization", "Identity & personality",
       "Computers", "Schedules", "System",
     ]);
@@ -58,6 +58,16 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Identity & personality" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Providers" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Agent (Hermes)" })).toBeNull();
+  });
+
+  it.each(["https://x.test", "https://app.matrix-os.com"])("uses the authenticated %s authority for WhatsApp href and system-browser open", async (platformHost) => {
+    useConnection.setState({ platformHost, api: { get: vi.fn().mockResolvedValue({ connected: false, admission: "public" }) } as never });
+    render(<SettingsView section="messaging" />);
+    const link = await screen.findByRole("link", {name:"Connect WhatsApp"});
+    expect(screen.queryByRole("link", {name:"Add to Slack"})).toBeNull();
+    expect(link.getAttribute("href")).toBe(`${platformHost}/whatsapp/connect`);
+    fireEvent.click(link);
+    await waitFor(() => expect(window.operator!.invoke).toHaveBeenCalledWith("shell:open-external", {url:`${platformHost}/whatsapp/connect`}));
   });
 
   it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers and consumes it", async (legacySection) => {

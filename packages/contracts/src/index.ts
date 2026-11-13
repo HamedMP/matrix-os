@@ -1,3 +1,4 @@
+export * from "#messaging-origin";
 export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
@@ -1467,6 +1468,7 @@ export type {
 } from "#os-view";
 
 export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
+export * from "#messaging-settings";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 
