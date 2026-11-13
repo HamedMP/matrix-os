@@ -90,6 +90,9 @@ export async function stageTerminalGeneration(options) {
     const destination = join(outputRoot, "generations", generation);
     try { await lstat(destination); await validateTerminalClosure(destination, generation, runtime); }
     catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; await rename(temporary, destination); }
+    // mkdtemp is owner-only. Published and reused generations must remain
+    // traversable by the matrix service user after root extracts the bundle.
+    await chmod(destination, 0o755);
     return { generation, directory: destination, manifest };
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
