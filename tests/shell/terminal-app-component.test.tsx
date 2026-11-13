@@ -316,6 +316,44 @@ describe("TerminalApp workspace contract", () => {
     expect((paneGridSpy.mock.lastCall?.[0] as { allowRemoteResize?: boolean }).allowRemoteResize).toBe(true);
   });
 
+  it("uses the canonical focused-session name instead of a stale saved pane heading", async () => {
+    let name = "agent-a";
+    let unavailable = false;
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) {
+        return unavailable ? json({}, 503) : json({ workspaces: [workspace([
+          tab(TAB_ID, name), tab(SECOND_TAB_ID, "agent-b"),
+        ])] });
+      }
+      if (url.endsWith("/api/terminal/layout") && !init?.method) return json({
+        activeTabId: "saved-tab", sidebarOpen: true,
+        tabs: [{ id: "saved-tab", label: "azure-drift", paneTree: {
+          type: "pane", id: "saved-pane", cwd: "projects", sessionId: REF_KEY,
+        } }],
+      });
+      return fallback(input, init);
+    });
+    render(<TerminalApp initialSessionId={REF_KEY} desktopParity />);
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: "agent-a" })).toBeTruthy();
+
+    name = "agent-a-renamed";
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByRole("heading", { level: 2, name })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(REF_KEY);
+
+    unavailable = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByRole("heading", { level: 2, name })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `Open ${WORKSPACE_ID}:${SECOND_TAB_ID}` }));
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: "agent-b" })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(`${WORKSPACE_ID}:${SECOND_TAB_ID}`);
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("creates a tab under the ensured workspace", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

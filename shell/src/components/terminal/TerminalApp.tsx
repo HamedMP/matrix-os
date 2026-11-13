@@ -60,6 +60,7 @@ import {
 import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
+import { useDesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
 import { ShellSharedTerminal } from "./ShellSharedTerminal";
 
@@ -334,7 +335,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [mobileInputActive, setMobileInputActive] = useState(false);
-  const [desktopSessionState, setDesktopSessionState] = useState<{ count: number; ready: boolean }>({ count: 0, ready: false });
+  const [desktopSessionState, handleDesktopSessionStateChange] = useDesktopTerminalSessionState();
   const [unavailableSessionIds, setUnavailableSessionIds] = useState<string[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1151,14 +1152,9 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
   };
 
   const activeTab = tabs.find(t => t.id === activeTabId);
-  const handleDesktopSessionStateChange = useCallback((next: { count: number; ready: boolean }) => {
-    setDesktopSessionState((current) => (
-      current.count === next.count && current.ready === next.ready ? current : next
-    ));
-  }, []);
   const { create: createDesktopShell, creating: creatingDesktopShell } = useTerminalSessionCreate({
     createSession: () => createShellSessionTab("Shell", DEFAULT_CWD),
-    onCreated: () => setDesktopSessionState({ count: 1, ready: true }),
+    onCreated: () => handleDesktopSessionStateChange({ count: 1, ready: true }),
   });
 
   // Construct store-compatible interface for child components
@@ -1283,7 +1279,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
                   : {})}
               >
                 {desktopParity ? (
-                  <DesktopTerminalSessionHeader title={activeTab.label} terminalId={getFocusedSessionId(activeTab.paneTree, focusedPaneId)} />
+                  <DesktopTerminalSessionHeader title={activeTab.label} terminalId={getFocusedSessionId(activeTab.paneTree, focusedPaneId)} sessionState={desktopSessionState} />
                 ) : null}
                 {!suspended ? (
                   <PaneGrid
