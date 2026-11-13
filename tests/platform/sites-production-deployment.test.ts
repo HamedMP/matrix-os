@@ -106,14 +106,14 @@ describe('production Matrix.page deployment contract', () => {
     const { db } = await createTestPlatformDb();
     try {
       const all: SiteEmailReadiness = { edgeExchange: true, clerkInline: true, lifecycleWebhook: true, mailDelivery: true };
-      expect(await readSiteEmailCapability(db, {}, all)).toBe(false);
-      for (const missing of Object.keys(all) as (keyof SiteEmailReadiness)[]) {
-        expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, { ...all, [missing]: false })).toBe(false);
-      }
-      expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, all)).toBe(false);
       const configured={MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED:'true',SITES_EDGE_SECRET:'e'.repeat(40),
         CLERK_SECRET_KEY:'sk_live_'+'c'.repeat(32),NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:'pk_live_'+'p'.repeat(32),
         ACCOUNT_DELETION_SECRET:'d'.repeat(40)};
+      expect(await readSiteEmailCapability(db, {}, all)).toBe(false);
+      for (const missing of Object.keys(all) as (keyof SiteEmailReadiness)[]) {
+        expect(await readSiteEmailCapability(db, configured, { ...all, [missing]: false })).toBe(false);
+      }
+      expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, all)).toBe(false);
       expect(await readSiteEmailCapability(db,configured,all)).toBe(true);
       for(const missing of ['SITES_EDGE_SECRET','CLERK_SECRET_KEY','NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY','ACCOUNT_DELETION_SECRET'])
         expect(await readSiteEmailCapability(db,{...configured,[missing]:''},all),missing).toBe(false);
