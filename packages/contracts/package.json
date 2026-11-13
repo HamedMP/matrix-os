@@ -141,6 +141,7 @@
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
+    "#canonical-chat-permission-mode": "./src/canonical-chat-permission-mode.ts",
     "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
     "#command-preview": "./src/command-preview.ts",
