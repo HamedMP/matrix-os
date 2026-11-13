@@ -63,8 +63,57 @@ it('revokes email invitations and sessions and cancels leased mail before owner 
 });
 it('configured deletion revokes site immediately and durably erases dedicated assets and routing', async () => {
     const owner = { ownerId: 'user_sites_delete_wiring', machineId: 'test-machine', appSlug: 'event' };
-    const service = createSitesService({ db, env, storage: { async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, async getObject() { return { body: null }; } } });
-    const site = await service.deploy(owner, { title: 'Event', slug: 'erase-event', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Event').toString('base64') }] });
+    const service = createSitesService({ db, env, emailCapability: async () => true,
+      storage: { async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, async getObject() { return { body: null }; } } });
+    const site = await service.deploy(owner, { title: 'Event', slug: 'erase-event', accessMode: 'private_email',
+      config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Event').toString('base64') }] });
+    await insertUserMachine(db, { machineId: 'foreign-machine', clerkUserId: 'user_foreign',
+      handle: 'foreign-owner', status: 'running', provisionedAt: new Date().toISOString() });
+    const foreignSiteId = randomUUID();
+    await db.executor.insertInto('public_sites').values({ id: foreignSiteId, owner_id: 'user_foreign',
+      machine_id: 'foreign-machine', app_slug: 'foreign', title: 'Foreign', description: '', slug: null,
+      revision: 1, status: 'published', access_mode: 'private_email', active_version: null,
+      created_at: new Date().toISOString() }).execute();
+    async function seedRelated(siteId: string, ownerId: string) {
+      const invitationId = randomUUID(), grantId = randomUUID(), sessionId = randomUUID(),
+        deliveryId = randomUUID(), auditId = randomUUID(), now = new Date();
+      await db.transaction(async trx => {
+        await trx.executor.insertInto('public_site_email_invitations').values({ id: invitationId, site_id: siteId,
+          normalized_email: `${siteId}@example.com`, display_email: `${siteId}@example.com`, generation: '1',
+          state: 'accepted', delivery_state: 'sent', invited_by_clerk_user_id: ownerId,
+          accepted_clerk_user_id: `user_guest_${siteId}`, created_at: now, issued_at: now,
+          expires_at: new Date(now.getTime() + 86400_000), accepted_at: now, revoked_at: null,
+          state_reason: null, updated_at: now, revision: '0' }).execute();
+        await trx.executor.insertInto('public_site_viewer_grants').values({ id: grantId, site_id: siteId,
+          invitation_id: invitationId, invitation_generation: '1', clerk_user_id: `user_guest_${siteId}`,
+          granted_at: now, revoked_at: null, revocation_reason: null }).execute();
+        await trx.executor.insertInto('public_site_viewer_sessions').values({ id: sessionId, site_id: siteId,
+          grant_id: grantId, secret_hash: 'a'.repeat(64), clerk_session_key: 'b'.repeat(64),
+          created_at: now, expires_at: new Date(now.getTime() + 86400_000), last_seen_at: null,
+          revoked_at: null }).execute();
+        await trx.executor.insertInto('public_site_invitation_deliveries').values({ id: deliveryId,
+          invitation_id: invitationId, invitation_generation: '1', idempotency_key: randomUUID(),
+          state: 'sent', attempts: 1, available_at: now, lease_token: null, lease_until: null,
+          provider_message_id: null, failure_code: null, sent_at: now, created_at: now, updated_at: now }).execute();
+        await trx.executor.insertInto('public_site_access_audit_events').values({ id: auditId, site_id: siteId,
+          invitation_id: invitationId, event_type: 'invitation_accepted', actor_kind: 'viewer',
+          actor_reference: `user_guest_${siteId}`, details: { generation: 1 }, occurred_at: now }).execute();
+      });
+      return { siteId, invitationId, grantId };
+    }
+    async function relatedCounts(ref: { siteId: string; invitationId: string; grantId: string }) {
+      return {
+        invitations: (await db.executor.selectFrom('public_site_email_invitations').select('id').where('site_id', '=', ref.siteId).execute()).length,
+        grants: (await db.executor.selectFrom('public_site_viewer_grants').select('id').where('site_id', '=', ref.siteId).execute()).length,
+        sessions: (await db.executor.selectFrom('public_site_viewer_sessions').select('id').where('grant_id', '=', ref.grantId).execute()).length,
+        deliveries: (await db.executor.selectFrom('public_site_invitation_deliveries').select('id').where('invitation_id', '=', ref.invitationId).execute()).length,
+        audit: (await db.executor.selectFrom('public_site_access_audit_events').select('id').where('site_id', '=', ref.siteId).execute()).length,
+      };
+    }
+    const erased = await seedRelated(site.id, owner.ownerId);
+    const retained = await seedRelated(foreignSiteId, 'user_foreign');
+    expect(await relatedCounts(erased)).toEqual({ invitations: 1, grants: 1, sessions: 1, deliveries: 1, audit: 1 });
+    expect(await relatedCounts(retained)).toEqual({ invitations: 1, grants: 1, sessions: 1, deliveries: 1, audit: 1 });
     objects.set('sites/owners/user_foreign/keep/index.html', new Uint8Array([1]));
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
         if (String(url).includes('organization_memberships'))
@@ -89,6 +138,9 @@ it('configured deletion revokes site immediately and durably erases dedicated as
         expect([...objects.keys()]).toEqual(['sites/owners/user_foreign/keep/index.html']);
         expect(await db.executor.selectFrom('public_site_aliases').selectAll().execute()).toEqual([{slug:'erase-event',site_id:null}]);
         expect(await db.executor.selectFrom('public_site_versions').selectAll().execute()).toEqual([]);
+        expect(await relatedCounts(erased)).toEqual({ invitations: 0, grants: 0, sessions: 0, deliveries: 0, audit: 0 });
+        expect(await relatedCounts(retained)).toEqual({ invitations: 1, grants: 1, sessions: 1, deliveries: 1, audit: 1 });
+        expect(await db.executor.selectFrom('public_sites').select('id').where('id','=',foreignSiteId).execute()).toHaveLength(1);
     }
     finally {
         runtime?.stop();
