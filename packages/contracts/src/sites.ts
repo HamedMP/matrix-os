@@ -8,10 +8,11 @@ export const SITE_PUBLISH_CLIENT_TIMEOUT_MS = SITE_PUBLISH_PROXY_TIMEOUT_MS + 15
 export const SITE_MAX_FILES = 200;
 export const SITE_MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
 export const SITE_MAX_FORM_BYTES = 16 * 1024;
+export const SITE_MAX_EMAIL_INVITES = 100;
 export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
-export const SITE_MANAGEMENT_CONTRACT_VERSION = "2";
+export const SITE_MANAGEMENT_CONTRACT_VERSION = "3";
 const reserved = new Set(["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SiteIdSchema = z.uuid();
@@ -73,7 +74,7 @@ export function validateSiteForm(form: SiteForm, input: unknown) {
 const title = z.string().trim().min(1).max(200);
 const description = z.string().trim().max(1000);
 const baseRevision = z.number().int().min(0).max(2_147_483_647);
-export const SiteAccessModeSchema = z.enum(["public", "private_link"]);
+export const SiteAccessModeSchema = z.enum(["public", "private_link", "private_email"]);
 export const SiteOwnerMutationSchema = z.object({
   title: title.optional(), description: description.optional(),
   slug: SiteSlugSchema.nullable().optional(), accessMode: SiteAccessModeSchema.optional(),
@@ -107,11 +108,13 @@ export const SiteDeploymentSchema = z.object({
   .refine((d) => d.files.reduce((sum, f) => sum + f.body.length / 4 * 3 - (f.body.endsWith("==") ? 2 : f.body.endsWith("=") ? 1 : 0), 0) <= SITE_MAX_BUNDLE_BYTES, "App is too large");
 export type SiteDeployment = z.infer<typeof SiteDeploymentSchema>;
 export const SiteVersionSchema = z.object({ id: SiteIdSchema, createdAt: z.string().datetime() }).strict();
+export const SiteEmailInvitationsCapabilitySchema = z.object({ privateEmailInvitations: z.boolean() }).strict();
 export const SiteRecordSchema = z.object({
   id: SiteIdSchema, appSlug: SiteAppSlugSchema, title, description,
   slug: SiteSlugSchema.nullable(), url: SiteUrlSchema, revision: baseRevision,
   status: z.enum(["published", "unpublished"]), activeVersion: SiteIdSchema.nullable(),
   accessMode: SiteAccessModeSchema.default("public"),
+  capabilities: SiteEmailInvitationsCapabilitySchema.optional(),
   versions: z.array(SiteVersionSchema).max(50), config: SitePublishingSchema,
 }).strict();
 export type SiteRecord = z.infer<typeof SiteRecordSchema>;
@@ -155,6 +158,74 @@ export const SiteAccessLinkCreateResponseSchema = z.object({
   }, "Invalid access link URL"),
 }).strict();
 export type SiteAccessLinkCreateResponse = z.infer<typeof SiteAccessLinkCreateResponseSchema>;
+const invitationRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const invitationGeneration = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const invitationEmail = z.email().max(254);
+export const SiteEmailInvitationStateSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
+export const SiteEmailInvitationDeliveryStateSchema = z.enum(["queued", "sending", "sent", "failed", "ambiguous", "suppressed"]);
+export const SiteEmailInvitationCreateRequestSchema = z.object({
+  emailAddresses: z.array(z.string().min(1).max(320)).min(1).max(SITE_MAX_EMAIL_INVITES),
+  baseRevision,
+}).strict();
+export const SiteEmailInvitationMutationRequestSchema = z.object({ baseRevision, invitationRevision }).strict();
+export const SiteEmailInvitationSummarySchema = z.object({
+  id: SiteIdSchema, emailAddress: invitationEmail,
+  state: SiteEmailInvitationStateSchema, deliveryState: SiteEmailInvitationDeliveryStateSchema,
+  generation: invitationGeneration, revision: invitationRevision,
+  issuedAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
+  acceptedAt: z.iso.datetime().nullable().optional(), revokedAt: z.iso.datetime().nullable().optional(),
+  updatedAt: z.iso.datetime(),
+}).strict();
+const invitationInputIndex = z.number().int().min(0).max(SITE_MAX_EMAIL_INVITES - 1);
+export const SiteEmailInvitationInputResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ inputIndex: invitationInputIndex, outcome: z.literal("queued"), invitation: SiteEmailInvitationSummarySchema }).strict(),
+  z.object({ inputIndex: invitationInputIndex, outcome: z.literal("existing"), invitation: SiteEmailInvitationSummarySchema }).strict(),
+  z.object({ inputIndex: invitationInputIndex, outcome: z.literal("invalid") }).strict(),
+  z.object({ inputIndex: invitationInputIndex, outcome: z.literal("duplicate_in_batch") }).strict(),
+  z.object({ inputIndex: invitationInputIndex, outcome: z.literal("policy_rejected") }).strict(),
+]);
+export const SiteEmailInvitationCreateResponseSchema = z.object({
+  results: z.array(SiteEmailInvitationInputResultSchema).min(1).max(SITE_MAX_EMAIL_INVITES),
+  siteRevision: baseRevision,
+}).strict();
+export const SiteEmailInvitationMutationResponseSchema = z.object({
+  invitation: SiteEmailInvitationSummarySchema, siteRevision: baseRevision,
+}).strict();
+export const SiteEmailInvitationCursorSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
+export const SiteEmailInvitationListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(SITE_MAX_EMAIL_INVITES).default(50),
+  cursor: SiteEmailInvitationCursorSchema.optional(),
+}).strict();
+export const SiteEmailInvitationPageSchema = z.object({
+  invitations: z.array(SiteEmailInvitationSummarySchema).max(SITE_MAX_EMAIL_INVITES),
+  nextCursor: SiteEmailInvitationCursorSchema.nullable(), siteRevision: baseRevision,
+}).strict();
+export const SiteEmailViewerExchangeSchema = z.object({}).strict();
+export type SiteEmailInvitationSummary = z.infer<typeof SiteEmailInvitationSummarySchema>;
+export type SiteEmailInvitationInputResult = z.infer<typeof SiteEmailInvitationInputResultSchema>;
+export type SiteEmailInvitationPage = z.infer<typeof SiteEmailInvitationPageSchema>;
+export type SiteEmailInvitationsCapability = z.infer<typeof SiteEmailInvitationsCapabilitySchema>;
+export const SiteInvitationAuditEventTypeSchema = z.enum([
+  "invitation_created", "invitation_resent", "invitation_accepted", "invitation_revoked",
+  "delivery_sent", "delivery_failed", "grant_revoked", "mode_changed", "unpublished",
+]);
+export const SiteInvitationAuditDetailsSchema = z.object({
+  generation: invitationGeneration.optional(),
+  reason: z.enum(["owner", "duplicate_identity", "mode_changed", "unpublished", "recipient_inactive", "recipient_deleted", "reinvited", "configuration", "throttled", "rejected", "timeout", "unavailable", "unknown"]).optional(),
+  fromMode: SiteAccessModeSchema.optional(), toMode: SiteAccessModeSchema.optional(),
+}).strict();
+export const SiteInvitationAuditEventSchema = z.object({
+  id: SiteIdSchema, invitationId: SiteIdSchema.nullable(),
+  type: SiteInvitationAuditEventTypeSchema,
+  actorKind: z.enum(["owner", "viewer", "system"]),
+  occurredAt: z.iso.datetime(), details: SiteInvitationAuditDetailsSchema,
+}).strict();
+export const SiteInvitationAuditCursorSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
+export const SiteInvitationAuditPageSchema = z.object({
+  events: z.array(SiteInvitationAuditEventSchema).max(100), nextCursor: SiteInvitationAuditCursorSchema.nullable(),
+}).strict();
+export type SiteInvitationAuditEvent = z.infer<typeof SiteInvitationAuditEventSchema>;
+export type SiteInvitationAuditDetails = z.infer<typeof SiteInvitationAuditDetailsSchema>;
 export const SiteIdempotencyKeySchema = z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/);
 export const SiteFormFieldsSchema = z.record(SiteFieldNameSchema, z.union([z.string().max(4000), z.number().finite(), z.boolean()]));
 export const SiteFormSubmissionSchema = z.object({ fields: SiteFormFieldsSchema, idempotencyKey: SiteIdempotencyKeySchema }).strict();
@@ -183,7 +254,7 @@ export const SiteSubmissionsResponseSchema = z.object({
   submissions: z.array(SiteSubmissionSchema).max(100), nextCursor: SiteSubmissionCursorSchema.nullable(),
 }).strict();
 export type SiteSubmissionsResponse = z.infer<typeof SiteSubmissionsResponseSchema>;
-export const SITE_SAFE_ERRORS = ["Site unavailable", "Site URL unavailable", "Site changed; reload and try again", "App needs a public build", "Invalid submission", "Submission unavailable", "Too many requests"] as const;
+export const SITE_SAFE_ERRORS = ["Site unavailable", "Site URL unavailable", "Site changed; reload and try again", "App needs a public build", "Invalid submission", "Submission unavailable", "Invitation unavailable", "Too many requests"] as const;
 export function siteSafeError(value: unknown, fallback = "Site unavailable"): string {
   return typeof value === "string" && SITE_SAFE_ERRORS.some((s) => s === value) ? value : fallback;
 }
