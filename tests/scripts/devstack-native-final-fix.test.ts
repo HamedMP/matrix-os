@@ -88,10 +88,10 @@ it("finishes the in-flight create on interrupt and cleans it without submitting 
   expect(journal.result()).toMatchObject({ status: "failed", gates: { isolation: { state: "failed", code: "acceptance_interrupted" } } });
   expect(await ledger.cleanup()).toContainEqual({ unit, state: "passed", outcome: "stopped" });
 });
-it.each(["net", "mnt", "root", "cgroup", "none"])("requires simultaneous pairwise isolation with shared %s", async fault => {
+it.each(["net", "mnt", "user", "root", "cgroup", "none"])("requires simultaneous pairwise isolation with shared %s", async fault => {
   const handles = ["1", "2"], freshWorker = vi.fn(async (id: string) => owner(id));
   const result = inspectWorkerPair({ freshWorker }, handles, async (id: string) => ({
-    properties: { MainPID: id }, namespaces: { net: "net:[" + (fault === "net" ? "3" : id) + "]", mnt: "mnt:[" + (fault === "mnt" ? "3" : id) + "]" },
+    properties: { MainPID: id }, namespaces: { user: "user:[" + (fault === "user" ? "3" : id) + "]", net: "net:[" + (fault === "net" ? "3" : id) + "]", mnt: "mnt:[" + (fault === "mnt" ? "3" : id) + "]" },
     rootIdentity: { device: "1", inode: fault === "root" ? "3" : id }, uid: 61200, cgroup: "0::/system.slice/" + (fault === "cgroup" ? "same" : id) + ".service",
   }));
   if (fault === "none") { await expect(result).resolves.toBeDefined(); expect(freshWorker).toHaveBeenCalledTimes(4); }

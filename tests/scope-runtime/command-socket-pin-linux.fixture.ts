@@ -1,12 +1,14 @@
 /** Standalone Linux qualification: bundle with esbuild, run with the target Node; no provider calls. */
 import assert from "node:assert/strict";
 import { createConnection, createServer, type Server } from "node:net";
-import { link, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pinScopeRuntimeCommandSocket } from "../../packages/scope-runtime/src/command-socket-pin.js";
 
 assert.equal(process.platform, "linux", "This qualification must execute on Linux");
 const root = await mkdtemp(join(await realpath("/tmp"), "matrix-pin-"));
+const trust = { uid: process.getuid!(), gid: (await stat(root)).gid, workloadUid: process.getuid!() };
+const pinSocket = (path: string) => pinScopeRuntimeCommandSocket(path, trust);
 const servers: Server[] = [];
 let peerFrames = 0;
 async function listener(path: string, owner: string) {
@@ -28,11 +30,11 @@ async function exchange(path: string) {
 const modes = ["symlink", "replacement", "parent"] as const;
 try {
   for (const mode of modes) {
-    const directory = join(root, mode); await mkdir(directory);
+    const directory = join(root, mode); await mkdir(directory); await chmod(directory, 0o2733);
     const path = join(directory, "worker.sock"), peer = join(root, `${mode}-peer.sock`);
-    await listener(path, "owner"); await listener(peer, "peer");
+    await listener(path, "owner"); await chmod(path, 0o620); await listener(peer, "peer");
     const original = await lstat(path);
-    const pin = await pinScopeRuntimeCommandSocket(path);
+    const pin = await pinSocket(path);
     assert.match(pin.path, /^\/proc\/self\/fd\/[0-9]+$/);
     assert.equal((await stat(pin.path)).ino, original.ino);
     // Controlled scheduling point: original inode was validated, but connect has not happened.
@@ -47,23 +49,28 @@ try {
     finally { await pin.close(); await pin.close(); }
     await assert.rejects(stat(pin.path), { code: "ENOENT" });
   }
-  const safe = join(root, "safe"); await mkdir(safe);
-  const path = join(safe, "worker.sock"); await listener(path, "owner");
+  const safe = join(root, "safe"); await mkdir(safe); await chmod(safe, 0o2733);
+  const path = join(safe, "worker.sock"); await listener(path, "owner"); await chmod(path, 0o620);
   const baseline = (await readdir("/proc/self/fd")).length;
+  for (const invalid of [{ ...trust, uid: trust.uid + 1 }, { ...trust, gid: trust.gid + 1 }, { ...trust, workloadUid: trust.workloadUid + 1 }]) {
+    await assert.rejects(pinScopeRuntimeCommandSocket(path, invalid));
+  }
+  await chmod(path, 0o600); await assert.rejects(pinSocket(path)); await chmod(path, 0o620);
+  await chmod(safe, 0o733); await assert.rejects(pinSocket(path)); await chmod(safe, 0o2733);
   await symlink(path, join(safe, "symlink.sock"));
-  await assert.rejects(pinScopeRuntimeCommandSocket(join(safe, "symlink.sock")));
+  await assert.rejects(pinSocket(join(safe, "symlink.sock")));
   await link(path, join(safe, "hardlink.sock"));
-  await assert.rejects(pinScopeRuntimeCommandSocket(path));
+  await assert.rejects(pinSocket(path));
   await unlink(join(safe, "hardlink.sock"));
   await writeFile(join(safe, "regular"), "not a socket");
-  await assert.rejects(pinScopeRuntimeCommandSocket(join(safe, "regular")));
+  await assert.rejects(pinSocket(join(safe, "regular")));
   await symlink(safe, join(root, "foreign-directory"));
-  await assert.rejects(pinScopeRuntimeCommandSocket(join(root, "foreign-directory", "worker.sock")));
-  await assert.rejects(pinScopeRuntimeCommandSocket(join(safe, "absent.sock")));
+  await assert.rejects(pinSocket(join(root, "foreign-directory", "worker.sock")));
+  await assert.rejects(pinSocket(join(safe, "absent.sock")));
   assert.equal((await readdir("/proc/self/fd")).length, baseline, "Rejected pins must close all opened descriptors");
   console.log(JSON.stringify({ node: process.version, platform: process.platform, architecture: process.arch,
     modes, ownerResponses: modes.length, peerFrames, rejectedSymlinkHardlinkRegularParentMissing: true,
-    failureDescriptorsClosed: true, successfulDescriptorsClosed: true }));
+    trustedIdentityModesRejected: true, failureDescriptorsClosed: true, successfulDescriptorsClosed: true }));
 } finally {
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   await rm(root, { recursive: true, force: true });

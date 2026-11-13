@@ -1,7 +1,7 @@
 import { assert, safeCode } from "./control.mjs";
 export { safeCode } from "./control.mjs";
 const RESOURCE_ROLES = ["isolation_control", "peer_control", "sdk", "drain"];
-const GATES = ["placement", "baseline", "dependencies", "build", "supervisor", "capability", "supervisor_security", "isolation", "sdk_isolation", "sdk", "broker_mock", "first_broker_cleanup", "crash", "restart", "reconcile", "drain", "broker_cleanup", "controls_cleanup", "cleanup", "unchanged"];
+const GATES = ["placement", "baseline", "dependencies", "build", "supervisor", "capability", "supervisor_security", "isolation", "sdk_isolation", "sdk", "broker_mock", "first_broker_cleanup", "crash", "restart", "reconcile", "command_cleanup", "drain", "broker_cleanup", "controls_cleanup", "cleanup", "unchanged"];
 export function createJournal() {
   const gates = Object.fromEntries(GATES.map(name => [name, { state: "not_run" }]));
   let failed = false; const resources = {};
@@ -25,7 +25,7 @@ export function createJournal() {
 }
 export function safeCapability(reply) {
   const profile = reply?.profile;
-  assert(profile && profile.profileId === "scope-runtime-chat-v1" && profile.profileVersion === 2
+  assert(profile && profile.profileId === "scope-runtime-chat-v1" && profile.profileVersion === 3
     && /^[a-f0-9]{64}$/.test(profile.profileDigest) && /^[1-9][0-9]{0,19}$/.test(profile.executionGeneration)
     && Array.isArray(profile.adapters) && profile.adapters.length === 1, "capability_invalid");
   const adapter = profile.adapters.find(item => item?.adapterId === "claude-code");

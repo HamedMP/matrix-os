@@ -1,3 +1,4 @@
+import { COMMAND_IPC_POLICY, COMMAND_WORKLOAD_USER } from "./command-ipc-policy.js";
 import { createHash } from "node:crypto";
 import {
   SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
@@ -5,7 +6,7 @@ import {
 } from "./worker-common.js";
 
 export const SCOPE_RUNTIME_PROFILE_ID = "scope-runtime-chat-v1";
-export const SCOPE_RUNTIME_PROFILE_VERSION = 2;
+export const SCOPE_RUNTIME_PROFILE_VERSION = 3;
 export const SCOPE_RUNTIME_HARNESS_VERSION = SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION;
 export const SCOPE_RUNTIME_CODEX_VERSION = SCOPE_RUNTIME_CODEX_HARNESS_VERSION;
 
@@ -19,7 +20,7 @@ export const COMMAND_DIRECTORY_TOKEN = "<command-directory>";
 
 export const FIXED_SYSTEMD_PROPERTIES = [
   "Type=exec",
-  "User=matrix-scope-workload",
+  `User=${COMMAND_WORKLOAD_USER}`,
   "DynamicUser=yes",
   "PrivateUsers=yes",
   `RootDirectory=${SCOPE_ROOT_TOKEN}`,
@@ -78,6 +79,7 @@ export const SCOPE_RUNTIME_PROFILE_DIGEST = createHash("sha256")
   .update([
     ...FIXED_SYSTEMD_PROPERTIES,
     ...FIXED_SYSTEMD_ENVIRONMENT,
+    ...COMMAND_IPC_POLICY,
     `Adapter=claude-code/${SCOPE_RUNTIME_HARNESS_VERSION}/chat_ai`,
     `Adapter=codex/${SCOPE_RUNTIME_CODEX_VERSION}/chat_ai`,
   ].join("\n") + "\n")

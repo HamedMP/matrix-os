@@ -1,3 +1,4 @@
+import { COMMAND_IPC_POLICY } from "./command-ipc-policy.js";
 /**
  * `scope-runtime-bot-v1`: the isolated workload profile for Matrix bots.
  *
@@ -25,7 +26,7 @@ import {
 } from "./profile.js";
 
 export const SCOPE_RUNTIME_BOT_PROFILE_ID = "scope-runtime-bot-v1";
-export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 3;
+export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 4;
 export const SCOPE_RUNTIME_BOT_ADAPTER_ID = "matrix-bot";
 /** The pinned Pi agent version inside the bot-runtime bundle. */
 export const SCOPE_RUNTIME_BOT_HARNESS_VERSION = "1.0.0";
@@ -64,6 +65,7 @@ export const SCOPE_RUNTIME_BOT_PROFILE_DIGEST = createHash("sha256")
   .update([
     ...FIXED_BOT_SYSTEMD_PROPERTIES,
     ...FIXED_SYSTEMD_ENVIRONMENT,
+    ...COMMAND_IPC_POLICY,
     `Adapter=${SCOPE_RUNTIME_BOT_ADAPTER_ID}/${SCOPE_RUNTIME_BOT_HARNESS_VERSION}/bot_agent`,
     `LeaseMs=${SCOPE_RUNTIME_PI_LEASE_MS}`,
   ].join("\n") + "\n")
@@ -71,7 +73,7 @@ export const SCOPE_RUNTIME_BOT_PROFILE_DIGEST = createHash("sha256")
 
 /** Ordinary owner-authorized Chat shares Pi's worker, never recipe Bot mount authority. */
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
-export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 3;
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 4;
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST = createHash("sha256")
   .update(`${SCOPE_RUNTIME_BOT_PROFILE_DIGEST}\nProfile=${SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID}\nRoots=agent-workspaces,projects,worktrees\n`)
   .digest("hex");

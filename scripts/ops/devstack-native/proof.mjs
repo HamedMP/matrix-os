@@ -1,4 +1,6 @@
 import { beginCloseEvidence, stderrPath, STDERR_LIMIT } from "./close-evidence.mjs";
+import { inspectCommandCleanup } from "./ipc-evidence.mjs";
+import { assertStableProcess, assertStableUnit } from "./credential-evidence.mjs";
 import { CODEX_BINARY } from "./security.mjs";
 import { safeCapability } from "./receipt.mjs";
 import { startControls } from "./controls.mjs";
@@ -149,7 +151,16 @@ export async function supervisorRequest(config, type, payload = {}) {
   const requestId = randomUUID();
   const reply = await exchange(config.supervisorSocket, { version: 1, type, requestId, ...payload }, type === "capability.get" ? 5000 : 60_000);
   const expected = { "capability.get": "capability.result", "runtime.create": "runtime.result", "runtime.stop": "runtime.result", "runtime.chat": "runtime.chat.result" }[type];
-  assert(reply?.version === 1 && reply.requestId === requestId && reply.type === expected && reply.ok === true, "supervisor_request_failed"); return reply;
+  assert(expected && reply?.version === 1 && reply.requestId === requestId && reply.type === expected, "supervisor_request_failed");
+  // Mirror only the strict negative variants in scope-runtime/src/protocol.ts.
+  // Never coerce or retain a frame: even a coarse rejection proves no cleanup authority.
+  const errors = {
+    "capability.result": ["invalid_request", "profile_unavailable", "runtime_unavailable"],
+    "runtime.result": ["invalid_request", "profile_unavailable", "adapter_unavailable", "capacity_exceeded", "runtime_not_found", "runtime_unavailable"],
+    "runtime.chat.result": ["invalid_request", "runtime_not_found", "runtime_unavailable", "generation_mismatch"],
+  };
+  if (reply.ok === false && Object.keys(reply).length === 5 && typeof reply.error === "string" && errors[expected].includes(reply.error)) throw new Error(reply.error);
+  assert(reply.ok === true, "supervisor_request_failed"); return reply;
 }
 export async function observeWorkers(config) {
   const text = await must("/usr/bin/systemctl", ["list-units", "--all", "--no-legend", "--plain", `${config.workerUnitPrefix}*.service`], "worker_observation_failed");
@@ -171,7 +182,7 @@ export async function createTrackedWorker(config, profile, ledger, assertInvento
 export async function nativeProof(config, identity, context, io = {}) {
   const { request = supervisorRequest, inventory = observeWorkers, workerConfiguration = inspectWorkerConfiguration,
     supervisorConfiguration = inspectSupervisor, workerIsolation = inspectWorker, brokerStart = startBroker,
-    controlsStart = startControls, brokerExchange = exchange, gracefulDrain = qualifyGracefulDrain, socketStat = stat } = io;
+    controlsStart = startControls, brokerExchange = exchange, gracefulDrain = qualifyGracefulDrain, commandCleanup = inspectCommandCleanup, socketStat = stat } = io;
   const { journal, ledger, dependencies, baseline, expectedProfile, node, check } = context;
   const capability = async () => {
     check();
@@ -242,14 +253,30 @@ export async function nativeProof(config, identity, context, io = {}) {
       }, "own_restart_failed");
       return { ...profile, incarnation, security: await supervisorConfiguration(config, node) };
     });
-    await journal.step("reconcile", async () => {
-      await assertInventory();
+    await journal.step("command_cleanup", async () => {
+      const supervisor = await supervisorConfiguration(config, node);
+      const retained = [];
       for (const handle of [first, peer, sdkHandle]) {
+        const state = await ledger.freshWorker(handle);
+        const observation = await workerConfiguration(config, handle, dependencies, identity.workerUnit(handle), node);
+        assert(state.MainPID === observation.properties.MainPID && state.InvocationID === observation.properties.InvocationID, "cleanup_worker_incarnation_changed");
         await ledger.freshWorker(handle);
-        const stopped = await ledger.protocolAction(handle, () => request(config, "runtime.stop", { runtimeHandle: handle }));
-        ledger.releaseWorker(handle, stopped);
+        retained.push({ handle, credentials: observation.credentials, commandIpc: observation.commandIpc });
       }
-      return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer, sdkHandle] };
+      await journal.step("reconcile", async () => {
+        await assertInventory();
+        for (const handle of [first, peer, sdkHandle]) {
+          await ledger.freshWorker(handle);
+          const stopped = await ledger.protocolAction(handle, () => request(config, "runtime.stop", { runtimeHandle: handle }));
+          ledger.releaseWorker(handle, stopped);
+        }
+        return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer, sdkHandle] };
+      });
+      const removed = await commandCleanup(config, [first, peer, sdkHandle]);
+      const afterCleanup = await supervisorConfiguration(config, node);
+      assertStableProcess(supervisor.credentials, afterCleanup.credentials);
+      assertStableUnit(supervisor.properties, afterCleanup.properties);
+      return { ...removed, supervisor: afterCleanup, retained, retainedStagingObservedBeforeStop: true };
     });
     check();
     broker = await brokerStart(config.brokerSocket, dirname(config.runtimeDirectory), check); const { handle: second } = await create(after, "drain");

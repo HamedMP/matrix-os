@@ -1,3 +1,4 @@
+import { commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
 import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -63,6 +64,7 @@ it("rejects a real but group-writable namespace parent before any unit call", as
 
 it.each(["matrix_ipc", "wrong_group", "writable_parent"])("honors the IPC leaf group without granting it namespace ownership: %s", async kind => {
   const root = await createUnixSocketTempDir(); clean.push(() => rm(root, { recursive: true, force: true }));
+  commandIdentityFixture(root);
   const namespaceRoot = join(root, "own"), ipc = join(namespaceRoot, "scope-runtime"), commands = join(namespaceRoot, "c");
   await mkdir(ipc, { recursive: true }); await mkdir(commands);
   await chmod(ipc, 0o770); await chmod(commands, 0o770);
