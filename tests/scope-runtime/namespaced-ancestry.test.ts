@@ -67,7 +67,7 @@ it.each(["matrix_ipc", "wrong_group", "writable_parent"])("honors the IPC leaf g
   commandIdentityFixture(root);
   const namespaceRoot = join(root, "own"), ipc = join(namespaceRoot, "scope-runtime"), commands = join(namespaceRoot, "c");
   await mkdir(ipc, { recursive: true }); await mkdir(commands);
-  await chmod(ipc, 0o770); await chmod(commands, 0o770);
+  await chmod(ipc, 0o2770); await chmod(commands, 0o2770);
   if (kind === "writable_parent") await chmod(namespaceRoot, 0o770);
   const namespaceTrust = { root, uid: process.getuid!(), ipcGid: (await lstat(ipc)).gid + (kind === "wrong_group" ? 1 : 0) };
   const runCommand = vi.fn(async () => ({ stdout: "" })), brokerSocket = join(ipc, "broker");
@@ -79,7 +79,7 @@ it.each(["matrix_ipc", "wrong_group", "writable_parent"])("honors the IPC leaf g
     await expect(launcher.list()).resolves.toEqual([]);
     expect(runCommand).toHaveBeenCalledOnce();
     expect((await lstat(brokerSocket)).isSocket()).toBe(true);
-    await createRuntimeDirectories({ stateRoot: join(namespaceRoot, "state"), commandSocketRoot: commands, namespaceTrust }, "runtime_" + "a".repeat(32));
+    await createRuntimeDirectories({ ...commandIdentityFixture(root), stateRoot: join(namespaceRoot, "state"), commandSocketRoot: commands, namespaceTrust }, "runtime_" + "a".repeat(32));
     expect((await lstat(commands)).mode & 0o777).toBe(0o770);
   } else {
     await expect(broker.start()).rejects.toThrow("Unsafe");

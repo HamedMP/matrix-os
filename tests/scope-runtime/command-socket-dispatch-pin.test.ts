@@ -103,6 +103,11 @@ it.each(["chat", "bot", "managed-pi"])("rejects old %s provenance before pinning
     : manager.runBot!({ runtimeHandle: handle, executionGeneration: generation, command: { version: 1, kind: "bot.cancel", runId: "run_test" } });
   await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify({ ...provenance, profileVersion: profile.profileVersion - 1 }));
   await expect(dispatch()).rejects.toThrow("Unsafe command IPC provenance"); expect(pin).not.toHaveBeenCalled();
+  const previousDigest = kind === "chat" ? "b89f556558d8c62f49d6892b79e3c159163bcd2404d292b5220685770f8ff9a4"
+    : kind === "bot" ? "da19db61e22016c6fe60b9ceca2a225233b65bf1b5851602c0f53817cda0be46"
+    : "d501a2cdb353cba40a85925cdb66f5caf2244214315090465c76cbc35259716d";
+  await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify({ ...provenance, profileDigest: previousDigest }));
+  await expect(dispatch()).rejects.toThrow("Unsafe command IPC provenance"); expect(pin).not.toHaveBeenCalled();
   await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify(provenance));
   await expect(dispatch("8")).rejects.toThrow("Unsafe command IPC provenance"); expect(pin).not.toHaveBeenCalled();
   await expect(dispatch()).rejects.toThrow("verified pin reached"); expect(pin).toHaveBeenCalledOnce();

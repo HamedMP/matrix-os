@@ -54,15 +54,15 @@ export function validateSupervisorProperties(properties, config) {
   same(list(properties.InaccessiblePaths).map(path => path.replace(/^-/, "")), [CODEX_BINARY]);
   same(properties.LockPersonality, "yes"); same(properties.RuntimeDirectoryPreserve, "yes"); same(properties.RemainAfterExit, "yes");
   assert(["9", "SIGKILL"].includes(properties.KillSignal), "supervisor_cold_stop_signal_drift");
-  // The fixture tightens its own IPC directory only. Legacy and fixed workers
-  // retain their source profiles; this does not qualify non-root Gateway IPC.
+  // PID1 supplies exact inherited-mode anchors behind the private namespace.
+  // This still does not qualify non-root Gateway IPC.
   base(properties, false);
-  for (const [key, value] of Object.entries({ Type: "simple", User: "root", Group: "matrix", DynamicUser: "no", PrivateUsers: "no", PrivateTmp: "no", ProtectHome: "tmpfs", RootDirectory: "", MemoryMax: "268435456", TasksMax: "64", UMask: "0007", RuntimeDirectoryMode: "0700", StateDirectoryMode: "0700", NotifyAccess: "all", Restart: "on-failure", KillMode: "control-group" })) same(properties[key], value);
+  for (const [key, value] of Object.entries({ Type: "simple", User: "root", Group: "matrix", DynamicUser: "no", PrivateUsers: "no", PrivateTmp: "no", ProtectHome: "tmpfs", RootDirectory: "", MemoryMax: "268435456", TasksMax: "64", UMask: "0007", RuntimeDirectoryMode: "2770", StateDirectoryMode: "2700", NotifyAccess: "all", Restart: "on-failure", KillMode: "control-group" })) same(properties[key], value);
   same(list(properties.RestrictAddressFamilies), ["AF_UNIX"]); same(duration(properties.RuntimeMaxUSec), 180000); same(duration(properties.TimeoutStopUSec), 45000);
   same(duration(properties.WatchdogUSec), 60000); same(duration(properties.RestartUSec), 5000);
   same(list(properties.ReadWritePaths), [config.runtimeDirectory, config.commandSocketRoot].sort());
   same(list(properties.RuntimeDirectory), [`matrix-devstack/${config.namespace}/scope-runtime`, `matrix-devstack/${config.namespace}/c`].sort());
-  same(list(properties.StateDirectory), [`matrix-devstack/${config.namespace}/scope-runtime`]);
+  same(list(properties.StateDirectory), [`matrix-devstack/${config.namespace}/scope-runtime`, `matrix-devstack/${config.namespace}/scope-runtime/runtimes`].sort());
   same(bindList(properties.BindPaths), []);
   same(bindList(properties.BindReadOnlyPaths), ["bots", "agent-workspaces", "projects", "worktrees"].map(name => `-${config.home}/${name}:${config.home}/${name}:rbind`).sort());
   return { properties: { ...properties, BindReadOnlyPaths: bindList(properties.BindReadOnlyPaths), BindPaths: [], ReadWritePaths: list(properties.ReadWritePaths) }, fixture: "root_only_native_ipc", nonRootGatewayAcceptance: "not_tested" };

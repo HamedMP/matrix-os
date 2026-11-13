@@ -1,3 +1,4 @@
+import { createDirectoryCreatorAdmission } from "../../packages/scope-runtime/src/directory-creator-admission.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   SCOPE_RUNTIME_PROFILE,
@@ -79,7 +80,7 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("b89f556558d8c62f49d6892b79e3c159163bcd2404d292b5220685770f8ff9a4");
+      .toBe("1d26fa0c16730348365d925f0ab02c62c49740cabc5794cb9b2c918f3ab1183f");
     expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([
       {
         adapterId: "claude-code",
@@ -259,4 +260,27 @@ describe("scope runtime supervisor", () => {
     await expect(create("018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d3"))
       .resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
   });
+  it("fences new creates and drains accepted directory-creator work before shutdown completes", async () => {
+    const admit = createDirectoryCreatorAdmission(2, 1_000);
+    const releases: Array<() => void> = [];
+    const native = launcher({ start: () => admit(() => new Promise<void>(resolve => { releases.push(resolve); })) });
+    let sequence = 1;
+    const controller = await createScopeRuntimeController({ launcher: native, executionGeneration: "12",
+      createRuntimeHandle: () => `runtime_${String(sequence++).padStart(32, "0")}` });
+    const create = (digit: number) => controller.handle({ version: 1, type: "runtime.create",
+      requestId: `018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d${digit}`, scopeHandle: SCOPE_HANDLE,
+      profileId: SCOPE_RUNTIME_PROFILE.profileId, workload: "chat_ai", adapterId: "claude-code", harnessVersion: "2.1.240" });
+    const first = create(1), second = create(2);
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    let closed = false; const closing = controller.close().then(() => { closed = true; });
+    await expect(create(3)).resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
+    expect(closed).toBe(false); releases[0]!();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    expect(closed).toBe(false); releases[1]!();
+    await closing;
+    for (const pending of [first, second]) await expect(pending).resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
+    expect(native.stop).toHaveBeenCalledWith("runtime_00000000000000000000000000000001");
+    expect(native.stop).toHaveBeenCalledWith("runtime_00000000000000000000000000000002");
+  });
+
 });

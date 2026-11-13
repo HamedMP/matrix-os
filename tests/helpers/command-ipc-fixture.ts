@@ -1,5 +1,8 @@
+import { spawn } from "node:child_process";
+import { directoryChildArgs, waitForDirectoryChild, type DirectoryChildRunner } from "../../packages/scope-runtime/src/inherited-command-directory.js";
+import type { RuntimeDirectoryOperations } from "../../packages/scope-runtime/src/runtime-directories.js";
 import { chownSync } from "node:fs";
-import { chmod, chown, link, lstat, mkdtemp, rm } from "node:fs/promises";
+import { chmod, chown, link, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { CommandSocketInodePinner } from "../../packages/scope-runtime/src/command-socket-pin.js";
 import type { CommandIdentityBinding } from "../../packages/scope-runtime/src/command-host-identity.js";
@@ -8,9 +11,36 @@ import { createUnixSocketTempDir } from "./unix-socket-temp.js";
 /** Owned macOS/Linux filesystem fixture, NOT root/DynamicUser or descriptor qualification. */
 export function commandIdentityFixture(root: string) {
   chownSync(root, process.getuid!(), process.getgid!());
-  return { namespaceTrust: { root, uid: process.getuid!(), ipcGid: process.getgid!() },
+  return { namespaceTrust: { root, uid: process.getuid!(), ipcGid: process.getgid!() }, directoryOperations: portableDirectoryOperations,
     async resolveCommandTrust(binding: CommandIdentityBinding) { return { ...binding.parent, workloadUid: process.getuid!() }; } };
 }
+
+/** Real child + real exclusive mkdir. Only the Darwin setgid result and fd
+ * pathname alias are explicitly modeled; this is not hardened Linux evidence. */
+export const portableDirectoryChild: DirectoryChildRunner = async request => {
+  const child = spawn(process.platform === "linux" ? "/usr/bin/mkdir" : "/bin/mkdir", directoryChildArgs(request,
+    process.platform === "linux" ? "/proc/self/fd/3" : request.parentPath), {
+    env: {}, cwd: "/", stdio: ["ignore", "pipe", "pipe", request.parentFd],
+  });
+  await waitForDirectoryChild(child);
+  if (process.platform !== "linux") await chmod(join(request.parentPath, request.leaf), 0o2733);
+};
+export const portableDirectoryOperations: RuntimeDirectoryOperations = {
+  async prepareAnchors(paths) {
+    for (const [path, mode] of [[paths.stateRoot, 0o2700], [join(paths.stateRoot, "runtimes"), 0o2700],
+      ...(paths.commandSocketRoot ? [[paths.commandSocketRoot, 0o2770] as const] : [])] as const) {
+      try { await lstat(path); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        await mkdir(path, { recursive: true, mode }); await chmod(path, mode);
+      }
+    }
+  },
+  async createPrivate(path) {
+    await mkdir(path, { mode: 0o700 });
+    if (process.platform !== "linux") await chmod(path, 0o2700);
+  },
+  runChild: portableDirectoryChild,
+};
 
 /** Portable inode alias. Discount only this fixture's extra hardlink in policy checks. */
 export const portablePublicationPin: CommandSocketInodePinner = async path => {

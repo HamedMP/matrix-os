@@ -5,7 +5,7 @@ import { CODEX_BINARY } from "./security.mjs";
 import { safeCapability } from "./receipt.mjs";
 import { startControls } from "./controls.mjs";
 import { inspectWorker, inspectWorkerConfiguration, inspectWorkerPair, inspectSupervisor } from "./evidence.mjs";
-import { exclusiveDirectory } from "./placement.mjs";
+import { brokerPublicationDirectory } from "./broker-publication.mjs";
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -26,7 +26,7 @@ export function supervisorArgs(config, token, template) {
     if (!service || !/^[A-Za-z]+=/.test(line) || line.startsWith("ExecStart=")) continue;
     let property = line;
     if (/^(RuntimeDirectory|StateDirectory)=/.test(line)) property = `${line.split("=")[0]}=matrix-devstack/${config.namespace}/scope-runtime`;
-    if (line.startsWith("RuntimeDirectoryMode=")) property = "RuntimeDirectoryMode=0700";
+    if (line.startsWith("StateDirectory=")) property += ` matrix-devstack/${config.namespace}/scope-runtime/runtimes`;
     if (line.startsWith("RuntimeDirectory=")) property += ` matrix-devstack/${config.namespace}/c`;
     if (line.startsWith("BindReadOnlyPaths=")) property = line.replace("/home/matrix/home", config.home ?? `${config.appRoot.slice(0, -4)}/home`);
     properties.push(`--property=${property}`);
@@ -75,7 +75,7 @@ function providerResponse() {
 export async function startBroker(path, bindingParent = dirname(path), check = () => {}) {
   const parent = await lstat(bindingParent);
   assert(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid() && (parent.mode & 0o022) === 0, "broker_bind_parent_unprotected");
-  const publication = await exclusiveDirectory(dirname(path), check);
+  const publication = await brokerPublicationDirectory(dirname(path), bindingParent, check);
   try { await publication.verify(); assert(!await stat(path), "broker_collision"); } catch (error) { await publication.close(); throw error; }
   let requests = 0; const sockets = new Set();
   const server = createServer({ allowHalfOpen: true }, socket => {

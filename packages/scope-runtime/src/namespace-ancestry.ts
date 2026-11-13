@@ -24,7 +24,7 @@ export async function assertNamespaceDirectory(path: string, trust: NamespacePat
       throw error;
     }
     if (!dir.isDirectory() || dir.uid !== trust.uid) throw new Error("Unsafe namespace directory");
-    if ((dir.mode & 0o022) !== 0 && !(ipcLeaf && current === path && (dir.mode & 0o7777) === 0o770
+    if ((dir.mode & 0o022) !== 0 && !(ipcLeaf && current === path && (dir.mode & 0o7777) === 0o2770
       && dir.gid === await trustedIpcGroup(trust))) throw new Error("Unsafe namespace directory");
   }
 }
@@ -39,8 +39,7 @@ export async function assertNamespaceSocket(path: string, trust: NamespacePathTr
 export interface RuntimeDirectoryRoots { stateRoot: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust }
 
 export async function assertRuntimeDirectoryPlacement(paths: RuntimeDirectoryRoots): Promise<void> {
-  if (!paths.commandSocketRoot) return; // Unchanged legacy layout.
   const trust = paths.namespaceTrust ?? HOST_NAMESPACE_TRUST;
   await assertNamespaceDirectory(join(paths.stateRoot, "runtimes"), trust);
-  await assertNamespaceDirectory(paths.commandSocketRoot, trust, true);
+  if (paths.commandSocketRoot) await assertNamespaceDirectory(paths.commandSocketRoot, trust, true);
 }
