@@ -23,6 +23,8 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/jev-repository-postgres.test.ts',
   'tests/gateway/sites-bootstrap-postgres.test.ts',
   'tests/gateway/slack-pi-integration.test.ts',
+  'tests/platform/sites-email-invitations-postgres.test.ts',
+  'tests/platform/sites-invitation-delivery.test.ts',
   'tests/platform/sites-postgres.test.ts',
   'tests/platform/sites-publish-admission-postgres.test.ts',
   'tests/platform/sites-recovery-postgres.test.ts',
