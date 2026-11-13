@@ -56,6 +56,48 @@ it("archives both the project ID and legacy slug chats", async () => {
   expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
 });
 
+it("reports running chats skipped when a project archive changes no chats", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={vi.fn(async () => ({ archived: [], archivedCount: 0, skippedCount: 3 }))}
+    onRestoreConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  expect(await screen.findByText("Archived 0 chats in Local project; 3 running skipped")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+it("restores an older archived chat into an expanded project without reopening it", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  let active = true;
+  const item = { chat: { id: "chat_old", title: "Older project chat", titleVersion: 1, revision: 2,
+    lifecycle: "active", attention: "none", messageCount: 1, createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
+    projectId: "proj_local", readState: { readThroughSeq: 1, markedUnread: false, unread: false }, classification: "done", persistence: "durable" };
+  const load = vi.fn(async (query: { group: string }) => ({ items: query.group === "project" && active ? [item] : [], totalCount: active ? 1 : 0 }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" loadNavigationPage={load as never}
+    onArchiveProjectChats={vi.fn(async () => { active = false; return { archived: [{ chatId: "chat_old", revision: 3 }], archivedCount: 1, skippedCount: 0 }; })}
+    onListArchivedConversations={vi.fn(async () => ({ items: active ? [] : [{ chat: { ...item.chat, lifecycle: "archived", revision: 3 } }] })) as never}
+    onRestoreConversation={vi.fn(async () => { active = true; return true; })} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  await within(nav).findByText("No chats in this project yet.");
+  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Older project chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restore selected" }));
+  await screen.findByText("No archived chats.");
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Archived chats" })).getAllByRole("button", { name: "Close", exact: true })[0]!);
+  expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
+  expect(within(nav).getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
+});
+
 it("keeps only failed project chats in bulk Undo after a partial restore", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
   const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
