@@ -43,23 +43,35 @@ function withMemberships(names: WriteBlockNames, body: string[]): string[] {
   ];
 }
 
-function regrantReadAndDelete(owner: string, holder: string): string {
+/**
+ * Revokes everything the owner role and PUBLIC hold on the holder's objects
+ * (column grants go with the table grant), then grants back exactly the
+ * allowed set, so a grant made since the last application never survives it.
+ */
+function regrantExactly(owner: string, holder: string): string {
   return `DO $block$
 DECLARE r record;
 BEGIN
   FOR r IN SELECT nspname FROM pg_namespace WHERE nspowner = '${holder}'::regrole OR nspname = 'public' LOOP
+    EXECUTE format('REVOKE ALL ON SCHEMA %I FROM PUBLIC, %I', r.nspname, '${owner}');
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', r.nspname, '${owner}');
   END LOOP;
   FOR r IN SELECT c.oid::regclass AS rel, c.relkind FROM pg_class c
     WHERE c.relowner = '${holder}'::regrole AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S') LOOP
-    IF r.relkind IN ('r', 'p') THEN
-      EXECUTE format('GRANT SELECT, DELETE, TRUNCATE ON %s TO %I', r.rel, '${owner}');
+    IF r.relkind = 'S' THEN
+      EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC, %I', r.rel, '${owner}');
+      EXECUTE format('GRANT SELECT ON SEQUENCE %s TO %I', r.rel, '${owner}');
     ELSE
-      EXECUTE format('GRANT SELECT ON %s TO %I', r.rel, '${owner}');
+      EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC, %I', r.rel, '${owner}');
+      EXECUTE format('GRANT %s ON TABLE %s TO %I',
+        CASE WHEN r.relkind IN ('r', 'p') THEN 'SELECT, DELETE, TRUNCATE' ELSE 'SELECT' END, r.rel, '${owner}');
     END IF;
   END LOOP;
-  FOR r IN SELECT p.oid::regprocedure AS fn FROM pg_proc p WHERE p.proowner = '${holder}'::regrole AND p.prosecdef LOOP
-    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, %I', r.fn, '${owner}');
+  FOR r IN SELECT p.oid::regprocedure AS fn, p.prosecdef FROM pg_proc p WHERE p.proowner = '${holder}'::regrole LOOP
+    EXECUTE format('REVOKE ALL ON ROUTINE %s FROM PUBLIC, %I', r.fn, '${owner}');
+    IF NOT r.prosecdef THEN
+      EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO %I', r.fn, '${owner}');
+    END IF;
   END LOOP;
 END
 $block$`;
@@ -73,7 +85,7 @@ export function writeBlockStatements(names: WriteBlockNames): string[] {
     `GRANT CREATE ON DATABASE ${names.databaseSql} TO ${names.holderSql}`,
     `GRANT USAGE, CREATE ON SCHEMA public TO ${names.holderSql}`,
     `REASSIGN OWNED BY ${names.ownerSql} TO ${names.holderSql}`,
-    regrantReadAndDelete(names.ownerName, names.holderName),
+    regrantExactly(names.ownerName, names.holderName),
   ]);
 }
 
