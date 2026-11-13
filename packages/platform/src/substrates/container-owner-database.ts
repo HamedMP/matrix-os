@@ -34,6 +34,8 @@ export interface ContainerOwnerDatabasesTable {
   writes_blocked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** Triggers and rules the block disabled, so the restore re-enables exactly those. */
   block_disabled: ColumnType<unknown, string | null | undefined, string | null>;
+  /** Set when a blocked database passed the alert threshold; cleared once it falls back below it. */
+  size_alerted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
@@ -72,6 +74,13 @@ export interface CompactionTarget {
   restoreBelowBytes: number;
 }
 
+/** Structured operator alert for a blocked database far over its limit. Carries no owner data. */
+export interface OwnerDatabaseSizeAlert {
+  event: 'container_owner_db_size_alert';
+  sizeBytes: number;
+  limitBytes: number;
+}
+
 export interface ContainerOwnerDatabasesDeps {
   db: PlatformDB;
   admin: OwnerClusterAdmin;
@@ -81,6 +90,8 @@ export interface ContainerOwnerDatabasesDeps {
   sizeRestoreMarginBytes?: number;
   connectionLimit?: number;
   randomBytes?: (size: number) => Buffer;
+  /** Defaults to one structured warning line in the platform log. */
+  alertOperator?: (alert: OwnerDatabaseSizeAlert) => void;
 }
 
 const IDENTIFIER = /^(mxo|mxr|mxh)_[a-z2-7]{26}$/;
@@ -102,6 +113,7 @@ const OWNER_LOCK_WAIT_MS = 30_000;
 const OWNER_LOCK_POLL_MS = 50;
 /** Owners with operations queued in this process; beyond it new operations answer busy. */
 const MAX_LOCAL_OWNER_QUEUES = 10_000;
+const ALERT_RATIO = 1.5;
 const MAX_RECORDED = 10_000;
 const DisabledSchema = z.array(z.object({
   kind: z.enum(['trigger', 'rule']),
@@ -162,6 +174,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     throw new Error('Owner database connection limit is invalid');
   }
   const randomBytes = deps.randomBytes ?? nodeRandomBytes;
+  const alertOperator = deps.alertOperator ?? ((alert: OwnerDatabaseSizeAlert) => console.warn(JSON.stringify(alert)));
   const restoreMargin = deps.sizeRestoreMarginBytes;
   if (restoreMargin !== undefined && (!Number.isSafeInteger(restoreMargin) || restoreMargin < 0)) {
     throw new Error('Owner database size restore margin is invalid');
@@ -306,6 +319,26 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     await terminateSessions(row.role_name, signal);
   }
 
+  /** Alerts once per crossing: the conditional update is the gate, so concurrent measurements alert once. */
+  async function alertIfFarOver(row: Row, sizeBytes: number, writesBlocked: boolean): Promise<void> {
+    const limitBytes = Number(row.size_limit_bytes);
+    const threshold = limitBytes * ALERT_RATIO;
+    if (writesBlocked && sizeBytes > threshold) {
+      const crossed = await db.executor.updateTable('container_owner_databases').set({ size_alerted_at: sql<Date>`now()` })
+        .where('clerk_user_id', '=', row.clerk_user_id).where('size_alerted_at', 'is', null)
+        .returning('clerk_user_id').executeTakeFirst();
+      if (!crossed) return;
+      try {
+        alertOperator({ event: 'container_owner_db_size_alert', sizeBytes, limitBytes });
+      } catch (error: unknown) {
+        console.error('[container-owner-db] size alert failed', { cause: error instanceof Error ? error.name : 'unknown' });
+      }
+    } else if (sizeBytes < threshold && row.size_alerted_at !== null) {
+      await db.executor.updateTable('container_owner_databases').set({ size_alerted_at: null })
+        .where('clerk_user_id', '=', row.clerk_user_id).execute();
+    }
+  }
+
   async function applyPassword(row: Row, epoch: number, signal: AbortSignal): Promise<void> {
     const roleSql = quoteIdentifier(row.role_name, 'mxr_');
     await admin.query(`ALTER ROLE ${roleSql} PASSWORD ${quotePassword(passwordFor(row.role_name, epoch))}`, [], signal);
@@ -429,6 +462,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
         password_epoch: generation,
         size_bytes: null,
         size_measured_at: null,
+        size_alerted_at: null,
         block_disabled: null,
         created_at: sql<Date>`now()`,
         deleted_at: null,
@@ -512,6 +546,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow(row));
       if (writesBlocked) await blockWrites(row, signal);
       else if (wasBlocked) await restoreWrites(row, signal);
+      await alertIfFarOver(row, sizeBytes, writesBlocked);
       return { sizeBytes, overLimit, writesBlocked };
     },
 

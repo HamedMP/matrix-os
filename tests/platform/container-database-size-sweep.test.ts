@@ -68,6 +68,34 @@ describe('owner database size sweep', () => {
     expect(inDatabase.flat().some((statement) => statement.startsWith('REASSIGN OWNED BY "mxh_'))).toBe(true);
   });
 
+  it('alerts operators once per crossing of 1.5x the limit while blocked, without owner data, and re-arms below it', async () => {
+    const alerts: unknown[] = [];
+    const service = createContainerOwnerDatabases({
+      db, admin: scriptedAdmin(cluster, sizes), passwordSecret: SECRET, sizeLimitBytes: 1000, sizeRestoreMarginBytes: 100,
+      alertOperator: (alert) => { alerts.push(alert); },
+    });
+    const credentials = await service.ensure('user_sweep_alert', 1, signal());
+    const alertedAt = async () => (await db.executor.selectFrom('container_owner_databases').select('size_alerted_at')
+      .where('clerk_user_id', '=', 'user_sweep_alert').executeTakeFirstOrThrow()).size_alerted_at;
+    const measure = async (size: number) => {
+      sizes.set(credentials.databaseName, size);
+      return service.enforceSizeLimit('user_sweep_alert', signal());
+    };
+
+    expect(await measure(1400)).toMatchObject({ writesBlocked: true });
+    expect(alerts).toEqual([]);
+    await measure(1600);
+    await measure(1700);
+    expect(alerts).toEqual([{ event: 'container_owner_db_size_alert', sizeBytes: 1600, limitBytes: 1000 }]);
+    expect(await alertedAt()).toBeInstanceOf(Date);
+    expect(JSON.stringify(alerts)).not.toMatch(/user_sweep_alert|mxo_|mxr_/);
+
+    expect(await measure(1400)).toMatchObject({ writesBlocked: true });
+    expect(await alertedAt()).toBeNull();
+    await measure(1550);
+    expect(alerts).toHaveLength(2);
+  });
+
   it('does not grant create back when a later start re-provisions a blocked owner', async () => {
     const inDatabase: string[][] = [];
     const statements: string[] = [];
