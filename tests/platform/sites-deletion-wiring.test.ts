@@ -5,6 +5,9 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 import { insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/src/account-deletion/wiring.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
+import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
+import { siteRecipientKey } from '../../packages/platform/src/sites/email-keys.js';
+import { randomUUID } from 'node:crypto';
 const objects = vi.hoisted(() => new Map<string, Uint8Array>());
 const sitesStore = vi.hoisted(() => ({
     listObjects: vi.fn(async (prefix: string) => ({ keys: [...objects.keys()].filter(key => key.startsWith(prefix)), nextCursor: null })),
@@ -62,6 +65,33 @@ it('configured deletion revokes site immediately and durably erases dedicated as
     }
     expect(sitesStore.destroy).toHaveBeenCalledOnce();
     expect(syncStore.destroy).toHaveBeenCalledOnce();
+});
+it('rolls back recipient erasure and viewer identity when final account cleanup is blocked', async () => {
+    const recipient='user_recipient_rollback', owner='user_foreign_site_owner';
+    const siteId=randomUUID(), invitationId=randomUUID(), grantId=randomUUID(), now=new Date();
+    await insertUserMachine(db,{machineId:'recipient-blocked-machine',clerkUserId:recipient,
+        handle:'recipient-rollback',status:'running',provisionedAt:now.toISOString()});
+    await insertUserMachine(db,{machineId:'foreign-site-machine',clerkUserId:owner,handle:'foreign-site',status:'running',provisionedAt:now.toISOString()});
+    await db.executor.insertInto('public_sites').values({id:siteId,owner_id:owner,machine_id:'foreign-site-machine',
+        app_slug:'foreign-app',title:'Foreign app',description:'',slug:null,revision:1,status:'published',
+        access_mode:'private_email',active_version:null,created_at:now.toISOString()}).execute();
+    await db.executor.insertInto('public_site_email_invitations').values({id:invitationId,site_id:siteId,
+        normalized_email:'recipient@example.com',display_email:'recipient@example.com',generation:'1',
+        state:'accepted',delivery_state:'sent',invited_by_clerk_user_id:owner,accepted_clerk_user_id:recipient,
+        created_at:now,issued_at:now,expires_at:new Date(now.getTime()+86400_000),accepted_at:now,
+        revoked_at:null,state_reason:null,updated_at:now,revision:'1'}).execute();
+    await db.executor.insertInto('public_site_viewer_grants').values({id:grantId,site_id:siteId,
+        invitation_id:invitationId,invitation_generation:'1',clerk_user_id:recipient,granted_at:now,
+        revoked_at:null,revocation_reason:null}).execute();
+    const recipientKey=siteRecipientKey(recipient,env.ACCOUNT_DELETION_SECRET);
+    await db.executor.insertInto('public_site_recipient_lifecycle').values({recipient_key:recipientKey,state:'active',
+        last_event_id:'initial_active',last_event_at:new Date(now.getTime()-1000),updated_at:now}).execute();
+    await expect(eraseOwnerPlatformData(db,recipient,undefined,env.ACCOUNT_DELETION_SECRET))
+        .rejects.toThrow('runtime_cleanup_pending');
+    expect((await db.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+        .where('recipient_key','=',recipientKey).executeTakeFirst())?.state).toBe('active');
+    expect((await db.executor.selectFrom('public_site_viewer_grants').select(['clerk_user_id','revoked_at'])
+        .where('id','=',grantId).executeTakeFirst())).toMatchObject({clerk_user_id:recipient,revoked_at:null});
 });
 it('refuses partial or shared dedicated sites credentials before starting cleanup', async () => {
     await expect(createConfiguredAccountDeletionRuntime({ db, env: { ...env, R2_SITES_SECRET_ACCESS_KEY: '' }, backgroundWorkersEnabled: false })).rejects.toThrow('Dedicated sites');

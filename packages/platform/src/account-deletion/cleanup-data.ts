@@ -1,6 +1,6 @@
 import { readCustomerChargeRelease } from "../ai-funded-customer-charge-release.js";
-import { createHash } from 'node:crypto';
-import { eraseOwnerSiteRegistry } from '../sites/account-lifecycle.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { eraseOwnerSiteRegistry, recordSiteRecipientLifecycle } from '../sites/account-lifecycle.js';
 import { sql } from 'kysely';
 import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
@@ -38,9 +38,16 @@ export async function assertDeletionOwnershipSafe(db: PlatformDB, owner: string)
 }
 
 /** All platform writes share one transaction; accounting keeps only anonymous amounts and timestamps. */
-export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, ownerHash?: (owner: string) => string): Promise<void> {
+export async function eraseOwnerPlatformData(db: PlatformDB, owner: string,
+  ownerHash?: (owner: string) => string, recipientSecret?: string): Promise<void> {
   await db.transaction(async (trx) => {
     if (ownerHash) await lockAccountDeletionOwner(trx.executor,ownerHash(owner));
+    if (recipientSecret) {
+      await recordSiteRecipientLifecycle(trx, {
+        userId: owner, state: 'deleted', eventId: `matrix_erasure_${randomUUID()}`,
+        eventAt: new Date(), secret: recipientSecret,
+      });
+    }
     // Financial lifecycle changes take the same lock before deciding whether
     // unknown platform expense remains. Do not erase between a check and receipt.
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${owner}`}, 0))`.execute(trx.executor);

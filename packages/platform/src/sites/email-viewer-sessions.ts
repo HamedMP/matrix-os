@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { SITE_VIEWER_SESSION_TTL_MS } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import { buildSiteViewerCookie, createSiteAccessSecret, hashSiteAccessSecret } from './access-links.js';
-import { readSiteViewerCookie, siteAccessSecretMatches } from './access-links.js';
-import { siteRecipientKey } from './email-keys.js';
+import { readSiteViewerCookie, siteAccessSecretMatches, siteViewerCookieName } from './access-links.js';
+import { siteClerkSessionKey, siteRecipientKey } from './email-keys.js';
 import { sql } from 'kysely';
 import { SiteError } from './types.js';
+import { getAccountDeletionAdmission } from '../account-deletion/admission.js';
 
 const MAX_ACTIVE_SESSIONS_PER_GRANT = 20;
 
@@ -54,6 +55,8 @@ export async function authorizeEmailViewerSession(
     .where('s.status', '=', 'published').where('s.access_mode', '=', 'private_email')
     .executeTakeFirst();
   if (!row || !siteAccessSecretMatches(credential.token, row.secret_hash)) return false;
+  if (!(await getAccountDeletionAdmission(db, row.clerk_user_id,
+    { ACCOUNT_DELETION_SECRET: secret })).newWorkAllowed) return false;
   const termination = await db.executor.selectFrom('public_site_clerk_session_terminations')
     .select('clerk_session_key').where('clerk_session_key', '=', row.clerk_session_key).executeTakeFirst();
   if (termination) return false;
@@ -66,13 +69,29 @@ export async function authorizeEmailViewerSession(
 export async function terminateEmailClerkSession(
   db: PlatformDB, siteId: string, clerkSessionKey: string, cookieHeader?: string,
 ): Promise<void> {
+  return terminateKey(db, clerkSessionKey, siteId, cookieHeader);
+}
+
+/** Main Matrix sign-out uses the same keyed terminal write before Clerk revocation. */
+export async function terminateEmailClerkSessionForMatrixSignOut(
+  db: PlatformDB, clerkSessionId: string, secret: string,
+): Promise<void> {
+  return terminateKey(db, siteClerkSessionKey(clerkSessionId, secret));
+}
+
+async function terminateKey(
+  db: PlatformDB, clerkSessionKey: string, siteId?: string, cookieHeader?: string,
+): Promise<void> {
   await db.transaction(async trx => {
     await sql`SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
     await sql`SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'site-clerk-session:' + clerkSessionKey}, 0))`.execute(trx.executor);
-    const credential = readSiteViewerCookie(cookieHeader, siteId);
-    if (cookieHeader && !credential) throw new SiteError('not_found');
-    if (credential) {
+    const viewerCookieName = siteId ? siteViewerCookieName(siteId) : null;
+    const viewerCookiePresent = viewerCookieName && cookieHeader?.split(';')
+      .some(value => value.trim().startsWith(`${viewerCookieName}=`));
+    const credential = siteId ? readSiteViewerCookie(cookieHeader, siteId) : null;
+    if (viewerCookiePresent && !credential) throw new SiteError('not_found');
+    if (credential && siteId) {
       const row = await trx.executor.selectFrom('public_site_viewer_sessions')
         .select(['secret_hash', 'clerk_session_key']).where('id', '=', credential.linkId)
         .where('site_id', '=', siteId).executeTakeFirst();

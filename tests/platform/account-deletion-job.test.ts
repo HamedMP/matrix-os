@@ -44,6 +44,19 @@ describe('durable account deletion job', () => {
     expect(await service().get(owner)).toMatchObject({ status: 'none' });
     expect(adapters.billing).not.toHaveBeenCalled();
   });
+  it('rolls back scheduling and cancellation when the recipient projection cannot commit', async () => {
+    const failing = (state: 'inactive' | 'active') => createAccountDeletionService({
+      db: fixture.db.kysely, adapters, secret, now, logError: vi.fn(),
+      recipientLifecycle: async (_trx, event) => {
+        if (event.state === state) throw new Error('recipient projection failed');
+      },
+    });
+    await expect(failing('inactive').schedule(owner)).rejects.toThrow('recipient projection failed');
+    expect(await service().get(owner)).toMatchObject({ status: 'none' });
+    await service().schedule(owner);
+    await expect(failing('active').cancel(owner)).rejects.toThrow('recipient projection failed');
+    expect(await service().get(owner)).toMatchObject({ status: 'scheduled' });
+  });
   it('repeated requests do not reset grace or duplicate billing and cancellation is durable', async () => {
     const first = await service().schedule(owner);
     clock = new Date(clock.getTime() + 1000);
