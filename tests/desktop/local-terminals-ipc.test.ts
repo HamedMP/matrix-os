@@ -115,6 +115,16 @@ describe("local terminal IPC", () => {
     await expect(invoke("local-terminal:put", { id: "t1", name: "../shot.png", dataBase64: "aGk=" })).rejects.toThrow("invalid request");
     await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "a".repeat(12_000_000) })).rejects.toThrow("invalid request");
     await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "aGk=" })).resolves.toEqual({ ok: true, path: "/tmp/hc/t1/shot.png" });
+    await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "a=b" })).rejects.toThrow("invalid request");
+  });
+
+  // Fault detected (Greptile on #3300): a zero-byte file encodes to "", which the contract
+  // rejected, so pasting it said "File upload failed. Try again." although herdr-core
+  // writes empty files and a retry could never succeed.
+  it("pastes an empty file", async () => {
+    const { host, invoke } = setup();
+    await expect(invoke("local-terminal:put", { id: "t1", name: "empty.txt", dataBase64: "" })).resolves.toEqual({ ok: true, path: "/tmp/hc/t1/shot.png" });
+    expect(host.put).toHaveBeenCalledWith("t1", "empty.txt", "");
   });
 
   it("reports a failed rename or put as a fixed outcome", async () => {

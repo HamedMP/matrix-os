@@ -80,7 +80,7 @@ export const LOCAL_TERMINAL_INVOKE = {
     request: z.strictObject({
       id: LocalTerminalIdSchema,
       name: PutFileNameSchema,
-      dataBase64: z.string().min(1).max(PUT_BASE64_MAX).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+      dataBase64: z.string().max(PUT_BASE64_MAX).regex(/^(?:[A-Za-z0-9+/]+={0,2})?$/), // "" is a zero-byte file
     }),
     response: z.union([
       z.strictObject({ ok: z.literal(true), path: z.string().min(1).max(4096) }),
