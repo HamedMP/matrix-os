@@ -70,6 +70,46 @@ async function sweepExpiredAndRetained(db: PlatformDB): Promise<void> {
         .where('expires_at', '<=', now).execute();
     });
   }
+  // A crash after the fifth lease leaves the invitation in "sending" forever
+  // unless the expired lease is resolved without another provider call.
+  const stalled = await db.executor.selectFrom('public_site_invitation_deliveries as d')
+    .innerJoin('public_site_email_invitations as i', 'i.id', 'd.invitation_id')
+    .select(['d.id', 'd.invitation_id', 'i.site_id'])
+    .where('d.state', '=', 'leased').where('d.attempts', '>=', 5)
+    .where('d.lease_until', '<=', now)
+    .orderBy('d.lease_until', 'asc').orderBy('d.id', 'asc').limit(MAX_BATCH).execute();
+  for (const candidate of stalled) {
+    await db.transaction(async trx => {
+      await sql`SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
+      await sql`SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
+      const site = await trx.executor.selectFrom('public_sites').select(['id', 'status', 'access_mode'])
+        .where('id', '=', candidate.site_id).forUpdate().executeTakeFirst();
+      const invitation = await trx.executor.selectFrom('public_site_email_invitations')
+        .select(['state', 'generation', 'expires_at']).where('id', '=', candidate.invitation_id)
+        .where('site_id', '=', candidate.site_id).forUpdate().executeTakeFirst();
+      const delivery = await trx.executor.selectFrom('public_site_invitation_deliveries')
+        .select(['state', 'attempts', 'lease_until', 'invitation_generation'])
+        .where('id', '=', candidate.id).where('invitation_id', '=', candidate.invitation_id)
+        .forUpdate().executeTakeFirst();
+      if (!delivery || delivery.state !== 'leased' || delivery.attempts < 5
+        || !delivery.lease_until || delivery.lease_until > now) return;
+      const valid = site?.status === 'published' && site.access_mode === 'private_email'
+        && invitation?.state === 'pending' && invitation.generation === delivery.invitation_generation
+        && invitation.expires_at > now;
+      await trx.executor.updateTable('public_site_invitation_deliveries').set({
+        state: valid ? 'ambiguous' : 'cancelled', lease_token: null, lease_until: null,
+        failure_code: valid ? 'timeout' : null, updated_at: now,
+      }).where('id', '=', candidate.id).where('state', '=', 'leased').execute();
+      if (!valid) return;
+      await trx.executor.updateTable('public_site_email_invitations').set({
+        delivery_state: 'ambiguous', updated_at: now,
+      }).where('id', '=', candidate.invitation_id).where('generation', '=', delivery.invitation_generation)
+        .where('state', '=', 'pending').execute();
+      await appendSiteInvitationAuditEvent(trx, { siteId: candidate.site_id, invitationId: candidate.invitation_id,
+        type: 'delivery_failed', actorKind: 'system', actorReference: null,
+        details: { generation: Number(delivery.invitation_generation), reason: 'timeout' } });
+    });
+  }
   const cutoff = new Date(now.getTime() - 30 * 86400_000);
   await db.transaction(async trx => {
     await sql`SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
@@ -193,7 +233,7 @@ export function createSiteInvitationDeliveryWorker(options: { db: PlatformDB; ma
       await sweepExpiredAndRetained(options.db);
       const jobs = await claim(options.db);
       let index = 0, sent = 0;
-      await Promise.all(Array.from({ length: Math.min(5, jobs.length) }, async () => {
+      const settled = await Promise.allSettled(Array.from({ length: Math.min(5, jobs.length) }, async () => {
         for (;;) {
           const job = jobs[index++]; if (!job) return;
           if (!await markSending(options.db, job)) continue;
@@ -201,6 +241,8 @@ export function createSiteInvitationDeliveryWorker(options: { db: PlatformDB; ma
           if (await complete(options.db, job, result)) sent++;
         }
       }));
+      const failure = settled.find(result => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
       return { claimed: jobs.length, sent };
     })();
     try { return await active; }
