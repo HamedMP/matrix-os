@@ -49,17 +49,16 @@ describe('Preview runtime access activation route', () => {
     ['ineligible', 'preview_access_ineligible'],
     ['identity_mismatch', 'preview_access_ineligible'],
     ['policy_conflict', 'preview_access_ineligible'],
-    ['expired', 'preview_access_expired'],
   ] as const)('returns a non-retryable 409 for %s without leaking the cause', async (cause, code) => {
     const response = await routes(async () => { throw new PreviewRuntimeAccessError(cause); })
       .request('/vps/preview/access/activate', { method: 'POST', headers, body });
     expect(response.status).toBe(409);
     const payload = await response.json() as { error: string; code: string };
     expect(payload.code).toBe(code);
-    expect(payload.error).toMatch(/^Preview access (is not eligible|has expired)$/);
+    expect(payload.error).toBe('Preview access is not eligible');
     expect(JSON.stringify(payload)).not.toMatch(/runtime|allocation|funded policy/i);
   });
-  it('keeps unavailable (global policy off, revision race) retryable as 503', async () => {
+  it('keeps unavailable (global policy off, revision race, expiry boundary) retryable as 503', async () => {
     const response = await routes(async () => { throw new PreviewRuntimeAccessError('unavailable'); })
       .request('/vps/preview/access/activate', { method: 'POST', headers, body });
     expect(response.status).toBe(503);

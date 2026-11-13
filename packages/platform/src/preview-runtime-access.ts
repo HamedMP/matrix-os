@@ -23,13 +23,12 @@ export function isBoundedPreviewProvisioningClass(
 }
 
 export type PreviewRuntimeAccessErrorCode =
-  | "ineligible" | "identity_mismatch" | "policy_conflict" | "expired" | "unavailable";
+  | "ineligible" | "identity_mismatch" | "policy_conflict" | "unavailable";
 
 const PREVIEW_RUNTIME_ACCESS_ERROR_MESSAGES: Record<PreviewRuntimeAccessErrorCode, string> = {
   ineligible: "Preview runtime is ineligible",
   identity_mismatch: "Preview runtime allocation identity mismatch",
   policy_conflict: "Preview runtime already has a funded policy",
-  expired: "Preview runtime access has expired",
   unavailable: "Preview runtime access is unavailable",
 };
 
@@ -151,9 +150,10 @@ export async function initializePreviewRuntimeAccess(options: {
         throw new PreviewRuntimeAccessError("identity_mismatch");
       }
       if (existing.expires_at > at) return previewAllocationSummary(existing);
-      const allowedModels = await lockAllowedPreviewModels(trx);
+      // Renewal still requires funded AI to be globally on with an allowed model.
+      await lockAllowedPreviewModels(trx);
       return renewExpiredPreviewAllocation({ trx, repository: options.repository, config, request,
-        existing, allowedModels, at, expiresAt });
+        existing, at, expiresAt });
     }
     const allowedModels = await lockAllowedPreviewModels(trx);
     const conflicting = await trx.executor.selectFrom("ai_funded_runtime_policies").selectAll()
@@ -213,11 +213,11 @@ type PreviewAllocationRow = Parameters<typeof previewAllocationSummary>[0];
  * - request counters reset to zero against the current configured limits;
  * - the expired promotional grant is retired by the ledger before one fresh
  *   grant of the configured budget lands, so credit never accumulates;
- * - the runtime policy keeps its monthly budget, so total Matrix-funded spend
- *   for one preview stays capped at one budget per calendar month no matter
- *   how often it is redeployed;
- * - the runtime policy's enabled flag is preserved, so an operator disable is
- *   never undone by a redeploy.
+ * - only the runtime policy's expiry moves: its monthly budget, allowed models
+ *   and enabled flag are preserved, so an operator's lower cap, narrowed
+ *   models or disable survive a redeploy, and total Matrix-funded spend for
+ *   one preview stays capped at one budget per calendar month no matter how
+ *   often it is redeployed.
  */
 async function renewExpiredPreviewAllocation(options: {
   trx: PlatformDB;
@@ -225,7 +225,6 @@ async function renewExpiredPreviewAllocation(options: {
   config: Extract<PreviewRuntimeAccessConfig, { enabled: true }>;
   request: z.output<typeof PreviewIdentitySchema>;
   existing: PreviewAllocationRow;
-  allowedModels: string[];
   at: string;
   expiresAt: string;
 }): Promise<PreviewRuntimeAccessSummary> {
@@ -236,8 +235,6 @@ async function renewExpiredPreviewAllocation(options: {
     throw new PreviewRuntimeAccessError("identity_mismatch");
   }
   const renewedPolicy = await trx.executor.updateTable("ai_funded_runtime_policies").set({
-    allowed_model_ids: JSON.stringify(options.allowedModels),
-    monthly_budget_microusd: config.aiBudgetMicrousd,
     expires_at: expiresAt,
     revision: policy.revision + 1,
     updated_at: at,

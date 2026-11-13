@@ -437,9 +437,7 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       // Permanent refusals are 409 so callers stop retrying; everything else
       // (host reachability, readiness polling, races) stays a retryable 503.
       if (isPermanentPreviewRuntimeAccessError(err)) {
-        return err.code === 'expired'
-          ? c.json({ error: 'Preview access has expired', code: 'preview_access_expired' }, 409)
-          : c.json({ error: 'Preview access is not eligible', code: 'preview_access_ineligible' }, 409);
+        return c.json({ error: 'Preview access is not eligible', code: 'preview_access_ineligible' }, 409);
       }
       return c.json({ error: 'Preview access activation failed' }, 503);
     }

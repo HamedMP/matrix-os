@@ -165,6 +165,22 @@ describe("bounded Preview runtime access", () => {
       .where("kind", "=", "promotional_grant").execute()).toHaveLength(2);
   });
 
+  it("keeps an operator-lowered budget cap and model narrowing across renewal", async () => {
+    const request = { ...identity, expectedRuntimeTokenEpoch: 1 };
+    const first = await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
+      now: () => new Date(clock) });
+    await db.executor.updateTable("ai_funded_runtime_policies").set({ monthly_budget_microusd: 250,
+      allowed_model_ids: JSON.stringify([modelId]), enabled: false })
+      .where("machine_id", "=", machineId).execute();
+    clock = new Date(Date.parse(first.expiresAt) + 1);
+    await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
+      now: () => new Date(clock) });
+    expect(await db.executor.selectFrom("ai_funded_runtime_policies")
+      .select(["monthly_budget_microusd", "allowed_model_ids", "enabled"])
+      .where("machine_id", "=", machineId).executeTakeFirstOrThrow()).toEqual({
+        monthly_budget_microusd: 250, allowed_model_ids: JSON.stringify([modelId]), enabled: false });
+  });
+
   it("keeps expired renewal fail-closed for identity mismatch and ineligible machines", async () => {
     const request = { ...identity, expectedRuntimeTokenEpoch: 1 };
     const first = await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
