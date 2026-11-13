@@ -75,6 +75,8 @@ describe("collaborative builder's production artifacts", () => {
       await symlink(resolve("node_modules"), join(app, "node_modules"), "dir");
       execFileSync(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "--project", app, "--noEmit"], { stdio: "pipe" });
       await viteBuild({ root: app, configFile: join(app, "vite.config.ts"), logLevel: "silent" });
+      const preflight = execFileSync(process.execPath, [resolve("skills/matrix/app-builder/scripts/verify-app.mjs"), app], { encoding: "utf8" });
+      expect(preflight).toContain("Manifest and build verified: /apps/team-tracker/");
       const raw = JSON.parse(await readFile(join(app, "matrix.json"), "utf8"));
       const manifest = AppManifestSchema.parse(raw);
       expect(manifest.collaboration!.compatibility.schemaDigest).toBe(schemaDigest(raw.storage.tables));
