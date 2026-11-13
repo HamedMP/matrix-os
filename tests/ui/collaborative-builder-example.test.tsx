@@ -32,7 +32,7 @@ function fixture() {
     onChange: (callback: () => void) => { notify = callback; return unsubscribe; },
   } } });
   return { query, mutate, unsubscribe, externalChange() {
-    rows.push({ id: "member", title: "Member task", done: false }); revision = "12"; notify();
+    rows = [...rows.filter((row) => row.id !== "member"), { id: "member", title: "Member task", done: false }]; revision = "12"; notify();
   } };
 }
 
@@ -89,6 +89,16 @@ describe("collaborative builder's shipped React example", () => {
     expect((screen.getByRole("button", { name: "Add task" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("recovers from a non-Error transport rejection and ignores empty submissions", async () => {
+    const bridge = fixture(); bridge.query.mockRejectedValueOnce("offline");
+    render(<App />); await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Review saved records" }));
+    await screen.findByText("Existing owner task");
+    fireEvent.change(screen.getByLabelText("New task"), { target: { value: "   " } });
+    fireEvent.submit(screen.getByLabelText("New task").closest("form")!);
+    expect(bridge.mutate).not.toHaveBeenCalled();
+  });
+
   it("confirms a committed response-lost insert by its saved ID without duplicating it", async () => {
     const bridge = fixture();
     const send = bridge.mutate.getMockImplementation()!;
@@ -102,5 +112,91 @@ describe("collaborative builder's shipped React example", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect((screen.getByLabelText("New task") as HTMLInputElement).value).toBe("");
     expect(bridge.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { result: [{ id: "bad", title: "Invalid", done: "false" }], revision: "7" },
+    { result: [], revision: "invalid" },
+    { result: null, revision: "7" },
+  ])("rejects malformed authoritative data without enabling writes", async (reply) => {
+    const bridge = fixture(); bridge.query.mockResolvedValueOnce(reply as never);
+    render(<App />);
+    await screen.findByRole("alert");
+    expect(screen.queryByText("No saved tasks yet.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Add task" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Review saved records" }));
+    await screen.findByText("Existing owner task");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("discards only a deliberately abandoned draft and keeps saved records", async () => {
+    const bridge = fixture(); render(<App />); await screen.findByText("Existing owner task");
+    bridge.mutate.mockRejectedValueOnce("offline");
+    fireEvent.change(screen.getByLabelText("New task"), { target: { value: "Abandoned" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Discard local draft" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect((screen.getByLabelText("New task") as HTMLInputElement).value).toBe("");
+    expect(screen.getByText("Existing owner task")).toBeTruthy();
+    expect(bridge.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["update", "delete"])("confirms an uncertain %s through an exact-ID reread", async (operation) => {
+    const bridge = fixture(); const send = bridge.mutate.getMockImplementation()!;
+    bridge.mutate.mockImplementationOnce(async (action, revision) => { await send(action, revision); throw new Error("lost"); });
+    render(<App />); await screen.findByText("Existing owner task");
+    fireEvent.click(operation === "update"
+      ? screen.getByRole("checkbox", { name: "Complete Existing owner task" })
+      : screen.getByRole("button", { name: "Delete Existing owner task" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Review saved records" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(bridge.query).toHaveBeenCalledWith({ action: "findOne", table: "tasks", id: "existing" });
+    if (operation === "update") expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    else expect(screen.getByText("No saved tasks yet.")).toBeTruthy();
+    expect(bridge.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mistake a row outside the list page for a confirmed deletion", async () => {
+    const bridge = fixture(); render(<App />); await screen.findByText("Existing owner task");
+    bridge.mutate.mockRejectedValueOnce(new Error("offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Existing owner task" }));
+    await screen.findByRole("alert");
+    bridge.query.mockResolvedValueOnce({ result: [], revision: "7" });
+    fireEvent.click(screen.getByRole("button", { name: "Review saved records" }));
+    await waitFor(() => expect(bridge.query).toHaveBeenCalledWith({ action: "findOne", table: "tasks", id: "existing" }));
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(bridge.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains newer input when an earlier save finishes and ignores stale reads", async () => {
+    const bridge = fixture(); const send = bridge.mutate.getMockImplementation()!;
+    let complete!: () => void;
+    bridge.mutate.mockImplementationOnce(async (action, revision) => { await new Promise<void>((resolve) => { complete = resolve; }); return send(action, revision); });
+    render(<App />); await screen.findByText("Existing owner task");
+    fireEvent.change(screen.getByLabelText("New task"), { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+    fireEvent.change(screen.getByLabelText("New task"), { target: { value: "Next draft" } });
+    await act(async () => complete());
+    await screen.findByText("First");
+    expect((screen.getByLabelText("New task") as HTMLInputElement).value).toBe("Next draft");
+    let finishRead!: (value: { result: never[]; revision: string }) => void;
+    bridge.query.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    await act(async () => bridge.externalChange());
+    await act(async () => bridge.externalChange());
+    await screen.findAllByText("Member task");
+    await act(async () => finishRead({ result: [], revision: "1" }));
+    expect(screen.getByText("First")).toBeTruthy();
+  });
+
+  it.each([false, true])("cleans up while an in-flight write settles (rejected: %s)", async (reject) => {
+    const bridge = fixture(); let settle!: () => void;
+    bridge.mutate.mockImplementationOnce(() => new Promise((resolve, fail) => { settle = () => reject ? fail("offline") : resolve({ result: null, revision: "8", replayed: false }); }));
+    const view = render(<App />); await screen.findByText("Existing owner task");
+    fireEvent.click(screen.getByRole("checkbox")); view.unmount();
+    await act(async () => settle());
+    expect(bridge.unsubscribe).toHaveBeenCalledOnce();
+    expect(bridge.query).toHaveBeenCalledTimes(1);
   });
 });

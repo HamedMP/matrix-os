@@ -53,11 +53,14 @@ separately. Provide copyable Slack text only; no automatic channel post.
 - The schema-preservation test uses the existing PostgreSQL-compatible test engine
   and real app registry/query engine. UI failure tests use a schema-checked bridge
   fixture. Neither is live owner/member authentication or VPS qualification.
-- Focused `bun run test`: 133 assertions passed across seven suites. Full repository
+- Focused `bun run test`: 151 tests passed across eight suites. Full repository
   typecheck passed. Pattern scan: zero violations, five existing warnings.
-- Focused example/helper coverage: 92.07% lines, 86.71% statements, 95.23%
-  functions, 78.68% branches. Measurement disabled repository-wide thresholds to
-  report this scope; it is not a claim of the requested 99–100% coverage target.
+- Follow-up recovery/CLI qualification: 28 tests pass against the shipped artifacts.
+  Focused example/helper coverage passes the existing 99% statement/line/function
+  and 95% branch thresholds: 100% lines/functions, 99.21% statements and 96.72%
+  branches. Includes malformed responses, late completions, exact-ID confirmation,
+  deliberate draft discard and atomic-write failure preservation. This supersedes
+  the initial 92.07% line-coverage measurement; it is not repository-wide coverage.
 - Public-site tests: 540 passed after building its workspace prerequisites.
 - Live Matrix login is available, but this skill/example is not installed there
   and a second account was not exercised. Four-surface evidence remains pending.
