@@ -362,7 +362,7 @@ describe("desktop release workflows", () => {
     expect(build).toContain("Verify macOS signature and notarization");
     expect(build).toContain('codesign --verify --deep --strict --verbose=2 "$app_path"');
     expect(build).toContain('grep "Authority=Developer ID Application" >/dev/null');
-    expect(build).toContain('xcrun stapler validate "$app_path"');
+    expect(build).toContain('bash scripts/release/stapler-validate-with-retry.sh "$app_path"');
     expect(build).toContain('spctl --assess --type execute --verbose=4 "$app_path"');
     expect(build).toContain("Launch smoke test macOS app");
     expect(build).toContain("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING");
