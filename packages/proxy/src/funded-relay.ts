@@ -187,6 +187,13 @@ function controlPlaneError(c: Context, error: unknown): Response {
       if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
       return response;
     }
+    if (error.status === 503 && error.busy) {
+      const { retryAfterSeconds, retryAt } = error.busy;
+      c.header("Retry-After", String(retryAfterSeconds));
+      return c.json({
+        type: "error", error: { type: "api_error", code: "busy", message: "Matrix AI is busy; try again later", retryAt },
+      }, 503);
+    }
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";
   console.warn("[proxy] Funded AI control request failed", { errorName });

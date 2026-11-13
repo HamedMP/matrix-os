@@ -22,9 +22,15 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay-config.js";
 
+/** The platform's funded busy refusal: when to come back, as both a header value and a timestamp. */
+export interface FundedBusyRetry {
+  retryAfterSeconds: number;
+  retryAt: string;
+}
+
 export class FundedControlPlaneError extends Error {
   constructor(readonly status: number, readonly priorityReason?: FundedAiPriorityReason,
-    readonly fundingReason?: "insufficient_credit" | "budget_exceeded") {
+    readonly fundingReason?: "insufficient_credit" | "budget_exceeded", readonly busy?: FundedBusyRetry) {
     super("Funded AI control-plane request failed");
     this.name = "FundedControlPlaneError";
   }
@@ -41,6 +47,21 @@ function fundingReasonFrom(status: number, text: string): "insufficient_credit" 
   if (status === 402 && safe.data.error.code === "insufficient_credit") return "insufficient_credit";
   if (status === 403 && safe.data.error.code === "budget_exceeded") return "budget_exceeded";
   return undefined;
+}
+
+const MAX_RETRY_AFTER_SECONDS = 2 * 24 * 60 * 60;
+
+/** Only a 503 with a contract-valid busy body and a bounded integer Retry-After counts as busy. */
+function busyRetryFrom(status: number, text: string, retryAfter: string | null): FundedBusyRetry | undefined {
+  if (status !== 503 || retryAfter === null || !/^[0-9]{1,6}$/.test(retryAfter)) return undefined;
+  const retryAfterSeconds = Number(retryAfter);
+  if (retryAfterSeconds > MAX_RETRY_AFTER_SECONDS) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text) as unknown; }
+  catch (error: unknown) { if (error instanceof SyntaxError) return undefined; throw error; }
+  const safe = FundedAiSafeErrorSchema.safeParse(parsed);
+  if (!safe.success || safe.data.error.code !== "busy") return undefined;
+  return { retryAfterSeconds, retryAt: safe.data.error.retryAt };
 }
 
 /** Only the platform's allowlisted priority reasons pass through; anything else is dropped. */
@@ -142,7 +163,7 @@ export function createFundedPlatformClient(options: Pick<
     const text = await readBoundedText(response, maxControlResponseBytes);
     if (!response.ok) {
       throw new FundedControlPlaneError(response.status, response.status === 429 ? priorityReasonFrom(text) : undefined,
-        fundingReasonFrom(response.status, text));
+        fundingReasonFrom(response.status, text), busyRetryFrom(response.status, text, response.headers.get("retry-after")));
     }
     let parsed: unknown;
     try {
