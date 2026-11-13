@@ -8,10 +8,10 @@ import { formatSiteDate } from "./format-site-date";
 import type { useAppSite } from "./use-app-site";
 
 type AppSiteState = ReturnType<typeof useAppSite>;
-type Result = { email: string; outcome: SiteEmailInvitationInputResult["outcome"] };
+type Result = { email: string; result: SiteEmailInvitationInputResult };
 
-const outcomeLabel: Record<Result["outcome"], string> = {
-  queued: "queued", existing: "already invited", invalid: "invalid address",
+const outcomeLabel: Record<SiteEmailInvitationInputResult["outcome"], string> = {
+  queued: "queued", existing: "existing invitation", invalid: "invalid address",
   duplicate_in_batch: "listed twice", policy_rejected: "could not invite",
 };
 const canResend = (invitation: SiteEmailInvitationSummary) => invitation.state === "expired"
@@ -26,6 +26,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
   const [addresses, setAddresses] = useState("");
   const [results, setResults] = useState<Result[]>([]);
   const [page, setPage] = useState<SiteEmailInvitationPage | null>(null);
+  const [hasLoadedMore, setHasLoadedMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -40,7 +41,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
     void client.emailInvitations(appSlug, controller.signal).then(next => {
       if (controller.signal.aborted) return;
       if (mutationVersion.current !== version) { setReload(value => value + 1); return; }
-      setPage(next); setLoadError(null);
+      setPage(next); setHasLoadedMore(false); setLoadError(null);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setLoadError(siteActionError(error));
     });
@@ -58,7 +59,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
     void state.mutate(signal => client.createEmailInvitations(appSlug,
       { baseRevision: site.revision, emailAddresses: emails }, signal), response => {
       mutationVersion.current += 1;
-      setResults(response.results.map(result => ({ email: emails[result.inputIndex]!, outcome: result.outcome })));
+      setResults(response.results.map(result => ({ email: emails[result.inputIndex]!, result })));
       setAddresses("");
       state.syncSite({ ...site, revision: response.siteRevision });
       setReload(value => value + 1);
@@ -87,6 +88,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
       setPage(current => current ? { ...next,
         invitations: [...current.invitations, ...next.invitations.filter(item =>
           !current.invitations.some(existing => existing.id === item.id))].slice(-100) } : next);
+      setHasLoadedMore(true);
     });
   }
 
@@ -105,7 +107,8 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
     </form>
     {inputError ? <p role="alert" className="text-xs">{inputError}</p> : null}
     {results.length ? <ul aria-label="Invitation results" aria-live="polite" className="ph-no-capture space-y-1 text-xs" data-ph-mask="true">
-      {results.map((result, index) => <li key={index}>{result.email} — {outcomeLabel[result.outcome]}</li>)}
+      {results.map(result => <li key={result.result.inputIndex}>{result.email} — {outcomeLabel[result.result.outcome]}
+        {result.result.outcome === "existing" ? ` (${result.result.invitation.state})` : null}</li>)}
     </ul> : null}
     {ready && loadError ? <div className="space-y-1"><p role="alert" className="text-xs">{loadError}</p>
       <Button size="sm" variant="secondary" disabled={disabled} onClick={() => { setLoadError(null); setReload(value => value + 1); }}>Retry invitation list</Button></div> : null}
@@ -120,5 +123,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
       </li>)}
     </ul> : ready && page ? <p className="text-xs">No email invitations yet.</p> : null}
     {ready && page?.nextCursor ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict} onClick={loadMore}>Load more invitations</Button> : null}
+    {ready && hasLoadedMore ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict}
+      onClick={() => setReload(value => value + 1)}>Show newest invitations</Button> : null}
   </div>;
 }
