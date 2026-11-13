@@ -46,7 +46,8 @@ An existing active or needs-recheck share's organization determines the roster a
 - `imageUrl` is the already projected Clerk profile image (https only, ≤2048 chars, no credentials; validated on ingest and by the contract).
 - Compatibility: shipped clients parse the members page strictly, so the field is returned only with `include=imageUrl`. The default page is unchanged. A new client talking to an older platform (which rejects the unknown query) retries the first page once without it and shows initials.
 - Browser images use `referrerPolicy="no-referrer"`, lazy decoding, and fall back to initials on error. No new endpoint, persistence, credentials, or server-side image fetching. Electron CSP already allows `img-src https:`.
-- Roster reads reuse the bounded directory hook (≤20 pages, ≤2,000 members), are tagged with their organization so a selection change never shows the previous roster, discard stale responses, and expose loading, failure + retry, and empty states with safe text only.
+- The renderer's platform client rebuilds member URLs from validated parts and accepts only `cursor`, `limit` 1-100, and `include=imageUrl`, each at most once.
+- Roster reads reuse the bounded directory hook (20 pages of 100 cover the 2,000-member limit; a roster that stops early says so), are tagged with their organization so a selection change never shows the previous roster, discard stale responses, and expose loading, failure + retry, and empty states with safe text only.
 
 ## Acceptance
 
