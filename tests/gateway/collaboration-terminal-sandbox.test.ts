@@ -31,6 +31,7 @@ const requestId = "20000000-0000-4000-8000-000000000001";
 
 function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "sandbox_shell"; contributorControl?: boolean }, extra: {
   revocations?: CollaborationRevocationEnforcer;
+  inheritedProject?: boolean;
 } = {}) {
   const actorId = `user_${role}`;
   const runtime = {
@@ -49,7 +50,9 @@ function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "s
   };
   const authority = {
     authorize: vi.fn(async ({ action }: { action: string }) => ({
-      actorId, ownerId: "user_owner", scopeId, membershipScopeId: scopeId, resourceKind: "terminal" as const,
+      actorId, ownerId: "user_owner", scopeId,
+      membershipScopeId: extra.inheritedProject ? "10000000-0000-4000-8000-000000000099" : scopeId,
+      resourceKind: "terminal" as const,
       resourceId: terminalId, role, authEpoch: 3, authorityRuntimeId: "runtime_owner", authorityGeneration: 1, capability: action,
     })),
   };
@@ -109,6 +112,41 @@ describe("dispatcher task policy", () => {
     const viewer = setup("viewer", { taskProfile: "sandbox_shell", contributorControl: true });
     await expect(viewer.dispatcher.dispatch({ scopeId, actorId: viewer.actorId, connectionId: "c1", action: acquire }))
       .rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("lets an organization member control an inherited sandbox terminal without a separate owner grant", async () => {
+    const projectTerminal = setup("editor", { taskProfile: "sandbox_shell", contributorControl: false }, {
+      inheritedProject: true,
+    });
+    await expect(projectTerminal.dispatcher.dispatch({
+      scopeId,
+      actorId: projectTerminal.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).resolves.toMatchObject({ action: "acquired" });
+  });
+
+  it("keeps an inherited owner host shell observe-only until the owner explicitly enables control", async () => {
+    const withheld = setup("editor", { taskProfile: "host_shell", contributorControl: false }, {
+      inheritedProject: true,
+    });
+    await expect(withheld.dispatcher.dispatch({
+      scopeId,
+      actorId: withheld.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(withheld.runtime.input).not.toHaveBeenCalled();
+
+    const granted = setup("editor", { taskProfile: "host_shell", contributorControl: true }, {
+      inheritedProject: true,
+    });
+    await expect(granted.dispatcher.dispatch({
+      scopeId,
+      actorId: granted.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).resolves.toMatchObject({ action: "acquired" });
   });
 });
 
