@@ -65,8 +65,19 @@ async function workflow(failAt = 0, denialFault?: string) {
   const profile = { profileId: "scope-runtime-chat-v1", profileVersion: 3, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240" }] };
   const states: Record<string, any> = {}, observations: Record<string, any> = {}, events: string[] = [], stopped: string[] = [];
   const unit = (handle: string) => config.workerUnitPrefix + handle.slice(8) + ".service";
-  const state = (index: number) => ({ LoadState: "loaded", InvocationID: String(index).repeat(32), MainPID: String(40 + index), ActiveState: "active", SubState: "running", DefinitionIdentity: "definition", Transient: "yes", Description: "token", KillSignal: "9", RuntimeDirectoryPreserve: "yes", ...Object.fromEntries(CASCADE_KEYS.map(key => [key, ""])) });
-  states[config.supervisorUnit] = state(1);
+  const state = (name: string, index: number) => ({
+    Id: name, LoadState: "loaded", InvocationID: String(index).repeat(32), MainPID: String(40 + index),
+    ActiveState: "active", SubState: "running", DefinitionIdentity: "definition", Transient: "yes", Description: "token",
+    DynamicUser: name === config.supervisorUnit ? "no" : "yes",
+    RootDirectory: name === config.supervisorUnit ? "" : join(base, "runtimes", name.slice(config.workerUnitPrefix.length, -8), "root"),
+    FragmentPath: `/run/systemd/transient/${name}`,
+    KillSignal: name === config.supervisorUnit ? "9" : "15",
+    RuntimeDirectoryPreserve: name === config.supervisorUnit ? "yes" : "no",
+    RemainAfterExit: name === config.supervisorUnit ? "yes" : "no",
+    StandardError: "journal", LimitFSIZE: "infinity", LimitFSIZESoft: "infinity",
+    ...Object.fromEntries(CASCADE_KEYS.map(key => [key, ""])),
+  });
+  states[config.supervisorUnit] = state(config.supervisorUnit, 1);
   const ledger = createUnitLedger(config, "token", { observe: async (name: string) => states[name], mutate: async (action: string, name: string) => {
     events.push(action + ":" + name);
     if (action === "kill") states[name] = { ...states[name], InvocationID: "f".repeat(32), MainPID: "99" };
@@ -78,7 +89,7 @@ async function workflow(failAt = 0, denialFault?: string) {
   const request = async (_config: unknown, type: string, payload: any = {}) => {
     if (type === "capability.get") return { profile: { ...profile, executionGeneration: states[config.supervisorUnit].MainPID === "99" ? "2" : "1" } };
     if (type === "runtime.create") {
-      const handle = "runtime_" + String(++created).repeat(32); states[unit(handle)] = state(created + 1);
+      const handle = "runtime_" + String(++created).repeat(32); states[unit(handle)] = state(unit(handle), created + 1);
       observations[handle] = await listener(join(config.commandSocketRoot, handle.slice(8), "worker.sock"));
       events.push("create:" + handle); return { runtimeHandle: handle, state: "running", executionGeneration: payload.scopeHandle && (created === 4 ? "2" : "1") };
     }
