@@ -478,7 +478,7 @@ async function readDiscoveryPage(
     });
     if (remaining > 0) {
       for (const entry of pending.items) {
-        items.push(entry.kind === "project" && !entry.grantId ? {
+        items.push(entry.kind === "project" ? {
           scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
           authorityGeneration: entry.authorityGeneration, status: "accepted", organizationId: entry.organizationId,
         } : {

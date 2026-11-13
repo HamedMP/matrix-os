@@ -1,8 +1,7 @@
 import type { CanonicalChatProviderAdapter } from "../chat/provider-adapter.js";
 import type { CollaborationRunBinding } from "@matrix-os/contracts";
 import type { CollaborationAuthority } from "../collaboration/authority.js";
-import type { CollaborationExecutionPolicyRepository } from "../collaboration/execution-policy.js";
-import type { SharedRunOwnerSource } from "../collaboration/shared-run-owner-source.js";
+import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "../collaboration/shared-run-owner-source.js";
 import type { SharedMatrixBotExtension } from "../collaboration/shared-matrix-bot.js";
 import type { GroupBotAuthorizer } from "../bots/runtime-registry.js";
 import type { GroupBotRunRequest, GroupBotRevocation } from "../bots/admission.js";
@@ -10,10 +9,20 @@ import type { createSharedBotModelRouteResolver } from "../bots/codex-route.js";
 import { BotRouteError } from "../bots/route-resolver.js";
 
 export interface CompanyCanonicalRun { scopeId:string;chatId:string;status:string;binding:CollaborationRunBinding }
+function bindingMatchesDecision(binding:CollaborationRunBinding, decision:SharedRunOwnerSourceDecision):boolean {
+  const source=binding.source;
+  if(decision.providerInstanceId!==source.providerInstanceId || decision.providerAccessSourceId!==source.accessSourceId
+    || decision.harness!==source.harness || !decision.allowedModelIds.includes(source.modelId))return false;
+  const providerSettingsRun=binding.providerSettingsRevision!==undefined || binding.routeGeneration!==undefined;
+  if(providerSettingsRun)return binding.providerSettingsRevision!==undefined && binding.routeGeneration!==undefined
+    && decision.authorityKind==="provider_settings_active" && decision.settingsRevision===binding.providerSettingsRevision
+    && decision.routeGeneration===binding.routeGeneration;
+  return decision.authorityKind==="standalone_policy" && decision.policyRevision===binding.policyRevision;
+}
 export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
   loadRun(runId:string):Promise<CompanyCanonicalRun|null>;
-  authority:Pick<CollaborationAuthority,"authorize">;policies:Pick<CollaborationExecutionPolicyRepository,"resolve">;
-  ownerSource:Pick<SharedRunOwnerSource,"prepare">;
+  authority:Pick<CollaborationAuthority,"authorize">;
+  ownerSource:Pick<SharedRunOwnerSource,"authority"|"prepare">;
   resolveModel:ReturnType<typeof createSharedBotModelRouteResolver>;
   getAdapter():CanonicalChatProviderAdapter|undefined;
   getGroupRevocation?():GroupBotRevocation|undefined;
@@ -32,15 +41,10 @@ export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
     const context=await options.authority.authorize({scopeId:run.scopeId,actorId:run.binding.requestingActorId,action:"request_ai"});
     if(context.scopeId!==run.scopeId || context.actorId!==run.binding.requestingActorId || context.ownerId!==options.ownerId
       || context.resourceKind!=="chat" || context.resourceId!==run.chatId || !context.organizationId)throw denied();
-    const policy=await options.policies.resolve(run.scopeId);
     const source=run.binding.source;
-    if(!policy || policy.ownerId!==options.ownerId || policy.revision!==run.binding.policyRevision
-      || policy.source.accessSourceId!==source.accessSourceId || policy.source.providerInstanceId!==source.providerInstanceId
-      || policy.source.harness!==source.harness || !policy.allowedModelIds.includes(source.modelId))throw denied();
     const decision=await options.ownerSource.prepare({scopeId:run.scopeId,chatId:run.chatId,ownerId:options.ownerId,
       requestingActorId:run.binding.requestingActorId,driverKind:source.harness});
-    if(decision.policyRevision!==run.binding.policyRevision || decision.providerInstanceId!==source.providerInstanceId
-      || decision.harness!==source.harness || !decision.allowedModelIds.includes(source.modelId))throw denied();
+    if(!bindingMatchesDecision(run.binding,decision))throw denied();
     return {run,context,decision};
   }
   const authorizeGroup:GroupBotAuthorizer=async input=>(await validated(input)).context;
@@ -58,9 +62,8 @@ export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
   }
   const matrixBot:SharedMatrixBotExtension={
     async resolvePolicyDriver(_execution,_run,context) {
-      const policy=await options.policies.resolve(context.scopeId);
-      if(!policy || policy.ownerId!==options.ownerId)throw denied();
-      return policy.source.harness;
+      if(context.ownerId!==options.ownerId)throw denied();
+      return (await options.ownerSource.authority({scopeId:context.scopeId,ownerId:context.ownerId})).harness;
     },
     async prepareAdapter(_execution,_run,context,decision) {
       const adapter=options.getAdapter();

@@ -173,6 +173,7 @@ describe("platform collaboration routes", () => {
       kind: "project",
       organizationId: "org_1",
       audience: "organization",
+      organizationGrantId,
       recipients: [],
     });
 
