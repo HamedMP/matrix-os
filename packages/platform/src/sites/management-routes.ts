@@ -1,27 +1,35 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER,
+    SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema,
+    SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord,
+    SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationListQuerySchema, SiteEmailInvitationMutationRequestSchema,
+    SiteInvitationAuditCursorSchema } from '@matrix-os/contracts';
 import { RuntimeSlotSchema, SafeHandleSchema } from '../customer-vps-schema.js';
 import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
 import type { SitesService } from './service.js';
 import { SiteError } from './types.js';
+import { createSiteEmailInvitations, listSiteEmailInvitations, resendSiteEmailInvitation,
+    revokeSiteEmailInvitation } from './email-invitations.js';
+import { listSiteInvitationAuditEvents } from './invitation-audit.js';
 export function createSiteManagementRoutes(options: {
     db: PlatformDB;
     platformSecret: string;
     service: SitesService;
+    emailEnabled?: () => Promise<boolean>;
 }): Hono {
     const app = new Hono();
     app.use('*', bodyLimit({ maxSize: 15 * 1024 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) }));
-    async function owner(c: Context, allowAccessLinkPaging = false) {
+    async function owner(c: Context, paging = false) {
         if (options.platformSecret.length < 32)
             return null;
         const handle = SafeHandleSchema.safeParse(c.req.param('handle'));
         const appSlug = SiteAppSlugSchema.safeParse(c.req.param('appSlug'));
         const query = z.object({
             runtimeSlot: RuntimeSlotSchema.default('primary'),
-            ...(allowAccessLinkPaging ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(paging ? { limit: z.string().regex(/^\d{1,3}$/).optional(), cursor: z.string().max(256).optional() } : {}),
         }).strict().safeParse(c.req.query());
         if (!handle.success || !appSlug.success || !query.success)
             throw new SiteError('invalid_request');
@@ -117,6 +125,59 @@ export function createSiteManagementRoutes(options: {
         if (!linkId.success) throw new SiteError('invalid_request');
         await options.service.revokeAccessLink(identity, linkId.data);
         return c.json({ ok: true });
+    });
+    const emailCreateBody = bodyLimit({ maxSize: 32 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) });
+    async function emailOwner(c: Context, paging = false) {
+        const identity = await owner(c, paging);
+        if (!identity) return null;
+        if (!options.emailEnabled || !await options.emailEnabled()) throw new SiteError('unavailable');
+        return identity;
+    }
+    const jsonBody = async (c: Context) => c.req.json().catch((error: unknown) => {
+        if (error instanceof SyntaxError) return null; throw error;
+    });
+    app.get('/:appSlug/invitations', async c => {
+        const identity = await emailOwner(c, true); if (!identity) return denied(c);
+        const input = SiteEmailInvitationListQuerySchema.safeParse({
+            ...(c.req.query('limit') ? { limit: c.req.query('limit') } : {}),
+            ...(c.req.query('cursor') ? { cursor: c.req.query('cursor') } : {}),
+        });
+        if (!input.success) throw new SiteError('invalid_request');
+        return c.json(await listSiteEmailInvitations(options.db, identity, input.data));
+    });
+    app.post('/:appSlug/invitations', emailCreateBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const input = SiteEmailInvitationCreateRequestSchema.safeParse(await jsonBody(c));
+        if (!input.success) throw new SiteError('invalid_request');
+        return c.json(await createSiteEmailInvitations(options.db, identity, input.data));
+    });
+    app.get('/:appSlug/invitations/audit', async c => {
+        const identity = await emailOwner(c, true); if (!identity) return denied(c);
+        const input = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50),
+            cursor: SiteInvitationAuditCursorSchema.optional() }).strict().safeParse({
+            ...(c.req.query('limit') ? { limit: c.req.query('limit') } : {}),
+            ...(c.req.query('cursor') ? { cursor: c.req.query('cursor') } : {}),
+        });
+        if (!input.success) throw new SiteError('invalid_request');
+        const site = await options.db.executor.selectFrom('public_sites').select('id')
+            .where('owner_id', '=', identity.ownerId).where('machine_id', '=', identity.machineId)
+            .where('app_slug', '=', identity.appSlug).executeTakeFirst();
+        if (!site) throw new SiteError('not_found');
+        return c.json(await listSiteInvitationAuditEvents(options.db, identity.ownerId, site.id, input.data));
+    });
+    app.post('/:appSlug/invitations/:invitationId/resend', smallBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const id = SiteIdSchema.safeParse(c.req.param('invitationId'));
+        const input = SiteEmailInvitationMutationRequestSchema.safeParse(await jsonBody(c));
+        if (!id.success || !input.success) throw new SiteError('invalid_request');
+        return c.json(await resendSiteEmailInvitation(options.db, identity, id.data, input.data));
+    });
+    app.delete('/:appSlug/invitations/:invitationId', smallBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const id = SiteIdSchema.safeParse(c.req.param('invitationId'));
+        const input = SiteEmailInvitationMutationRequestSchema.safeParse(await jsonBody(c));
+        if (!id.success || !input.success) throw new SiteError('invalid_request');
+        return c.json(await revokeSiteEmailInvitation(options.db, identity, id.data, input.data));
     });
     return app;
 }
