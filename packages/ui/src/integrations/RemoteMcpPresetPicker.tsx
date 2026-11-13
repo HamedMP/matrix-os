@@ -1,11 +1,12 @@
 "use client";
 
+import { Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { REMOTE_MCP_DEPARTMENTS, type RemoteMcpDepartment } from "@matrix-os/contracts/remote-mcp-catalog";
+import { McpServiceLogo } from "./McpServiceLogo.js";
+import { mcpTokens as t } from "./mcp-settings-tokens.js";
 import { REMOTE_MCP_DEPARTMENT_LABELS, filterRemoteMcpPresets, type RemoteMcpPreset } from "./remote-mcp-presets.js";
 
-const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
-const pill = { background: "var(--bg-surface-hover, var(--muted))" };
 
 export interface RemoteMcpPresetPickerProps {
   presets: readonly RemoteMcpPreset[];
@@ -38,56 +39,62 @@ export function RemoteMcpPresetPicker({ presets, state, connections, connectingI
 
   return (
     <section aria-label="MCP services" className="space-y-4">
-      <div className="flex items-center gap-3 rounded-full border px-4 py-2.5" style={{ borderColor: "var(--border-subtle, var(--border))", ...pill }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" style={muted}>
-          <circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" />
-        </svg>
-        <input type="search" aria-label="Search MCP services" placeholder="Search services" value={query} maxLength={80}
-          onChange={event => setQuery(event.target.value)}
-          className="min-w-0 flex-1 rounded-sm bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-current" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-[220px] flex-1 items-center gap-2.5 rounded-xl border px-3 py-2 focus-within:ring-2 focus-within:ring-current"
+          style={{ borderColor: t.border, background: t.surface }}>
+          <Search size={15} aria-hidden="true" style={{ color: t.muted }} />
+          <input type="search" aria-label="Search MCP services" placeholder="Search Linear, HubSpot, Notion…" value={query} maxLength={80}
+            onChange={event => setQuery(event.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none" style={{ color: t.text }} />
+        </div>
       </div>
-      <div className="flex flex-wrap gap-1" aria-label="Department filters">
-        <button type="button" aria-pressed={department === null} onClick={() => setDepartment(null)}
-          className="rounded-full px-3 py-1.5 text-xs focus-visible:outline-2" style={department === null ? pill : muted}>All</button>
+      <div className="flex flex-wrap gap-1.5" aria-label="Department filters">
+        <FilterChip label="All" active={department === null} onClick={() => setDepartment(null)} />
         {REMOTE_MCP_DEPARTMENTS.map(id => (
-          <button key={id} type="button" aria-pressed={department === id} onClick={() => setDepartment(department === id ? null : id)}
-            className="rounded-full px-3 py-1.5 text-xs focus-visible:outline-2" style={department === id ? pill : muted}>
-            {REMOTE_MCP_DEPARTMENT_LABELS[id]}
-          </button>
+          <FilterChip key={id} label={REMOTE_MCP_DEPARTMENT_LABELS[id]} active={department === id} onClick={() => setDepartment(department === id ? null : id)} />
         ))}
       </div>
-      {state === "loading" ? <p role="status" className="py-6 text-center text-sm" style={muted}>Loading MCP services…</p> : null}
+      {state === "loading" ? (
+        <div role="status" aria-label="Loading MCP services" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <span className="sr-only">Loading MCP services…</span>
+          {Array.from({ length: 6 }, (_, index) => (
+            <div key={index} aria-hidden="true" className="h-[72px] animate-pulse rounded-xl border" style={{ borderColor: t.border, background: t.sunken }} />
+          ))}
+        </div>
+      ) : null}
       {state === "error" ? (
-        <div className="flex flex-col items-center gap-2 py-6 text-center" role="status">
-          <p className="text-sm font-medium">Could not load MCP services</p>
-          <p className="text-sm" style={muted}>You can still paste any MCP server URL below.</p>
-          <button type="button" aria-label="Retry loading MCP services" onClick={onRetry} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">Retry</button>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-8 text-center" role="status" style={{ borderColor: t.border }}>
+          <p className="text-sm font-medium" style={{ color: t.text }}>Could not load MCP services</p>
+          <p className="text-sm" style={{ color: t.muted }}>You can still add any MCP server by URL below.</p>
+          <button type="button" aria-label="Retry loading MCP services" onClick={onRetry} className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: t.borderStrong, color: t.text }}>Retry</button>
         </div>
       ) : null}
       {state === "ready" && visible.length === 0 ? (
-        <div className="py-6 text-center" role="status">
-          <p className="text-sm font-medium">{presets.length === 0 ? "No services available" : "No services match"}</p>
-          <p className="mt-1 text-sm" style={muted}>{presets.length === 0 ? "Paste any MCP server URL below to connect it." : "Try another search or department, or paste an MCP URL below."}</p>
+        <div className="rounded-xl border border-dashed py-8 text-center" role="status" style={{ borderColor: t.border }}>
+          <p className="text-sm font-medium" style={{ color: t.text }}>{presets.length === 0 ? "No services available" : "No services match"}</p>
+          <p className="mt-1 text-sm" style={{ color: t.muted }}>{presets.length === 0 ? "Add any MCP server by URL below." : "Try another search or department, or add the server by URL below."}</p>
         </div>
       ) : null}
       {state === "ready" && visible.length > 0 ? (
-        <ul className="grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map(preset => {
             const saved = byUrl.get(normalized(preset.url));
             const isConnecting = connectingId === preset.id;
+            const ready = saved?.status === "ready";
             return (
-              <li key={preset.id} className="flex min-w-0 items-center gap-3 py-3" data-testid={`mcp-preset-${preset.id}`}>
-                <div aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold" style={pill}>
-                  {preset.name.charAt(0).toUpperCase()}
-                </div>
+              <li key={preset.id} data-testid={`mcp-preset-${preset.id}`}
+                className="flex min-w-0 items-center gap-3 rounded-xl border p-3 transition-colors"
+                style={{ borderColor: ready ? `color-mix(in srgb, ${t.success} 35%, transparent)` : t.border, background: t.surface }}>
+                <McpServiceLogo presetId={preset.id} name={preset.name} size={40} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{preset.name}</p>
-                  <p className="truncate text-xs" style={muted} title={preset.description}>{preset.description}</p>
+                  <p className="truncate text-sm font-medium" style={{ color: t.text }}>{preset.name}</p>
+                  <p className="line-clamp-2 text-xs leading-snug" style={{ color: t.muted }} title={preset.description}>{preset.description}</p>
                 </div>
                 {saved ? <SavedPresetState name={preset.name} saved={saved} disabled={disabled || connectingId !== null} onFinishSignIn={onFinishSignIn} /> : (
                   <button type="button" aria-label={`Connect ${preset.name}`} disabled={disabled || connectingId !== null} onClick={() => onConnect(preset.id)}
-                    className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50">
-                    {isConnecting ? "Connecting…" : "Connect"}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors hover:brightness-95 disabled:opacity-50"
+                    style={{ borderColor: t.borderStrong, color: t.text, background: t.surface }}>
+                    {isConnecting ? "Connecting…" : <><Plus size={13} aria-hidden="true" />Connect</>}
                   </button>
                 )}
               </li>
@@ -99,15 +106,35 @@ export function RemoteMcpPresetPicker({ presets, state, connections, connectingI
   );
 }
 
+function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button type="button" aria-pressed={active} onClick={onClick}
+      className="rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2"
+      style={active
+        ? { background: t.primary, color: t.primaryFg, borderColor: "transparent" }
+        : { color: t.secondary, borderColor: t.border, background: t.surface }}>
+      {label}
+    </button>
+  );
+}
+
 function SavedPresetState({ name, saved, disabled, onFinishSignIn }: {
   name: string; saved: { serverId: string; status: string }; disabled: boolean; onFinishSignIn: (serverId: string) => void;
 }) {
   if (saved.status === "auth_required") {
     return (
       <button type="button" aria-label={`Finish sign-in for ${name}`} disabled={disabled} onClick={() => onFinishSignIn(saved.serverId)}
-        className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50">Finish sign-in</button>
+        className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
+        style={{ background: `color-mix(in srgb, ${t.warning} 18%, transparent)`, color: t.text }}>Finish sign-in</button>
     );
   }
   const label = saved.status === "ready" ? "Connected" : saved.status === "disabled" ? "Disabled" : "Needs attention";
-  return <span className="shrink-0 rounded-full px-2.5 py-1 text-xs" style={pill}>{label}</span>;
+  const color = saved.status === "ready" ? t.success : saved.status === "disabled" ? t.muted : t.warning;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+      style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color: t.text }}>
+      <span aria-hidden="true" className="size-1.5 rounded-full" style={{ background: color }} />
+      <span>{label}</span>
+    </span>
+  );
 }

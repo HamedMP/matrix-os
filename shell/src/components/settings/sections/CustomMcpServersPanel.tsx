@@ -1,8 +1,15 @@
 "use client";
 
 import {
+  MatrixMcpEndpointCard,
   McpConnectionInventory,
+  McpCustomServerForm,
+  McpRowAction,
+  McpSectionHeading,
   McpServerDiagnostics,
+  McpToolPolicyList,
+  connectedMcpServices,
+  matrixMcpEndpointUrl,
   RemoteMcpPresetPicker,
   buildMcpConnectionInventory,
   customMcpErrorMessage,
@@ -12,7 +19,7 @@ import {
 import type { ConnectedService } from "./integrations-helpers";
 
 import { CUSTOM_MCP_UNAVAILABLE, CUSTOM_MCP_UNAVAILABLE_MESSAGE, rebaseCustomMcpPolicy } from "@matrix-os/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 type AuthMode = "none" | "oauth" | "bearer" | "api_key";
@@ -114,6 +121,10 @@ async function readErrorBody(response: Response): Promise<unknown> {
   }
 }
 
+const subscribeToNothing = () => () => {};
+const browserOrigin = () => window.location.origin;
+const serverOrigin = () => null;
+
 function findMcpServer(servers: McpServer[], serverId: string): McpServer | undefined {
   return servers.find((server) => server.id === serverId);
 }
@@ -123,6 +134,7 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
   connectedApps?: readonly ConnectedService[];
   appNames?: Readonly<Record<string, string>>;
 } = {}) {
+  const platformOrigin = useSyncExternalStore(subscribeToNothing, browserOrigin, serverOrigin);
   const [servers, setServers] = useState<McpServer[]>([]);
   const [presets, setPresets] = useState<RemoteMcpPreset[]>([]);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">("loading");
@@ -315,11 +327,13 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
   const inventory = buildMcpConnectionInventory(servers, connectedApps, appNames);
   const serverById = new Map(servers.map((server) => [server.id, server]));
 
+  const connectedServices = connectedMcpServices(inventory);
+
   return (
-    <section className="space-y-4 border-t border-border/60 pt-8">
+    <section className="space-y-8 border-t border-border/60 pt-8">
       <div>
         <h3 className="text-sm font-medium">MCP servers</h3>
-        <p className="mt-1 text-sm text-muted-foreground">Connect a service once and every Matrix agent can use it. Credentials stay in the Matrix platform broker.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Connect your tools once. Every agent in Matrix can use them, and so can any MCP client you sign in with Matrix. Credentials stay in the Matrix platform broker.</p>
       </div>
       {error ? (
         <div className="flex items-center gap-3">
@@ -337,28 +351,18 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
         </div>
       ) : null}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading MCP servers…</p>}
-      <fieldset disabled={!loaded || loading || diagnosing} className="min-w-0 space-y-4">
-      <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
-        connectingId={busy?.startsWith("preset:") ? busy.slice("preset:".length) : null} disabled={busy !== null}
-        onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
-      <div className="grid gap-2 rounded-lg border border-border/60 bg-card/50 p-4 sm:grid-cols-2">
-        <p className="text-sm font-medium sm:col-span-2">Paste any MCP server URL</p>
-        <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" maxLength={100} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <input aria-label="MCP server URL" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/mcp" maxLength={2048} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <select aria-label="Authentication mode" value={authMode} onChange={(event) => setAuthMode(event.target.value as AuthMode)} className="rounded-md border border-border bg-background px-3 py-2 text-sm">
-          <option value="oauth">MCP OAuth</option><option value="none">No authentication</option><option value="bearer">Bearer token</option><option value="api_key">X-API-Key</option>
-        </select>
-        {(authMode === "bearer" || authMode === "api_key") && <input aria-label="MCP credential" type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Secret credential" maxLength={4096} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />}
-        <button type="button" disabled={busy !== null || !name.trim() || !url.trim()} onClick={createServer} className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">Add MCP server</button>
-      </div>
-      {loaded && (inventory.length > 0 || !error) ? <McpConnectionInventory entries={inventory}
+      <MatrixMcpEndpointCard endpointUrl={matrixMcpEndpointUrl(platformOrigin)} connectedServices={connectedServices} />
+      <fieldset disabled={!loaded || loading || diagnosing} className="min-w-0 space-y-8">
+      {loaded && (inventory.length > 0 || !error) ? <div className="space-y-3">
+        <McpSectionHeading title="Your connections" count={inventory.length || undefined} description="Choose which tools agents and clients may use." />
+        <McpConnectionInventory entries={inventory}
         renderActions={(entry) => {
           const server = serverById.get(entry.id);
           if (!server) return null;
           return (
             <>
-              {server.authMode === "oauth" && server.status === "auth_required" && <button type="button" className="text-xs underline" onClick={() => { void authorize(server.id); }}>Authorize</button>}
-              <button type="button" className="text-xs text-red-400 underline" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}`, "DELETE")}>Remove</button>
+              {server.authMode === "oauth" && server.status === "auth_required" && <McpRowAction tone="primary" onClick={() => { void authorize(server.id); }}>Authorize</McpRowAction>}
+              <McpRowAction tone="danger" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}`, "DELETE")}>Remove</McpRowAction>
             </>
           );
         }}
@@ -376,17 +380,22 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
                   if (!response.ok) throw new Error("MCP diagnostic failed");
                   return response.json();
                 }} />
-              {server.tools.length > 0 && <div className="mt-3 space-y-2">
-                {server.tools.map((tool) => <div key={tool.name} className="flex flex-wrap items-center gap-3 text-xs">
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={tool.enabled} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, enabled: event.target.checked } : candidate) }))} />{tool.name}</label>
-                  {tool.description ? <span className="min-w-0 flex-1 truncate text-muted-foreground" title={tool.description}>{tool.description}</span> : null}
-                  <select aria-label={`${tool.name} approval`} value={tool.approval} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, approval: event.target.value as McpTool["approval"] } : candidate) }))} className="rounded border border-border bg-background px-2 py-1"><option value="always_ask">Always ask</option><option value="allow">Allow</option></select>
-                </div>)}
-                <button type="button" disabled={!server.tools.some((tool) => tool.enabled)} onClick={() => queuePolicyUpdate(server.id, (current) => ({ ...current, enabled: !current.enabled }))} className="rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-50">{server.enabled ? "Disable" : "Enable"}</button>
-              </div>}
+              <McpToolPolicyList tools={server.tools} serverEnabled={server.enabled}
+                onToolEnabledChange={(toolName, enabled) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === toolName ? { ...candidate, enabled } : candidate) }))}
+                onToolApprovalChange={(toolName, approval) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === toolName ? { ...candidate, approval } : candidate) }))}
+                onToggleServer={() => queuePolicyUpdate(server.id, (current) => ({ ...current, enabled: !current.enabled }))} />
             </>
           );
-        }} /> : null}
+        }} /></div> : null}
+      <div className="space-y-3">
+        <McpSectionHeading title="Add services" description="Each service you connect joins your Matrix MCP. Sign in with the service; Matrix keeps the credentials." />
+        <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
+          connectingId={busy?.startsWith("preset:") ? busy.slice("preset:".length) : null} disabled={busy !== null}
+          onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
+      </div>
+      <McpCustomServerForm name={name} url={url} authMode={authMode} credential={credential}
+        onNameChange={setName} onUrlChange={setUrl} onAuthModeChange={setAuthMode} onCredentialChange={setCredential}
+        canSubmit={busy === null && Boolean(name.trim()) && Boolean(url.trim())} onSubmit={() => { void createServer(); }} />
       </fieldset>
     </section>
   );

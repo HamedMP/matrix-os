@@ -58,18 +58,22 @@ export function McpServerDiagnostics({ disabled, request, onDiscovered, onPendin
     }
   }
 
+  const button = "inline-flex h-7 items-center rounded-lg border px-2.5 text-xs font-medium transition-colors hover:brightness-95 disabled:opacity-50";
+  const buttonStyle = { borderColor: "var(--border-default, var(--border))", color: "var(--text-primary, var(--foreground))", background: "transparent" };
+  const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
   return <div className="mt-3 space-y-2" aria-busy={pending !== null}>
-    <div className="flex gap-3">
-      <button type="button" className="text-xs underline disabled:opacity-50" disabled={disabled || pending !== null} onClick={() => void run("discover")}>
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" className={button} style={buttonStyle} disabled={disabled || pending !== null} onClick={() => void run("discover")}>
         {pending === "discover" ? "Discovering…" : "Discover"}
       </button>
-      <button type="button" className="text-xs underline disabled:opacity-50" disabled={disabled || pending !== null} onClick={() => void run("test")}>
+      <button type="button" className={button} style={buttonStyle} disabled={disabled || pending !== null} onClick={() => void run("test")}>
         {pending === "test" ? "Testing…" : "Test"}
       </button>
+      <p className="min-w-0 flex-1 text-xs" style={muted}>Discover loads available tools. Test checks the connection without running a tool.</p>
     </div>
-    <p className="text-xs opacity-70">Discover loads available tools. Test checks the connection without running a tool.</p>
-    <p className="text-xs opacity-70">New tools start enabled. Always ask requires approval for each call; Allow permits calls without asking.</p>
-    {pending ? <p role="status" className="text-xs">{pending === "discover" ? "Discovering available tools…" : "Testing connection…"}</p> : null}
-    {feedback ? <p role={feedback.error ? "alert" : "status"} className="text-xs">{feedback.message}</p> : null}
+    <p className="text-xs" style={muted}>New tools start on. “Ask every time” needs your approval for each call; “Always allow” runs without asking.</p>
+    {pending ? <p role="status" className="text-xs" style={muted}>{pending === "discover" ? "Discovering available tools…" : "Testing connection…"}</p> : null}
+    {feedback ? <p role={feedback.error ? "alert" : "status"} className="rounded-lg px-2.5 py-1.5 text-xs"
+      style={{ background: feedback.error ? "color-mix(in srgb, var(--danger, var(--destructive, #ba5236)) 10%, transparent)" : "color-mix(in srgb, var(--success, #288a5b) 10%, transparent)", color: "var(--text-primary, var(--foreground))" }}>{feedback.message}</p> : null}
   </div>;
 }

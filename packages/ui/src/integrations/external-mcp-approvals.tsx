@@ -12,6 +12,9 @@
 import { ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../Button.js";
+import { McpServiceLogo } from "./McpServiceLogo.js";
+import { MCP_SERVICE_MARKS } from "./mcp-service-marks.js";
+import { mcpTokens } from "./mcp-settings-tokens.js";
 import {
   EXTERNAL_MCP_APPROVALS_DEFAULT_POLL_MS,
   EXTERNAL_MCP_APPROVALS_LOAD_ERROR,
@@ -24,7 +27,8 @@ import {
   type ExternalMcpDecision,
 } from "./external-mcp-approvals-client.js";
 
-const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
+const muted = { color: mcpTokens.muted };
+const t = mcpTokens;
 
 type ListState = { status: "loading" | "failed"; approvals: [] } | { status: "loaded"; approvals: ExternalMcpApproval[] };
 
@@ -66,15 +70,24 @@ function minutes(ms: number): number {
   return Math.max(1, Math.round(Math.abs(ms) / 60_000));
 }
 
+/** Approvals name a server like "linear-1a2b3c4d"; its prefix picks the catalog logo when one exists. */
+function presetIdForService(service: string | null | undefined): string | undefined {
+  const prefix = service?.toLowerCase().split(/[-\s]/)[0];
+  return prefix && Object.hasOwn(MCP_SERVICE_MARKS, prefix) ? prefix : undefined;
+}
+
 function ApprovalRow({ approval, busy, onDecide }: { approval: ExternalMcpApproval; busy: boolean; onDecide: (decision: ExternalMcpDecision) => void }) {
   const service = approval.service ?? "Unknown service";
   const remaining = Date.parse(approval.expiresAt) - Date.now();
   const expired = remaining <= 0;
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 px-3 py-2">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{approval.tool} <span style={muted}>· {service}</span></p>
-        <p className="text-xs" style={muted}>
+    <li className="flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: t.border, background: t.surface }}>
+      <McpServiceLogo presetId={presetIdForService(approval.service)} name={service} size={36} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium" style={{ color: t.text }}>
+          <code className="rounded-md px-1.5 py-0.5 text-xs" style={{ fontFamily: t.mono, background: t.sunken }}>{approval.tool}</code> <span style={muted}>· {service}</span>
+        </p>
+        <p className="mt-0.5 text-xs" style={muted}>
           External MCP client · Requested {minutes(Date.now() - Date.parse(approval.createdAt))} min ago · {expired ? "Expired" : `Expires in ${minutes(remaining)} min`}
         </p>
       </div>
@@ -89,12 +102,12 @@ function ApprovalRow({ approval, busy, onDecide }: { approval: ExternalMcpApprov
 /** Onboarding empty state: how an external client reaches this screen, plus a manual re-check. */
 function EmptyState({ onCheck }: { onCheck: () => void }) {
   return (
-    <div data-empty-state className="flex flex-col items-center rounded-lg border border-dashed border-border/60 p-5 text-center">
-      <ShieldCheck aria-hidden="true" className="size-6" style={muted} />
-      <p className="mt-2 text-sm font-medium">No external writes are waiting</p>
+    <div data-empty-state className="flex flex-col items-center rounded-2xl border border-dashed px-6 py-7 text-center" style={{ borderColor: t.border }}>
+      <span aria-hidden="true" className="flex size-10 items-center justify-center rounded-xl" style={{ background: t.sunken, color: t.muted }}><ShieldCheck className="size-5" /></span>
+      <p className="mt-3 text-sm font-medium" style={{ color: t.text }}>No external writes are waiting</p>
       <p className="mt-1 max-w-md text-xs" style={muted}>
         When Claude Code, Codex, or another MCP client connected to Matrix asks to run a write tool, it waits here for you.
-        Connect a client with <code>matrix mcp login</code>, or bridge a stdio-only client with <code>matrix mcp bridge</code>.
+        Connect a client with <code style={{ fontFamily: t.mono }}>matrix mcp login</code>, or bridge a stdio-only client with <code style={{ fontFamily: t.mono }}>matrix mcp bridge</code>.
       </p>
       <Button className="mt-3" size="sm" variant="secondary" onClick={onCheck}>Check again</Button>
     </div>
@@ -123,14 +136,19 @@ export function ExternalMcpApprovalsPanel({ transport }: { transport: ExternalMc
   };
 
   return (
-    <section aria-label="External MCP approvals" className="space-y-2">
-      <div>
-        <h4 className="text-sm font-medium">External write approvals</h4>
-        <p className="mt-1 text-xs" style={muted}>Writes from MCP clients outside Matrix wait here for you. Matrix never shows their arguments; approve only tools you expect a client to use.</p>
+    <section aria-label="External MCP approvals" className="space-y-3">
+      <div className="space-y-0.5">
+        <h4 className="flex flex-wrap items-center gap-2 text-base font-semibold tracking-tight" style={{ color: t.text }}>
+          External write approvals
+          {state.status === "loaded" && state.approvals.length > 0 ? (
+            <span className="rounded-full px-2 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in srgb, ${t.warning} 16%, transparent)`, color: t.text }}>{state.approvals.length} waiting</span>
+          ) : null}
+        </h4>
+        <p className="text-sm" style={{ color: t.secondary }}>Writes from MCP clients outside Matrix wait here for you. Matrix never shows their arguments; approve only tools you expect a client to use.</p>
       </div>
-      {error ? <div role="alert" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger, var(--destructive))" }}>{error}</div> : null}
+      {error ? <div role="alert" className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger, var(--destructive))" }}>{error}</div> : null}
       {state.status === "loading" ? <p role="status" className="text-sm" style={muted}>Loading approvals…</p> : null}
-      {state.status === "failed" ? <div role="alert" className="rounded-lg border border-border/60 p-3 text-sm">{EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
+      {state.status === "failed" ? <div role="alert" className="rounded-2xl border p-4 text-sm" style={{ borderColor: t.border, background: t.surface }}>{EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
         {transport ? <div className="mt-2"><Button size="sm" variant="secondary" onClick={() => { void reload(); }}>Try again</Button></div> : null}</div> : null}
       {state.status === "loaded" && state.approvals.length === 0 ? <EmptyState onCheck={() => { void reload(); }} /> : null}
       {state.status === "loaded" && state.approvals.length > 0 ? <ul aria-label="Pending external MCP approvals" className="space-y-2">

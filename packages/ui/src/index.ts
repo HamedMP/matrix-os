@@ -35,7 +35,12 @@ export {
 } from "./integrations/GithubDeveloperAccess.js";
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
 export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
-export { McpConnectionInventory, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { McpConnectionInventory, McpSectionHeading, McpStatusPill, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { MatrixMcpEndpointCard, type MatrixMcpEndpointCardProps } from "./integrations/MatrixMcpEndpointCard.js";
+export { DEFAULT_MATRIX_MCP_ENDPOINT, matrixMcpClientSetups, matrixMcpEndpointUrl, type MatrixMcpClientSetup } from "./integrations/matrix-mcp-endpoint.js";
+export { McpServiceLogo, McpServiceLogoStack, type McpServiceLogoProps } from "./integrations/McpServiceLogo.js";
+export { McpRowAction, McpToolPolicyList, type McpToolApproval, type McpToolPolicyListProps } from "./integrations/McpToolPolicyList.js";
+export { McpCustomServerForm, type McpCustomAuthMode, type McpCustomServerFormProps } from "./integrations/McpCustomServerForm.js";
 export { ExternalMcpApprovalsIndicator, ExternalMcpApprovalsPanel } from "./integrations/external-mcp-approvals.js";
 export { createExternalMcpApprovalsFetchTransport, type ExternalMcpApprovalsTransport } from "./integrations/external-mcp-approvals-client.js";
 export {
@@ -49,6 +54,7 @@ export { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, type Or
 export {
   REMOTE_MCP_DEPARTMENT_LABELS,
   buildMcpConnectionInventory,
+  connectedMcpServices,
   customMcpErrorMessage,
   filterRemoteMcpPresets,
   parseRemoteMcpCatalog,

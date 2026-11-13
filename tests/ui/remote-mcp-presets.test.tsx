@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMcpConnectionInventory,
+  connectedMcpServices,
   customMcpErrorMessage,
   filterRemoteMcpPresets,
   parseRemoteMcpCatalog,
@@ -108,5 +109,17 @@ describe("McpConnectionInventory", () => {
     rerender(<McpConnectionInventory entries={[{ kind: "pipedream", id: "p1", name: "Gmail", statusLabel: "Connected", accountLabel: "Work" }]} />);
     expect(screen.getByText("Gmail")).toBeTruthy();
     expect(screen.getByText(/Connected app · Work/)).toBeTruthy();
+  });
+});
+
+describe("connectedMcpServices", () => {
+  // Fault: the endpoint card claims it routes to a service that still needs sign-in.
+  it("lists only live connections, keeping the catalog id for the logo", () => {
+    const inventory = buildMcpConnectionInventory(
+      [{ id: "s1", name: "Linear", url: "https://mcp.linear.app/mcp", status: "ready" }, { id: "s2", name: "Figma", url: "https://mcp.figma.com/mcp", status: "auth_required" }],
+      [{ id: "p1", service: "gmail", status: "active" }],
+      { gmail: "Gmail" },
+    );
+    expect(connectedMcpServices(inventory)).toEqual([{ name: "Linear", presetId: "linear" }, { name: "Gmail" }]);
   });
 });
