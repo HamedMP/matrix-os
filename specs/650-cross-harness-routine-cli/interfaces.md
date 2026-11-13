@@ -1,5 +1,7 @@
 # Routine CLI interfaces
 
+Task6b adds the [native Pi source boundary](./pi-sources.md), separately from managed Pi and native account qualification.
+
 Task6a adds the [partial OpenCode source port](./opencode-sources.md). Its actual Matrix/CLI/Postgres lane uses named native fixtures. Production routine exposure remains closed pending the [proposed exclusive native discovery adapter](./opencode-discovery-adapter-design.md); ordinary OpenCode Chat continues unchanged.
 
 ## Implementation boundary
