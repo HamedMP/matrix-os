@@ -135,12 +135,19 @@ it('exchanges one verified Clerk identity through the exact Worker route without
   expect(bearerOnlySignOut.status).toBe(200);
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:otherCookie}}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(404);
+  activeSessionId='sess_viewer_revocation_browser';
+  const revokeExchange=await exchangeRequest();
+  expect(revokeExchange.status).toBe(200);
+  const revokeCookie=revokeExchange.headers.get('set-cookie')!.split(';')[0]!;
+  const currentFrame=()=>worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:revokeCookie}}),
+   {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret});
+  expect((await currentFrame()).status).toBe(200);
   await db.executor.updateTable('public_site_viewer_grants').set({revoked_at:new Date(),revocation_reason:'owner'}).where('site_id','=',siteId).execute();
   const revokedAt=performance.now();
-  expect((await get(`/${siteId}/frame`)).status).toBe(404);
+  expect((await currentFrame()).status).toBe(404);
   expect(performance.now()-revokedAt).toBeLessThan(5_000);
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/forms/rsvp`,{method:'POST',
-   headers:{origin:'https://matrix.page',cookie,'content-type':'application/json'},
+   headers:{origin:'https://matrix.page',cookie:revokeCookie,'content-type':'application/json'},
    body:JSON.stringify({fields:{name:'After revoke'},idempotencyKey:'email-visitor-request-0002'})}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(404);
   expect((await submissions.list(siteId,'email-app',50,null)).items).toHaveLength(1);
