@@ -95,6 +95,21 @@ describe("shared app publishing", () => {
     expect(screen.getAllByRole("heading",{name:"Invite"})).toHaveLength(1);
     expect(screen.getByText("One-time invite link")).toBeTruthy();
   });
+  it("shows the state of an existing invitation so an owner can choose to resend it", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const revoked={id:"44444444-4444-4444-8444-444444444444",emailAddress:"first@example.com",state:"revoked" as const,
+      deliveryState:"sent" as const,generation:1,revision:2,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-11-08T00:00:00.000Z",updatedAt:"2026-11-08T00:00:00.000Z",acceptedAt:null,revokedAt:"2026-11-08T00:00:00.000Z"};
+    const api=client({get:vi.fn(async()=>emailSite),
+      createEmailInvitations:vi.fn(async()=>({siteRevision:2,results:[{inputIndex:0,outcome:"existing" as const,invitation:revoked}]})),
+      emailInvitations:vi.fn(async()=>({invitations:[revoked],nextCursor:null,siteRevision:2}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    fireEvent.change(screen.getByLabelText("Invite by email"),{target:{value:"first@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    expect(await screen.findByText("first@example.com — existing invitation (revoked)")).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Resend"})).toBeTruthy();
+  });
   it("does not silently replace email access when an owner creates a one-time link", async () => {
     const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
     const api=client({get:vi.fn(async()=>emailSite)});
@@ -184,6 +199,32 @@ describe("shared app publishing", () => {
     await waitFor(()=>expect(resendEmailInvitation).toHaveBeenCalledWith("launch",expired.id,
       {baseRevision:1,invitationRevision:3},expect.any(AbortSignal)));
     expect(screen.getByText(/older@example.com/)).toBeTruthy();
+  });
+  it("returns to the newest invitations after bounded paging discards them", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const invitations=Array.from({length:150},(_,index)=>({
+      id:`44444444-4444-4444-8444-${index.toString(16).padStart(12,"0")}`,
+      emailAddress:`person${index}@example.com`,state:"pending" as const,deliveryState:"sent" as const,
+      generation:1,revision:0,issuedAt:"2026-11-01T00:00:00.000Z",expiresAt:"2026-11-20T00:00:00.000Z",
+      updatedAt:"2026-11-01T00:00:00.000Z",acceptedAt:null,revokedAt:null,
+    }));
+    const emailInvitations=vi.fn(async(_slug:string,_signal:AbortSignal,cursor?:string)=>{
+      const start=cursor?Number(cursor):0;
+      return {invitations:invitations.slice(start,start+50),nextCursor:start+50<invitations.length?String(start+50):null,siteRevision:1};
+    });
+    const api=client({get:vi.fn(async()=>emailSite),emailInvitations});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    const inventory=await screen.findByRole("list",{name:"Email invitations"});
+    expect(within(inventory).getByText(/person0@example.com/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Load more invitations"}));
+    await waitFor(()=>expect(within(inventory).getAllByRole("listitem")).toHaveLength(100));
+    fireEvent.click(screen.getByRole("button",{name:"Load more invitations"}));
+    await waitFor(()=>expect(within(inventory).queryByText(/person0@example.com/)).toBeNull());
+    expect(within(inventory).getAllByRole("listitem")).toHaveLength(100);
+    fireEvent.click(screen.getByRole("button",{name:"Show newest invitations"}));
+    await waitFor(()=>expect(within(inventory).getByText(/person0@example.com/)).toBeTruthy());
+    expect(within(inventory).getAllByRole("listitem")).toHaveLength(50);
+    expect(emailInvitations).toHaveBeenLastCalledWith("launch",expect.any(AbortSignal));
   });
   it("creates an invite in one click by privately publishing a new app", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
