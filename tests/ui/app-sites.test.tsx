@@ -95,6 +95,31 @@ describe("shared app publishing", () => {
     expect(screen.getAllByRole("heading",{name:"Invite"})).toHaveLength(1);
     expect(screen.getByText("One-time invite link")).toBeTruthy();
   });
+  it("does not silently replace email access when an owner creates a one-time link", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const api=client({get:vi.fn(async()=>emailSite)});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const create=await screen.findByRole("button",{name:"Create invite link"});
+    expect(create).toHaveProperty("disabled",true);
+    fireEvent.click(create);
+    expect(api.update).not.toHaveBeenCalled();
+    expect(api.createAccessLink).not.toHaveBeenCalled();
+  });
+  it("keeps pasted email lines in the shared multiline control", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const createEmailInvitations=vi.fn(async()=>({siteRevision:2,results:[]}));
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const input=screen.getByLabelText("Invite by email");
+    expect(input.tagName).toBe("TEXTAREA");
+    expect(input.getAttribute("data-slot")).toBe("textarea");
+    fireEvent.change(input,{target:{value:"alice@example.com\nbob@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    await waitFor(()=>expect(createEmailInvitations).toHaveBeenCalledWith("launch",
+      {baseRevision:1,emailAddresses:["alice@example.com","bob@example.com"]},expect.any(AbortSignal)));
+  });
   it("offers email as a separate access mode only when the capability is ready", async () => {
     const publicSite={...published,capabilities:{privateEmailInvitations:true}};
     const emailSite={...publicSite,accessMode:"private_email" as const,revision:2};
