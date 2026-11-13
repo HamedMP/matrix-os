@@ -22,6 +22,25 @@ export function builtinToolPermissionModeCallback<T>(approvalId: string, callbac
   return approvalId.startsWith("tool_") ? callback : undefined;
 }
 
+class PermissionModeIntentSupersededError extends Error {
+  constructor() { super(CHAT_PERMISSION_MODE_ERROR); this.name = "PermissionModeIntentSupersededError"; }
+}
+
+/** Missing sequence information never proves that another accepted change came later. */
+function permissionIntentWasSuperseded(detail: CanonicalChatDetailResponse | null, runId: string, clientRequestId: string, mode: ChatPermissionMode): boolean {
+  if (!detail) return false;
+  const events = detail.activities.filter((event): event is Extract<typeof event, { type: "run.permission_mode" }> =>
+    event.type === "run.permission_mode" && event.chatId === detail.record.chat.id && event.runId === runId);
+  const original = events.find(event => event.clientRequestId === clientRequestId && event.permissionMode === mode);
+  if (original?.sequence === undefined || events.some(event => event.sequence === undefined)) return false;
+  const latest = events.reduce<typeof original | undefined>((current, event) =>
+    !current || event.sequence! > current.sequence! ? event : current, undefined);
+  const currentMode = detail.runs.find(run => run.id === runId)?.permissionMode;
+  return Boolean(latest && latest.sequence! > original.sequence && latest.clientRequestId !== clientRequestId
+    && latest.permissionMode !== mode && latest.permissionMode === currentMode
+    && !events.some(event => event.id !== latest.id && event.sequence === latest.sequence));
+}
+
 /** An accepted response changes this exact run only; another Chat/runtime never receives it. */
 export async function setCanonicalChatPermissionMode(input: {
   client: ChatPermissionModeClient;
@@ -41,19 +60,24 @@ export async function setCanonicalChatPermissionMode(input: {
   }
   const current = () => input.isCurrent() && input.getDetail()?.record.chat.id === chatId
     && input.getDetail()?.record.activeRun?.runId === input.runId;
+  const clientRequestId = input.clientRequestId ?? `req_${crypto.randomUUID().replaceAll("-", "")}`;
   let accepted: CanonicalSetChatPermissionModeResponse;
   try {
     accepted = await input.client.setPermissionMode(chatId, input.runId, {
-      clientRequestId: input.clientRequestId ?? `req_${crypto.randomUUID().replaceAll("-", "")}`,
+      clientRequestId,
       permissionMode: input.permissionMode,
     });
   } catch (error: unknown) {
     console.warn("[chat] Permission mode response unavailable:", error instanceof Error ? error.name : "UnknownError");
     // A lost response does not prove rejection. Read canonical state before offering a retry.
     if (current()) {
-      try { await input.refresh(chatId); }
+      let refreshed = false;
+      try { refreshed = await input.refresh(chatId) !== null; }
       catch (failure: unknown) { console.warn("[chat] Permission recovery unavailable:", failure instanceof Error ? failure.name : "UnknownError"); }
       if (current() && input.getDetail()?.runs.some(run => run.id === input.runId && run.permissionMode === input.permissionMode)) return { refreshFailed: false };
+      if (refreshed && current() && permissionIntentWasSuperseded(input.getDetail(), input.runId, clientRequestId, input.permissionMode)) {
+        throw new PermissionModeIntentSupersededError();
+      }
     }
     throw new Error(CHAT_PERMISSION_MODE_ERROR);
   }
@@ -102,14 +126,18 @@ export function useLiveChatPermissionMode(input: {
     if (!supported || inFlight.current === ownerAtStart || ownerAtStart.scope !== scope) throw new Error(CHAT_PERMISSION_MODE_ERROR);
     inFlight.current = ownerAtStart;
     setAttempt({ scope, pending: true, error: null, notice: null });
+    let attemptedRequestId: string | undefined;
     try {
       if (intent.current?.scope !== scope || intent.current.mode !== mode) {
         intent.current = { scope, mode, requestId: `req_${crypto.randomUUID().replaceAll("-", "")}` };
       }
-      const result = await input.change!(input.activeRunId, mode, intent.current.requestId);
+      attemptedRequestId = intent.current.requestId;
+      const result = await input.change!(input.activeRunId, mode, attemptedRequestId);
       if (intent.current?.scope === scope && intent.current.mode === mode) intent.current = null;
       if (owner.current === ownerAtStart) setAttempt({ scope, pending: false, error: null, notice: result?.refreshFailed ? CHAT_PERMISSION_MODE_REFRESH_NOTICE : null });
     } catch (error: unknown) {
+      if (error instanceof PermissionModeIntentSupersededError && owner.current === ownerAtStart
+        && intent.current?.requestId === attemptedRequestId) intent.current = null;
       console.warn("[chat] Permission mode change failed:", error instanceof Error ? error.name : "UnknownError");
       if (owner.current === ownerAtStart) setAttempt({ scope, pending: false, error: CHAT_PERMISSION_MODE_ERROR, notice: null });
       throw new Error(CHAT_PERMISSION_MODE_ERROR);

@@ -182,3 +182,63 @@ it.each(["organization", "shared"])("does not issue a live mutation for a %s Cha
   await expect(setCanonicalChatPermissionMode({ ...state.input, client: { setPermissionMode } })).rejects.toThrow("Could not change permission mode");
   expect(setPermissionMode).not.toHaveBeenCalled();
 });
+
+it("starts a fresh explicit intent after canonical history proves an ambiguous change was superseded", async () => {
+  const state = context();
+  let originalRequestId = "";
+  let reads = 0;
+  const setPermissionMode = vi.fn(async (_chatId: string, _runId: string, input: { clientRequestId: string }) => {
+    originalRequestId ||= input.clientRequestId;
+    if (input.clientRequestId === originalRequestId) throw new TypeError("LostOrSupersededResponse");
+    return state.accepted;
+  });
+  state.input.refresh.mockImplementation(async () => {
+    reads += 1;
+    if (reads === 1) throw new TypeError("LostRecoveryRead");
+    if (reads !== 2) return;
+    state.input.commit(current => current ? { ...current, activities: [
+      { id: "activity_own_full", chatId: state.chatId, runId: state.runId, type: "run.permission_mode", sequence: 10,
+        occurredAt: current.runs[0]!.updatedAt, permissionMode: "full_access", clientRequestId: originalRequestId },
+      { id: "activity_other_supervised", chatId: state.chatId, runId: state.runId, type: "run.permission_mode", sequence: 11,
+        occurredAt: current.runs[0]!.updatedAt, permissionMode: "supervised", clientRequestId: "req_other_tab" },
+    ] } : current);
+  });
+  const change = (runId: string, permissionMode: "supervised" | "full_access", clientRequestId: string) =>
+    setCanonicalChatPermissionMode({ ...state.input, runId, permissionMode, clientRequestId, client: { setPermissionMode } });
+  const hook = renderHook(() => useLiveChatPermissionMode({ scope: state.chatId, activeRunId: state.runId,
+    liveModes: ["supervised", "full_access"], change, changeDraft: vi.fn() }));
+  await act(async () => { await expect(hook.result.current.select("full_access")).rejects.toThrow("Could not change permission mode"); });
+  expect(setPermissionMode).toHaveBeenCalledOnce();
+  await act(async () => { await expect(hook.result.current.select("full_access")).rejects.toThrow("Could not change permission mode"); });
+  expect(setPermissionMode.mock.calls[1]?.[2].clientRequestId).toBe(originalRequestId);
+  expect(setPermissionMode).toHaveBeenCalledTimes(2); // Recovery never retries the mutation itself.
+  await act(async () => { await hook.result.current.select("full_access"); });
+  expect(setPermissionMode.mock.calls[2]?.[2].clientRequestId).not.toBe(originalRequestId);
+  expect(state.detail()?.runs[0]?.permissionMode).toBe("full_access");
+});
+
+it.each(["other_run", "unsequenced", "same_sequence", "older_sequence"])("preserves ambiguous request IDs when %s history cannot prove supersession", async invalid => {
+  const state = context();
+  let originalRequestId = "";
+  const setPermissionMode = vi.fn(async (_chatId: string, _runId: string, input: { clientRequestId: string }) => {
+    originalRequestId ||= input.clientRequestId;
+    throw new TypeError("UnconfirmedPermissionChange");
+  });
+  state.input.refresh.mockImplementation(async () => {
+    state.input.commit(current => current ? { ...current, activities: [
+      { id: "activity_own_full", chatId: state.chatId, runId: state.runId, type: "run.permission_mode", sequence: 10,
+        occurredAt: current.runs[0]!.updatedAt, permissionMode: "full_access", clientRequestId: originalRequestId },
+      { id: "activity_other_supervised", chatId: state.chatId, runId: invalid === "other_run" ? "run_other" : state.runId,
+        type: "run.permission_mode", sequence: invalid === "unsequenced" ? undefined : invalid === "same_sequence" ? 10 : invalid === "older_sequence" ? 9 : 11,
+        occurredAt: current.runs[0]!.updatedAt, permissionMode: "supervised", clientRequestId: "req_other_tab" },
+    ] } : current);
+  });
+  const change = (runId: string, permissionMode: "supervised" | "full_access", clientRequestId: string) =>
+    setCanonicalChatPermissionMode({ ...state.input, runId, permissionMode, clientRequestId, client: { setPermissionMode } });
+  const hook = renderHook(() => useLiveChatPermissionMode({ scope: state.chatId, activeRunId: state.runId,
+    liveModes: ["supervised", "full_access"], change, changeDraft: vi.fn() }));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await act(async () => { await expect(hook.result.current.select("full_access")).rejects.toThrow("Could not change permission mode"); });
+  }
+  expect(setPermissionMode.mock.calls[1]?.[2].clientRequestId).toBe(originalRequestId);
+});

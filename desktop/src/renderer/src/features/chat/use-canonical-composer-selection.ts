@@ -98,6 +98,10 @@ export function useCanonicalComposerSelection({
           : rememberedInstance ?? currentInstance;
       const boundModes = canonicalChatTurnModes(catalog, currentSelection,
         executionControls?.chatId === chatId ? executionControls : undefined);
+      // Accepted run authority applies even when the retained model cannot admit a new turn.
+      if (!chatChanged && !scopeChanged && acceptedPermissionChanged && boundModes && current) {
+        current = { ...current, permissionMode: boundModes.permissionMode };
+      }
       const currentIsSupported = current && currentInstance?.availability === "available" && !isLegacyMatrixSdkProvider(currentInstance)
         && (!boundInstanceId || current.instanceId === boundInstanceId)
         && currentInstance.models.some((model) => (
@@ -108,7 +112,7 @@ export function useCanonicalComposerSelection({
         && rememberedOptions(catalog, current).length === current.options.length
         && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) {
-        return acceptedPermissionChanged && boundModes ? { ...current, permissionMode: boundModes.permissionMode } : current;
+        return current;
       }
       if (!chatChanged && !scopeChanged && (composerSelectionTouched.current || hadObservedCatalog) && current
         && (!currentInstance || currentInstance.availability !== "available"
