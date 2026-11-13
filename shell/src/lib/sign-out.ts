@@ -9,10 +9,6 @@ export function getSignInRedirectUrl(): string {
 }
 
 export async function clearMatrixAppSession(): Promise<void> {
-  clearChatNavigationScopes();
-  clearBrowserChatNavigationCache();
-  // S06 / T034: direct collaboration sessions end with the actor's app session.
-  closeShellCollaborationSessions();
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -31,6 +27,10 @@ export async function clearMatrixAppSession(): Promise<void> {
   } finally {
     window.clearTimeout(timeoutId);
   }
+  clearChatNavigationScopes();
+  clearBrowserChatNavigationCache();
+  // S06 / T034: direct collaboration sessions end with the actor's app session.
+  closeShellCollaborationSessions();
 }
 
 export function isTimeoutError(error: unknown): boolean {

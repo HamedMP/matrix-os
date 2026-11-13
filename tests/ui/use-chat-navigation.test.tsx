@@ -3,8 +3,20 @@ import React, { StrictMode, startTransition, Suspense, useState } from 'react';
 import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { clearChatNavigationScopes, useChatNavigation } from '../../packages/ui/src/chat-navigation/use-chat-navigation.js';
-afterEach(() => { cleanup(); clearChatNavigationScopes(); });
+import { clearMatrixAppSession } from '../../shell/src/lib/sign-out.js';
+afterEach(() => { cleanup(); clearChatNavigationScopes(); vi.unstubAllGlobals(); });
 const empty = { version: 1 as const, items: [], truncated: false };
+it('keeps a mounted chat store live when platform sign-out fails', async () => {
+  const load=vi.fn(async()=>empty);
+  let emit!: (event: unknown) => void;
+  const events={subscribe:vi.fn(listener=>{emit=listener;return {dispose:vi.fn()}})};
+  const hook=renderHook(()=>useChatNavigation({scope:'signout-failure',load,eventSource:events}));
+  await waitFor(()=>expect(hook.result.current.fresh).toBe(true));
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(null,{status:503})));
+  await expect(clearMatrixAppSession()).rejects.toThrow('Sign-out is temporarily unavailable');
+  act(()=>emit({type:'chat.changed',chatId:'chat_one',cursor:1,revision:1,eventType:'chat.updated'}));
+  await waitFor(()=>expect(load).toHaveBeenCalledTimes(2));
+});
 it('shares one loader and one event subscription across mounted surfaces', async () => {
   const load = vi.fn(async () => empty);
   let emit!: (event: unknown) => void;
