@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@matrix-os/ui";
+import { Textarea } from "../ui/textarea";
 import type { SiteEmailInvitationInputResult, SiteEmailInvitationPage, SiteEmailInvitationSummary, SiteRecord } from "@matrix-os/contracts";
 import { siteActionError, type SiteClient } from "../../lib/site-client";
 import { formatSiteDate } from "./format-site-date";
@@ -94,14 +95,12 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
       : "Choose Private — invited email under publishing settings to invite people.";
   return <div className="space-y-2">
     <p className="text-xs leading-4" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>{explanation}</p>
-    <form onSubmit={invite} className="ph-no-capture grid grid-cols-[minmax(0,1fr)_auto] gap-2" data-ph-mask="true">
-      <input aria-label="Invite by email" disabled={!ready || disabled || state.conflict}
-        value={addresses} maxLength={30 * 1024} placeholder="Invite by email"
+    <form onSubmit={invite} className="ph-no-capture grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2" data-ph-mask="true">
+      <Textarea aria-label="Invite by email" disabled={!ready || disabled || state.conflict}
+        value={addresses} maxLength={30 * 1024} rows={2} placeholder="Invite by email, one per line or separated by commas"
         onChange={event => setAddresses(event.target.value)}
         onKeyDown={event => { if (event.key === "Escape") setAddresses(""); }}
-        className="h-8 min-w-0 rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--matrix-primary)] disabled:cursor-not-allowed"
-        style={{ borderColor: "var(--matrix-border)", background: ready ? "var(--matrix-card)" : "var(--muted, var(--matrix-card))",
-          color: ready ? "var(--matrix-fg)" : "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
+        className="min-w-0 resize-y text-sm" />
       <Button type="submit" disabled={!ready || disabled || state.conflict || !addresses.trim()} size="sm">Invite</Button>
     </form>
     {inputError ? <p role="alert" className="text-xs">{inputError}</p> : null}

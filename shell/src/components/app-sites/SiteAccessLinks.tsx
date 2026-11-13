@@ -22,6 +22,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   const linksMutationVersion = useRef(0);
   const invite = variant === "invite";
   const ready = site?.status === "published" && site.accessMode === "private_link";
+  const emailMode = site?.status === "published" && site.accessMode === "private_email";
   const publicationKey = ready && site ? `${site.id}:${site.revision}` : null;
   const generatedUrl = generatedLink?.publicationKey === publicationKey ? generatedLink.url : null;
   useEffect(() => {
@@ -40,7 +41,9 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     return () => controller.abort();
   }, [appSlug, client, ready, site?.id, reload]);
   if (!invite && !ready) return null;
-  const create = () => state.mutate(async signal => {
+  const create = () => {
+    if (emailMode) return;
+    return state.mutate(async signal => {
     let publication = site;
     let publicationChanged = false;
     if (!publication || publication.status !== "published") {
@@ -75,7 +78,8 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
       setGeneratedLink({ url: result.url, publicationKey: `${result.publication.id}:${result.publication.revision}` });
     },
     invite ? "Invite link created." : "One-time link created.",
-  );
+    );
+  };
   const revoke = (linkId: string) => state.action(async signal => {
     await client.revokeAccessLink(appSlug, linkId, signal); return linkId;
   }, revoked => {
@@ -105,9 +109,10 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
           <p className="text-xs">{invite ? readinessCopy : "Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days."}</p>
         </div>
       </div>
-      {invite ? <Button aria-label="Create invite link" size="sm" disabled={disabled || (ready && !linksLoaded)} onClick={() => void create()}>Create</Button> : null}
+      {invite ? <Button aria-label="Create invite link" size="sm" disabled={disabled || emailMode || (ready && !linksLoaded)} onClick={() => void create()}>Create</Button> : null}
     </div>
-    {!invite ? <Button size="sm" disabled={disabled || !linksLoaded} onClick={() => void create()}>Create one-time link</Button> : null}
+    {emailMode ? <p className="text-xs">Switch to Private — one-time links in publishing settings before creating a link.</p> : null}
+    {!invite ? <Button size="sm" disabled={disabled || emailMode || !linksLoaded} onClick={() => void create()}>Create one-time link</Button> : null}
     {ready && generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
       <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
