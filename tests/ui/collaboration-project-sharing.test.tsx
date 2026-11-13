@@ -106,6 +106,21 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
+  it("offers one organization-wide confirmation without role, people, activation, or AI policy controls", () => {
+    const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
+    render(<ProjectSharingDialog api={apiFixture()} scope={privateScope} projectName="Launch"
+      organizationName="Matrix Team" inventory={completeInventory()}
+      refreshInventory={async () => completeInventory()} onClose={vi.fn()} />);
+
+    expect(screen.getByText(/Every active current and future member of Matrix Team can work in this project immediately/i)).toBeVisible();
+    expect(screen.getByText(/AI work uses the owner's current Provider Settings and is billed to the owner/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Share whole project" })).toBeEnabled();
+    expect(screen.queryByLabelText("Share with")).toBeNull();
+    expect(screen.queryByRole("button", { name: /General access/i })).toBeNull();
+    expect(screen.queryByText(/activate access/i)).toBeNull();
+    expect(screen.queryByText(/choose a model|provider terms|acknowledge/i)).toBeNull();
+  });
+
   it("shows every Chat root and the owner's Git readiness before sharing", () => {
     const inventory = completeInventory();
     inventory.ownedItems[1] = {
@@ -124,80 +139,46 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.getByText(/GitHub access is missing/)).toBeVisible();
   });
 
-  it("explains item membership effects without silently promoting recipients", () => {
+  it("does not present legacy role and per-person membership effects", () => {
     renderDialog({ inventory: completeInventory() });
-    expect(screen.getByText(/Ada joins the whole project as editor/i)).toBeVisible();
-    expect(screen.getByText(/Lin's standalone Chat access ends/i)).toBeVisible();
-    expect(screen.getByText(/Maya keeps standalone access only to Personal notes/i)).toBeVisible();
-    expect(screen.getByText(/Lin is not added to the project/i)).toBeVisible();
+    expect(screen.queryByText(/Ada joins the whole project as editor/i)).toBeNull();
+    expect(screen.queryByText(/Membership changes|Editor|Viewer/i)).toBeNull();
   });
 
-  it("lets the owner choose who gets access before sharing the project", async () => {
-    // Before confirmation the project is private. The owner picks its audience now (through the
-    // owner setup key); the grants are recorded and start when the project is shared.
+  it("does not let the owner configure a private project's audience before sharing", () => {
     const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
-    const grant = {
-      id: "60000000-0000-4000-8000-000000000401", scopeId: scope.id, organizationId: "org_matrix_team",
-      audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", state: "pending", policyVersion: "v1",
-      revision: "1", createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
-    };
-    let grants: unknown[] = [];
     const api = apiFixture();
-    api.get.mockImplementation(async (path: string) => {
-      if (path.startsWith("/api/organizations/")) return { members: [{
-        actorId: "user_ada",
-        displayName: "Ada",
-        role: "org:member",
-        joinedAt: "2026-08-01T00:00:00.000Z",
-      }] };
-      if (path.endsWith("/grants")) return grants;
-      return { ...privateScope, revision: grants.length ? "5" : "4" };
-    });
-    // An organization grant made earlier is stored active on the home, but nobody has access before the share.
-    const organizationGrant = { ...grant, id: "60000000-0000-4000-8000-000000000402", audience: { kind: "organization" }, state: "active" };
-    api.post.mockImplementation(async (path: string) => {
-      if (!path.endsWith("/grants")) throw new Error("unexpected");
-      grants = [grant, organizationGrant];
-      return grant;
-    });
     render(<ChatCollaboratorsDialog api={api} scope={privateScope} members={[]}
       onRefresh={async () => ({ scope: privateScope, members: [] })} onClose={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "Choose who gets access" })).toBeVisible();
-    expect(screen.getByText(/if you choose no one, everyone in your organization gets Editor access/i)).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Grant access" })).toBeEnabled());
-    fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
-    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
-    expect(await screen.findByText("Access starts when you share the whole project.")).toBeVisible();
-    expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "contributor",
-    }));
-    expect(await screen.findByRole("combobox", { name: "Preset for Ada" })).toBeVisible();
-    // Every grant, including an organization grant stored active, reads as starting at share time.
-    expect(screen.getAllByText("Starts when shared")).toHaveLength(2);
-    expect(screen.queryByText("Active")).toBeNull();
-    expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
-    // A private project has no readiness to load yet.
-    expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("/policy/preflight"), expect.anything());
+    expect(screen.getByRole("heading", { name: "Project access" })).toBeVisible();
+    expect(screen.queryByLabelText(/Share with|Access preset/i)).toBeNull();
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("asks the owner to wait while a confirmed share is still being published", () => {
+  it("keeps the same role-free rule while a confirmed share is being published", () => {
     const api = apiFixture();
     const preparing: CollaborationScope = { ...scope, organizationId: "org_matrix_team", lifecycle: "preparing" };
     render(<ChatCollaboratorsDialog api={api} scope={preparing} members={[]}
       onRefresh={async () => ({ scope: preparing, members: [] })} onClose={vi.fn()} />);
 
-    expect(screen.getByText("Access can be changed once sharing finishes.")).toBeVisible();
-    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining("/grants"));
+    expect(screen.getByText(/every active organization member can work in this whole project/i)).toBeVisible();
+    expect(screen.queryByText(/Editor|Viewer|People with access/i)).toBeNull();
+    expect(api.get).not.toHaveBeenCalled();
   });
 
-  it("describes project invitations as whole-project access", () => {
-    render(<ChatCollaboratorsDialog api={apiFixture()} scope={scope} members={[]}
+  it("keeps legacy collaborator controls out of the organization-wide project flow", () => {
+    const api = apiFixture();
+    render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]}
       onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
 
-    expect(screen.getByText(/applies to this whole project and its future project-owned contents/i)).toBeVisible();
+    expect(screen.getByText(/every active organization member can work in this whole project/i)).toBeVisible();
     expect(screen.getByText(/External references and unrelated resources stay outside the share/i)).toBeVisible();
-    expect(screen.queryByText(/does not grant access to its project/i)).toBeNull();
+    expect(screen.queryByLabelText(/Share with|Access preset|Owner AI source|Allowed model/i)).toBeNull();
+    expect(screen.queryByText(/People with access|Editor|Viewer|acknowledg/i)).toBeNull();
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("blocks confirmation when any owned resource cannot cross the authority boundary", () => {
@@ -269,46 +250,29 @@ describe("whole-project sharing confirmation", () => {
     expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
   });
 
-  it("uses the refreshed inventory revision after an access edit", async () => {
+  it("confirms the reviewed inventory without a grant or access-policy mutation", async () => {
     const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
     const first = completeInventory();
-    const refreshed = { ...completeInventory(), scopeRevision: "5", inventoryToken: "d".repeat(64) };
-    let preset: "viewer" | "contributor" = "contributor";
-    let grantRevision = "1";
     const api = apiFixture();
-    api.get.mockImplementation(async (path: string) => {
-      if (path.endsWith("/members")) return { members: [] };
-      if (path.endsWith("/grants")) return [{ ...defaultOrganizationGrant(), preset, revision: grantRevision }];
-      return privateScope;
-    });
-    api.patch.mockImplementation(async (_path: string, body: { preset: "viewer" | "contributor" }) => {
-      preset = body.preset;
-      grantRevision = "2";
-      return {};
-    });
     api.post.mockImplementation(async (path: string) => {
-      if (path.endsWith("/policy/preflight")) return undefined;
       if (path.endsWith("/project/confirm")) return {
         id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
         createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
       };
       throw new Error("unexpected route");
     });
-    const onAccessChanged = vi.fn(async () => refreshed);
     render(<ProjectSharingDialog api={api} scope={privateScope} projectName="Launch"
-      selectedOrganizationId="org_matrix_team" organizationName="Matrix Team" inventory={first}
-      refreshInventory={async () => refreshed} onAccessChanged={onAccessChanged} onClose={vi.fn()} />);
+      organizationName="Matrix Team" inventory={first}
+      refreshInventory={async () => first} onClose={vi.fn()} />);
 
-    const general = await screen.findByRole("button", { name: "General access: Editor" });
-    fireEvent.pointerDown(general, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Viewer View project activity only/ }));
-    await waitFor(() => expect(onAccessChanged).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Share whole project" }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scope.id}/project/confirm`,
-      expect.objectContaining({ expectedScopeRevision: "5", inventoryToken: "d".repeat(64) }),
+      expect.objectContaining({ expectedScopeRevision: "4", inventoryToken: "c".repeat(64) }),
     ));
+    expect(api.patch).not.toHaveBeenCalled();
+    expect(api.delete).not.toHaveBeenCalled();
   });
 
   it("waits for publication after confirming, then opens collaborators on the shared project", async () => {

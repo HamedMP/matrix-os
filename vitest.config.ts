@@ -41,7 +41,10 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/terminal-runtime/generation-closure": path.resolve(__dirname, "packages/terminal-runtime/src/generation-closure.mjs"),
+      "@matrix-os/terminal-runtime/generation-lock": path.resolve(__dirname, "packages/terminal-runtime/src/generation-lock.ts"),
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
+      "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
       "@matrix-os/ui/collaborative-app-sharing": path.resolve(__dirname, "packages/ui/src/collaboration/collaborative-app-sharing.ts"),
       "@matrix-os/ui/feature-flags": path.resolve(__dirname, "packages/ui/src/feature-flags.ts"),
@@ -69,6 +72,8 @@ export default defineConfig({
       "@matrix-os/contracts/ai-usage/node": path.resolve(__dirname, "packages/contracts/src/ai-usage/node.ts"),
       "@matrix-os/contracts/ai-usage": path.resolve(__dirname, "packages/contracts/src/ai-usage/index.ts"),
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
+      "@matrix-os/contracts/routine-destination": path.resolve(__dirname, "packages/contracts/src/routine-destination.ts"),
+      "@matrix-os/contracts/routine-cli": path.resolve(__dirname, "packages/contracts/src/routine-cli.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/slack-bridge": path.resolve(__dirname, "packages/contracts/src/slack-bridge.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),

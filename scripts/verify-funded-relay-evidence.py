@@ -31,9 +31,25 @@ CONFIG_ENV = {"projectId": "GCP_PROJECT_ID", "region": "GCP_REGION",
               "cloudflareGatewayUrl": "CLOUDFLARE_AI_GATEWAY_URL"}
 REGISTRY_ENV = "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"
 REGISTRY_CONFIG = "pricingRegistryEnabled"
-WORKERS_PRICING_PREFIX = "MATRIX_FUNDED_WORKERS_PRICING_"
-WORKERS_PRICING_ENV = {WORKERS_PRICING_PREFIX + field for field in
-                       ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")}
+# Optional legacy review bindings. The historical bundle covers only its original eight models.
+BUNDLED_WORKERS_REVIEWS = {
+    "DEEPSEEK_FLASH": "cloudflare-2026-10-15-deepseek-v4-flash-0731",
+    "GLM_FULL": "cloudflare-2026-10-15-glm-5.3",
+    "KIMI_CODE": "cloudflare-2026-10-15-kimi-k2.7-code",
+    "GPT_OSS_120B": "cloudflare-2026-10-15-gpt-oss-120b",
+    "GEMMA_4": "cloudflare-2026-10-15-gemma-4-26b",
+    "DEEPSEEK_PRO": "cloudflare-2026-10-15-deepseek-v4-pro-0813",
+    "QWEN_38": "cloudflare-2026-10-15-qwen3.8-27b",
+    "GPT_OSS_20B": "cloudflare-2026-10-15-gpt-oss-20b",
+}
+OPTIONAL_WORKERS_REVIEWS = {
+    "WORKERS": "cloudflare-2026-10-15-workers-eight",
+    **BUNDLED_WORKERS_REVIEWS,
+    "DEEPSEEK_V41_FLASH": "cloudflare-2026-11-12-deepseek-v4.1-flash-1017",
+}
+REVIEW_FIELDS = ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")
+OPTIONAL_WORKERS_ENV = {f"MATRIX_FUNDED_{model}_PRICING_{field}"
+                        for model in OPTIONAL_WORKERS_REVIEWS for field in REVIEW_FIELDS}
 FIXED_ENV = {
     "MATRIX_FUNDED_AI_ENABLED": "true", "MATRIX_FUNDED_AI_RESERVATION_MODE": "usage",
     "MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY": "16", "MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY": "2",
@@ -95,6 +111,29 @@ def archive_files(body):
     return result
 
 
+def optional_workers_bindings(pricing):
+    bindings = {}
+    reviews = set()
+    for model, version in OPTIONAL_WORKERS_REVIEWS.items():
+        names = [f"MATRIX_FUNDED_{model}_PRICING_{field}" for field in REVIEW_FIELDS]
+        if not any(name in pricing for name in names):
+            continue
+        require(all(name in pricing for name in names), "Incomplete Workers AI review")
+        require(pricing[names[0]] == version, "Unsupported Workers AI review")
+        review_window(pricing[names[1]], pricing[names[2]], 31)
+        bindings.update({name: pricing[name] for name in names})
+        reviews.add(model)
+    require("WORKERS" not in reviews or not reviews.intersection(BUNDLED_WORKERS_REVIEWS),
+            "Overlapping Workers AI reviews")
+    return bindings
+
+
+def emit_workers_bindings():
+    bindings = optional_workers_bindings({name: os.environ[name] for name in OPTIONAL_WORKERS_ENV
+                                          if os.environ.get(name)})
+    emit_env({"WORKERS_PRICING_BINDINGS": "".join(f"|{key}={value}" for key, value in bindings.items())})
+
+
 def verify_configuration(config):
     expected_fields = set(CONFIG_ENV) | {"secretVersions", "pricing"}
     if REGISTRY_CONFIG in config:
@@ -115,24 +154,17 @@ def verify_configuration(config):
     require(set(config["secretVersions"]) == set(SECRETS), "Invalid secret version fields")
     require(all(matches(r"[1-9]\d{0,9}", value) for value in config["secretVersions"].values()), "Numeric secret versions required")
     pricing = config["pricing"]
-    expected = {}
+    expected = set() if config.get(REGISTRY_CONFIG) else set(optional_workers_bindings(pricing))
     for model, version, days in (("SONNET", "anthropic-2026-08-31-standard", 31),
                                  ("GLM", "cloudflare-2026-09-10-glm-flash", 31),
                                  ("JEV", "typesafe-jev-input-2026-09", 90)):
         if config.get(REGISTRY_CONFIG) and model != "JEV":
             continue
         prefix = "MATRIX_" + ("" if model == "JEV" else "FUNDED_") + model + "_PRICING_"
-        expected.update({prefix + field: None for field in ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")})
+        expected.update(prefix + field for field in REVIEW_FIELDS)
         require(pricing[prefix + "REVIEW_VERSION"] == version, "Unsupported price review")
         review_window(pricing[prefix + "REVIEWED_AT"], pricing[prefix + "VALID_THROUGH"], days)
-    if not config.get(REGISTRY_CONFIG) and set(pricing) & WORKERS_PRICING_ENV:
-        require(WORKERS_PRICING_ENV <= set(pricing), "Incomplete Workers price review")
-        require(pricing[WORKERS_PRICING_PREFIX + "REVIEW_VERSION"] == "cloudflare-2026-10-15-workers-eight",
-                "Unsupported Workers price review")
-        review_window(pricing[WORKERS_PRICING_PREFIX + "REVIEWED_AT"],
-                      pricing[WORKERS_PRICING_PREFIX + "VALID_THROUGH"], 31)
-        expected.update({key: None for key in WORKERS_PRICING_ENV})
-    require(set(pricing) == set(expected), "Invalid pricing fields")
+    require(set(pricing) == expected, "Invalid pricing fields")
 
 
 def pricing_environment_matches(config):
@@ -141,7 +173,7 @@ def pricing_environment_matches(config):
     pricing = config["pricing"]
     return (mode in {"", "false", "true"} and (mode == "true") == registry and
             all(os.environ.get(key) == value for key, value in pricing.items()) and
-            (registry or all(not os.environ.get(key) for key in WORKERS_PRICING_ENV - set(pricing))))
+            (registry or all(not os.environ.get(key) for key in OPTIONAL_WORKERS_ENV - set(pricing))))
 
 
 def verify_evidence(body, receipt_hash, source, run, repository, stage):
@@ -419,7 +451,12 @@ def import_evidence():
 if __name__ == "__main__":
     try:
         {"configuration": configuration, "promotion": promotion, "import": import_evidence,
+         "workers-pricing-bindings": emit_workers_bindings,
          "deployment-preflight": deployment_preflight, "candidate-isolation": candidate_isolation}[sys.argv[1]]()
     except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-        print("Funded Relay release evidence/configuration verification failed; production remains blocked.", file=sys.stderr)
+        if sys.argv[1] == "workers-pricing-bindings":
+            print("Workers AI review must match the supported version and a current UTC window of at most 31 days.",
+                  file=sys.stderr)
+        else:
+            print("Funded Relay release evidence/configuration verification failed; production remains blocked.", file=sys.stderr)
         sys.exit(1)

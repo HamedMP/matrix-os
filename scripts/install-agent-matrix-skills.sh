@@ -24,6 +24,7 @@ skills=(
   apple-design
   browser-admin
   chat-import
+  collaborative-app-builder
   css-animations
   debug-app
   design-system

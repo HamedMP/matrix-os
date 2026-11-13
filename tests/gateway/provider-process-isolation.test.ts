@@ -112,3 +112,22 @@ describe("provider process isolation", () => {
     expect(missingBus.command).toBe("claude");
   });
 });
+
+// Actual credential-free Node descriptor fixture, not systemd or native OpenCode qualification.
+it.each(["ignore", "pipe"] as const)("preserves the fourth owned descriptor with %s stdin through the real direct provider spawn helper", async stdin => {
+  const { spawnIsolatedProviderProcess } = await import("../../packages/gateway/src/coding-agents/provider-process-isolation.js");
+  const { once } = await import("node:events");
+  vi.stubEnv("MATRIX_PROVIDER_PROCESS_ISOLATION", "0");
+  const args = ["--input-type=module", "-e", "import { writeSync } from 'node:fs'; writeSync(3, 'owned-descriptor');"];
+  const options = { cwd: process.cwd(), env: { PATH: process.env.PATH ?? "" } };
+  const child = stdin === "ignore"
+    ? spawnIsolatedProviderProcess(process.execPath, args, { ...options, stdio: ["ignore", "pipe", "pipe", "pipe"] })
+    : spawnIsolatedProviderProcess(process.execPath, args, { ...options, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+  try {
+    const pipe = (child.stdio as unknown as import("node:stream").Duplex[])[3];
+    if (!pipe) throw new Error("Missing owned descriptor");
+    let received = ""; pipe.on("data", (chunk: Buffer) => { received += chunk.toString("utf8"); });
+    expect((await once(child, "close"))[0]).toBe(0);
+    expect(received).toBe("owned-descriptor");
+  } finally { child.kill("SIGKILL"); vi.unstubAllEnvs(); }
+});

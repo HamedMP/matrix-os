@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 /** Immutable USD/M-token rates in thousandths of a microusd/token.
- * Reviewed 2026-10-15 against official Workers AI pricing and account catalog.
+ * Each version records the review date against official Workers AI pricing.
  * https://developers.cloudflare.com/workers-ai/platform/pricing/
  * No rolling validity: each model still needs an explicit expiring attestation.
  */
@@ -15,6 +15,7 @@ export const WORKERS_AI_PRICE_SNAPSHOTS = Object.freeze({
   "@cf/deepseek-ai/deepseek-v4-pro-0813": { prefix: "DEEPSEEK_PRO", version: "cloudflare-2026-10-15-deepseek-v4-pro-0813", input: 1320, output: 3960, cached: 44 },
   "@cf/qwen/qwen3.8-27b": { prefix: "QWEN_38", version: "cloudflare-2026-10-15-qwen3.8-27b", input: 450, output: 3200, cached: 50 },
   "@cf/openai/gpt-oss-20b": { prefix: "GPT_OSS_20B", version: "cloudflare-2026-10-15-gpt-oss-20b", input: 200, output: 300, cached: 200 },
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017": { prefix: "DEEPSEEK_V41_FLASH", version: "cloudflare-2026-11-12-deepseek-v4.1-flash-1017", input: 300, output: 1200, cached: 6 },
 } as const);
 export type WorkersPricingModelId = keyof typeof WORKERS_AI_PRICE_SNAPSHOTS;
 export const WORKERS_AI_PRICING_VERSIONS = Object.freeze(Object.fromEntries(

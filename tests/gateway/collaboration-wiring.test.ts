@@ -108,6 +108,7 @@ describe("gateway collaboration wiring", () => {
         { version: 14 },
         { version: 15 },
         { version: 16 },
+        { version: 17 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -180,7 +181,7 @@ describe("gateway collaboration wiring", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it("authorizes an accepted preset grant through the wired authority on chat, project and terminal scopes", async () => {
+  it("authorizes organization-wide projects while preserving standalone chat and terminal grants", async () => {
     const organizationId = "org_wiring_primary";
     const members = new Set(["user_wiring_owner", "user_wiring_member"]);
     const runtime = await createGatewayCollaboration({
@@ -222,13 +223,15 @@ describe("gateway collaboration wiring", () => {
         invitation_id: null, invited_by: "user_wiring_owner", accepted_at: now, expires_at: null, revision: 1, joined_at: now, updated_at: now,
         dispositioned_at: null,
       }).execute();
-      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
-        .rejects.toMatchObject({ code: "not_found" });
-      const grant = await runtime.capabilities.createGrant({
-        scopeId: scope.id, actorId: "user_wiring_owner", clientRequestId: crypto.randomUUID(), expectedRevision: 1, payloadHash: "a".repeat(64),
-        audience: { kind: "member", actorId: "user_wiring_member" }, preset: "contributor", policyVersion: "v1",
-      });
-      await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: "1" });
+      if (scope.kind !== "project") {
+        await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
+          .rejects.toMatchObject({ code: "not_found" });
+        const grant = await runtime.capabilities.createGrant({
+          scopeId: scope.id, actorId: "user_wiring_owner", clientRequestId: crypto.randomUUID(), expectedRevision: 1, payloadHash: "a".repeat(64),
+          audience: { kind: "member", actorId: "user_wiring_member" }, preset: "contributor", policyVersion: "v1",
+        });
+        await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: "1" });
+      }
       await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
         .resolves.toMatchObject({ role: "editor", organizationId, resourceKind: scope.kind });
       await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "discuss" }))

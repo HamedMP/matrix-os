@@ -9,6 +9,138 @@ export const PRESET_POLICY_VERSION = "v1";
 
 export type ScopeRow = Selectable<CollaborationScopesTable>;
 
+export interface AcceptedOperationKey {
+  scopeId: string;
+  actorId: string;
+  clientRequestId: string;
+  operationKind: string;
+}
+
+const MAX_PENDING_OPERATION_CLEANUPS = 1_024;
+const MAX_CONCURRENT_OPERATION_CLEANUPS = 4;
+
+interface ScheduledCleanup {
+  key: string;
+  task: () => Promise<void>;
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+/**
+ * Deduplicates cleanup replays and keeps enough of the owner's ten-connection
+ * pool free for the drains performed by a cleanup transaction. Pending work is
+ * bounded separately from running work so a burst cannot grow memory forever.
+ */
+export class BoundedOperationCleanupScheduler {
+  private readonly operations = new Map<string, Promise<void>>();
+  private readonly queue: ScheduledCleanup[] = [];
+  private running = 0;
+
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly maxPending: number,
+  ) {
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1
+      || !Number.isInteger(maxPending) || maxPending < maxConcurrent) {
+      throw new RangeError("Invalid collaboration cleanup limits");
+    }
+  }
+
+  run(key: string, task: () => Promise<void>): Promise<void> {
+    const existing = this.operations.get(key);
+    if (existing) return existing;
+    if (this.operations.size >= this.maxPending) {
+      return Promise.reject(new Error("Collaboration cleanup capacity exceeded"));
+    }
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    this.operations.set(key, promise);
+    this.queue.push({ key, task, promise, resolve, reject });
+    this.pump();
+    return promise;
+  }
+
+  private pump(): void {
+    while (this.running < this.maxConcurrent) {
+      const scheduled = this.queue.shift();
+      if (!scheduled) return;
+      this.running += 1;
+      void Promise.resolve().then(scheduled.task).then(
+        () => scheduled.resolve(),
+        (error: unknown) => scheduled.reject(error),
+      ).finally(() => {
+        if (this.operations.get(scheduled.key) === scheduled.promise) {
+          this.operations.delete(scheduled.key);
+        }
+        this.running -= 1;
+        this.pump();
+      });
+    }
+  }
+}
+
+// A weak database key cannot retain a closed owner database. Each live database
+// gets a separately bounded scheduler, and every entry is removed on settlement.
+const operationCleanupSchedulers = new WeakMap<
+  Kysely<OwnerCollaborationDatabase>,
+  BoundedOperationCleanupScheduler
+>();
+
+function acceptedOperationKey(key: AcceptedOperationKey): string {
+  return `${key.scopeId}\0${key.actorId}\0${key.clientRequestId}\0${key.operationKind}`;
+}
+
+/**
+ * Runs durable post-commit cleanup exactly once at a time. The row lock is the
+ * claim: connection loss rolls the transaction back and releases it, while the
+ * operation remains accepted so another worker can safely retry. Completion is
+ * committed only after cleanup finishes, keeping subsequent sharing fenced.
+ */
+export function completeAcceptedOperation(
+  db: Kysely<OwnerCollaborationDatabase>,
+  key: AcceptedOperationKey,
+  cleanup: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>,
+): Promise<void> {
+  let scheduler = operationCleanupSchedulers.get(db);
+  if (!scheduler) {
+    scheduler = new BoundedOperationCleanupScheduler(
+      MAX_CONCURRENT_OPERATION_CLEANUPS,
+      MAX_PENDING_OPERATION_CLEANUPS,
+    );
+    operationCleanupSchedulers.set(db, scheduler);
+  }
+  const registryKey = acceptedOperationKey(key);
+  return scheduler.run(registryKey, () => db.transaction().execute(async (trx) => {
+    const operation = await trx.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", key.scopeId)
+      .where("actor_id", "=", key.actorId)
+      .where("client_request_id", "=", key.clientRequestId)
+      .where("operation_kind", "=", key.operationKind)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!operation) throw new Error("Collaboration cleanup operation is unavailable");
+    if (operation.status === "completed") return;
+    if (operation.status !== "accepted") throw new Error("Collaboration cleanup operation cannot run");
+    await cleanup(trx);
+    const completed = await trx.updateTable("collaboration_operations").set({
+      status: "completed",
+      expires_at: new Date(Date.now() + OPERATION_RETENTION_MS),
+    }).where("scope_id", "=", key.scopeId)
+      .where("actor_id", "=", key.actorId)
+      .where("client_request_id", "=", key.clientRequestId)
+      .where("operation_kind", "=", key.operationKind)
+      .where("status", "=", "accepted")
+      .returning("status")
+      .executeTakeFirst();
+    if (!completed) throw new Error("Collaboration cleanup operation changed");
+  }));
+}
+
 /** Once direct authority is activated, old member rows can never grant access again. */
 export async function hasRetiredLegacyAuthority(
   db: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>,

@@ -342,6 +342,8 @@ export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectO
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
 export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
+export { createRoutineActionClient, createRoutineActionBrowserClient, type RoutineActionClient, type RoutineActionRequest } from "./routine-action/client.js";
+export { RoutineActionConfirmation, RoutineActionInbox } from "./routine-action/RoutineActionConfirmation.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 

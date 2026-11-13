@@ -13,6 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { findTsxLoader } from '../src/lib/find-tsx-loader.mjs';
+import { attachRoutineIpcRelay } from '../src/lib/routine-ipc-relay.mjs';
 import { assertSupportedNodeRuntime } from '../src/lib/node-runtime-guard.mjs';
 
 assertSupportedNodeRuntime(process.argv.slice(2), process.version);
@@ -34,11 +35,14 @@ if (!existsSync(cliEntry)) {
   process.exit(1);
 }
 
+const privateIpc = typeof process.send === "function" && process.connected;
 const child = spawn(
   process.execPath,
   ['--import', pathToFileURL(tsxLoader).href, cliEntry, ...process.argv.slice(2)],
-  { stdio: 'inherit', env: process.env },
+  { stdio: privateIpc ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit', env: process.env },
 );
+
+if (privateIpc) attachRoutineIpcRelay(process, child);
 
 child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal);

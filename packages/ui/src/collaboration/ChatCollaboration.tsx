@@ -2,7 +2,6 @@ import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
   CollaborativeAppDirectoryItemSchema,
-  CollaborativeAppDirectoryResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
@@ -164,14 +163,8 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
-  const [apps, setApps] = useState<CollaborativeAppDirectoryItem[]>([]);
-  const [appCursor, setAppCursor] = useState<string | null>(null);
-  const [appsLoading, setAppsLoading] = useState(true);
-  const [appsLoadingMore, setAppsLoadingMore] = useState(false);
-  const [appsUnavailable, setAppsUnavailable] = useState(false);
-  const visibleItems = useMemo(() => hideAcceptedProjects
-    ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
-    : items, [hideAcceptedProjects, items]);
+  const visibleItems = useMemo(() => items.filter((item) => item.kind !== "app"
+    && (!hideAcceptedProjects || !isAcceptedProjectOwnedByRail(item))), [hideAcceptedProjects, items]);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -179,10 +172,10 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         if (!active) return;
         const inboxPage = CollaborationDiscoveryResponseSchema.parse(inbox);
         const sharedPage = CollaborationDiscoveryResponseSchema.parse(shared);
-        setItems([
+        setItems(appendUniqueDiscoveryItems([], [
           ...inboxPage.items,
           ...sharedPage.items,
-        ]);
+        ]));
         setInboxCursor(inboxPage.nextCursor ?? null);
         setSharedCursor(sharedPage.nextCursor ?? null);
         setError(false);
@@ -194,42 +187,6 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api]);
-  useEffect(() => {
-    let active = true;
-    void api.get("/api/collaboration/shared-apps?limit=50")
-      .then((value) => {
-        const page = CollaborativeAppDirectoryResponseSchema.parse(value);
-        if (!active) return;
-        setApps(page.items);
-        setAppCursor(page.nextCursor ?? null);
-        setAppsUnavailable(false);
-      })
-      .catch((failure: unknown) => {
-        console.warn("[chat-collaboration] app discovery failed", failure instanceof Error ? failure.name : "UnknownError");
-        if (active) setAppsUnavailable(true);
-      })
-      .finally(() => { if (active) setAppsLoading(false); });
-    return () => { active = false; };
-  }, [api]);
-  const loadMoreApps = async () => {
-    if (!appCursor || appsLoadingMore) return;
-    setAppsLoadingMore(true);
-    try {
-      const page = CollaborativeAppDirectoryResponseSchema.parse(await api.get(
-        `/api/collaboration/shared-apps?limit=50&cursor=${encodeURIComponent(appCursor)}`,
-      ));
-      setApps((current) => page.items.reduce<CollaborativeAppDirectoryItem[]>((all, item) => (
-        all.some((candidate) => candidate.scopeId === item.scopeId) ? all : [...all, item]
-      ), current));
-      setAppCursor(page.nextCursor ?? null);
-      setAppsUnavailable(false);
-    } catch (failure: unknown) {
-      console.warn("[chat-collaboration] app discovery page failed", failure instanceof Error ? failure.name : "UnknownError");
-      setAppsUnavailable(true);
-    } finally {
-      setAppsLoadingMore(false);
-    }
-  };
   const loadMore = async () => {
     if (loadingMore || (!inboxCursor && !sharedCursor)) return;
     setLoadingMore(true);
@@ -242,9 +199,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       const inboxPage = inbox ? CollaborationDiscoveryResponseSchema.parse(inbox) : null;
       const sharedPage = shared ? CollaborationDiscoveryResponseSchema.parse(shared) : null;
       const additions = [...(inboxPage?.items ?? []), ...(sharedPage?.items ?? [])];
-      setItems((current) => additions.reduce<DiscoveryItem[]>((combined, item) => (
-        combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
-      ), current));
+      setItems((current) => appendUniqueDiscoveryItems(current, additions));
       if (inboxPage) setInboxCursor(inboxPage.nextCursor ?? null);
       if (sharedPage) setSharedCursor(sharedPage.nextCursor ?? null);
     } catch (failure: unknown) {
@@ -322,7 +277,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       <p className="font-medium">Shared items are unavailable</p>
       <p className="mt-1 text-sm">Refresh the page to try again.</p>
     </div> : null}
-    {!loading && !appsLoading && !error && visibleItems.length === 0 && apps.length === 0 ? <div className="rounded-2xl border p-10 text-center">
+    {!loading && !error && visibleItems.length === 0 ? <div className="rounded-2xl border p-10 text-center">
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
@@ -330,13 +285,6 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         : "Invitations and accepted shared items will appear here."}</p>
     </div> : null}
     <div className="grid gap-3">
-      {apps.map((app) => <article key={`app:${app.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{appDisplayName(app.appId)}</p>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>App · shared by {app.owner.displayName}</p>
-        </div>
-        <button type="button" className={buttonClass} onClick={() => openApp(app.scopeId, app)}>Open app</button>
-      </article>)}
       {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
@@ -383,10 +331,6 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
               : <button type="button" className={buttonClass} onClick={() => openProject(item.scopeId)}>Open project</button>}
         </article>)}
     </div>
-    {appsUnavailable ? <p role="status" className="text-sm">Shared apps are temporarily unavailable.</p> : null}
-    {appCursor ? <button type="button" className={buttonClass} disabled={appsLoadingMore} onClick={() => void loadMoreApps()}>
-      {appsLoadingMore ? "Loading…" : "Load more shared apps"}
-    </button> : null}
     {invitationError ? <p role="alert" className="text-sm">Invitation could not be updated. Try again.</p> : null}
     {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
     {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
@@ -395,9 +339,6 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   </main>;
 }
 
-function appDisplayName(appId: string): string {
-  return appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
-}
 
 function SharedTerminalView({ api, actorId, scopeId, layers }: {
   api: CollaborationApi;
@@ -438,6 +379,17 @@ function homeStateMessage(home: DiscoveryItem["home"]): string {
 function discoveryKey(item: DiscoveryItem): string {
   if (item.status === "invited") return `invite:${item.invitationId}`;
   return item.status === "organization_pending" ? `org:${item.scopeId}` : `scope:${item.scopeId}`;
+}
+
+function appendUniqueDiscoveryItems(current: DiscoveryItem[], additions: DiscoveryItem[]): DiscoveryItem[] {
+  const seen = new Set(current.map(discoveryKey));
+  const combined = [...current];
+  for (const item of additions) {
+    if (seen.has(discoveryKey(item))) continue;
+    seen.add(discoveryKey(item));
+    combined.push(item);
+  }
+  return combined;
 }
 
 function openAcceptedChat(

@@ -1,3 +1,4 @@
+import type { RoutineCliActionController } from "../bots/routine-action-controller.js";
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
@@ -53,6 +54,7 @@ import {
 } from "./provider-catalog.js";
 import {
   CanonicalProviderRunEventSchema,
+  CanonicalProviderRunRecoveryPendingError,
   type CanonicalChatProviderAdapter,
   type CanonicalProviderRunEvent,
   type CanonicalProviderRunInput,
@@ -201,6 +203,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;
+    routineActions?: Pick<RoutineCliActionController, "submitChat">;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
     collaborationGuard?: {
@@ -684,6 +687,10 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
       if (controller.signal.reason instanceof BackgroundProjectionDetached) return;
+      if (error instanceof CanonicalProviderRunRecoveryPendingError) {
+        await this.persistActivities(owner, run, [{ type: "run.error", error: error.safeError }]);
+        return;
+      }
       if (cleanupUnconfirmed) {
         controller.abort();
         console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
@@ -1049,7 +1056,7 @@ export class CanonicalChatOrchestrator {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     return submitCanonicalApproval({ repository: this.options.repository,
       active: this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters }),
-      browserApprovals: this.options.browserApprovals,
+      browserApprovals: this.options.browserApprovals, routineActions: this.options.routineActions,
     }, owner, chatId, runId, approvalId, inputValue, provenance);
   }
 

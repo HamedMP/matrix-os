@@ -55,6 +55,7 @@ export interface AppEntry {
   name: string;
   path: string;
   iconUrl?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 const MIN_WIDTH = 320;

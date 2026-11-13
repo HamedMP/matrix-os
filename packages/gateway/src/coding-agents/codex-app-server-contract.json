@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.167.1",
+  "latestVerifiedVersion": "0.169.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -185,6 +185,15 @@
         "darwin-arm64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1",
         "linux-x64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1"
       }
+    },
+    "0.167.2": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1",
+        "linux-x64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1"
+      }
+    },
+    "0.169.0": {
+      "schemaSha256": "d2d0612646b0739dd264067ef944442a5485e44529c793bebf3985e9a9df6cfc"
     }
   },
   "requiredServerMethods": [
@@ -192,7 +201,8 @@
     "item/fileChange/requestApproval",
     "item/tool/requestUserInput",
     "item/permissions/requestApproval",
-    "mcpServer/elicitation/request"
+    "mcpServer/elicitation/request",
+    "item/tool/call"
   ],
   "requiredServerNotifications": [
     "item/started",
@@ -213,11 +223,105 @@
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
     "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-    "item/started": "91a60058ca9e9b9dee61f91aa674d5577f48ab94ecd80833b7500573ed19d644",
-    "item/completed": "091914fa7fb2f8aa285ce5c2452b3abbd7177c6d7193d56d7bb3e8c0f1dcddff",
+    "item/started": "617275c94854b1871af5371cbfdfdd88d03c66d681983ed82e3efeea1adec800",
+    "item/completed": "bd38783bca8b6bd3ecf75796883f3784bffca1d7797c33b3248e43a754e92c0d",
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "a422130287e89c148ef74c9c38773df548c11153e68cfd57409705154ca16940"
+    "turn/completed": "ea32be3552e720e9f07bffae9bb0b4270c0f33a7d86a1df9c701fc77197e3906",
+    "item/tool/call": "931064a4a120a47dc72bfcefa4c1ce3edb737b7faaf99a317bb4a6bc82dade19"
+  },
+  "routineProtocolsByVersion": {
+    "0.162.1": {
+      "client": {
+        "initialize": "b53f725235c5d7990268cd0886ce43c5179ad8ab0b3208c97afbb44bd40cd30b",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "03df893808cb376a17c251e8ed6ba144c3189323f9330c2762e8d846d85019f1",
+        "turn/start": "adbbcb0780c523a73d4b54999c52b3dd0076c92365c0c06b4aa6880ceef60307"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.165.0": {
+      "client": {
+        "initialize": "b53f725235c5d7990268cd0886ce43c5179ad8ab0b3208c97afbb44bd40cd30b",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "017e211e9dd761aeca249d0d1075637abf81a9f1c3b1b087460d19c79768c03c",
+        "turn/start": "364c856d8568ec54e4f3219f3ee691c631d402427f4e6cd88d4fde9a04383ddd"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.166.0": {
+      "client": {
+        "initialize": "b53f725235c5d7990268cd0886ce43c5179ad8ab0b3208c97afbb44bd40cd30b",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "017e211e9dd761aeca249d0d1075637abf81a9f1c3b1b087460d19c79768c03c",
+        "turn/start": "d3c53757381596f1d360fb6a1b9c99dad61c3b8286b6cd3c6d1e16a4edac6915"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.167.0": {
+      "client": {
+        "initialize": "07c96a7f5dc636ba7cb580e0572b9778a6cb1fedce9b06f36c3721e06361dd75",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "5bfb6bb6a56942b096d5d6d7f56aefd331d570d0879c314d10faccb200ce84ca",
+        "turn/start": "4e422ed06ce00b423caf28e6877a36ce790448506b5ebe794194fa9b4de276ec"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.167.1": {
+      "client": {
+        "initialize": "07c96a7f5dc636ba7cb580e0572b9778a6cb1fedce9b06f36c3721e06361dd75",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "5bfb6bb6a56942b096d5d6d7f56aefd331d570d0879c314d10faccb200ce84ca",
+        "turn/start": "4e422ed06ce00b423caf28e6877a36ce790448506b5ebe794194fa9b4de276ec"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.167.2": {
+      "client": {
+        "initialize": "07c96a7f5dc636ba7cb580e0572b9778a6cb1fedce9b06f36c3721e06361dd75",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "5bfb6bb6a56942b096d5d6d7f56aefd331d570d0879c314d10faccb200ce84ca",
+        "turn/start": "4e422ed06ce00b423caf28e6877a36ce790448506b5ebe794194fa9b4de276ec"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.169.0": {
+      "client": {
+        "initialize": "07c96a7f5dc636ba7cb580e0572b9778a6cb1fedce9b06f36c3721e06361dd75",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "c01c9ed3e947ea8605db3d0fc34721eeb81255f5f04f865a68a565b2cef2adfb",
+        "turn/start": "2849adb6a1f8af2696af36278a0a20f6a4979fe388f3bb35f9904d58b5c7cbed"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    }
   }
 }

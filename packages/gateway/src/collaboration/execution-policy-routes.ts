@@ -64,6 +64,14 @@ function requirePolicies(options: ExecutionPolicyRouteOptions): CollaborationExe
   return options.executionPolicies;
 }
 
+async function rejectProjectPolicy(options: ExecutionPolicyRouteOptions, scopeId: string): Promise<void> {
+  const scope = await options.repository.getScope(scopeId);
+  if (!scope) throw new CollaborationAuthorizationError("not_found", "Scope not found");
+  if (scope.kind === "project" || scope.membershipMode === "inherited") {
+    throw new CollaborationExecutionPolicyError("conflict", "Project AI uses the owner's current settings");
+  }
+}
+
 export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPolicyRouteOptions): void {
   const putLimit = bodyLimit({
     maxSize: COLLABORATION_HTTP_BODY_LIMIT,
@@ -74,6 +82,7 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
   routes.get(POLICY_OPTIONS_PATH, async (c) => handlePolicy(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorizeOwnerScope(options, c, new Uint8Array(), scopeId);
+    await rejectProjectPolicy(options, scopeId);
     const result = await requirePolicies(options).options(scopeId, context.actorId);
     return c.json(CollaborationExecutionPolicyOptionsSchema.parse(result));
   }));
@@ -81,6 +90,7 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
   routes.get(POLICY_PATH, async (c) => handlePolicy(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     await authorizeCurrentScope(options, c, new Uint8Array(), "read", scopeId);
+    await rejectProjectPolicy(options, scopeId);
     const policy = await requirePolicies(options).resolve(scopeId);
     if (!policy) throw new CollaborationExecutionPolicyError("not_found", "No execution policy");
     return c.json(CollaborationExecutionPolicySchema.parse(policy));
@@ -90,6 +100,7 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
     const context = await authorizeOwnerScope(options, c, bytes, scopeId);
+    await rejectProjectPolicy(options, scopeId);
     const request = CollaborationExecutionPolicyPutRequestSchema.parse(value);
     const policy = await requirePolicies(options).put({
       scopeId, actorId: context.actorId, request, payloadHash: digest(bytes),

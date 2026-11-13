@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
@@ -1486,7 +1487,6 @@ export async function createGateway(config: GatewayConfig) {
       accessSourceId: "owner_openai_profile",
     }) } : {}),
   });
-  collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     codexExecutable: codexExecutable ?? undefined,
     profileGuard: nativeProviderProfileGuard,
@@ -1516,11 +1516,15 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     codexNativeAccountMetadataReader: nativeCodexRuntime.readAccount,
     prepareNativeCodexRevocation: () => nativeCodexRuntime.admission.prepareRevocation(),
+    prepareSharedAiRouteChange: () => gatewayCollaboration?.prepareOwnerAiRouteChange() ?? Promise.resolve(),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+  });
+  collaborationProviderSnapshots.attach({
+    getSnapshot: (options) => providerSettingsStore!.getCanonicalCollaborationSnapshot(options),
   });
   const appAiRuntime = registerAppAiCapabilities(app, {
     homePath, ownerIds: codingAgentOwnerIds,
@@ -1576,10 +1580,17 @@ export async function createGateway(config: GatewayConfig) {
         getBots: () => botServices, modelId: process.env.MATRIX_COMPANY_BOT_MODEL?.trim(),
       });
     }
+    const routineCliTransport = { binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
+      endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` };
     botServices = await startBots({
+      routineCliTransport,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
+      ...(internalPlatformUrl && internalPlatformToken && internalHandle && process.env.MATRIX_MACHINE_ID && process.env.MATRIX_RUNTIME_SLOT
+        ? { routineActionPlatform: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+          machineId: process.env.MATRIX_MACHINE_ID, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT } } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
+      configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter((ownerId): ownerId is string => Boolean(ownerId)),
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
@@ -1602,10 +1613,12 @@ export async function createGateway(config: GatewayConfig) {
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
     const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
+      ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
+        ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
         ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
         homePath,
         credentialKey: toolOutputKey,
@@ -1621,6 +1634,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
+          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
           ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port,
           threads: codingAgentThreadStore,
           homePath,
@@ -1631,6 +1645,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
+          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
           threads: codingAgentThreadStore,
           homePath,
           toolOutputKey,
@@ -1640,6 +1655,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
+          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
           threads: codingAgentThreadStore,
           homePath,
           toolOutputKey,
@@ -1653,7 +1669,7 @@ export async function createGateway(config: GatewayConfig) {
       canonicalExecutableDriverKinds.push("matrix_pi");
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
-      homePath, browserApprovals: supervisedBrowserRuntime?.control,
+      homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
@@ -1671,6 +1687,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
+    botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});

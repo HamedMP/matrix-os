@@ -1,8 +1,6 @@
 import {
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
-  CollaborationReadinessSchema,
-  type CollaborationReadiness,
   type CollaborationProjectInventory,
   type CollaborationScope,
 } from "@matrix-os/contracts";
@@ -11,13 +9,8 @@ import { X } from "lucide-react";
 import { Dialog } from "../Dialog.js";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSourceSummary } from "./ProjectSourceSummary.js";
-import { ReadinessSummary } from "./ReadinessSummary.js";
-import { ProjectAccessManager } from "./ProjectAccessManager.js";
-import { ContributorAiSettings } from "./ContributorAiSettings.js";
 import {
   deriveProjectPresentation,
-  projectMembershipEffectKey,
-  projectMembershipEffectLabel,
 } from "./project-state.js";
 
 const buttonClass = "inline-flex h-7 items-center justify-center rounded-lg border px-2.5 text-xs font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
@@ -26,12 +19,9 @@ export function ProjectSharingDialog({
   api,
   scope,
   projectName,
-  selectedOrganizationId,
   organizationName,
-  popoverZIndex,
   inventory,
   refreshInventory,
-  onAccessChanged,
   onConfirmed,
   publicationDelayed = false,
   publicationFailure,
@@ -41,12 +31,9 @@ export function ProjectSharingDialog({
   api: CollaborationApi;
   scope: CollaborationScope;
   projectName: string;
-  selectedOrganizationId?: string | null;
   organizationName?: string;
-  popoverZIndex?: number;
   inventory?: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
-  onAccessChanged?: () => Promise<unknown>;
   /** Called once the home accepts the confirmation; the project then publishes asynchronously. */
   onConfirmed?: () => void;
   /** True once the bounded wait for publication ran out; the share continues on the home. */
@@ -61,25 +48,12 @@ export function ProjectSharingDialog({
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
-  const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
-  useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(() => api.post(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/policy/preflight`, {}))
-      .then((value) => {
-        const parsed = CollaborationReadinessSchema.safeParse(value);
-        if (active && parsed.success && parsed.data.resourceKind === "project") setReadiness(parsed.data);
-      })
-      .catch((failure: unknown) => {
-        console.warn("[project-collaboration] readiness unavailable", failure instanceof Error ? failure.name : "UnknownError");
-      });
-    return () => { active = false; };
-  }, [api, scope.id]);
   const displayedInventory = publicationFailure && inventory
     ? CollaborationProjectInventorySchema.parse(inventory)
     : currentInventory;
@@ -89,19 +63,6 @@ export function ProjectSharingDialog({
     ...(item.branch ? { branch: item.branch } : {}), ...(item.dirty !== undefined ? { dirty: item.dirty } : {}),
     readiness: item.compatibility,
   }));
-
-  const refreshAfterAccessChange = async () => {
-    if (scope.lifecycle === "shared" || scope.lifecycle === "archived") {
-      await onAccessChanged?.();
-      return;
-    }
-    const result = await onAccessChanged?.();
-    const parsed = CollaborationProjectInventorySchema.safeParse(result);
-    const refreshed = parsed.success
-      ? parsed.data
-      : CollaborationProjectInventorySchema.parse(await refreshInventory());
-    if (alive.current) setCurrentInventory(refreshed);
-  };
 
   const confirm = async () => {
     if (!presentation?.canConfirm || pending || (confirmed && !publicationFailure) || !displayedInventory) return;
@@ -146,6 +107,24 @@ export function ProjectSharingDialog({
     }
   };
 
+  const unshare = async () => {
+    if (pending || (scope.lifecycle !== "shared" && scope.lifecycle !== "archived")) return;
+    setPending(true);
+    setError("");
+    try {
+      await api.post(`/api/collaboration/scopes/${scope.id}/project/unshare`, {
+        clientRequestId: crypto.randomUUID(),
+        expectedRevision: scope.revision,
+      });
+      if (alive.current) onClose();
+    } catch (failure: unknown) {
+      console.warn("[project-collaboration] unshare failed", failure instanceof Error ? failure.name : "UnknownError");
+      if (alive.current) setError("Project access could not be removed. Refresh and try again.");
+    } finally {
+      if (alive.current) setPending(false);
+    }
+  };
+
   const published = scope.lifecycle === "shared" || scope.lifecycle === "archived";
   const confirmationLocked = confirmed && !publicationFailure;
   const publicationError = publicationFailure === "inventory_changed"
@@ -176,18 +155,23 @@ export function ProjectSharingDialog({
     </header>
 
     <div className="min-h-0 flex-1 overflow-y-auto">
-      {scope.organizationId ? <ProjectAccessManager api={api} scope={scope}
-        selectedOrganizationId={selectedOrganizationId}
-        organizationName={organizationName}
-        popoverZIndex={popoverZIndex}
-        onChanged={refreshAfterAccessChange} /> : null}
+      {scope.organizationId ? <section aria-labelledby="project-access-heading" className="border-t px-4 py-3"
+        style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
+        <h3 id="project-access-heading" className="text-xs font-medium">Organization access</h3>
+        <p className="mt-1 text-xs leading-5">
+          Every active current and future member of {organizationName ?? "the organization"} can work in this project immediately.
+        </p>
+        <p className="mt-1 text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>
+          AI work uses the owner&apos;s current Provider Settings and is billed to the owner. Members cannot change sharing, billing, or organization settings.
+        </p>
+      </section> : null}
 
       {!published ? <section className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
         <p className="text-xs leading-5">
           All current and future project contents share together, including every project Chat and its history.
         </p>
         <p className="mt-0.5 text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>
-          Files remain inside this access boundary; collaborator file browsing and editing are not available yet.
+          Members can use project Chats, files, apps, tools, and terminals inside this project boundary.
         </p>
       </section> : null}
 
@@ -203,9 +187,6 @@ export function ProjectSharingDialog({
       </ul>
     </section> : null}
 
-      {readiness && !published ? <div className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
-        <ReadinessSummary readiness={readiness} compact />
-      </div> : null}
       {displayedInventory && !published ? <div className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
         <ProjectSourceSummary gitSetup={displayedInventory.gitSetup} chatRoots={chatRoots} compact />
       </div> : null}
@@ -220,20 +201,6 @@ export function ProjectSharingDialog({
         {displayedInventory.externalReferences.map((item) => <li key={`${item.kind}:${item.id}`}>{item.id}</li>)}
       </ul>
     </section> : null}
-
-      {displayedInventory && !published && displayedInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading"
-        className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
-      <h3 id="membership-effects-heading" className="text-xs font-medium">Membership changes</h3>
-      <ul className="mt-1 grid gap-1">
-        {displayedInventory.membershipEffects.map((effect) => <li key={projectMembershipEffectKey(effect)}
-          className="text-xs leading-5">{projectMembershipEffectLabel(effect)}</li>)}
-      </ul>
-    </section> : null}
-
-      {published ? <div className="border-t px-4 py-3"
-        style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
-        <ContributorAiSettings api={api} scope={scope} compact />
-      </div> : null}
 
       {presentation && presentation.blockerMessages.length > 0 ? <div role="alert" className="mx-4 mb-3 rounded-lg border p-3 text-xs">
       {presentation.blockerMessages.map((message) => <p key={message}>{message}</p>)}
@@ -250,10 +217,15 @@ export function ProjectSharingDialog({
     <footer className="flex items-end gap-3 border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
       <p className="min-w-0 flex-1 text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>
         <span className="block">Files, apps, instructions, and project Chats share together.</span>
-        <span className="block">Members activate access when they open the project.</span>
+        <span className="block">Active organization members get access automatically.</span>
       </p>
-      {published ? <button type="button" className="h-7 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-medium text-[var(--bg-surface)]"
-        disabled={pending} onClick={onClose}>Done</button> : null}
+      {published ? <>
+        <button type="button" className={buttonClass} disabled={pending} onClick={() => void unshare()}>
+          {pending ? "Removing…" : "Unshare project"}
+        </button>
+        <button type="button" className="h-7 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-medium text-[var(--bg-surface)]"
+          disabled={pending} onClick={onClose}>Done</button>
+      </> : null}
       {!published ? <button type="button" className="h-7 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-medium text-[var(--bg-surface)] disabled:opacity-50"
         disabled={pending || confirmationLocked || !presentation?.canConfirm}
         onClick={() => void confirm()}>{pending ? "Confirming…" : confirmationLocked ? "Publishing…" : "Share whole project"}</button> : null}

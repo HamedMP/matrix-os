@@ -6,13 +6,16 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
+import { DesktopAppOrgSharingSection } from "./DesktopAppOrgSharingSection";
 
 export function DesktopAppSiteButton({
   appSlug,
   portalContainer,
+  buildEpoch = 0,
 }: {
   appSlug: string;
   portalContainer?: HTMLElement | null;
+  buildEpoch?: number;
 }) {
   const api = useConnection(state => state.api);
   const runtimeSlot = useConnection(state => state.runtimeSlot);
@@ -27,6 +30,8 @@ export function DesktopAppSiteButton({
     if (!api) return null;
     return createDesktopSiteClient(api, runtimeSlot);
   }, [api, runtimeSlot, authGeneration]);
+  const collaborationApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null,
+    [api, runtimeSlot, authGeneration]);
   return (
     <AppSiteSharePopover
       onOpenChange={setOpen}
@@ -50,6 +55,10 @@ export function DesktopAppSiteButton({
           client={client}
           ownerIdentity={email ?? userId ?? "local-user"}
           onClose={() => setOpen(false)}
+          organizationSharing={collaborationApi ? <DesktopAppOrgSharingSection
+            key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
+            appId={appSlug} api={collaborationApi} buildEpoch={buildEpoch}
+          /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

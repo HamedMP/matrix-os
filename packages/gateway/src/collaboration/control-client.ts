@@ -116,6 +116,8 @@ export class CollaborationControlClient {
     capabilities?: Pick<CollaborationCapabilityRepository, "endActorGrants">;
     /** Drops cached membership evidence for the denied actor or organization. */
     membership?: MembershipEvidenceEvictor;
+    /** Drains project sessions/runs after membership evidence has been fenced. */
+    onMembershipEnded?(input: { organizationId: string; actorId: string }): Promise<void>;
     fetchImpl?: typeof fetch;
     /** Opens the control WebSocket; production uses `ws` through `loadDefaultConnector`, tests pass a fake. */
     connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike | Promise<ControlSocketLike>;
@@ -291,14 +293,27 @@ export class CollaborationControlClient {
         try {
           await this.options.capabilities.endActorGrants({ organizationId: denial.organizationId, actorId: denial.actorId });
         } catch (error: unknown) {
-          // Not fully applied: no fence is acknowledged, so the denial completes only at its lease
-          // deadline; access is already closed because the evidence was evicted and sessions ended.
+          // Rejecting terminates this ordered stream, so no later acknowledgement can cover the
+          // failed denial. The platform redelivers it after reconnect; access is already closed.
           console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
-          return;
+          throw error;
         }
         // The drain may have landed while the cleanup was in flight. The runtime has stopped
         // serving, so the denial is left to complete at its lease deadline rather than being
         // acknowledged on behalf of a fenced home.
+        if (this.closed) return;
+      }
+      if (denial.organizationId && denial.actorId && this.options.onMembershipEnded) {
+        try {
+          await this.options.onMembershipEnded({
+            organizationId: denial.organizationId,
+            actorId: denial.actorId,
+          });
+        } catch (error: unknown) {
+          console.warn("[collaboration-control-client] project access drain failed",
+            error instanceof Error ? error.name : "UnknownError");
+          throw error;
+        }
         if (this.closed) return;
       }
       this.lastFenceAt = this.now().toISOString();

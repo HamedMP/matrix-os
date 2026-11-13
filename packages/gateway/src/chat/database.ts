@@ -150,6 +150,8 @@ export interface ChatQueuedTurnsTable {
   accepted_auth_epoch: ColumnType<number | null, number | null | undefined, number | null>;
   accepted_execution_generation: ColumnType<number | null, number | null | undefined, number | null>;
   accepted_execution_eligibility: ColumnType<unknown | null, unknown | null | undefined, unknown | null>;
+  accepted_provider_access_source_id: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_provider_route_generation: ColumnType<string | null, string | null | undefined, string | null>;
   retry_of_queued_turn_id: ColumnType<string | null, string | null | undefined, string | null>;
   position: number;
   status: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
@@ -479,6 +481,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       accepted_auth_epoch BIGINT,
       accepted_execution_generation BIGINT,
       accepted_execution_eligibility JSONB,
+      accepted_provider_access_source_id TEXT,
+      accepted_provider_route_generation TEXT,
       retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL,
       position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 32),
       status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled', 'interrupted', 'unauthorized', 'unavailable')),
@@ -509,6 +513,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_generation BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_eligibility JSONB`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_provider_access_source_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_provider_route_generation TEXT`.execute(db);
   await sql`
     ALTER TABLE chat_queued_turns
     ADD COLUMN IF NOT EXISTS retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL

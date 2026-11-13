@@ -143,7 +143,8 @@ describe("funded AI route readiness client", () => {
     await expect(client.getRouteReadiness()).resolves.toEqual(receipt);
     expect(fetchFn).toHaveBeenCalledWith(config.routeReadinessUrl, expect.objectContaining({
       method: "POST", redirect: "error", signal: expect.any(AbortSignal),
-      headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }), body: "{}",
+      headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}`,
+        "x-matrix-funded-readiness-catalog-version": "2" }), body: "{}",
     }));
     const invalid = createFundedAiRouteReadinessClient(config, vi.fn(async () => Response.json({ ...receipt,
       readyModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5"] })));
@@ -165,6 +166,7 @@ it("binds only trusted exact-runtime ordinary readiness to its configured phase"
   expect(fetchFn.mock.calls[0]![1]).toMatchObject({ body: "{}", headers: { "x-matrix-isolated-chat-phase": isolatedChat.phaseId } });
   await client.getRouteReadiness({ modelId: JEV_MODEL_ID });
   expect(fetchFn.mock.calls[1]![1]!.headers).not.toHaveProperty("x-matrix-isolated-chat-phase");
+  expect(fetchFn.mock.calls[1]![1]!.headers).not.toHaveProperty("x-matrix-funded-readiness-catalog-version");
   await createFundedAiRouteReadinessClient({ ...config, isolatedChat: { ...isolatedChat, ownerId: "other" } }, fetchFn).getRouteReadiness();
   expect(fetchFn.mock.calls[2]![1]!.headers).not.toHaveProperty("x-matrix-isolated-chat-phase");
   fetchFn.mockClear();

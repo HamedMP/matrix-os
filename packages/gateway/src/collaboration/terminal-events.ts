@@ -246,8 +246,12 @@ export class CollaborationTerminalEventRegistry {
   }
 
   notifyRevoked(scopeId: string, actorId: string): void {
+    this.notifyScopeRevoked(scopeId, actorId);
+  }
+
+  notifyScopeRevoked(scopeId: string, actorId?: string): void {
     for (const connection of [...this.connections.values()]) {
-      if (connection.scopeId === scopeId && connection.actorId === actorId) {
+      if (connection.scopeId === scopeId && (actorId === undefined || connection.actorId === actorId)) {
         this.sendBestEffort(connection, unavailableFrame(connection, this.runtimes.get(scopeId), "revoked"));
         this.remove(connection, 1008, "Revoked");
       }

@@ -1,118 +1,126 @@
 # Organization collaboration on member computers
 
-**Status:** Shipped collaboration baseline with the project-sharing alignment specified here.
-**Updated:** 2026-10-07
-**Design source:** Figma Desktop app, node `1433:19805` (project Share dialog). Product decisions in this specification override older frames where they differ.
+**Status:** V1 simplification approved; detailed delivery specification in [2689 — Organization-Wide Project Access](../2689-organization-project-access/spec.md).
+**Updated:** 2026-11-04
+**Tracking:** [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os)
+**Design history:** Earlier Figma role and access-management frames remain historical context. The V1 product decisions below override them where they conflict.
 
-## Authoritative product boundary
+## Authoritative V1 product boundary
 
-The project remains the only boundary for creating new live collaboration for Chat, terminal, file, and folder resources. Sharing a project grants access to all current and future project-owned content, including every existing and future project Chat and its history. A project Chat is one inherited group AI timeline: attributed human prompts render on the right and assistant/tool output renders on the left. It is not copied or split into private per-member Chats.
+The project is the only boundary for creating new live Chat, terminal, file, and folder collaboration. Sharing a project with an organization gives every active current and future organization member full working access to all current and future project content, including Chats and history, files, apps, tools, and project terminals.
 
-New standalone live Chat, terminal, file, and folder scopes cannot be created. An exact app build that satisfies the collaborative-app readiness contract may create one direct organization app scope without a project; this additive exception derives full access from current organization membership and does not reuse project roles, grants, invitations, or activation. Existing standalone scopes, recipient links, and `Shared with me` entries remain readable for compatibility, and owners retain a legacy **Manage access** path so they can change roles or revoke access. The gateway continues to accept project scope creation and internal project-inherited child Chat scope creation.
+An exact app build that satisfies the collaborative-app readiness contract may also create one direct organization app scope without a project. This additive exception derives full access from current organization membership and does not reuse project roles, grants, invitations, or activation.
 
-Public read-only Chat snapshots are a separate publication feature. Snapshot creation remains available and never grants project or live-Chat access. Chat sharing offers the snapshot action only; the old live **Invite collaborators** choice is removed.
+V1 has one organization-member experience. New project sharing has no Editor or Viewer roles, direct member invitations, per-capability grants, project-level AI policy, model allowlist, or provider acknowledgement. The owner confirms one consequence when sharing: organization members may work throughout the project and use the owner's current global AI connection.
 
-This release targets Web Canvas, Web Desktop, and Electron Desktop. It does not reorganize the topbar, organization management, or `Shared with me`; it adds no recipient file browser/editor and makes no Web Mobile or Native Mobile change.
+Full working access is not ownership. Only the project owner may:
 
-## Roles and authority
+- share or unshare the whole project;
+- delete the whole project; and
+- manage the owner's AI connections or billing.
 
-Product copy uses exactly **Owner**, **Editor**, and **Viewer**. Stored and wire-level preset `contributor` remains unchanged and is rendered as **Editor**. No role enum, migration, or second authorization source is introduced.
+Organization membership remains governed by organization policy. Project ownership neither grants nor denies organization-administration authority.
 
-- Owner is immutable and manages the project's access.
-- Editor can discuss, prompt AI when the `requestAi` capability and owner runtime are available, and invoke authorized project file mutations on the owner's runtime.
-- Viewer can read the shared history but cannot compose, request AI, mutate files, or operate the owner's runtime.
+Members may create, modify, and delete content inside the project. They may not access unrelated projects, the owner's general home, credentials, billing data, or system configuration.
 
-Clerk current organization membership plus a Matrix project grant is the sole access authority. Clerk organization owners and admins receive no implicit access to member projects. Organization administration roles never bypass a project grant.
+New standalone live Chat, terminal, file, and folder scopes cannot be created. Existing standalone scopes, recipient links, and `Shared with me` entries remain readable, manageable, and revocable for compatibility. Public read-only Chat snapshots remain a separate feature and never grant live project access.
 
-The effective role is the strongest applicable project grant. Under organization-wide Editor access, a weaker direct Viewer grant cannot downgrade a member; the access manager presents that member as inherited Editor. Under organization-wide Viewer or Restricted access, a direct Editor grant is permitted. Revocation and role changes remain revision-checked and idempotent.
+This release targets Web Canvas, Web Desktop, and Electron Desktop. Native Mobile parity remains separate.
 
-## Unified project Share dialog
+## Authority
 
-Project sharing uses one Figma-aligned Share dialog for setup, publication progress, failures, retries, and ongoing access management. Separate inventory and collaborator dialogs are not product surfaces.
+The authoritative access rule is:
 
-On the first open, the dialog:
+```text
+project access = project is shared with organization
+                 AND actor has current active membership in that organization
+```
 
-1. Runs the existing project scope preflight and loads the revision-bound project inventory.
-2. Warns that all current and future project contents share together, while files remain inside the authorization boundary and no recipient file browser/editor ships here.
-3. Resolves and displays the selected Clerk organization's real display name.
-4. Creates the initial general-access grant as **Everyone in {organization} · Editor** if no audience has been configured.
-5. Confirms the exact inventory through the existing project-confirmation endpoint.
-6. Keeps delayed publication, conflicts, retry, and success in the same dialog.
+Organization administration status does not grant access to a private project before it is shared. After sharing, every active member receives the same working access regardless of organization administration role. Pending, expired, suspended, or removed identities receive no access. When membership cannot be verified, member access fails closed.
 
-After publication, that dialog is the access manager. It shows the immutable Owner, activated members, explicit pending member grants, and general access as Editor, Viewer, or Restricted. Owners can add direct grants, change Editor/Viewer roles, and revoke grants. Organization-wide members activate access when they first open the project.
+The owner is immutable and always retains private access. Removing a member from the organization or unsharing the project ends affected member access without individual grant cleanup. If the project owner loses active membership in the selected organization, all non-owner access ends until the owner explicitly shares with an eligible organization. Revocation stops affected active project sessions and denies later operations.
 
-The dialog uses generic safe errors. It never exposes provider, database, filesystem, or raw gateway error details.
+## Unified Share dialog
 
-## Shared Chat behavior
+The project Share dialog performs and explains one operation:
 
-Every project-owned Chat inherits the project's audience and effective roles, including Chats that existed before publication and Chats created later. Creation of a new project Chat must idempotently bind the inherited project scope; it must not create an independent audience.
+> Share this project with everyone in {organization}. Members can edit project content and use your configured AI connection.
 
-There is one canonical timeline and one AI queue per Chat. Human prompts identify their actor and render on the right. Assistant messages, tool calls, and tool results render on the left. Realtime updates are shared by all authorized participants.
+Before sharing, the dialog shows the selected organization's real name and the scope of access. After sharing, it shows that the project is available to everyone in the organization and offers the owner an unshare action. It does not show roles, individual grants, capability switches, provider/model selection, or a separate AI acknowledgement.
 
-`ChatPermissionPresentation.canRequestAi` is a boolean derived from authority and availability:
+Sharing and unsharing remain owner-authorized, revision-checked, idempotent operations. Failures use generic safe errors and never expose provider, database, filesystem, or gateway details.
 
-- Owner or Editor + `requestAi` capability + available owner runtime: composer enabled.
-- Viewer, missing capability, or unavailable runtime: history remains visible and composer is disabled with safe explanatory copy.
+## Shared Chat and AI behavior
 
-AI execution and project file mutations remain on the owner's runtime. This release does not add a collaborator-facing file UI.
+Every project Chat inherits the project's organization access, including Chats that existed before sharing and Chats created later. There is one canonical timeline and one AI queue per Chat. Human prompts identify their actor; assistant messages, tool calls, and tool results remain shared and persistent.
 
-## Compatibility and rejected concepts
+AI availability is derived from membership, project authority, owner-runtime availability, and the owner's current global AI Settings:
 
-- Existing scope IDs, grants, events, standalone links, and recipient entries remain valid.
-- Reads, role management, and revocation remain available for existing standalone scopes.
-- The standalone preflight may return an existing scope for management, but it must not issue a confirmation token for a new standalone scope.
-- Direct standalone create requests fail closed at the gateway with a generic authorization response, except for an exact app build with a current readiness certificate under `specs/2689-collaborative-app-sharing/`.
-- The app exception never changes legacy project or standalone roles. Any current organization member may share an app they own, and every current member including the organization guest role receives the app's full declared functionality without app-specific permission rows.
-- Public Chat snapshots stay supported and are not live collaboration.
-- The Figma concept in which each member receives a private Chat or per-member snapshot is **rejected**, not deferred. Project Chats remain shared group timelines.
+```text
+can request AI = can access shared project
+                 AND owner runtime is available
+                 AND owner's current AI connection is ready
+```
+
+The project does not persist a separate provider selection or long-lived project-to-account consent binding. A later owner Settings change governs later requests automatically. Each provider request must still verify the exact current owner authority at admission time. A concurrent account change either leaves the request on the one verified current authority or causes no provider request.
+
+If the owner logs out, disables AI, changes accounts, or has no ready source, shared AI becomes unavailable. Matrix must not fall back to Matrix credit, another provider, another account, another model source, or a collaborator credential. Account changes fence new requests and stop or drain affected active work before replacement becomes usable.
+
+Credentials remain server-side and unavailable to collaborators, sandboxes, public responses, logs, and model context. Shared execution remains constrained to the exact project boundary.
 
 ## Endpoint authorization matrix
 
 | Operation | Authentication | Required authority | Result |
 | --- | --- | --- | --- |
-| Project scope preflight/create | owner-runtime session | resource owner and current organization membership | allowed |
-| Project inventory/confirmation/publication | owner direct session | `manage_members` on the exact project scope | revision-bound operation |
-| Project grant create/change/revoke | owner direct session | `manage_members`; current scope and grant revisions | idempotent mutation |
-| Project access presentation | owner direct session | `manage_members` | owner/general/activated/pending projection |
-| Project-inherited Chat scope creation | internal project path | active parent project authority | allowed and audience-inherited |
-| Standalone live Chat/terminal/file/folder create | owner-runtime session | none can authorize | denied |
-| Direct collaborative app scope create | owner-runtime session | exact app owner + current organization membership + current exact-build readiness | allowed without project/grant/activation |
-| Existing standalone read/manage/revoke | direct session | existing grant/capability | compatibility path remains |
-| Public Chat snapshot create/read | existing snapshot authority | snapshot rules, not collaboration grants | unchanged read-only publication |
+| Project share/unshare | Owner runtime session | project owner and current membership in selected organization | revision-bound whole-project mutation |
+| Shared project read/write | Direct owner-home session | current active membership for both project owner and requesting actor in project's organization | full project working access |
+| Shared Chat discussion/AI | Direct owner-home session | shared project access; AI additionally requires current ready owner connection | canonical shared timeline |
+| Project tool/app/terminal use | Direct owner-home session | shared project access and operational project capability | project-scoped execution only |
+| Whole-project deletion | Owner runtime session | project owner | allowed |
+| Owner AI/billing mutation | Owner runtime session | owner provider authority | allowed; collaborators denied |
+| Standalone live Chat/terminal/file/folder create | Owner runtime session | none can authorize | denied |
+| Direct collaborative app scope create | Owner runtime session | exact app owner + current organization membership + current exact-build readiness | allowed without project/grant/activation |
+| Existing standalone read/manage/revoke | Direct session | existing compatibility authority | compatibility path remains |
+| Public Chat snapshot create/read | Snapshot authority | snapshot rules, not collaboration membership | unchanged read-only publication |
 
-All route parameters and bodies use bounded Zod schemas and mutating routes use body limits. Authorization is re-evaluated at the gateway; UI state is never authority. Related writes are transactional, optimistic concurrency is enforced in the write statement, and mutation retries use stable client request IDs.
+All route parameters and bodies use bounded Zod schemas and mutating routes use body limits. Authorization is re-evaluated at the gateway; UI state is never authority. Related writes are transactional, optimistic concurrency is enforced in the write statement, and retries use stable request identifiers.
+
+## Compatibility and transition
+
+- Existing shared projects transition to organization-wide full working access without project or Chat recreation.
+- Historical project roles, direct grants, capability grants, and execution policies do not independently authorize or restrict V1 project access after transition.
+- Existing records may be retained temporarily for rollback or audit, but current organization membership and the project's selected organization are the serving authority.
+- Existing scope IDs, grants, events, standalone links, and recipient entries remain valid for compatibility.
+- Reads, role management, and revocation remain available for existing standalone scopes.
+- The standalone preflight may return an existing scope for management, but it must not issue a confirmation token for a new standalone scope.
+- Direct standalone create requests fail closed at the gateway with a generic authorization response, except for an exact app build with a current readiness certificate under `specs/2689-collaborative-app-sharing/`.
+- The app exception never changes legacy project or standalone roles. Any current organization member may share an app they own, and every current member including the organization guest role receives the app's full declared functionality without app-specific permission rows.
+- Public Chat snapshots stay supported and separate from live collaboration.
+- The Figma concept in which each member receives a private Chat or per-member snapshot is rejected, not deferred. Project Chats remain shared group timelines.
 
 ## Acceptance criteria
 
 Release evidence must prove:
 
-- dynamic organization name and initial Everyone/Editor state;
-- unified preflight, inventory conflict, publication, delayed publication, retry, and access-manager states;
-- effective-role precedence, member activation, direct role changes, and revocation;
-- Editor AI composition versus Viewer read-only behavior;
-- attributed multi-user prompts on the right and assistant/tool output on the left;
-- inheritance for existing and newly created project Chats;
-- snapshot-only Chat sharing and absence of new standalone live-share controls;
-- legacy standalone access management and recipient compatibility;
-- gateway denial of new standalone Chat, terminal, file, and folder kinds while project, inherited Chat, and readiness-qualified direct app creation still work;
-- no project read from organization admin status alone;
-- Editor AI/file capabilities and Viewer restrictions;
-- parity on Web Canvas, Web Desktop, and Electron Desktop.
+- one-confirmation organization sharing with no role, member, capability, provider, model, or acknowledgement setup;
+- immediate equivalent access for current and newly activated organization members;
+- member use of existing and future project Chats, AI, project content, tools, apps, and terminals;
+- owner-only sharing, whole-project deletion, and owner AI/billing, plus organization administration governed independently by organization policy;
+- member denial outside the shared project and complete outsider denial;
+- automatic use of the owner's current global AI Settings for later requests;
+- no provider, account, model-source, collaborator-credential, or Matrix-credit fallback;
+- safe account-change, logout, unshare, membership-loss, restart, and reconnect behavior;
+- canonical prompt/response persistence without duplication;
+- compatibility for existing project shares and legacy standalone records;
+- continued denial of new standalone Chat, terminal, file, and folder scopes while readiness-qualified direct app creation remains allowed; and
+- live parity evidence for Web Canvas, Web Desktop, and Electron Desktop at the exact reviewed build.
 
-Run the focused collaboration suites, affected typechecks, React quality checks, Web and Electron production builds, and current Web Canvas/Electron end-to-end journeys with screenshots. Public documentation ships in a separate `FinnaAI/matrix-os-site` PR.
+Run focused collaboration and provider-admission suites, affected typechecks, production builds, and live owner/member/outsider journeys. Attach evidence to the PR and ENG-29, post the same evidence with the ENG-29 and PR links in Slack `#tech`, and link the Slack permalink back to the PR. Public documentation ships through a separate `FinnaAI/matrix-os-site` PR.
 
 ## Deferred work
 
-Track these items in one linked GitHub issue, not an empty draft PR:
-
-- recipient file browsing/editing and directory-to-project binding;
-- closer Figma redesign and filtering of `Shared with me`;
-- topbar reorganization and Notification Inbox;
-- Native Mobile collaboration parity;
-- standalone live Chat, terminal, file, and folder sharing, plus any app sharing that does not meet the exact-build collaborative-app contract;
-- collaborative terminal UX within shared projects;
-- public project links, copy-link flows, and external access requests;
-- organization invite links and “join with work email”;
-- fine-grained file/folder permissions and roles beyond Editor/Viewer.
-
-Public Chat snapshots remain supported and are excluded from that deferred live-collaboration issue.
+- Anonymous, public, external-guest, cross-organization, or multi-organization live project access.
+- Fine-grained roles, direct grants, per-capability controls, and project-specific AI policies.
+- New standalone live Chat, terminal, file, and folder sharing, plus any app sharing that does not meet the exact-build collaborative-app contract.
+- Native Mobile collaboration parity.
+- Member ownership transfer, whole-project deletion, sharing administration, provider administration, or billing administration.

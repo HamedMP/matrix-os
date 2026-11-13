@@ -13,6 +13,7 @@ import {
 } from "../../packages/platform/src/funded-pricing-review-job-sources.js";
 
 const glm = "@cf/zai-org/glm-5.3";
+const deepseek = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const qwen = "@cf/qwen/qwen3.8-27b";
 const gemma = "@cf/google/gemma-4-26b-a4b-it";
 const sonnet = "anthropic/claude-sonnet-5";
@@ -23,6 +24,7 @@ const pricing = [
   "| Model | Price in Tokens | Price in Neurons |",
   "| --- | --- | --- |",
   "| @cf/zai-org/glm-5.3 | $1.400 per M input tokens <br> $0.260 per M cached input tokens <br> $4.400 per M output tokens | 127273 neurons per M input tokens |",
+  "| @cf/deepseek-ai/deepseek-v4.1-flash-1017 | $0.300 per M input tokens <br> $0.006 per M cached input tokens <br> $1.200 per M output tokens | 27273 neurons per M input tokens |",
   "| @cf/qwen/qwen3.8-27b | $0.450 per M input tokens <br> $3.200 per M output tokens | 40909 neurons per M input tokens |",
   "| @cf/google/gemma-4-26b-a4b-it | $0.100 per M input tokens <br> $0.300 per M output tokens | 9091 neurons per M input tokens |",
 ].join("\n");
@@ -76,6 +78,21 @@ describe("official funded pricing verification", () => {
     [gemma]: FUNDED_PRICING_CATALOG[gemma],
     [sonnet]: FUNDED_PRICING_CATALOG[sonnet],
   };
+
+  it("verifies the exact shared DeepSeek V4.1 Flash rate", async () => {
+    expect(FUNDED_PRICING_CATALOG[deepseek]).toMatchObject({
+      version: "cloudflare-2026-11-12-deepseek-v4.1-flash-1017",
+      input: 300,
+      output: 1200,
+      cached: 6,
+    });
+    const result = await readOfficialFundedPricing({
+      fetchFn: sourceFetch(),
+      signal: new AbortController().signal,
+      catalog: { [deepseek]: FUNDED_PRICING_CATALOG[deepseek] },
+    });
+    expect(result[deepseek]).toMatchObject({ kind: "match", retiredAt: null });
+  });
 
   it("requires model-specific cache evidence and reads the provider retirement deadline", async () => {
     const fetchFn = sourceFetch();
