@@ -191,23 +191,15 @@ describe("Electron Shared with me navigation", () => {
     expect(screen.queryByRole("heading", { name: "Launch plan" })).toBeNull();
   });
 
-  it("opens an exact shared app target in a native app tab", async () => {
+  // Exact app-target tab creation is retained in app-launcher.test.tsx; apps no longer belong in Chat.
+  it("keeps shared app cards out of the Chat directory", async () => {
     collaborationMock.appAvailable = true;
     render(<DesktopChatCollaboration />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open app" }));
-
-    const active = useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId);
-    expect(active).toMatchObject({
-      kind: "app",
-      title: "team tracker",
-      sharedAppTarget: {
-        scopeId: "10000000-0000-4000-8000-000000000099",
-        appId: "team-tracker",
-        buildId: "b".repeat(64),
-        shareRevision: "7",
-      },
-    });
+    await screen.findByRole("button", { name: "Open Chat" });
+    expect(screen.queryByRole("button", { name: "Open app" })).toBeNull();
+    expect(screen.queryByText("team tracker")).toBeNull();
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
   it("exposes Shared with me in the Chat rail and opens its native content", async () => {

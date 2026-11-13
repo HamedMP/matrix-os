@@ -14,7 +14,7 @@ const target = {
   registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
   owner: { actorId: "user_owner", displayName: "Owner" },
 };
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it("loads every metadata page and removes a stopped share on discovery refresh", async () => {
   let shared = true;
@@ -75,6 +75,54 @@ it("keeps a large directory usable and loads additional pages on demand", async 
   act(() => result.current.loadMore());
   await waitFor(() => expect(result.current.items).toHaveLength(21));
   expect(result.current.hasMore).toBe(false);
+});
+
+it("refreshes the loaded page window without hiding later apps and removes revoked shares", async () => {
+  vi.useFakeTimers();
+  let revoked = false;
+  const api = { get: vi.fn(async (path: string) => {
+    const page = Number(new URL(path, "https://platform.test").searchParams.get("cursor") ?? 0);
+    return { items: revoked && page === 19 ? [] : [{ ...target,
+      scopeId: `10000000-0000-4000-8000-${String(page + 1).padStart(12, "0")}` }],
+      ...(page < 20 ? { nextCursor: String(page + 1) } : {}) };
+  }) };
+  const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
+  await act(async () => undefined);
+  expect(result.current.items).toHaveLength(20);
+  await act(async () => result.current.loadMore());
+  expect(result.current.items).toHaveLength(21);
+  revoked = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(result.current.items).toHaveLength(20);
+  expect(result.current.items.at(-1)?.scopeId).toBe("10000000-0000-4000-8000-000000000021");
+  expect(result.current.items.some((item) => item.scopeId.endsWith("000000000020"))).toBe(false);
+  expect(result.current.hasMore).toBe(false);
+  await act(async () => notifyCollaborationDiscoveryChanged());
+  expect(result.current.items.at(-1)?.scopeId).toBe("10000000-0000-4000-8000-000000000021");
+});
+
+it("polls the bounded later page window until the member explicitly restarts", async () => {
+  vi.useFakeTimers();
+  const api = { get: vi.fn(async (path: string) => {
+    const page = Number(new URL(path, "https://platform.test").searchParams.get("cursor") ?? 0);
+    return { items: Array.from({ length: 100 }, (_, index) => ({ ...target,
+      scopeId: `10000000-0000-4000-8000-${String(page * 100 + index + 1).padStart(12, "0")}` })),
+      ...(page < 20 ? { nextCursor: String(page + 1) } : {}) };
+  }) };
+  const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
+  await act(async () => undefined);
+  await act(async () => result.current.loadMore());
+  expect(result.current.items).toHaveLength(2_000);
+  api.get.mockClear();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(api.get).toHaveBeenCalledTimes(20);
+  expect(api.get.mock.calls[0][0]).toContain("cursor=1");
+  expect(result.current.items[0]?.scopeId).toBe("10000000-0000-4000-8000-000000000101");
+  expect(result.current.items.at(-1)?.scopeId).toBe("10000000-0000-4000-8000-000000002100");
+  expect(result.current.hasEarlier).toBe(true);
+  await act(async () => result.current.restart());
+  expect(result.current.items[0]?.scopeId).toBe(target.scopeId);
+  expect(result.current.hasEarlier).toBe(false);
 });
 
 it("bounds loaded entries, preserves them on pagination failure and offers restart", async () => {

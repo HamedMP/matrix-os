@@ -27,6 +27,9 @@ supported for compatibility.
 - Initial discovery reads at most 20 pages. More results remain available through
   Load more; retain at most 2,000 visible shared entries and explain when earlier
   entries leave that window, with Show first shared apps to return to them.
+  Retain at most 21 loaded pages, including sparse pages, so refresh work stays
+  bounded. Polls and discovery events revalidate the current page window,
+  including removed shares; only Show first shared apps returns to the start.
 
 ## Acceptance
 
