@@ -53,6 +53,20 @@ it('preserves the legacy site response unless the gateway negotiates access mode
  expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
+it('keeps email capability fields out of version 2 gateway responses', async () => {
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'contract-upgrade',title:'Upgrade',description:'',slug:null,revision:0,status:'published',access_mode:'private_email',active_version:null,created_at:new Date().toISOString()}).execute();
+ const versioned=new Hono();
+ versioned.route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db,emailCapability:async()=>true})}));
+ const url='/internal/containers/launch/sites/contract-upgrade?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`};
+ const previous=await (await versioned.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:'2'}})).json() as Record<string,unknown>;
+ expect(previous.accessMode).toBe('private_email');
+ expect(previous).not.toHaveProperty('capabilities');
+ const current=await (await versioned.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:'3'}})).json() as Record<string,unknown>;
+ expect(current).toMatchObject({accessMode:'private_email',capabilities:{privateEmailInvitations:true}});
+});
+
 it('registers only with concrete dependencies and advertises email readiness as false by default', async () => {
  const missing = { db: undefined, platformSecret: secret } as unknown as Parameters<typeof registerSiteRoutes>[1];
  expect(() => registerSiteRoutes(new Hono(), missing)).toThrow();
@@ -64,7 +78,7 @@ it('registers only with concrete dependencies and advertises email readiness as 
  const registered = new Hono();
  registerSiteRoutes(registered, { db, platformSecret: secret, edgeSecret: 'e'.repeat(40), env: { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' } });
  const response = await registered.request('/internal/containers/launch/sites/email-capability?runtimeSlot=primary', {
-  headers: { authorization: `Bearer ${token}` },
+  headers: { authorization: `Bearer ${token}`, [SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]: SITE_MANAGEMENT_CONTRACT_VERSION },
  });
  expect(response.status).toBe(200);
  expect(await response.json()).toMatchObject({ capabilities: { privateEmailInvitations: false } });
