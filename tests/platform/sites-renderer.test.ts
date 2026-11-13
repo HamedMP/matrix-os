@@ -13,8 +13,14 @@ it('keeps the email Clerk component and exchange on the exact canonical app URL 
  expect(gate.html).toContain('session.getToken');
  expect(gate.html).not.toMatch(/app\.matrix-os\.com|api\/auth\/app-session|billing|onboarding|provision-runtime/);
  expect(gate.csp).toContain('clerk.matrix-os.com');
+ expect(gate.csp).toMatch(/script-src [^;]*https:\/\/challenges\.cloudflare\.com/);
+ expect(gate.csp).toMatch(/connect-src [^;]*https:\/\/challenges\.cloudflare\.com/);
+ expect(gate.csp).toContain('frame-src https://challenges.cloudflare.com');
+ expect(gate.csp).toContain("worker-src 'self' blob:");
  expect(APP_CSP).not.toContain('clerk.matrix-os.com');
  expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(APP_CSP).not.toContain('challenges.cloudflare.com');
+ expect(PRIVATE_APP_CSP).not.toContain('challenges.cloudflare.com');
  expect(gate.html).not.toContain(site.title);
 });
 it('reuses an existing Matrix Clerk session and exchanges only at that app URL', async () => {
