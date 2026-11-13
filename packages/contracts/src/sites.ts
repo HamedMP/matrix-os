@@ -164,7 +164,7 @@ const invitationEmail = z.email().max(254);
 export const SiteEmailInvitationStateSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
 export const SiteEmailInvitationDeliveryStateSchema = z.enum(["queued", "sending", "sent", "failed", "ambiguous", "suppressed"]);
 export const SiteEmailInvitationCreateRequestSchema = z.object({
-  emailAddresses: z.array(z.string().min(1).max(320)).min(1).max(SITE_MAX_EMAIL_INVITES),
+  emailAddresses: z.array(z.string().max(320)).min(1).max(SITE_MAX_EMAIL_INVITES),
   baseRevision,
 }).strict();
 export const SiteEmailInvitationMutationRequestSchema = z.object({ baseRevision, invitationRevision }).strict();

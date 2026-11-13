@@ -102,6 +102,34 @@ it('preserves legacy access-link listings unless the gateway negotiates paginati
  expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
  expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
 });
+it('serves bounded email invitation and audit endpoints only to the exact owner machine',async()=>{
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,
+  app_slug:'email-event',title:'Email event',description:'',slug:null,revision:1,status:'published',
+  access_mode:'private_email',active_version:null,created_at:new Date().toISOString()}).execute();
+ const enabled=new Hono();enabled.route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,
+  service:createSitesService({db}),emailEnabled:async()=>true}));
+ const url='/internal/containers/launch/sites/email-event/invitations?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ expect((await enabled.request(url,{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({baseRevision:1,emailAddresses:['person@example.com']})})).status).toBe(401);
+ const created=await enabled.request(url,{method:'POST',headers,
+  body:JSON.stringify({baseRevision:1,emailAddresses:['person@example.com']})});
+ expect(created.status).toBe(200);
+ const result=await created.json() as {results:Array<{invitation:{id:string;revision:number}}>;siteRevision:number};
+ expect(result.results[0]).toMatchObject({outcome:'queued'});
+ const invitationId=result.results[0]!.invitation.id;
+ expect((await enabled.request(url,{headers})).status).toBe(200);
+ expect((await enabled.request(url+'&limit=0',{headers})).status).toBe(400);
+ expect((await enabled.request(url,{method:'POST',headers,body:'x'.repeat(33*1024)})).status).toBe(413);
+ const revoked=await enabled.request(`${url.replace('?runtimeSlot=primary','')}/${invitationId}?runtimeSlot=primary`,{
+  method:'DELETE',headers,body:JSON.stringify({baseRevision:result.siteRevision,invitationRevision:0})});
+ expect(revoked.status).toBe(200);
+ const audit=await enabled.request('/internal/containers/launch/sites/email-event/invitations/audit?runtimeSlot=primary',{headers});
+ expect(audit.status).toBe(200);
+ expect((await audit.json() as {events:Array<{type:string}>}).events.map(event=>event.type))
+  .toEqual(expect.arrayContaining(['invitation_created','invitation_revoked']));
+});
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{
  const url='/internal/containers/launch/sites/event?runtimeSlot=primary';

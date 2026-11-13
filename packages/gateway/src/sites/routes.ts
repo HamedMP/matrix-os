@@ -5,7 +5,10 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema,
+ SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, SiteEmailInvitationCreateRequestSchema,
+ SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationListQuerySchema, SiteInvitationAuditCursorSchema,
+ type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -130,6 +133,40 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   const linkId=SiteIdSchema.safeParse(c.req.param('linkId'));if(!linkId.success)return c.json({error:'Invalid request'},400);
   try{await options.platform!.revokeAccessLink(c.req.param('slug')!,linkId.data);return c.json({ok:true});}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ });
+ const emailMutationLimit=bodyLimit({maxSize:2048,onError:c=>c.json({error:'Invalid request'},413)});
+ const emailCreateLimit=bodyLimit({maxSize:32*1024,onError:c=>c.json({error:'Invalid request'},413)});
+ async function emailCall<T>(c:Context,work:()=>Promise<T>):Promise<Response>{
+  try{return c.json(await work());}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ }
+ app.get(base+'/invitations',async c=>{
+  const parsed=SiteEmailInvitationListQuerySchema.safeParse(c.req.query());
+  if(!parsed.success)return c.json({error:'Invalid request'},400);
+  return emailCall(c,()=>options.platform!.listEmailInvitations(c.req.param('slug')!,parsed.data));
+ });
+ app.post(base+'/invitations',emailCreateLimit,async c=>{
+  const parsed=await body(c,SiteEmailInvitationCreateRequestSchema);
+  if(!parsed.success)return c.json({error:'Invalid request'},400);
+  return emailCall(c,()=>options.platform!.createEmailInvitations(c.req.param('slug')!,parsed.data));
+ });
+ app.get(base+'/invitations/audit',async c=>{
+  const parsed=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),
+   cursor:SiteInvitationAuditCursorSchema.optional()}).strict().safeParse(c.req.query());
+  if(!parsed.success)return c.json({error:'Invalid request'},400);
+  return emailCall(c,()=>options.platform!.emailInvitationAudit(c.req.param('slug')!,parsed.data));
+ });
+ app.post(base+'/invitations/:invitationId/resend',emailMutationLimit,async c=>{
+  const id=SiteIdSchema.safeParse(c.req.param('invitationId'));
+  const parsed=await body(c,SiteEmailInvitationMutationRequestSchema);
+  if(!id.success||!parsed.success)return c.json({error:'Invalid request'},400);
+  return emailCall(c,()=>options.platform!.resendEmailInvitation(c.req.param('slug')!,id.data,parsed.data));
+ });
+ app.delete(base+'/invitations/:invitationId',emailMutationLimit,async c=>{
+  const id=SiteIdSchema.safeParse(c.req.param('invitationId'));
+  const parsed=await body(c,SiteEmailInvitationMutationRequestSchema);
+  if(!id.success||!parsed.success)return c.json({error:'Invalid request'},400);
+  return emailCall(c,()=>options.platform!.revokeEmailInvitation(c.req.param('slug')!,id.data,parsed.data));
  });
  async function publication(c:Context):Promise<SiteRecord|null>{return options.platform!.request(c.req.param('slug')!,'GET');}
  app.get(base+'/submissions',async c=>{

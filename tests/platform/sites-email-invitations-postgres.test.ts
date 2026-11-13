@@ -3,7 +3,8 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
-import { acceptSiteEmailInvitation, siteClerkSessionKey } from '../../packages/platform/src/sites/email-invitations.js';
+import { acceptSiteEmailInvitation, createSiteEmailInvitations, listSiteEmailInvitations,
+  resendSiteEmailInvitation, revokeSiteEmailInvitation, siteClerkSessionKey } from '../../packages/platform/src/sites/email-invitations.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { authorizeEmailViewerSession } from '../../packages/platform/src/sites/email-viewer-sessions.js';
 
@@ -62,6 +63,69 @@ postgres('site email invitations across independent PostgreSQL connections', () 
     expect(sessions.length).toBeLessThanOrEqual(20);
     expect(invitation).toMatchObject({ state: 'accepted', accepted_clerk_user_id: recipient.clerkUserId });
     expect(events.filter(event => event.event_type === 'invitation_accepted')).toHaveLength(1);
+  });
+
+  it('creates ordered normalized owner results and a committed outbox before delivery', async () => {
+    const {siteId}=await seed();
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const created=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:[
+      '  ADA@example.com  ','ada@EXAMPLE.com','bad address','recipient@example.com','bob+notes@example.com','',
+    ]});
+    expect(created.results.map(result=>result.outcome)).toEqual(['queued','duplicate_in_batch','invalid','existing','queued','invalid']);
+    expect(created.results[0]).toMatchObject({invitation:{emailAddress:'ada@example.com',state:'pending',generation:1}});
+    expect(created.siteRevision).toBe(2);
+    const rows=await dbB.executor.selectFrom('public_site_email_invitations').selectAll().where('site_id','=',siteId).execute();
+    expect(rows).toHaveLength(3);
+    const deliveries=await dbB.executor.selectFrom('public_site_invitation_deliveries').selectAll()
+      .where('invitation_id','in',rows.filter(row=>row.normalized_email!=='recipient@example.com').map(row=>row.id)).execute();
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries.every(row=>row.state==='queued')).toBe(true);
+    const audit=await dbB.executor.selectFrom('public_site_access_audit_events').selectAll().where('site_id','=',siteId).execute();
+    expect(audit.filter(row=>row.event_type==='invitation_created')).toHaveLength(2);
+    const page=await listSiteEmailInvitations(dbB,owner,{limit:2});
+    expect(page.invitations).toHaveLength(2);
+    expect(page.nextCursor).toBeTruthy();
+    expect(page.invitations.every(row=>!('acceptedClerkUserId' in row))).toBe(true);
+    const next=await listSiteEmailInvitations(dbB,owner,{limit:2,cursor:page.nextCursor!});
+    expect(next.invitations).toHaveLength(1);
+    await expect(createSiteEmailInvitations(dbB,owner,{baseRevision:1,emailAddresses:['new@example.com']}))
+      .rejects.toMatchObject({code:'conflict'});
+  });
+
+  it('resends a failed invitation with one new generation and cancels stale delivery work', async () => {
+    const {siteId,invitationId}=await seed('retry@example.com');
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const now=new Date();
+    await dbA.executor.insertInto('public_site_invitation_deliveries').values({id:randomUUID(),invitation_id:invitationId,
+      invitation_generation:'1',idempotency_key:randomUUID(),state:'failed',attempts:1,available_at:now,
+      lease_token:null,lease_until:null,provider_message_id:null,failure_code:'timeout',sent_at:null,created_at:now,updated_at:now}).execute();
+    await dbA.executor.updateTable('public_site_email_invitations').set({delivery_state:'failed'}).where('id','=',invitationId).execute();
+    const resent=await resendSiteEmailInvitation(dbA,owner,invitationId,{baseRevision:1,invitationRevision:0});
+    expect(resent).toMatchObject({siteRevision:2,invitation:{id:invitationId,generation:2,state:'pending',deliveryState:'queued'}});
+    const deliveries=await dbB.executor.selectFrom('public_site_invitation_deliveries').selectAll().where('invitation_id','=',invitationId)
+      .orderBy('invitation_generation','asc').execute();
+    expect(deliveries.map(row=>row.state)).toEqual(['cancelled','queued']);
+    await expect(resendSiteEmailInvitation(dbB,owner,invitationId,{baseRevision:2,invitationRevision:0}))
+      .rejects.toMatchObject({code:'conflict'});
+  });
+
+  it('revokes an accepted invitation, grant, sessions, and delivery in one owner transaction', async () => {
+    const {siteId,invitationId}=await seed('revoke@example.com');
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const identity={...recipient,clerkSessionId:'sess_revoke',verifiedEmails:['revoke@example.com']};
+    const issued=await acceptSiteEmailInvitation({db:dbA,siteId,identity,secret});
+    expect(await authorizeEmailViewerSession(dbB,siteId,issued.cookie,secret)).toBe(true);
+    const response=await revokeSiteEmailInvitation(dbA,owner,invitationId,{baseRevision:1,invitationRevision:1});
+    expect(response).toMatchObject({siteRevision:2,invitation:{state:'revoked'}});
+    expect(await authorizeEmailViewerSession(dbB,siteId,issued.cookie,secret)).toBe(false);
+    expect((await dbB.executor.selectFrom('public_site_viewer_grants').selectAll().where('id','=',issued.grantId)
+      .executeTakeFirstOrThrow()).revocation_reason).toBe('owner');
+    expect((await dbB.executor.selectFrom('public_site_viewer_sessions').selectAll().where('id','=',issued.sessionId)
+      .executeTakeFirstOrThrow()).revoked_at).not.toBeNull();
+    expect(await dbB.executor.selectFrom('public_site_access_audit_events').select('event_type')
+      .where('invitation_id','=',invitationId).where('event_type','=','invitation_revoked').execute()).toHaveLength(1);
+    await expect(revokeSiteEmailInvitation(dbB,owner,invitationId,{baseRevision:1,invitationRevision:1}))
+      .rejects.toMatchObject({code:'conflict'});
   });
 
   it('admits only one of two matching identities and rejects expiry or a terminated Clerk session', async () => {
