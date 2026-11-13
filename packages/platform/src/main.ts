@@ -134,9 +134,6 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
-import {
-  resolveContainerEndpoint,
-} from './container-endpoint.js';
 import { startPlatformServer } from './platform-startup.js';
 import {
   checkCustomerVpsPrimaryStorageEnv,
@@ -261,6 +258,7 @@ export function createApp(deps: {
   db: PlatformDB;
   atsDb?: AtsDB;
   docker?: Dockerode;
+  registeredRuntimeInstance?: string;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -298,7 +296,7 @@ export function createApp(deps: {
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
-  const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
+  const { db, docker, registeredRuntimeInstance, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const appEnv = deps.env ?? process.env;
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
@@ -714,6 +712,7 @@ export function createApp(deps: {
   app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), createSessionRoutingMiddleware({
     db,
     docker,
+    registeredRuntimeInstance,
     orchestrator,
     clerkAuth,
     appEnv,
@@ -910,6 +909,7 @@ export function createApp(deps: {
   // --- Subdomain proxy ---
 
   app.all('/proxy/:handle/*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c) => {
+    if (registeredRuntimeInstance) return c.json({ error: 'Matrix computer unavailable' }, 404);
     const handle = c.req.param('handle');
     if (!HANDLE_PATTERN.test(handle)) {
       return c.json({ error: 'Invalid handle' }, 400);
