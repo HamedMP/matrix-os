@@ -145,6 +145,7 @@ function codingSupports(
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
     interactionModes: supportedModes,
+    ...(driverKind === "claude_code" ? { livePermissionModes: ["supervised", "full_access"] as Array<"supervised" | "full_access"> } : {}),
     permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
       : ["supervised", "auto_accept_edits", "auto", "full_access"],

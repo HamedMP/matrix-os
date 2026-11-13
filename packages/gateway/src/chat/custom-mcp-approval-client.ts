@@ -9,6 +9,7 @@ const PrepareResponse = z.discriminatedUnion("kind", [
 const DecisionResponse = z.object({ receipt: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 
 export interface CustomMcpApprovalClient {
+  verifyPermissionMode?(input: { chatId: string; runId: string; clientRequestId: string; permissionMode: "supervised" | "full_access"; permissionModeProof: string }): Promise<boolean>;
   verifyIntegrationDecision?(input: { chatId: string; runId: string; approvalId: string;
     decision: "approve" | "decline" | "cancel"; clientRequestId: string; platformApprovalProof: string }): Promise<boolean>;
   registerRun(runId: string): Promise<{ generation: number }>;
@@ -40,11 +41,11 @@ export function createCustomMcpApprovalClient(options: {
   const endpoint = new URL(`/internal/containers/${options.handle}/mcp-approvals/`, base);
   const fetcher = options.fetcher ?? fetch;
 
-  async function post(path: string, value: unknown, proof?: string): Promise<Response> {
+  async function post(path: string, value: unknown, proof?: string, proofHeader = "x-matrix-custom-mcp-approval-proof"): Promise<Response> {
     const response = await fetcher(new URL(path, endpoint).toString(), {
       method: "POST",
       headers: { authorization: `Bearer ${options.token}`, "content-type": "application/json",
-        ...(proof ? { "x-matrix-custom-mcp-approval-proof": proof } : {}) },
+        ...(proof ? { [proofHeader]: proof } : {}) },
       body: JSON.stringify(value), redirect: "error", signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error("Custom MCP approval unavailable");
@@ -52,6 +53,11 @@ export function createCustomMcpApprovalClient(options: {
   }
 
   return {
+    async verifyPermissionMode(input) {
+      const { permissionModeProof, ...request } = input;
+      const result = await post(`/internal/containers/${options.handle}/integrations/permission-mode/verify`, request, permissionModeProof, "x-matrix-chat-permission-mode-proof");
+      return z.strictObject({ verified: z.literal(true) }).parse(await result.json()).verified;
+    },
     async verifyIntegrationDecision(input) {
       const { platformApprovalProof, ...decision } = input;
       const result = await post(`/internal/containers/${options.handle}/integrations/approval/verify`, decision, platformApprovalProof);

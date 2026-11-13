@@ -1,3 +1,5 @@
+import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { projectChatPermissionModeResponse } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
 import { managedChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
@@ -60,4 +62,21 @@ describe("Chat provider presentation negotiation", () => {
   it("rejects an invalid funding-state capability", async () => {
     expect((await routes.request("/api/chat-providers?includeFundingState=yes")).status).toBe(400);
   });
+});
+
+
+it("negotiates live mode capabilities independently and preserves strict legacy catalogs", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  catalog.instances[0]!.supports.livePermissionModes = ["supervised", "full_access"];
+  const routes = createChatProviderRoutes({ catalog: { getCatalog: async () => catalog, refresh: async () => catalog }, getPrincipal: () => ({ userId: "owner", source: "jwt" }) });
+  const legacy = await (await routes.request("/api/chat-providers")).json();
+  expect(legacy.instances[0].supports).not.toHaveProperty("livePermissionModes");
+  const current = await (await routes.request("/api/chat-providers?includeLivePermissionModes=true")).json();
+  expect(current.instances[0].supports.livePermissionModes).toEqual(["supervised", "full_access"]);
+  expect((await routes.request("/api/chat-providers?includeLivePermissionModes=true&includeLivePermissionModes=false")).status).toBe(400);
+  const response = { activities: [{ type: "run.permission_mode", permissionMode: "full_access" }, { type: "run.status", status: "running" }] };
+  expect(projectChatPermissionModeResponse(response, "0").activities).toEqual([{ type: "run.status", status: "running" }]);
+  expect(projectChatPermissionModeResponse({ type: "chat.content", content: response }, "0").content.activities).toHaveLength(1);
+  expect(projectChatPermissionModeResponse(response, "1")).toBe(response);
+  expect(response.activities).toHaveLength(2);
 });

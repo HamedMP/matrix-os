@@ -90,6 +90,16 @@ export function createClaudeBuiltinToolApprovalControl(options: {
   }
 
   return {
+    async allowPending() {
+      if (closed) throw new Error("Approval unavailable");
+      for (const [id, current] of [...pending]) {
+        if (pending.get(id) !== current) continue;
+        if (current.deciding) throw new Error("Approval already resolving");
+        clearTimeout(current.timer);
+        await current.respond({ behavior: "allow", updatedInput: current.input });
+        if (forget(id, current)) resolved(id, "approve");
+      }
+    },
     has(id: string) { return pending.has(id); },
     onToolPermission(request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: Respond): boolean {
       if (request.toolName.startsWith("mcp__") || request.toolName === "AskUserQuestion") return false;

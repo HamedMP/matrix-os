@@ -110,11 +110,13 @@ export function createSharedBrowserBroker(options: {
   const timer=setInterval(sweep,15_000);timer.unref();
   const allowsSupervisedRun = (identity: Pick<SharedBrowserBinding, "ownerId" | "chatId">) =>
     (options.supervisedRunExpiresAt?.(identity) ?? Infinity) > now();
-  function openRun(binding:SharedBrowserBinding,signal:AbortSignal,policy?:BrowserRunPolicy) {
+  function openRun(binding:SharedBrowserBinding,signal:AbortSignal,policy?:BrowserRunPolicy,supervisedPolicy?:BrowserRunPolicy) {
     sweep();
     if(closed || signal.aborted || binding.ownerId!==options.ownerId || ![binding.chatId,binding.runId].every(x=>SAFE_ID.test(x))
       || !["pi","openclaw","hermes","codex","claude_code"].includes(binding.harness) || runs.has(binding.runId) || runs.size>=64)throw new SharedBrowserError("run_unavailable");
     if(policy && (policy.mode!=="supervised" || (policy.authorizeAction !== null && typeof policy.authorizeAction!=="function")))throw new SharedBrowserError("run_unavailable");
+    const savedPolicy = policy ?? supervisedPolicy;
+    if(savedPolicy && (savedPolicy.mode!=="supervised" || (savedPolicy.authorizeAction!==null && typeof savedPolicy.authorizeAction!=="function")))throw new SharedBrowserError("run_unavailable");
     const expiresAt = Math.min(now() + ttl, (policy ? options.supervisedRunExpiresAt?.(binding) : undefined) ?? Infinity);
     if (policy && options.supervisedRunExpiresAt && expiresAt <= now()) throw new SharedBrowserError("run_unavailable");
     const token=randomBytes(32).toString("base64url");
@@ -125,7 +127,24 @@ export function createSharedBrowserBroker(options: {
       row.expiryTimer = setTimeout(row.onAbort, Math.max(0, expiresAt - now()));
       row.expiryTimer.unref?.();
     }
-    return{token,expiresAt:row.expiresAt,close:()=>row.closing ?? (runs.get(binding.runId)===row ? closeRun(binding.runId) : Promise.resolve())};
+    return{token,expiresAt:row.expiresAt,setPermissionMode:async(mode:"supervised"|"full_access")=>{
+      if(registered(binding)!==row || controls>=4)throw new SharedBrowserError("run_unavailable");
+      // Cancel the old approval/action before draining it. A mode switch never
+      // replays its physical mutation; queued work must obtain a fresh observation.
+      if(!active || active===row){revision++;needsObservation=true;currentDriver().invalidateObservation();if(active===row)runningControl?.controller.abort();}
+      return enqueueControl(async()=>{
+      if(registered(binding)!==row)throw new SharedBrowserError("run_unavailable");
+      if(active===row)await drain();
+      if(registered(binding)!==row)throw new SharedBrowserError("run_unavailable");
+      if(mode==="supervised") {
+        if(!savedPolicy || !allowsSupervisedRun(binding))throw new SharedBrowserError("run_unavailable");
+        row.expiresAt=Math.min(row.expiresAt,options.supervisedRunExpiresAt?.(binding)??Infinity);
+        if(row.expiresAt<=now())throw new SharedBrowserError("run_unavailable");
+        clearTimeout(row.expiryTimer);
+        if(options.supervisedRunExpiresAt){row.expiryTimer=setTimeout(row.onAbort,Math.max(0,row.expiresAt-now()));row.expiryTimer.unref?.();}
+      }
+      row.policy=mode==="supervised"?Object.freeze({...savedPolicy!}):undefined;
+    });},close:()=>row.closing ?? (runs.get(binding.runId)===row ? closeRun(binding.runId) : Promise.resolve())};
   }
   function resolveCapability(token:string):SharedBrowserBinding|null {
     if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;

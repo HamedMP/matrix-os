@@ -1,3 +1,5 @@
+import { setCanonicalPermissionMode } from "./permission-mode-control.js";
+import type { CanonicalSetChatPermissionModeRequest } from "@matrix-os/contracts";
 import type { RoutineCliActionController } from "../bots/routine-action-controller.js";
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import { settleSteerCallbackFailure } from "./steering-delivery.js";
@@ -194,6 +196,7 @@ export class CanonicalChatOrchestrator {
       | "getInputState"
       | "reopenInputSubmission"
       | "getPendingApproval"
+      | "getPermissionModeContext"
       | "getLatestAdapterStateForChat"
       | "hasRetryRequest"
       | "getTurnRunContext"
@@ -222,6 +225,8 @@ export class CanonicalChatOrchestrator {
     this.steerRun = this.orderedControls.wrap(this.steerRun.bind(this));
     this.steerQueuedTurn = this.orderedControls.wrap(this.steerQueuedTurn.bind(this));
     this.submitInput = this.orderedControls.wrap(this.submitInput.bind(this));
+    this.submitApproval = this.orderedControls.wrap(this.submitApproval.bind(this));
+    this.setPermissionMode = this.orderedControls.wrap(this.setPermissionMode.bind(this));
     this.shutdownDrainMs = options.shutdownDrainMs ?? 10_000;
     if (!Number.isInteger(this.shutdownDrainMs) || this.shutdownDrainMs < 1 || this.shutdownDrainMs > 60_000) {
       throw new RangeError("Invalid canonical Chat shutdown drain timeout");
@@ -1043,6 +1048,11 @@ export class CanonicalChatOrchestrator {
   async submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     return submitCanonicalInput({ repository: this.options.repository, active: this.active.get(runId), owner, chatId, runId, requestId, input });
+  }
+
+  async setPermissionMode(owner: ChatOwner, chatId: string, runId: string, input: CanonicalSetChatPermissionModeRequest, provenance?: { permissionModeProof?: string }) {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
+    return setCanonicalPermissionMode({ repository: this.options.repository, active: this.active.get(runId), now: this.options.now }, owner, chatId, runId, input, provenance);
   }
 
   async submitApproval(

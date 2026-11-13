@@ -370,3 +370,82 @@ describe("shared Chrome broker ownership and takeover",()=>{
     release.resolve();expect(await operation).toBe("restored");await s.broker.close();
   });
 });
+
+it("restores the exact per-run supervised authority after a full-access interval", async () => {
+  const perRun = vi.fn(async () => {});
+  const fallback = vi.fn(async () => { throw new SharedBrowserError("approval_unavailable"); });
+  const driver = { execute: vi.fn(async () => ({ success: true, observationId: "obs" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
+  const broker = createSharedBrowserBroker({ ownerId: "owner", driver, authorizeAction: fallback, setHumanControl: async () => {} });
+  const controller = new AbortController();
+  const lease = broker.openRun(binding, controller.signal, { mode: "supervised", authorizeAction: perRun });
+  try {
+    await lease.setPermissionMode("full_access");
+    await broker.execute(binding, { action: "snapshot" }, controller.signal);
+    expect(perRun).not.toHaveBeenCalled();
+    await lease.setPermissionMode("supervised");
+    expect(broker.status().needsObservation).toBe(true);
+    await broker.execute(binding, { action: "snapshot" }, controller.signal);
+    expect(perRun).toHaveBeenCalledOnce(); expect(fallback).not.toHaveBeenCalled();
+  } finally { await lease.close(); await broker.close(); }
+});
+
+it("caps an initially full browser lease to its supervised authority expiry without extending TTL", async () => {
+  let clock = 0;
+  const driver = { execute: vi.fn(async () => ({ success: true, observationId: "obs" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
+  const broker = createSharedBrowserBroker({ ownerId: "owner", driver, now: () => clock,
+    supervisedRunExpiresAt: () => 50, setHumanControl: async () => {} });
+  const controller = new AbortController();
+  const lease = broker.openRun(binding, controller.signal, undefined, { mode: "supervised", authorizeAction: null });
+  try {
+    await lease.setPermissionMode("supervised");
+    await lease.setPermissionMode("full_access");
+    clock = 51;
+    expect(broker.resolveCapability(lease.token)).toBeNull();
+    await expect(lease.setPermissionMode("full_access")).rejects.toMatchObject({ code: "run_unavailable" });
+  } finally { await lease.close(); await broker.close(); }
+});
+
+it("cancels and drains an old Browser approval before changing mode without replaying its action", async () => {
+  let approvalSignal: AbortSignal | undefined;
+  const authorizeAction = vi.fn(async (request: { signal: AbortSignal }) => {
+    approvalSignal = request.signal;
+    await new Promise<void>((_resolve, reject) => request.signal.addEventListener("abort", () => reject(new SharedBrowserError("browser_changed")), { once: true }));
+  });
+  const driver = { execute: vi.fn(async () => ({ success: true, observationId: "obs" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
+  const broker = createSharedBrowserBroker({ ownerId: "owner", driver, setHumanControl: async () => {}, drainTimeoutMs: 100 });
+  const controller = new AbortController();
+  const lease = broker.openRun(binding, controller.signal, { mode: "supervised", authorizeAction });
+  try {
+    const previous = broker.execute(binding, { action: "snapshot" }, controller.signal);
+    const rejected = expect(previous).rejects.toMatchObject({ code: "browser_changed" });
+    await vi.waitFor(() => expect(authorizeAction).toHaveBeenCalledOnce());
+    await lease.setPermissionMode("full_access");
+    await rejected;
+    expect(approvalSignal?.aborted).toBe(true);
+    expect(driver.execute).not.toHaveBeenCalled();
+    expect(broker.status().needsObservation).toBe(true);
+    await expect(broker.execute(binding, { action: "snapshot" }, controller.signal)).resolves.toMatchObject({ success: true });
+    expect(driver.execute).toHaveBeenCalledOnce();
+    expect(controller.signal.aborted).toBe(false);
+  } finally { await lease.close(); await broker.close(); }
+});
+
+it("changes an inactive run's policy without draining another run's pending Browser approval", async () => {
+  const driver = { execute: vi.fn(async () => ({ success: true, observationId: "obs" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
+  const entered = deferred<void>(), permit = deferred<void>();
+  const broker = createSharedBrowserBroker({ ownerId: "owner", driver, setHumanControl: async () => {}, drainTimeoutMs: 50 });
+  const controller = new AbortController();
+  const first = broker.openRun(binding, controller.signal, { mode: "supervised", authorizeAction: async () => { entered.resolve(); await permit.promise; } });
+  const secondBinding = { ...binding, runId: "run-other" };
+  const second = broker.openRun(secondBinding, controller.signal, { mode: "supervised", authorizeAction: async () => {} });
+  const action = broker.execute(binding, { action: "snapshot" }, controller.signal);
+  try {
+    await entered.promise;
+    const before = broker.status(), invalidations = driver.invalidateObservation.mock.calls.length;
+    await second.setPermissionMode("full_access");
+    expect(broker.status()).toEqual(before);
+    expect(driver.invalidateObservation).toHaveBeenCalledTimes(invalidations);
+    expect(driver.execute).not.toHaveBeenCalled();
+    permit.resolve(); await expect(action).resolves.toMatchObject({ success: true });
+  } finally { permit.resolve(); await action; await second.close(); await first.close(); await broker.close(); }
+});

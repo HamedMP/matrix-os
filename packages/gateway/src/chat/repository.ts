@@ -1,3 +1,4 @@
+import { getPermissionModeContext } from "./permission-mode-repository.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
@@ -1335,6 +1336,10 @@ export class ChatRepository {
       .where("chat_id", "=", chatId).where("seq", ">", Math.max(0, Math.trunc(input.afterSeq)))
       .orderBy("seq").limit(limit).execute();
     return rows.map(toMessage);
+  }
+
+  getPermissionModeContext(owner: ChatOwner, chatId: string, runId: string, clientRequestId: string) {
+    return getPermissionModeContext(this.kysely, owner, chatId, runId, clientRequestId);
   }
 
   async getTurnRunContext(

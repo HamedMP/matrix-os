@@ -287,7 +287,7 @@ function claudePermissionMode(input: AgentLaunchInput): z.infer<typeof ClaudePer
   return "default";
 }
 
-function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLaunchSettingsSchema> {
+export function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLaunchSettingsSchema> {
   const sandbox = input.sandbox;
   if (!sandbox) {
     throw new Error("Claude sandbox preflight is required");

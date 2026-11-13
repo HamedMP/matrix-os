@@ -1,3 +1,5 @@
+import { CanonicalChatRunSchema } from "@matrix-os/contracts";
+import { parseJson } from "./records.js";
 import { isDeepStrictEqual } from "node:util";
 import type { RoutineCliVerifiedInvocation } from "../bots/routine-cli-source.js";
 import { randomBytes } from "node:crypto";
@@ -29,11 +31,18 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
         .where("owner_id", "=", input.owner.ownerId).where("owner_type", "=", "personal")
         .where("lifecycle", "=", "active").where("collaboration", "is", null).forShare().executeTakeFirst();
       if (!chat) return false;
-      const row = await trx.selectFrom("chat_runs").select(["id", "instance_id", "selection"])
+      // Both owner modes retain the same exact-action routine ceiling. Only the
+      // canonical Claude mode transition may supersede the native admission mode.
+      const ownerModes = driver === "claude_code" && ["supervised", "full_access"].includes(input.permissionMode);
+      const row = await trx.selectFrom("chat_runs").select(["id", "instance_id", "selection", "permission_mode", "capability_snapshot"])
         .where("id", "=", input.runId).where("chat_id", "=", input.chatId).where("turn_id", "=", input.turnId)
-        .where("driver_kind", "=", driver).where("permission_mode", "=", input.permissionMode)
+        .where("driver_kind", "=", driver).where("permission_mode", "in", ownerModes ? ["supervised", "full_access"] : [input.permissionMode])
         .where("interaction_mode", "=", input.interactionMode).where("status", "in", ["accepted", "running", "waiting_for_approval", "waiting_for_input"])
         .forShare().executeTakeFirst();
+      if (row && row.permission_mode !== input.permissionMode) {
+        const capabilities = CanonicalChatRunSchema.shape.capabilitySnapshot.parse(parseJson(row.capability_snapshot));
+        if (!ownerModes || !["supervised", "full_access"].every(mode => capabilities.permissionModes.includes(mode))) return false;
+      }
       return !!row && (provider !== "matrix_pi" || row.instance_id === input.selection.instanceId && isDeepStrictEqual(typeof row.selection === "string" ? JSON.parse(row.selection) : row.selection, input.selection)) && options.current(invocation) && !options.signal.aborted;
     },
   };

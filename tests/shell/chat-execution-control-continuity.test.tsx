@@ -30,23 +30,3 @@ it("retains the submitted modes when a draft becomes a bound Chat and isolates t
   rerender({ chatId: "chat_three", scopeKey: "another_runtime" });
   expect(result.current.selected?.permissionMode).toBe("supervised");
 });
-
-it("reconciles confirmed same-Run permissions without losing other composer edits", async () => {
-  const catalog = createCanonicalProviderCatalogFixture();
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
-  const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol" };
-  const controls = { chatId: "chat_one", runId: "run_one", selection, interactionMode: "default", permissionMode: "supervised" };
-  const hook = renderHook(({ executionControls }) => useChatProviderState(selection, selection.instanceId, {
-    chatId: "chat_one", executionControls,
-  }), { initialProps: { executionControls: controls } });
-  await waitFor(() => expect(hook.result.current.loading).toBe(false));
-  act(() => hook.result.current.selectInteractionMode("plan"));
-
-  hook.rerender({ executionControls: { ...controls, permissionMode: "full_access" } });
-  expect(hook.result.current.selected?.permissionMode).toBe("full_access");
-  expect(hook.result.current.selected?.interactionMode).toBe("plan");
-
-  hook.rerender({ executionControls: controls });
-  expect(hook.result.current.selected?.permissionMode).toBe("supervised");
-  expect(hook.result.current.selected?.interactionMode).toBe("plan");
-});

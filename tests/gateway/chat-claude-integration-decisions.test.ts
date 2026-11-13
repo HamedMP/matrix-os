@@ -255,3 +255,16 @@ describe("built-in integration human decisions", () => {
     f.registry.close();
   });
 });
+
+it("settles a pending native integration only after its run capability receives Full access", async () => {
+  const f = fixture();
+  try {
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    f.capability.setFullAccess!(true);
+    await f.control.allowPending();
+    expect(f.respond).toHaveBeenCalledWith({ behavior: "allow", updatedInput: action });
+    expect(f.events).toContainEqual({ type: "approval.resolved", approvalId: f.requested.approvalId, decision: "approve" });
+    expect(f.verify).not.toHaveBeenCalled();
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(true);
+  } finally { f.control.close(); f.registry.close(); }
+});

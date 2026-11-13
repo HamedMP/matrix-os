@@ -1,6 +1,7 @@
 # Apply owner permission changes consistently
 
-Ticket: [ENG-267](https://linear.app/matrix-os/issue/ENG-267).
+Ticket: [ENG-475](https://linear.app/matrix-os/issue/ENG-475).
+Original feature: [ENG-267](https://linear.app/matrix-os/issue/ENG-267).
 Related: [original approval specification](../628-supervised-tool-approval/spec.md).
 
 ## Verified problem
@@ -65,6 +66,53 @@ The implementation plan must identify the exact transaction/event boundary and
 live capability-update methods before production edits. No new persistence
 technology, global communication channel, silent prompt replay or production
 permission change is allowed.
+
+## Implemented authority and recovery boundary
+
+- The existing ordered run-control queue serializes owner intent before reads.
+  The context read has a 3-second bound; the native transition has a 40-second
+  deadline including proof verification, correlated settings/mode acknowledgements,
+  capability updates and persistence. Clients allow 45 seconds for this operation.
+- `appendRunActivities` holds the existing owner/chat/run transaction. The
+  permission event and effective run mode commit together, before eligible pending
+  built-in/integration requests resolve. The original capability snapshot is not
+  rewritten. Duplicate request IDs are checked against the stored event and current
+  mode; stale/opposite-mode reuse cannot replay authority.
+- Server-owned capability closures update integration authority and the exact
+  Browser lease. Downgrade preserves its per-run authorizer and shrinks, never
+  extends, its expiry. A waiting Browser action is canceled and drained before
+  changing policy; it is never automatically replayed. Changing an inactive lease
+  cannot drain or invalidate another Chat's Browser action.
+- A native request canceled during transition is removed from the bounded queue;
+  retransmitted native IDs do not enqueue duplicate allows. Partial/uncertain
+  changes close controls, abort the process and revoke run capabilities.
+- If a database write completes after the transition deadline, an aborted Run may
+  retain the effective permission event. This is an acceptable orphan state:
+  grants have been revoked and no live process retains that authority. The event
+  is provenance, never permission to start another process.
+- Same-run steering restarts with the latest acknowledged mode, including its
+  sandbox and newly issued capabilities. It cannot restore the original broader
+  mode after a downgrade. Routine sources retain their exact-owner consent
+  ceiling; only canonical Claude Supervised/Full-access supersession, supported by
+  the original capability snapshot, preserves their existing source continuity.
+  A permission change does not grant unattended routine authority.
+- Unsupported shared/Bot/plan/auto contexts remain unavailable. Ordinary custom
+  MCP challenges keep their existing exact approval model. Older clients do not
+  receive unrecognized activity variants or support fields without opting in.
+
+## Review layers and extraction plan
+
+Publish two native stack layers: backend/contracts/platform authority, then
+Web/Electron controls and reconciliation. Share ENG-475 and the stack link;
+each layer remains below 50 changed files and 3,000 additions.
+
+Permission transport, native acknowledgements and repository behavior live in
+focused helpers. The large gateway orchestrator receives delegation only.
+UI business logic lives in the shared permission controller; large Chat entrypoints
+only forward it. Future focused refactoring should extract the active-run control
+coordinator from `CanonicalChatWorkspace` and the equivalent transcript/composer
+binding from `ChatApp`, retaining their existing authority and navigation tests.
+That structural extraction is outside this bounded regression fix.
 
 ## Acceptance and delivery
 

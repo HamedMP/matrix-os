@@ -1,3 +1,4 @@
+import { CanonicalSetChatPermissionModeRequestSchema, type CanonicalSetChatPermissionModeRequest } from "@matrix-os/contracts";
 import { createChatNavigationService } from "./navigation-service.js";
 import type { ChatNavigationReader } from "./navigation-repository.js";
 import type { OwnerToolOutputProjection } from "./owner-tool-output.js";
@@ -142,7 +143,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "setPermissionMode" | "retryTurn" | "reconcileActiveRuns"
     >;
     navigation?: ChatNavigationReader;
     projectOwnerToolOutput?: OwnerToolOutputProjection;
@@ -509,6 +510,12 @@ export function createCanonicalChatService(
       );
     },
 
+    async setPermissionMode(owner: ChatOwner, chatId: string, runId: string, input: CanonicalSetChatPermissionModeRequest, provenance?: { permissionModeProof?: string }) {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator?.setPermissionMode) throw new Error("Canonical Chat orchestration unavailable");
+      return options.orchestrator.setPermissionMode(owner, CanonicalChatIdSchema.parse(chatId), CanonicalChatRunIdSchema.parse(runId), CanonicalSetChatPermissionModeRequestSchema.parse(input), provenance);
+    },
+
     async submitApproval(
       owner: ChatOwner,
       chatId: string,
@@ -578,6 +585,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     cancelRun: unavailable,
     submitInput: unavailable,
     submitApproval: unavailable,
+    setPermissionMode: unavailable,
     retryTurn: unavailable,
   };
 }

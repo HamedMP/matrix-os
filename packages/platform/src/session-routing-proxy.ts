@@ -22,6 +22,7 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
   'x-matrix-custom-mcp-approval-proof',
+  'x-matrix-chat-permission-mode-proof',
   'x-matrix-browser-approval-proof',
   'x-matrix-routine-action-proof',
   'x-matrix-routine-origin-proof',

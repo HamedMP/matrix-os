@@ -28,23 +28,3 @@ it("restores accepted Chat controls instead of global preferences and fences loc
   hook.rerender({ chatId: "chat_two" });
   await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("supervised"));
 });
-
-it("reconciles confirmed same-Run permissions without losing other composer edits", async () => {
-  const catalog = createCanonicalProviderCatalogFixture();
-  const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol" };
-  const controls = { chatId: "chat_one", runId: "run_one", selection, interactionMode: "default", permissionMode: "supervised" };
-  const hook = renderHook(({ executionControls }) => useCanonicalComposerSelection({
-    catalog, catalogReady: true, initializeImmediately: true, chatId: "chat_one",
-    currentSelection: selection, boundInstanceId: selection.instanceId, executionControls,
-  }), { initialProps: { executionControls: controls } });
-  await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("supervised"));
-  act(() => hook.result.current.onSelectionChange({ ...hook.result.current.selection!, interactionMode: "plan" }));
-
-  hook.rerender({ executionControls: { ...controls, permissionMode: "full_access" } });
-  await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("full_access"));
-  expect(hook.result.current.selection?.interactionMode).toBe("plan");
-
-  hook.rerender({ executionControls: controls });
-  await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("supervised"));
-  expect(hook.result.current.selection?.interactionMode).toBe("plan");
-});

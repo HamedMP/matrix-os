@@ -71,6 +71,7 @@ function requestDigest(method: string, path: string, body: unknown): string | nu
 
 /** Main-process grants, never agent-provided approval flags. Bound to one live capability. */
 export function createIntegrationToolAuthority(options: { live(): boolean; now(): number; fullAccess?: boolean }) {
+  let fullAccess = options.fullAccess === true;
   const grants: Array<{ digest: string; receiptHash: string; expiresAt: number }> = [];
   function sweep() {
     for (let i = grants.length - 1; i >= 0; i--) if (grants[i]!.expiresAt <= options.now()) grants.splice(i, 1);
@@ -91,12 +92,14 @@ export function createIntegrationToolAuthority(options: { live(): boolean; now()
     }, isLive() { return options.live() && grant.expiresAt > options.now() && grants.includes(grant); } };
   }
   return {
+    isFullAccess: () => options.live() && fullAccess,
+    setFullAccess(value: boolean) { if (!options.live()) throw new Error("Run authority unavailable"); fullAccess = value; },
     grantIntegrationTool,
     consumeIntegrationRequest(method: string, path: string, body: unknown, receipt?: string): boolean {
       if (!options.live()) return false;
       const digest = requestDigest(method, path, body);
       if (!digest) return false;
-      if (options.fullAccess) return true;
+      if (fullAccess) return true;
       if (!receipt || !/^[a-f0-9]{64}$/.test(receipt)) return false;
       const receiptHash = createHash("sha256").update(receipt).digest("hex");
       sweep();

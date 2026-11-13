@@ -1,3 +1,4 @@
+import { applyPermissionModeActivity } from "./permission-mode-repository.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
@@ -451,6 +452,7 @@ export class ChatRunLifecycleRepository {
           occurred_at: sequenced.occurredAt,
         }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
         if (row) {
+          if (sequenced.type === "run.permission_mode") await applyPermissionModeActivity(trx, sequenced, Number(current.revision));
           if (sequenced.type === "approval.resolved") {
             await persistApprovalOutcome(trx, sequenced, Number(current.revision));
           }

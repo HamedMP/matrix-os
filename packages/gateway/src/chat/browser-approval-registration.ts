@@ -10,7 +10,7 @@ export function registerBrowserApprovalRun(
 ) {
   const harness = driverKind === "matrix_pi" ? "pi" : driverKind === "codex" || driverKind === "claude_code" ? driverKind : undefined;
   if (!control || !harness || input.sharedScopeId || input.owner.type !== "personal"
-    || input.permissionMode !== "supervised" || input.interactionMode !== "default") return undefined;
+    || !(input.permissionMode === "supervised" || driverKind === "claude_code" && input.permissionMode === "full_access") || input.interactionMode !== "default") return undefined;
   return control.registerRun({
     binding: { ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness },
     signal: input.signal,

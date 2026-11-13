@@ -69,6 +69,8 @@ export interface MatrixMcpRunCapability {
   surface?: "preview_drive_call";
   previewDrive?: { runGrant: string; chatId: string; runId: string };
   revoke(): void;
+  setFullAccess?(value: boolean): void;
+  isFullAccess?(): boolean;
   grantIntegrationTool?: ReturnType<typeof createIntegrationToolAuthority>["grantIntegrationTool"];
   bindPreviewActionGrant?(receipt: string, actionGrant: string): boolean;
 }
@@ -242,7 +244,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
       }) : undefined;
       active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
       return { token, revoke: () => { active.delete(key); },
-        ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
+        ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool, setFullAccess: authority.setFullAccess, isFullAccess: authority.isFullAccess } : {}) };
     },
     resolve(token, method, path) {
       return resolveRunContext(token, method, path)?.actorId ?? null;

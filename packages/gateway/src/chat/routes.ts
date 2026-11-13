@@ -1,3 +1,4 @@
+import { ChatPermissionModeWireVersionSchema, projectChatPermissionModeResponse, CanonicalSetChatPermissionModeRequestSchema, CanonicalSetChatPermissionModeResponseSchema, type CanonicalSetChatPermissionModeRequest, type CanonicalSetChatPermissionModeResponse } from "@matrix-os/contracts";
 import type { ApprovalProvenance } from "./approval-submission.js";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
@@ -223,6 +224,7 @@ export interface CanonicalChatRouteService {
     requestId: string,
     input: CanonicalSubmitChatInputRequest,
   ): Promise<CanonicalChatInputSubmissionResponse>;
+  setPermissionMode?(owner: ChatOwner, chatId: string, runId: string, input: CanonicalSetChatPermissionModeRequest, provenance?: { permissionModeProof?: string }): Promise<CanonicalSetChatPermissionModeResponse>;
   submitApproval(
     owner: ChatOwner,
     chatId: string,
@@ -307,9 +309,9 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(projectChatRecipeSources(projectChatImportSource(value,
+  return context.json(projectChatPermissionModeResponse(projectChatReadStateResponse(projectChatRecipeSources(projectChatImportSource(value,
     ChatImportSourceVersionSchema.parse(context.req.query("importSourceVersion")))),
-    ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
+    ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), ChatPermissionModeWireVersionSchema.parse(context.req.query("permissionModeVersion"))), status);
 }
 
 export function createCanonicalChatRoutes(options: {
@@ -318,7 +320,8 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
-    if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
+    if (!ChatPermissionModeWireVersionSchema.safeParse(context.req.query("permissionModeVersion")).success || (context.req.queries("permissionModeVersion")?.length ?? 0) > 1
+      || !ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
       || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
       || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
       || !ChatAssistantTextWireVersionSchema.safeParse(context.req.query("assistantTextVersion")).success
@@ -781,6 +784,19 @@ export function createCanonicalChatRoutes(options: {
     } catch (error: unknown) {
       return handleError(context, error);
     }
+  });
+
+  routes.post("/api/chats/:chatId/runs/:runId/permission-mode", cancelBodyLimit, async context => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const runId = CanonicalChatRunIdSchema.parse(context.req.param("runId"));
+      const input = CanonicalSetChatPermissionModeRequestSchema.safeParse(await context.req.json());
+      if (!input.success) return validationError(context);
+      if (!options.service.setPermissionMode) return context.json({ error: "Permission changes unavailable" }, 503);
+      const result = await options.service.setPermissionMode(ownerFromPrincipal(options.getPrincipal(context)), chatId, runId, input.data,
+        { permissionModeProof: context.req.header("x-matrix-chat-permission-mode-proof") });
+      return chatJson(context, CanonicalSetChatPermissionModeResponseSchema.parse(result));
+    } catch (error: unknown) { return handleError(context, error); }
   });
 
   routes.post("/api/chats/:chatId/runs/:runId/approvals/:approvalId", cancelBodyLimit, async (context) => {
