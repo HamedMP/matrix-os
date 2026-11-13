@@ -5,6 +5,8 @@ import {
 } from "./preview-terminal-access.js";
 import { randomBytes } from 'node:crypto';
 import { authenticatedApprovalProxyProofs } from './owner-approval-proofs.js';
+import type { BrowserApprovalMachineLookup } from './browser-approval-machine-lookup.js';
+import type { BrowserApprovalPolicy } from './browser-dev-approval-policy.js';
 export { authenticatedApprovalProxyProof } from './canonical-owner-approval-proxy.js';
 import { browserApprovalProofHeader } from './browser-chat-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
@@ -143,6 +145,7 @@ interface CreateSessionRoutingMiddlewareOpts {
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   appEnv: NodeJS.ProcessEnv;
+  browserApprovals: { policy: BrowserApprovalPolicy; lookup?: BrowserApprovalMachineLookup };
   platformSecret: string;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
@@ -236,6 +239,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     orchestrator,
     clerkAuth,
     appEnv,
+    browserApprovals,
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
@@ -251,6 +255,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     getGatewayUrlForHandle,
     logRouteError,
   } = opts;
+  const browserProofOptions = {
+    browserApprovalsEnabled: browserApprovals.policy.kind === 'global',
+    browserApprovalDevScope: browserApprovals.policy.kind === 'scoped' ? browserApprovals.policy.scope : undefined,
+    browserApprovalMachineLookup: browserApprovals.lookup,
+  };
 
   async function proxyAuthShell(
     c: Context,
@@ -751,7 +760,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
-        identity, platformSecret, machine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        identity, platformSecret, machine, clerkAuth, ...browserProofOptions });
       if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
@@ -920,7 +929,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
-        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, ...browserProofOptions });
       if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });

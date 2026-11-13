@@ -387,7 +387,8 @@ export async function startBots(options: {
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
-    supervisedBrowser: typeof options.sharedBrowser?.authorizeAction === "function", toolCapabilities: managedCapabilities });
+    supervisedBrowser: identity => typeof options.sharedBrowser?.authorizeAction === "function" && options.sharedBrowser.allowsSupervisedRun(identity),
+    toolCapabilities: managedCapabilities });
   const ownerTools = createManagedPiOwnerTools({ toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
     ...(integrationClient ? { integrations: integrationClient } : {}),

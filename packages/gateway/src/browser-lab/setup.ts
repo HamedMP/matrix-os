@@ -57,10 +57,18 @@ export function registerBrowserSetupRoutes(app: Hono, options: BrowserSetupOptio
 /** Setup authority exists before the optional native feature flag is enabled. */
 export function resolveBrowserSetupOwner(env: NodeJS.ProcessEnv): string | undefined {
   const owner = env.MATRIX_CLERK_USER_ID;
-  if (env.MATRIX_RUNTIME_SLOT !== "primary" || !/^[a-z][a-z0-9-]{0,62}$/.test(env.MATRIX_HANDLE ?? "")
+  const slot = env.MATRIX_RUNTIME_SLOT;
+  const eligibleSlot = slot === "primary" || (slot === "dev" && env.MATRIX_BROWSER_DEV_SETUP === "true");
+  if (!eligibleSlot || !/^[a-z][a-z0-9-]{0,62}$/.test(env.MATRIX_HANDLE ?? "")
     || /^(?:pv-|pr-)/.test(env.MATRIX_HANDLE ?? "")
     || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(env.MATRIX_MACHINE_ID ?? "")
     || !/^user_[A-Za-z0-9]{1,128}$/.test(owner ?? "")
     || (env.MATRIX_USER_ID !== undefined && env.MATRIX_USER_ID !== owner)) return undefined;
   return owner;
+}
+
+/** A previously installed Dev runtime still requires the host opt-in. */
+export function isBrowserRuntimeEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.MATRIX_BROWSER_LAB === "true"
+    && (env.MATRIX_RUNTIME_SLOT !== "dev" || resolveBrowserSetupOwner(env) !== undefined);
 }

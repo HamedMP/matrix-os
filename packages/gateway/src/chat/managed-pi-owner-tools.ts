@@ -178,7 +178,14 @@ export function createManagedPiOwnerTools(deps: {
           if (!deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
           if (current.permissionMode === "supervised") {
             if (!deps.sharedBrowser.authorizeAction) throw new BotBrokerActionError("not_granted");
-            deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            // The trial may expire after capability discovery but before setup.
+            if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+            try {
+              deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            } catch (error: unknown) {
+              if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+              throw error;
+            }
           } else {
             deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
           }
@@ -205,6 +212,9 @@ export function createManagedPiOwnerTools(deps: {
         if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
         try { return text(await deps.sharedBrowser.execute(browserBinding(binding), request.args, signal)); }
         catch (error: unknown) {
+          if (error instanceof SharedBrowserError && !error.dispatched && error.code === "tab_limit") {
+            return text({ success: false, content: error.message, automation: deps.sharedBrowser.status() });
+          }
           if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy"].includes(error.code)) {
             return text({ success: false, content: "Browser control changed. Wait for the owner to resume, then take a fresh snapshot; never replay the refused action.", automation: deps.sharedBrowser.status() });
           }

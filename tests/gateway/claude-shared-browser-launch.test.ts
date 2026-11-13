@@ -12,6 +12,8 @@ it("merges dedicated browser MCP with existing Matrix tools, strict config and n
   expect(config.mcpServers.matrix_shared_browser.env).toEqual({ MATRIX_SHARED_BROWSER_TOKEN: "${MATRIX_SHARED_BROWSER_TOKEN}", MATRIX_SHARED_BROWSER_GATEWAY_PORT: "${MATRIX_SHARED_BROWSER_GATEWAY_PORT}" });
   expect(launch.args[launch.args.indexOf("--allowedTools") + 1]).toBe("mcp__matrix_shared_browser__shared_browser");
   expect(launch.args).toContain("--strict-mcp-config"); expect(launch.args).toContain("--no-chrome");
+  const browserGuidance = launch.args[launch.args.indexOf("--append-system-prompt") + 1];
+  expect(browserGuidance).toContain("If the tool says the Browser run ended, do not wait for or suggest Resume");
   expect(launch.args.join(" ")).not.toContain("a".repeat(43)); expect(launch.env.MATRIX_SHARED_BROWSER_TOKEN).toBe("a".repeat(43));
 });
 it("adds the only browser MCP server when integrations are unavailable", () => {
