@@ -49,6 +49,7 @@ async function assertOwnerDeliveryCapacity(db: PlatformDB, ownerId: string, addi
     .innerJoin('public_sites as s', 's.id', 'i.site_id')
     .select(sql<number>`count(*)::int`.as('outstanding'))
     .where('s.owner_id', '=', ownerId)
+    .where('i.state', '=', 'pending').where('i.expires_at', '>', new Date())
     .where(eb => eb.or([eb('d.state', 'in', ['queued', 'leased']),
       eb.and([eb('d.state', 'in', ['failed', 'ambiguous']), eb('d.attempts', '<', 5)])]));
   if (exceptInvitationId) query = query.where('d.invitation_id', '!=', exceptInvitationId);
@@ -303,6 +304,8 @@ export async function acceptSiteEmailInvitation(input: AcceptSiteEmailInvitation
         const accepted = await admitted.executor.updateTable('public_site_email_invitations').set({
           state: 'accepted', accepted_clerk_user_id: userId, accepted_at: now,
           updated_at: now, revision: sql`revision + 1`,
+          delivery_state: sql`CASE WHEN delivery_state IN ('queued','sending','failed','ambiguous')
+            THEN 'suppressed' ELSE delivery_state END`,
         }).where('id', '=', selected.id).where('site_id', '=', siteId)
           .where('normalized_email', '=', selected.normalized_email).where('generation', '=', selected.generation)
           .where('state', '=', 'pending').where('expires_at', '>', now)
@@ -318,6 +321,10 @@ export async function acceptSiteEmailInvitation(input: AcceptSiteEmailInvitation
           .where('invitation_generation', '=', selected.generation).where('clerk_user_id', '=', userId)
           .where('revoked_at', 'is', null).executeTakeFirst();
         if (!grant) throw new SiteError('not_found');
+        await admitted.executor.updateTable('public_site_invitation_deliveries').set({
+          state: 'cancelled', lease_token: null, lease_until: null, updated_at: now,
+        }).where('invitation_id', '=', selected.id)
+          .where('state', 'in', ['queued', 'leased', 'failed', 'ambiguous']).execute();
         await appendSiteInvitationAuditEvent(admitted, { siteId, invitationId: selected.id,
           type: 'invitation_accepted', actorKind: 'viewer', actorReference: userId,
           details: { generation: Number(selected.generation) } });
