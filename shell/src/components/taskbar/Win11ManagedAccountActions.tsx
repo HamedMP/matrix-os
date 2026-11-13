@@ -14,14 +14,22 @@ export function Win11ManagedAccountActions({ onClose }: { onClose: () => void })
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   if (!isLoaded || !isSignedIn) return null;
 
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutError(null);
     const redirectUrl = getSignInRedirectUrl();
-    await clearMatrixAppSession();
+    try {
+      await clearMatrixAppSession();
+    } catch {
+      setSigningOut(false);
+      setSignOutError("Sign-out is temporarily unavailable. Try again.");
+      return;
+    }
     try {
       await clerkSignOutWithTimeout(signOut, redirectUrl);
       window.location.replace(redirectUrl);
@@ -68,6 +76,7 @@ export function Win11ManagedAccountActions({ onClose }: { onClose: () => void })
         )}
         <span>{signingOut ? "Signing out…" : "Sign out"}</span>
       </button>
+      {signOutError ? <p role="alert" className="px-3 py-1 text-xs text-destructive">{signOutError}</p> : null}
     </>
   );
 }

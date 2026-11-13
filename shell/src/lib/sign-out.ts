@@ -23,9 +23,11 @@ export async function clearMatrixAppSession(): Promise<void> {
     });
     if (!response.ok) {
       console.warn("[auth] Matrix app session clear returned non-OK status", response.status);
+      throw new Error("Matrix app session clear failed");
     }
   } catch (error: unknown) {
     console.warn("[auth] Matrix app session clear failed", error instanceof Error ? error.name : typeof error);
+    throw new Error("Sign-out is temporarily unavailable. Try again.");
   } finally {
     window.clearTimeout(timeoutId);
   }

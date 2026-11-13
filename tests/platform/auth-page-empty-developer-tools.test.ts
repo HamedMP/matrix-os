@@ -18,6 +18,36 @@ describe('inline auth fallback continuation', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps Clerk signed in when app-session cleanup fails on the main auth page', async () => {
+    const signOut = vi.fn(async () => undefined);
+    const html = getAuthPage('pk_test_matrix', 'sign-in', 'test-nonce', '/', 'https://app.matrix-os.com');
+    const dom = new JSDOM(html, {
+      url: 'https://app.matrix-os.com/sign-in',
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.assign(window, {
+          AbortSignal,
+          Response,
+          Clerk: {
+            load: async () => undefined,
+            user: { fullName: 'Test User', primaryEmailAddress: { emailAddress: 'test@example.com' } },
+            session: { getToken: async () => 'clerk-token' },
+            signOut,
+          },
+          fetch: async (_input: string | URL | Request, init?: RequestInit) =>
+            new Response('{}', { status: 503 }),
+        });
+      },
+    });
+    openDoms.push(dom);
+    await waitForCondition(() => Boolean(dom.window.document.querySelector('.session-actions button:not(.primary)')));
+    const button = dom.window.document.querySelector<HTMLButtonElement>('.session-actions button:not(.primary)')!;
+    button.click();
+    await waitForCondition(() => button.textContent?.includes('temporarily unavailable') === true);
+    expect(button.disabled).toBe(false);
+    expect(signOut).not.toHaveBeenCalled();
+  });
+
   it('keeps a checkout return passive until app-session can expose the authorized runtime', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     let appSessionAttempts = 0;

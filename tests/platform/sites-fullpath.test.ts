@@ -90,6 +90,13 @@ it('exchanges one verified Clerk identity through the exact Worker route without
   const otherCookie=otherExchange.headers.get('set-cookie')!.split(';')[0]!;
   expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:otherCookie}}),
    {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(200);
+  const bearerOnlySignOut=await worker.fetch(new Request(`https://matrix.page/${siteId}/access/email/sign-out`,{
+   method:'POST',headers:{origin:'https://matrix.page',authorization:'Bearer session.jwt.token',
+    cookie:'__session=clerk-cookie','content-type':'application/json'},body:'{}'}),
+   {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret});
+  expect(bearerOnlySignOut.status).toBe(200);
+  expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/frame`,{headers:{cookie:otherCookie}}),
+   {SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:edgeSecret})).status).toBe(404);
   await db.executor.updateTable('public_site_viewer_grants').set({revoked_at:new Date(),revocation_reason:'owner'}).where('site_id','=',siteId).execute();
   expect((await get(`/${siteId}/frame`)).status).toBe(404);
   expect((await get(`/${siteId}`)).status).toBe(200);

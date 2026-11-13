@@ -4,9 +4,10 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { acceptSiteEmailInvitation, createSiteEmailInvitations, listSiteEmailInvitations,
-  resendSiteEmailInvitation, revokeSiteEmailInvitation, siteClerkSessionKey } from '../../packages/platform/src/sites/email-invitations.js';
+  resendSiteEmailInvitation, revokeSiteEmailInvitation, siteClerkSessionKey, siteRecipientKey } from '../../packages/platform/src/sites/email-invitations.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
-import { authorizeEmailViewerSession } from '../../packages/platform/src/sites/email-viewer-sessions.js';
+import { authorizeEmailViewerSession, terminateEmailClerkSessionForMatrixSignOut } from '../../packages/platform/src/sites/email-viewer-sessions.js';
+import { recordSiteRecipientLifecycle } from '../../packages/platform/src/sites/account-lifecycle.js';
 
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
@@ -185,6 +186,94 @@ postgres('site email invitations across independent PostgreSQL connections', () 
     } finally { release.resolve(); await deletion; }
     await expect(acceptance).rejects.toMatchObject({ code: 'not_found' });
     expect(await dbA.executor.selectFrom('public_site_viewer_grants').select('id').where('site_id', '=', siteId).execute()).toEqual([]);
+  });
+
+  it('denies an existing viewer session as soon as recipient account deletion is scheduled', async () => {
+    const { siteId } = await seed('scheduled@example.com');
+    const identity = { clerkUserId: 'user_scheduled', clerkSessionId: 'sess_scheduled',
+      verifiedEmails: ['scheduled@example.com'] };
+    const issued = await acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret });
+    expect(await authorizeEmailViewerSession(dbB, siteId, issued.cookie, secret)).toBe(true);
+    const repository = new AccountDeletionRepository(dbB.kysely, { secret });
+    await repository.acceptPrepared(identity.clerkUserId, false, async () => ({
+      clerkUserId: identity.clerkUserId, appleTokens: [],
+    }));
+    expect(await authorizeEmailViewerSession(dbA, siteId, issued.cookie, secret)).toBe(false);
+  });
+
+  it('serializes acceptance and main Matrix sign-out across independent PostgreSQL connections', async () => {
+    const { siteId } = await seed('signout-race@example.com');
+    const identity = { clerkUserId: 'user_signout_race', clerkSessionId: 'sess_signout_race',
+      verifiedEmails: ['signout-race@example.com'] };
+    const [accepted, terminated] = await Promise.allSettled([
+      acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret }),
+      terminateEmailClerkSessionForMatrixSignOut(dbB, identity.clerkSessionId, secret),
+    ]);
+    expect(terminated.status).toBe('fulfilled');
+    if (accepted.status === 'fulfilled') {
+      expect(await authorizeEmailViewerSession(dbB, siteId, accepted.value.cookie, secret)).toBe(false);
+    }
+    await expect(acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret }))
+      .rejects.toMatchObject({ code: 'not_found' });
+    const live = await dbB.executor.selectFrom('public_site_viewer_sessions').select('id')
+      .where('site_id', '=', siteId).where('revoked_at', 'is', null).execute();
+    expect(live).toHaveLength(0);
+  });
+
+  it('revokes recipient grants on inactivation and keeps deleted identities terminal under stale events', async () => {
+    const { siteId } = await seed('inactive@example.com');
+    const identity = { clerkUserId: 'user_inactive', clerkSessionId: 'sess_inactive',
+      verifiedEmails: ['inactive@example.com'] };
+    const issued = await acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret });
+    const eventAt = new Date();
+    await recordSiteRecipientLifecycle(dbB, { userId: identity.clerkUserId, state: 'inactive',
+      eventId: 'evt_inactive', eventAt, secret });
+    expect(await authorizeEmailViewerSession(dbA, siteId, issued.cookie, secret)).toBe(false);
+    expect((await dbA.executor.selectFrom('public_site_viewer_grants').select('revocation_reason')
+      .where('id', '=', issued.grantId).executeTakeFirstOrThrow()).revocation_reason).toBe('recipient_inactive');
+    await expect(acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret }))
+      .rejects.toMatchObject({ code: 'not_found' });
+    await recordSiteRecipientLifecycle(dbA, { userId: identity.clerkUserId, state: 'active',
+      eventId: 'evt_same_time_active', eventAt, secret });
+    expect((await dbB.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+      .where('recipient_key', '=', siteRecipientKey(identity.clerkUserId, secret))
+      .executeTakeFirstOrThrow()).state).toBe('inactive');
+    await recordSiteRecipientLifecycle(dbA, { userId: identity.clerkUserId, state: 'active',
+      eventId: 'evt_reactivated', eventAt: new Date(eventAt.getTime() + 500), secret });
+    expect(await authorizeEmailViewerSession(dbB, siteId, issued.cookie, secret)).toBe(false);
+    await recordSiteRecipientLifecycle(dbB, { userId: identity.clerkUserId, state: 'deleted',
+      eventId: 'evt_deleted', eventAt: new Date(eventAt.getTime() + 1000), secret });
+    await recordSiteRecipientLifecycle(dbA, { userId: identity.clerkUserId, state: 'active',
+      eventId: 'evt_stale', eventAt: new Date(eventAt.getTime() - 1000), secret });
+    expect((await dbB.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+      .where('recipient_key', '=', siteRecipientKey(identity.clerkUserId, secret))
+      .executeTakeFirstOrThrow()).state).toBe('deleted');
+    expect((await dbB.executor.selectFrom('public_site_viewer_grants').select('clerk_user_id')
+      .where('id', '=', issued.grantId).executeTakeFirstOrThrow()).clerk_user_id)
+      .toBe(`deleted:${siteRecipientKey(identity.clerkUserId, secret)}`);
+    expect((await dbB.executor.selectFrom('public_site_email_invitations').select('accepted_clerk_user_id')
+      .where('site_id', '=', siteId).executeTakeFirstOrThrow()).accepted_clerk_user_id)
+      .toBe(`deleted:${siteRecipientKey(identity.clerkUserId, secret)}`);
+    expect(await dbB.executor.selectFrom('public_site_access_audit_events').select('actor_reference')
+      .where('site_id', '=', siteId).where('actor_reference', '=', identity.clerkUserId).execute()).toHaveLength(0);
+  });
+
+  it('serializes signed inactivation against acceptance across independent connections', async () => {
+    const { siteId } = await seed('inactive-race@example.com');
+    const identity = { clerkUserId: 'user_inactive_race', clerkSessionId: 'sess_inactive_race',
+      verifiedEmails: ['inactive-race@example.com'] };
+    const [accepted, inactive] = await Promise.allSettled([
+      acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret }),
+      recordSiteRecipientLifecycle(dbB, { userId: identity.clerkUserId, state: 'inactive',
+        eventId: 'evt_inactive_race', eventAt: new Date(), secret }),
+    ]);
+    expect(inactive.status).toBe('fulfilled');
+    if (accepted.status === 'fulfilled')
+      expect(await authorizeEmailViewerSession(dbA, siteId, accepted.value.cookie, secret)).toBe(false);
+    await expect(acceptSiteEmailInvitation({ db: dbB, siteId, identity, secret }))
+      .rejects.toMatchObject({ code: 'not_found' });
+    expect(await dbB.executor.selectFrom('public_site_viewer_sessions').select('id')
+      .where('site_id', '=', siteId).where('revoked_at', 'is', null).execute()).toHaveLength(0);
   });
 
   it('authorizes only an active site-scoped viewer session and denies the next request after grant revocation', async () => {
