@@ -45,7 +45,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
       if (!controller.signal.aborted) setLoadError(siteActionError(error));
     });
     return () => controller.abort();
-  }, [appSlug, client, ready, site?.id, site?.revision, reload]);
+  }, [appSlug, client, ready, site?.id, site?.revision, state.conflict, reload]);
 
   function invite(event: FormEvent) {
     event.preventDefault();
