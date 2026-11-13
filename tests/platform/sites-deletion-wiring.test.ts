@@ -7,6 +7,7 @@ import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { siteRecipientKey } from '../../packages/platform/src/sites/email-keys.js';
+import { eraseOwnerSites } from '../../packages/platform/src/sites/account-lifecycle.js';
 import { randomUUID } from 'node:crypto';
 const objects = vi.hoisted(() => new Map<string, Uint8Array>());
 const sitesStore = vi.hoisted(() => ({
@@ -29,6 +30,37 @@ beforeAll(async () => { db = (await createTestPlatformDb()).db;
 });
 beforeEach(async () => { objects.clear(); vi.clearAllMocks(); await db.executor.deleteFrom('account_deletion_jobs').execute(); await db.executor.deleteFrom('public_sites').execute(); await db.executor.deleteFrom('public_site_aliases').execute(); });
 afterAll(async () => { vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
+it('revokes email invitations and sessions and cancels leased mail before owner asset erasure',async()=>{
+ const owner={ownerId:'user_sites_delete_wiring',machineId:'test-machine',appSlug:'event'};
+ const service=createSitesService({db,env,emailCapability:async()=>true,storage:{async putObject(){return{};},async getObject(){return{body:null};}}});
+ const site=await service.deploy(owner,{title:'Event',accessMode:'private_email',config:{},files:[{path:'index.html',contentType:'text/html',body:Buffer.from('Event').toString('base64')}]});
+ const pendingId=randomUUID(),acceptedId=randomUUID(),grantId=randomUUID(),sessionId=randomUUID(),deliveryId=randomUUID(),now=new Date();
+ const invitation=(id:string,email:string,state:'pending'|'accepted')=>({id,site_id:site.id,normalized_email:email,display_email:email,generation:'1',
+  state,delivery_state:'sending' as const,invited_by_clerk_user_id:owner.ownerId,accepted_clerk_user_id:state==='accepted'?'user_guest':null,
+  created_at:now,issued_at:now,expires_at:new Date(now.getTime()+7*86400_000),accepted_at:state==='accepted'?now:null,
+  revoked_at:null,state_reason:null,updated_at:now,revision:'0'});
+ await db.executor.insertInto('public_site_email_invitations').values([
+  invitation(pendingId,'pending@example.test','pending'),invitation(acceptedId,'accepted@example.test','accepted')]).execute();
+ await db.executor.insertInto('public_site_viewer_grants').values({id:grantId,site_id:site.id,invitation_id:acceptedId,
+  invitation_generation:'1',clerk_user_id:'user_guest',granted_at:now,revoked_at:null,revocation_reason:null}).execute();
+ await db.executor.insertInto('public_site_viewer_sessions').values({id:sessionId,site_id:site.id,grant_id:grantId,
+  secret_hash:'a'.repeat(64),clerk_session_key:'b'.repeat(64),created_at:now,expires_at:new Date(now.getTime()+7*86400_000),
+  last_seen_at:null,revoked_at:null}).execute();
+ await db.executor.insertInto('public_site_invitation_deliveries').values({id:deliveryId,invitation_id:pendingId,
+  invitation_generation:'1',idempotency_key:randomUUID(),state:'leased',attempts:1,available_at:now,
+  lease_token:randomUUID(),lease_until:new Date(now.getTime()+60_000),provider_message_id:null,failure_code:null,
+  sent_at:null,created_at:now,updated_at:now}).execute();
+ const store={abortOwnerMultipartUploads:vi.fn(),listObjects:vi.fn(async()=>({keys:[],nextCursor:null})),
+  deleteObject:vi.fn()};
+ await eraseOwnerSites(db,owner.ownerId,store,env);
+ const invitations=await db.executor.selectFrom('public_site_email_invitations').selectAll().where('site_id','=',site.id).execute();
+ expect(invitations).toHaveLength(2);
+ expect(invitations.every(row=>row.state==='revoked'&&row.delivery_state==='suppressed'&&row.state_reason==='owner')).toBe(true);
+ expect((await db.executor.selectFrom('public_site_viewer_grants').select('revocation_reason').where('id','=',grantId).executeTakeFirst())?.revocation_reason).toBe('owner_deleted');
+ expect((await db.executor.selectFrom('public_site_viewer_sessions').select('revoked_at').where('id','=',sessionId).executeTakeFirst())?.revoked_at).not.toBeNull();
+ expect((await db.executor.selectFrom('public_site_invitation_deliveries').select('state').where('id','=',deliveryId).executeTakeFirst())?.state).toBe('cancelled');
+ expect(store.abortOwnerMultipartUploads).toHaveBeenCalledOnce();
+});
 it('configured deletion revokes site immediately and durably erases dedicated assets and routing', async () => {
     const owner = { ownerId: 'user_sites_delete_wiring', machineId: 'test-machine', appSlug: 'event' };
     const service = createSitesService({ db, env, storage: { async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, async getObject() { return { body: null }; } } });

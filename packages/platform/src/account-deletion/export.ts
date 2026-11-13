@@ -77,12 +77,31 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
     const accessLinks=siteIds.length ? await trx.executor.selectFrom('public_site_access_links').select([
       'id','site_id','created_at','claim_expires_at','claimed_at','session_expires_at',
     ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('created_at').orderBy('id').limit(50001).execute() : [];
+    const emailInvitations=siteIds.length ? await trx.executor.selectFrom('public_site_email_invitations').select([
+      'id','site_id','normalized_email','generation','state','delivery_state','invited_by_clerk_user_id',
+      'accepted_clerk_user_id','created_at','issued_at','expires_at','accepted_at','revoked_at','state_reason','updated_at',
+    ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('id').limit(50001).execute() : [];
+    const viewerGrants=siteIds.length ? await trx.executor.selectFrom('public_site_viewer_grants').select([
+      'id','site_id','invitation_id','invitation_generation','clerk_user_id','granted_at','revoked_at','revocation_reason',
+    ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('id').limit(50001).execute() : [];
+    const viewerSessions=siteIds.length ? await trx.executor.selectFrom('public_site_viewer_sessions').select([
+      'id','site_id','grant_id','created_at','expires_at','last_seen_at','revoked_at',
+    ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('id').limit(50001).execute() : [];
+    const invitationIds=emailInvitations.map(invitation=>invitation.id);
+    const deliveryOutbox=invitationIds.length ? await trx.executor.selectFrom('public_site_invitation_deliveries').select([
+      'id','invitation_id','invitation_generation','state','attempts','available_at','sent_at','created_at','updated_at',
+    ]).where('invitation_id','in',invitationIds).orderBy('invitation_id').orderBy('id').limit(50001).execute() : [];
+    const auditEvents=siteIds.length ? await trx.executor.selectFrom('public_site_access_audit_events').select([
+      'id','site_id','invitation_id','event_type','actor_kind','details','occurred_at',
+    ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('id').limit(50001).execute() : [];
     if ([posts,comments,likes,follows].some((rows)=>rows.length>10000) || machines.length>1000 || billing.length>1000
       || sites.length>1000 || versions.length>50000 || aliases.length>10000 || accessLinks.length>50000
+      || [emailInvitations,viewerGrants,viewerSessions,deliveryOutbox,auditEvents].some(rows=>rows.length>50000)
       || credit.length>1000 || aiRequests.length>10000) {
       throw new Error('Platform export capacity exceeded');
     }
     return { version:3,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding,
-      publicSites:{sites,versions,aliases,accessLinks}, aiGatewayCredit:{ balances:credit, requests:aiRequests } };
+      publicSites:{sites,versions,aliases,accessLinks,emailInvitations,viewerGrants,viewerSessions,deliveryOutbox,auditEvents},
+      aiGatewayCredit:{ balances:credit, requests:aiRequests } };
   });
 }
