@@ -76,6 +76,11 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
 
     expect(await adapter.findTabByInternalName(sessionName, firstName)).toEqual(first);
     await adapter.renameTab(sessionName, second.tabId, "renamed");
+    expect(await adapter.findTabByInternalName(sessionName, secondName)).toBeUndefined();
+    await expect(adapter.recoverRenamedTabs(sessionName, [{
+      internalName: secondName, displayName: "renamed", tabId: second.tabId, paneId: second.paneId, requireLivePane: true,
+    }])).resolves.toEqual({ [secondName]: second });
+    expect(await adapter.findTabByInternalName(sessionName, secondName)).toEqual(second);
     await adapter.closeTab(sessionName, second.tabId);
     expect(await adapter.findTabByInternalName(sessionName, secondName)).toBeUndefined();
   }, 30_000);

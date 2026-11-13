@@ -13,6 +13,7 @@ import type {
   ZellijObserverEvent,
   ZellijRuntimeAdapter,
 } from "./runtime.js";
+import type { RenamedTabCandidate } from "./renamed-tab-recovery.js";
 import {
   TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
@@ -47,6 +48,13 @@ const PaneGeometrySchema = PaneSchema.extend({
   is_selectable: z.boolean().optional(),
 });
 type PaneGeometry = z.infer<typeof PaneGeometrySchema>;
+const RenamedTabCandidatesSchema = z.array(z.object({
+  internalName: z.string().regex(TAB_NAME),
+  displayName: z.string().min(1).max(128),
+  tabId: z.number().int().min(0),
+  paneId: z.string().regex(PANE_ID).nullable(),
+  requireLivePane: z.boolean(),
+}).strict()).max(10_000);
 const TabSchema = z.object({
   tab_id: z.number().int().min(0),
   name: z.string().max(128),
@@ -643,6 +651,56 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       found[tab.name] = { tabId: tab.tab_id, paneId };
     }
     return found;
+  }
+
+  /**
+   * Repairs tabs an older runtime renamed from their internal name to their display name.
+   * Identity requires the stored tab ID, the exact display name, and a managed pane; exited
+   * records additionally require their stored pane to be present and not held.
+   */
+  async recoverRenamedTabs(
+    sessionNameInput: string,
+    candidatesInput: RenamedTabCandidate[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const candidates = RenamedTabCandidatesSchema.parse(candidatesInput);
+    if (candidates.length === 0) return {};
+    const tabs = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-tabs", "--json"],
+      z.array(TabSchema).max(10_000),
+      binaryPath,
+    );
+    const existingNames = new Set(tabs.map((tab) => tab.name));
+    const tabsById = new Map(tabs.map((tab) => [tab.tab_id, tab]));
+    const claimedTabIds = new Set<number>();
+    const matches = candidates.flatMap((candidate) => {
+      const tab = tabsById.get(candidate.tabId);
+      if (!tab || existingNames.has(candidate.internalName) || claimedTabIds.has(candidate.tabId)) return [];
+      if (tab.name !== candidate.displayName || TAB_NAME.test(tab.name)) return [];
+      claimedTabIds.add(candidate.tabId);
+      return [candidate];
+    });
+    if (matches.length === 0) return {};
+    const panes = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+      z.array(PaneSchema.extend({ is_held: z.boolean().optional() })).max(10_000),
+      binaryPath,
+    );
+    const recovered: Record<string, { tabId: number; paneId: string }> = {};
+    for (const candidate of matches) {
+      const managedPanes = panes.filter((pane) => pane.tab_id === candidate.tabId && !pane.is_plugin);
+      const primaryPane = candidate.requireLivePane
+        ? managedPanes.find((pane) => `terminal_${pane.id}` === candidate.paneId && pane.is_held !== true)
+        : managedPanes.find((pane) => pane.pane_title === candidate.internalName)
+          ?? managedPanes.toSorted((left, right) => left.id - right.id)[0];
+      if (!primaryPane) continue;
+      await this.run(
+        ["--session", sessionName, "action", "rename-tab", "--tab-id", String(candidate.tabId), candidate.internalName],
+        binaryPath,
+      );
+      recovered[candidate.internalName] = { tabId: candidate.tabId, paneId: `terminal_${primaryPane.id}` };
+    }
+    return recovered;
   }
 
   async subscribeWorkspace(sessionNameInput: string, input: {

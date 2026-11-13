@@ -22,6 +22,12 @@ import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
+  renamedTabCandidates,
+  renamedTabRecoveryCandidates,
+  revivableExitedTabs,
+  type RenamedTabCandidate,
+} from "./renamed-tab-recovery.js";
+import {
   TerminalWorkspaceStore,
   type TerminalRuntimeWorkspaceState,
   type TerminalSnapshot,
@@ -53,6 +59,11 @@ export interface ZellijRuntimeAdapter {
     internalNames: string[],
   ): Promise<Record<string, { tabId: number; paneId: string }>>;
   renameTab?(sessionName: string, tabId: number, name: string): Promise<void>;
+  /**
+   * Restores the stable internal name of tabs an older runtime renamed to their display name.
+   * A candidate matches only its stored Zellij tab ID when that tab still carries the display name.
+   */
+  recoverRenamedTabs?(sessionName: string, candidates: RenamedTabCandidate[]): Promise<Record<string, { tabId: number; paneId: string }>>;
   closeTab?(sessionName: string, tabId: number): Promise<void>;
   deleteSession?(sessionName: string): Promise<void>;
   scrollState?(sessionName: string, paneId: string, line?: number): Promise<TerminalScrollState>;
@@ -316,6 +327,7 @@ export class TerminalRuntime {
     const releaseObserverReservation = needsObserver
       ? this.reserveObserverSlot(workspaceId)
       : () => undefined;
+    let releaseRevivalReservation: () => void = () => undefined;
     try {
       await this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize);
       const restorableTabs = Object.values(workspace.tabs)
@@ -327,10 +339,19 @@ export class TerminalRuntime {
             restorableTabs.map((tab) => tab.zellijTabName),
           )
         : undefined;
+      const located = new Map<string, { tabId: number; paneId: string }>();
       for (const tab of restorableTabs) {
-        let ids = recoveredTabs
+        const ids = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
+        if (ids) located.set(tab.id, ids);
+      }
+      const repaired = await this.recoverRenamedTabs(
+        workspace,
+        renamedTabRecoveryCandidates(workspace, restorableTabs, located),
+      );
+      for (const tab of restorableTabs) {
+        let ids = located.get(tab.id) ?? repaired[tab.zellijTabName];
         if (tab.status === "starting" && tab.startupCommand === undefined) {
           // Records without startup intent predate stable client-supplied tab
           // IDs. Recover an already-created Zellij tab when possible; an
@@ -353,8 +374,10 @@ export class TerminalRuntime {
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
+      releaseRevivalReservation = await this.reviveRecoveredExitedTabs(workspace, repaired, needsObserver);
       await this.restartObserver(workspaceId);
     } finally {
+      releaseRevivalReservation();
       releaseObserverReservation();
     }
   }
@@ -377,9 +400,61 @@ export class TerminalRuntime {
     const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
     const tab = workspace.tabs[ref.tabId];
     if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
-    await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
+    // The display name is Matrix-owned. The Zellij tab keeps its stable internal
+    // name because restore and pane-close recovery locate tabs by that name.
     return this.store.renameTab(ref, input);
+  }
+
+  private async recoverRenamedTabs(
+    workspace: TerminalRuntimeWorkspaceState,
+    candidates: RenamedTabCandidate[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>> {
+    if (candidates.length === 0 || !this.zellij.recoverRenamedTabs) return {};
+    return this.zellij.recoverRenamedTabs(workspace.zellijSessionName, candidates);
+  }
+
+  /**
+   * Revives exited records whose live pane was proven by renamed-tab recovery, within admission
+   * limits. Returns the observer reservation it took, which the caller releases after restarting
+   * the workspace observer.
+   */
+  private async reviveRecoveredExitedTabs(
+    workspace: TerminalRuntimeWorkspaceState,
+    recovered: Record<string, { tabId: number; paneId: string }>,
+    observerReserved: boolean,
+  ): Promise<() => void> {
+    const noReservation = () => undefined;
+    const revivable = revivableExitedTabs(workspace, recovered);
+    if (revivable.length === 0) return noReservation;
+    let releaseObserverReservation: () => void = noReservation;
+    if (!observerReserved) {
+      try {
+        releaseObserverReservation = this.reserveObserverSlot(workspace.id);
+      } catch (error) {
+        if (!(error instanceof TerminalRuntimeError) || error.code !== "capacity") throw error;
+        console.warn("[terminal-runtime] skipped exited tab revival at observer capacity");
+        return noReservation;
+      }
+    }
+    try {
+      const workspaces = await this.listWorkspaces();
+      const current = workspaces.find((candidate) => candidate.id === workspace.id);
+      let workspaceLive = current?.tabs.filter(tabOccupiesAdmission).length ?? 0;
+      let totalLive = workspaces.reduce((count, candidate) => count + candidate.tabs.filter(tabOccupiesAdmission).length, 0);
+      for (const tab of revivable) {
+        if (workspaceLive >= this.maxTabsPerWorkspace || totalLive >= this.maxTabsTotal) {
+          console.warn("[terminal-runtime] skipped exited tab revival at tab capacity");
+          break;
+        }
+        await this.store.activateTab({ workspaceId: workspace.id, tabId: tab.id }, recovered[tab.zellijTabName]!);
+        workspaceLive += 1;
+        totalLive += 1;
+      }
+      return releaseObserverReservation;
+    } catch (error) {
+      releaseObserverReservation();
+      throw error;
+    }
   }
 
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace> {
@@ -926,7 +1001,7 @@ export class TerminalRuntime {
       const replacement = await this.zellij.findTabByInternalName?.(
         workspace.zellijSessionName,
         tab.zellijTabName,
-      );
+      ) ?? (await this.recoverRenamedTabs(workspace, renamedTabCandidates([tab], false)))[tab.zellijTabName];
       if (replacement) {
         await this.store.activateTab(ref, replacement);
       } else {

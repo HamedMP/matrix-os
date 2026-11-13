@@ -244,6 +244,69 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     expect(run.mock.calls.filter(([args]) => args.includes("list-panes"))).toHaveLength(1);
   });
 
+  it("restores the internal name of a renamed tab only on its stored tab ID with the display name", async () => {
+    const live = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const exited = "matrix-tab-fedcba9876543210fedcba9876543210";
+    const held = "matrix-tab-00000000000000000000000000000001";
+    const stranger = "matrix-tab-00000000000000000000000000000002";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) {
+        return JSON.stringify([
+          { tab_id: 7, name: "agent-a" },
+          { tab_id: 8, name: "agent-b" },
+          { tab_id: 9, name: "agent-c" },
+          { tab_id: 10, name: "other" },
+        ]);
+      }
+      if (args.includes("list-panes")) {
+        return JSON.stringify([
+          { id: 12, is_plugin: false, tab_id: 7, pane_title: live },
+          { id: 13, is_plugin: false, tab_id: 8, pane_title: exited, is_held: false, exit_status: null },
+          { id: 14, is_plugin: false, tab_id: 9, pane_title: held, is_held: true, exit_status: 0 },
+          { id: 15, is_plugin: false, tab_id: 10, pane_title: stranger },
+        ]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+    const sessionName = "matrix-w-0123456789abcdef0123456789abcdef";
+
+    await expect(adapter.recoverRenamedTabs(sessionName, [
+      { internalName: live, displayName: "agent-a", tabId: 7, paneId: "terminal_1", requireLivePane: false },
+      { internalName: exited, displayName: "agent-b", tabId: 8, paneId: "terminal_13", requireLivePane: true },
+      { internalName: held, displayName: "agent-c", tabId: 9, paneId: "terminal_14", requireLivePane: true },
+      { internalName: stranger, displayName: "renamed-locally", tabId: 10, paneId: "terminal_15", requireLivePane: false },
+    ])).resolves.toEqual({
+      [live]: { tabId: 7, paneId: "terminal_12" },
+      [exited]: { tabId: 8, paneId: "terminal_13" },
+    });
+    const renames = run.mock.calls.map(([args]) => args).filter((args) => args.includes("rename-tab"));
+    expect(renames).toEqual([
+      ["--session", sessionName, "action", "rename-tab", "--tab-id", "7", live],
+      ["--session", sessionName, "action", "rename-tab", "--tab-id", "8", exited],
+    ]);
+    expect(run.mock.calls.filter(([args]) => args.includes("list-tabs"))).toHaveLength(1);
+  });
+
+  it("never claims a tab that already carries a managed internal name", async () => {
+    const internalName = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-tabs")) return JSON.stringify([{ tab_id: 7, name: "matrix-tab-fedcba9876543210fedcba9876543210" }]);
+      if (args.includes("list-panes")) return JSON.stringify([{ id: 12, is_plugin: false, tab_id: 7 }]);
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+
+    await expect(adapter.recoverRenamedTabs("matrix-w-0123456789abcdef0123456789abcdef", [{
+      internalName,
+      displayName: "matrix-tab-fedcba9876543210fedcba9876543210",
+      tabId: 7,
+      paneId: "terminal_12",
+      requireLivePane: false,
+    }])).resolves.toEqual({});
+    expect(run.mock.calls.some(([args]) => args.includes("rename-tab"))).toBe(false);
+  });
+
   it("promotes a remaining pane through the pinned generation when the primary closes", async () => {
     const logicalName = "matrix-w-0123456789abcdef0123456789abcdef";
     const ownedName = "matrix-rt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
