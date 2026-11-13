@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   FilePreviewDescriptorSchema,
-  resolveChatMessageLink,
+  FileResourceRefSchema,
   type FilePreviewDescriptor,
   type FileResourceRef,
 } from "@matrix-os/contracts";
@@ -17,9 +17,10 @@ import {
 const CHAT_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
 
 function resourceForChatPath(path: string): FileResourceRef {
-  const target = resolveChatMessageLink(path);
-  if (target?.kind !== "file") throw new Error("InvalidChatFile");
-  return { kind: "home", path: target.path };
+  // Message links are resolved by their caller; the file tree supplies literal paths.
+  const resource = FileResourceRefSchema.safeParse({ kind: "home", path });
+  if (!resource.success) throw new Error("InvalidChatFile");
+  return resource.data;
 }
 
 function gatewayPreviewUrl(url: string, gatewayUrl = getGatewayUrl()): string {
@@ -75,6 +76,9 @@ async function loadPreviewText(url: string, maxBytes: number, gatewayUrl?: strin
 }
 
 export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl }: { path: string; onClose: () => void; embedded?: boolean; gatewayUrl?: string }) {
+  // These identities control FilePreviewContent's fetch/object-URL lifetime.
+  const loadBlob = useCallback((url: string, maxBytes: number) => loadPreviewBlob(url, maxBytes, gatewayUrl), [gatewayUrl]);
+  const loadText = useCallback((url: string, maxBytes: number) => loadPreviewText(url, maxBytes, gatewayUrl), [gatewayUrl]);
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, [path]);
   const [attempt, setAttempt] = useState(0);
@@ -103,8 +107,8 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl }: {
               key={`${state.descriptor.version}:${attempt}`}
               descriptor={state.descriptor}
               contentUrl={filePreviewContentUrl(state.descriptor.resource)}
-              loadBlob={(url, maxBytes) => loadPreviewBlob(url, maxBytes, gatewayUrl)}
-              loadText={(url, maxBytes) => loadPreviewText(url, maxBytes, gatewayUrl)}
+              loadBlob={loadBlob}
+              loadText={loadText}
               retry={retry}
             />}
     </div>
