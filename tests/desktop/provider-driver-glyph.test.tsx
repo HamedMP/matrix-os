@@ -5,6 +5,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options";
 import { ProviderDriverGlyph } from "../../desktop/src/renderer/src/features/chat/ProviderDriverGlyph";
+import hermesProviderIcon from "../../desktop/src/renderer/src/assets/providers/hermes-provider.png";
 
 vi.mock("@renderer/lib/hugeicons", () => ({ Cpu: (props: Record<string, unknown>) => <svg {...props} /> }));
 afterEach(cleanup);
@@ -26,7 +27,7 @@ describe("Desktop Chat provider artwork", () => {
     const { container } = render(<ProviderDriverGlyph kind="hermes" size={20} />);
     const glyph = container.querySelector('[data-provider-glyph="hermes"]');
     expect(glyph).toBeInstanceOf(HTMLImageElement);
-    expect(glyph).toHaveAttribute("src", expect.stringContaining("hermes-provider.png"));
+    expect(glyph).toHaveAttribute("src", hermesProviderIcon);
     expect(glyph).toHaveAttribute("alt", "");
     expect(glyph).toHaveAttribute("aria-hidden", "true");
     expect(glyph).toHaveAttribute("width", "20");
