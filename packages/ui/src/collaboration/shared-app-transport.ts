@@ -61,10 +61,17 @@ export function createSharedAppTransport(input: {
   const base = `/api/collaboration/scopes/${target.scopeId}/apps/${encodeURIComponent(target.appId)}`;
   let launchRequestId: string | null = null;
   let uncertain: PendingMutation[] = [];
-  let pendingConflict = false;
+  let pendingFailure: SharedAppTransportError | null = null;
+  let retryInFlight: ReturnType<SharedAppTransport["retryMutation"]> | null = null;
+  let closed = false;
   const inFlight = new Set<string>();
 
+  const requireOpen = () => {
+    if (closed) throw new SharedAppTransportError("unavailable", false);
+  };
+
   const launch = async () => {
+    requireOpen();
     launchRequestId ??= crypto.randomUUID();
     try {
       const response = CollaborativeAppLaunchResponseSchema.parse(await input.platform.post(
@@ -86,6 +93,7 @@ export function createSharedAppTransport(input: {
   };
 
   const query = async (action: unknown): Promise<{ result: unknown; revision: string }> => {
+    requireOpen();
     try {
       return CollaborativeAppQueryResponseSchema.parse(await input.direct.request(
         target.scopeId, "POST", `${base}/view`, { action },
@@ -96,6 +104,7 @@ export function createSharedAppTransport(input: {
   };
 
   const sendMutation = async (attempt: PendingMutation) => {
+    requireOpen();
     inFlight.add(attempt.clientRequestId);
     try {
       const response = CollaborationAppActionResponseSchema.parse(await input.direct.request(
@@ -108,7 +117,8 @@ export function createSharedAppTransport(input: {
       return { ...response, revision: String(response.revision) };
     } catch (error: unknown) {
       const normalized = normalize(error, "unavailable");
-      if (normalized.code === "host_offline" || normalized.code === "unavailable") {
+      if (normalized.code === "host_offline" || normalized.code === "unavailable"
+        || normalized.code === "invalid_response") {
         if (!uncertain.some((candidate) => candidate.clientRequestId === attempt.clientRequestId)) {
           uncertain.push(attempt);
         }
@@ -121,52 +131,67 @@ export function createSharedAppTransport(input: {
     }
   };
 
+  const recoverMutations = async () => {
+    const attempts = [...uncertain];
+    if (attempts.length === 0) {
+      pendingFailure = null;
+      throw new SharedAppTransportError("conflict", false);
+    }
+    let result: { result: unknown; revision: string; replayed: boolean } | undefined;
+    for (const attempt of attempts) {
+      try {
+        result = await sendMutation(attempt);
+      } catch (error: unknown) {
+        const failure = normalize(error, "unavailable");
+        if (failure.code !== "uncertain"
+          && (!pendingFailure || pendingFailure.code === "conflict")) {
+          pendingFailure = failure;
+        }
+      }
+    }
+    if (uncertain.length > 0) throw new SharedAppTransportError("uncertain", true);
+    if (pendingFailure) {
+      const failure = pendingFailure;
+      pendingFailure = null;
+      throw failure;
+    }
+    // Nonempty recovery either produced a result or reported its failure above.
+    return result!;
+  };
+
   return {
     target,
     launch,
     query,
-    mutate(action, expectedRevision) {
+    async mutate(action, expectedRevision) {
+      requireOpen();
       if (uncertain.length + inFlight.size >= MAX_PENDING_MUTATIONS) {
-        return Promise.reject(new SharedAppTransportError("unavailable", true));
+        throw new SharedAppTransportError("unavailable", true);
       }
       const attempt = { clientRequestId: crypto.randomUUID(), expectedRevision, action };
       return sendMutation(attempt);
     },
     async retryMutation() {
-      const attempts = [...uncertain];
-      if (attempts.length === 0) {
-        pendingConflict = false;
-        throw new SharedAppTransportError("conflict", false);
-      }
-      let result: { result: unknown; revision: string; replayed: boolean } | undefined;
-      let firstFailure: unknown;
-      for (const attempt of attempts) {
-        try {
-          result = await sendMutation(attempt);
-        } catch (error: unknown) {
-          if (error instanceof SharedAppTransportError && error.code === "conflict") {
-            pendingConflict = true;
-          } else {
-            firstFailure ??= error;
-          }
-        }
-      }
-      if (uncertain.length > 0) throw new SharedAppTransportError("uncertain", true);
-      if (firstFailure) throw firstFailure;
-      if (pendingConflict) {
-        pendingConflict = false;
-        throw new SharedAppTransportError("conflict", false);
-      }
-      if (!result) throw new SharedAppTransportError("conflict", false);
-      return result;
+      requireOpen();
+      if (retryInFlight) return retryInFlight;
+      const recovery = recoverMutations().finally(() => {
+        retryInFlight = null;
+      });
+      retryInFlight = recovery;
+      return recovery;
     },
     subscribe(handlers) {
+      requireOpen();
       return input.direct.subscribeEvents(target.scopeId, {
         onEvent: handlers.onChanged,
         onUnavailable: handlers.onUnavailable,
       });
     },
-    close() { input.direct.close(target.scopeId); },
+    close() {
+      if (closed) return;
+      closed = true;
+      input.direct.close(target.scopeId);
+    },
   };
 }
 
