@@ -22,7 +22,8 @@ export function openNativeSharedBrowserRun(options: {
   input.signal.throwIfAborted();
   let lease: ReturnType<SharedBrowserBroker["openRun"]>;
   try { lease = options.broker.openRun(binding, input.signal,
-      supervised ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction ?? null } : undefined); }
+      supervised ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction ?? null } : undefined,
+      { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction ?? null }); }
   catch (error: unknown) {
     if (supervised && !options.broker.allowsSupervisedRun(binding)) return undefined;
     console.warn("[shared-browser-native] Run admission unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -30,6 +31,7 @@ export function openNativeSharedBrowserRun(options: {
   }
   let closing: Promise<void> | undefined;
   return {
+    setPermissionMode: lease.setPermissionMode,
     isLive: () => options.broker.resolveCapability(lease.token) !== null,
     attemptId: randomUUID(), token: lease.token, expiresAt: lease.expiresAt,
     mcpServer: {

@@ -1,3 +1,4 @@
+import { isChatPermissionModePath, mintChatPermissionModeProof } from "./chat-permission-mode-proof.js";
 import { routineActionPathId, routineOwnerSession, mintRoutineActionProof } from "./routine-action-proof.js";
 import type { ClerkAuth } from "./clerk-auth.js";
 import { isCustomMcpApprovalSubmitPath, mintCustomMcpApprovalProof } from "./custom-mcp-approval-proof.js";
@@ -53,7 +54,7 @@ export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyI
   if (routine && !sessionExpiresAt) return null;
   if (!input.platformSecret || input.identity.source !== "auth"
     || (!routine && input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity))
-    || !(routine || isCustomMcpApprovalSubmitPath(input.method, input.path) || isBrowserGrantRevokePath(input.method, input.path))) return null;
+    || !(isChatPermissionModePath(input.method, input.path) || routine || isCustomMcpApprovalSubmitPath(input.method, input.path) || isBrowserGrantRevokePath(input.method, input.path))) return null;
   const reader = input.request.clone().body?.getReader();
   if (!reader) return null;
   const cancel = () => {
@@ -88,6 +89,7 @@ export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyI
         identity: { ...input.identity, handle: input.handle, runtimeSlot: input.machine.runtimeSlot } });
       if (browser) return browser;
     }
+    if (isChatPermissionModePath(input.method, input.path)) return mintChatPermissionModeProof({ method: input.method, path: input.path, body, secret: input.platformSecret, identity: { handle: input.handle, userId: input.identity.userId, source: input.identity.source } });
     return mintCustomMcpApprovalProof({ method: input.method, path: input.path, body, secret: input.platformSecret,
       identity: { handle: input.handle, userId: input.identity.userId, source: input.identity.source } });
   } catch (error: unknown) {

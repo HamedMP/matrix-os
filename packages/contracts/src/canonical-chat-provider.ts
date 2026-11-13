@@ -131,7 +131,12 @@ export const CanonicalProviderSupportSchema = z.object({
   resources: z.array(CanonicalChatResourceKindSchema).max(7),
   interactionModes: z.array(canonicalReferenceId(80)).max(16),
   permissionModes: z.array(canonicalReferenceId(80)).max(16),
+  livePermissionModes: z.array(z.enum(["supervised", "full_access"])).max(2).optional(),
 }).strict().superRefine((supports, ctx) => {
+  if (supports.livePermissionModes && (!unique(supports.livePermissionModes)
+    || supports.livePermissionModes.some(mode => !supports.permissionModes.includes(mode)))) {
+    ctx.addIssue({ code: "custom", path: ["livePermissionModes"], message: "Live modes must be distinct supported modes" });
+  }
   for (const key of ["attachments", "tools", "resources", "interactionModes", "permissionModes"] as const) {
     if (!unique(supports[key])) {
       ctx.addIssue({ code: "custom", path: [key], message: "Duplicate capability value" });

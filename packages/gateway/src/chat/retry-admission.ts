@@ -41,6 +41,11 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    if (context.permissionModeUnconfirmed) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Permission change was not confirmed. Start a new message and select its permission mode.", false, []), 409,
+      );
+    }
     if (context.latestRun.driverKind === "matrix_bot" && context.turn.clientRequestId.startsWith("req_routine_")) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Review this routine's status before requesting new work.", false, []), 409,

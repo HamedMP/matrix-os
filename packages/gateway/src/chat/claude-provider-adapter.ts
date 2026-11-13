@@ -15,7 +15,8 @@ import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
-import { buildAgentLaunch } from "../agent-launcher.js";
+import { createClaudePermissionControl } from "./claude-permission-control.js";
+import { buildAgentLaunch, claudeLaunchSettings } from "../agent-launcher.js";
 import type { MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import {
   buildKernelCredentialLaunch,
@@ -182,6 +183,7 @@ export function createClaudeChatProviderAdapter(options: {
     chatId: string;
     abort: () => void;
     steer: (prompt: string) => void;
+    setPermissionMode: NonNullable<CanonicalChatProviderAdapter["setPermissionMode"]>;
     submitInput: ReturnType<typeof createClaudeInputController>["submit"];
     submitApproval?: ReturnType<typeof createClaudeCustomMcpApprovalControl>["submit"];
   }>();
@@ -237,7 +239,7 @@ export function createClaudeChatProviderAdapter(options: {
           : "No Matrix tools are available for this run.")
       : undefined;
     const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
-    let approvalClient = approvalReady && capability && !previewDrive && selectedPermission === "default" && input.interactionMode === "default"
+    let approvalClient = approvalReady && capability && !previewDrive && ["default", "bypassPermissions"].includes(selectedPermission) && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
     let registeredGeneration: number | undefined;
     let launch: ReturnType<typeof buildAgentLaunch>;
@@ -263,6 +265,7 @@ export function createClaudeChatProviderAdapter(options: {
         matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: previewDrive ? "preview_drive_call" : mcpScope,
       });
+      if (input.owner.type === "personal" && !input.sharedScopeId && !input.context?.agent && !previewDrive && input.interactionMode === "default" && ["default", "bypassPermissions"].includes(selectedPermission)) launch.args.splice(launch.args.indexOf("--") < 0 ? launch.args.length : launch.args.indexOf("--"), 0, "--allow-dangerously-skip-permissions");
       if (browserRun) configureClaudeSharedBrowser(launch, browserRun);
       if (resumeState) {
         const separator = launch.args.indexOf("--");
@@ -348,7 +351,7 @@ export function createClaudeChatProviderAdapter(options: {
     const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
     // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
     const builtinToolApproval = verifyBuiltinToolDecision
-      && (selectedPermission === "default" || selectedPermission === "acceptEdits")
+      && (selectedPermission === "default" || selectedPermission === "acceptEdits" || selectedPermission === "bypassPermissions")
       && input.interactionMode === "default"
       ? createClaudeBuiltinToolApprovalControl({
         runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
@@ -359,6 +362,7 @@ export function createClaudeChatProviderAdapter(options: {
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
+      permissionControl.close();
       inputControl.close();
       capability?.revoke();
       approvalControl?.close();
@@ -387,7 +391,13 @@ export function createClaudeChatProviderAdapter(options: {
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: humanWait.emit,
       onError: () => processController.abort(),
-      onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
+      onToolPermission: (request, respond) => permissionControl.gate(request, respond) || dispatchPermission(request, respond),
+      onToolPermissionCancel: id => {
+        permissionControl.cancel(id);
+        integrationApproval?.onToolPermissionCancel(id); approvalControl?.onToolPermissionCancel(id); builtinToolApproval?.onToolPermissionCancel(id);
+      },
+    });
+    const dispatchPermission: NonNullable<Parameters<typeof createClaudeInputController>[0]["onToolPermission"]> = (request, respond) => integrationApproval?.onToolPermission(request, respond)
         || (approvalControl?.onToolPermission ?? (approvalReady && capability && !previewDrive && selectedPermission === "default"
         && input.interactionMode === "default" ? (request, respond) => {
           if (request.toolName !== CALL_TOOL) return false;
@@ -402,18 +412,30 @@ export function createClaudeChatProviderAdapter(options: {
           return true;
         } : undefined))?.(request, respond)
         || builtinToolApproval?.onToolPermission(request, respond)
-        || false,
-      onToolPermissionCancel: id => {
-        integrationApproval?.onToolPermissionCancel(id);
-        approvalControl?.onToolPermissionCancel(id);
-        builtinToolApproval?.onToolPermissionCancel(id);
+        || false;
+    const permissionControl = createClaudePermissionControl({ chatId: input.chatId, runId: input.runId,
+      initialMode: input.permissionMode, enabled: input.owner.type === "personal" && !input.sharedScopeId && !input.context?.agent && !previewDrive
+        && input.interactionMode === "default" && ["default", "bypassPermissions"].includes(selectedPermission), signal: processSignal,
+      verify: options.customMcpApprovalClient?.verifyPermissionMode?.bind(options.customMcpApprovalClient),
+      write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Permission transport unavailable")),
+      supervisedSettings: claudeLaunchSettings({ agent: "claude", cwd, runtimeHome: options.homePath,
+        approvalPolicy: "on-request", mode: "default", claudePermissionMode: "default", matrixCustomMcp: capability !== null,
+        matrixCustomMcpScope: mcpScope, matrixDriveContext: Boolean(input.context?.drives?.length),
+        sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd] } }),
+      async setAuthority(fullAccess) {
+        if (capability && !capability.setFullAccess) throw new Error("Run authority unavailable");
+        capability?.setFullAccess?.(fullAccess);
+        await browserRun?.setPermissionMode(fullAccess ? "full_access" : "supervised");
       },
+      allowPending: async () => { await builtinToolApproval?.allowPending(); await integrationApproval?.allowPending(); }, dispatch: dispatchPermission,
+      abort: () => { revokeApproval(); processController.abort(); },
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
       ownerType: input.owner.type,
       chatId: input.chatId,
       abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
+      setPermissionMode: permissionControl.change,
       submitInput: inputControl.submit,
       submitApproval: async (id: string, decision: Parameters<NonNullable<typeof approvalControl>["submit"]>[1], provenance?: Parameters<NonNullable<typeof approvalControl>["submit"]>[2]) => {
         if (integrationApproval?.has(id)) return integrationApproval.submit(id, decision, provenance);
@@ -631,6 +653,7 @@ export function createClaudeChatProviderAdapter(options: {
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
       markStarted?.();
       if (routineHook?.handle(line)) return;
+      if (permissionControl.handle(line)) return;
       if (inputControl.handle(line)) return;
       if (line.type === "result") {
         if (line.is_error === true || line.subtype === "error") discardProjectedText();
@@ -851,6 +874,7 @@ export function createClaudeChatProviderAdapter(options: {
         releaseActiveRun();
         for await (const event of execute({
           ...input,
+          permissionMode: permissionControl.currentMode(),
           prompt: steerPrompt,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
@@ -938,6 +962,11 @@ export function createClaudeChatProviderAdapter(options: {
     serializeState: (value) => ClaudeChatStateSchema.parse(value),
     start: (input) => execute(input),
     resume: (input) => execute(input, ClaudeChatStateSchema.parse(input.resumeState)),
+    async setPermissionMode(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Permission Run unavailable");
+      await active.setPermissionMode(input);
+    },
     async submitInput(input) {
       const active = activeRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Input Run unavailable");

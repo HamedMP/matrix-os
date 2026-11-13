@@ -205,3 +205,16 @@ it.each([true, "true"])("rejects a legacy read opt-in before consuming Preview a
     expect(launch.args[launch.args.indexOf("--append-system-prompt") + 1]!).not.toContain("This run cannot connect, sync, disconnect or mutate integrations");
   } finally { registry.close(); }
 });
+
+it("changes integration authority only through the live server-side capability and revokes both modes", () => {
+  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+  const capability = registry.issue({ owner, runId: "run_live", scope: "chat_call", fullAccess: false })!;
+  const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call")!;
+  const allowed = () => context.consumeIntegrationRequest!("POST", "/api/integrations/call", action);
+  expect(allowed()).toBe(false);
+  capability.setFullAccess!(true); expect(allowed()).toBe(true);
+  capability.setFullAccess!(false); expect(allowed()).toBe(false);
+  capability.revoke(); expect(allowed()).toBe(false);
+  expect(() => capability.setFullAccess!(true)).toThrow();
+  registry.close();
+});

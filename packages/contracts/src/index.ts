@@ -1515,3 +1515,4 @@ export * from "#routine-full-access";
 export * from "#routine-full-access-view";
 
 export * from "#routine-origin-proof";
+export * from "#canonical-chat-permission-mode";

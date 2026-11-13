@@ -12,6 +12,7 @@ import { createJevLabelCallRoutes, authorizeInternalJevLabels } from "../../pack
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
+import { mintChatPermissionModeProof } from "../../packages/platform/src/chat-permission-mode-proof.js";
 import { mintCustomMcpApprovalProof } from "../../packages/platform/src/custom-mcp-approval-proof.js";
 
 function bearerFor(handle: string, secret: string): string {
@@ -74,6 +75,67 @@ describe("platform/internal-integration-routes", () => {
       internalIntegrationRoutes: internalRoutes,
     });
   }
+
+  it("verifies exact owner permission changes without optional Pipedream routes", async () => {
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123" });
+    const body = { chatId: "chat_builtin", runId: "run_builtin", clientRequestId: "req_builtin", permissionMode: "full_access" };
+    const proof = (actorId = "user_alice") => mintChatPermissionModeProof({ method: "POST", path: "/api/chats/chat_builtin/runs/run_builtin/permission-mode",
+      body: JSON.stringify({ clientRequestId: body.clientRequestId, permissionMode: body.permissionMode }), secret: "platform-secret-123",
+      identity: { handle: "alice", userId: actorId, source: "auth" } })!;
+    const path = "/internal/containers/alice/integrations/permission-mode/verify";
+    const headers = { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`, "content-type": "application/json", "x-matrix-chat-permission-mode-proof": proof() };
+    const response = await app.request(path, { method: "POST", headers, body: JSON.stringify(body) });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ verified: true });
+    for (const change of [{ runId: "run_other" }, { chatId: "chat_other" }, { clientRequestId: "req_other" }, { permissionMode: "supervised" }]) {
+      expect((await app.request(path, { method: "POST", headers, body: JSON.stringify({ ...body, ...change }) })).status).toBe(403);
+    }
+    for (const candidate of ["forged", proof("user_other")]) expect((await app.request(path, { method: "POST",
+      headers: { ...headers, "x-matrix-chat-permission-mode-proof": candidate }, body: JSON.stringify(body) })).status).toBe(403);
+    expect((await app.request(path, { method: "POST", headers: { ...headers, authorization: "Bearer forged" }, body: JSON.stringify(body) })).status).toBe(401);
+    expect((await app.request(path, { method: "POST", body: JSON.stringify(body) })).status).toBe(401);
+    expect((await app.request(path, { method: "POST", headers, body: "invalid" })).status).toBe(400);
+    expect((await app.request(path, { method: "POST", headers, body: "x".repeat(4001) })).status).toBe(413);
+    // Optional personal-account endpoints retain their absent-service behavior.
+    expect((await app.request("/internal/containers/alice/integrations/probe")).status).toBe(401);
+    expect((await app.request("/internal/containers/alice/integrations/approval/verify", { method: "POST", headers, body: JSON.stringify(body) })).status).toBe(401);
+  });
+
+  it.each([
+    { handle: "pr-3912", provisioningClass: "preview" as const },
+    { handle: "pv-3912-1234abcd", provisioningClass: "private-preview" as const },
+  ])("keeps $provisioningClass permission verification denied without owner-only eligibility", async ({ handle, provisioningClass }) => {
+    await insertUserMachine(db, { machineId: "00000000-0000-4000-8000-000000003912", clerkUserId: "user_preview_owner", handle,
+      runtimeSlot: handle, provisioningClass, status: "running", provisionedAt: new Date().toISOString(),
+      ...(provisioningClass === "private-preview" ? { sourcePr: 3912, confirmedBundleVersion: "v2026.11.14-pr3912-1-abcdef0" } : {}) });
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123" });
+    const body = { chatId: "chat_builtin", runId: "run_builtin", clientRequestId: "req_builtin", permissionMode: "full_access" };
+    const proof = mintChatPermissionModeProof({ method: "POST", path: "/api/chats/chat_builtin/runs/run_builtin/permission-mode",
+      body: JSON.stringify({ clientRequestId: body.clientRequestId, permissionMode: body.permissionMode }), secret: "platform-secret-123",
+      identity: { handle, userId: "user_preview_owner", source: "auth" } })!;
+    expect((await app.request(`/internal/containers/${handle}/integrations/permission-mode/verify`, { method: "POST",
+      headers: { authorization: `Bearer ${bearerFor(handle, "platform-secret-123")}`, "content-type": "application/json", "x-matrix-chat-permission-mode-proof": proof }, body: JSON.stringify(body) })).status).toBe(403);
+  });
+
+  it("keeps provider-independent permission verification subject to live Private Preview membership", async () => {
+    const handle = "pv-3912-1234abcd";
+    await insertUserMachine(db, { machineId: "00000000-0000-4000-8000-000000003912", clerkUserId: "user_preview_owner", handle,
+      runtimeSlot: handle, provisioningClass: "private-preview", status: "running", provisionedAt: new Date().toISOString(),
+      sourcePr: 3912, confirmedBundleVersion: "v2026.11.14-pr3912-1-abcdef0" });
+    const membership = vi.fn(async () => true);
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123",
+      privatePreviewMembership: membership, env: { ...process.env, MATRIX_INTERNAL_CLERK_ORG_ID: "org_internaltest" } });
+    const body = { chatId: "chat_builtin", runId: "run_builtin", clientRequestId: "req_builtin", permissionMode: "full_access" };
+    const proof = mintChatPermissionModeProof({ method: "POST", path: "/api/chats/chat_builtin/runs/run_builtin/permission-mode",
+      body: JSON.stringify({ clientRequestId: body.clientRequestId, permissionMode: body.permissionMode }), secret: "platform-secret-123",
+      identity: { handle, userId: "user_preview_owner", source: "auth" } })!;
+    const request = () => app.request(`/internal/containers/${handle}/integrations/permission-mode/verify`, { method: "POST",
+      headers: { authorization: `Bearer ${bearerFor(handle, "platform-secret-123")}`, "content-type": "application/json", "x-matrix-chat-permission-mode-proof": proof }, body: JSON.stringify(body) });
+    expect((await request()).status).toBe(200);
+    expect(membership).toHaveBeenCalledWith("org_internaltest", "user_preview_owner");
+    membership.mockResolvedValue(false);
+    expect((await request()).status).toBe(403);
+  });
 
   it("requires signed machine delegation before the Gmail label seam can dispatch", async () => {
     const labels = vi.fn(async () => ({ labels: [] }));

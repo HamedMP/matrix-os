@@ -64,6 +64,16 @@ export function createClaudeIntegrationApprovalControl(options: {
     void deny(current.respond).catch(options.onError);
   }
   return {
+    async allowPending() {
+      if (closed || options.capability.previewDrive || options.capability.isFullAccess?.() !== true) throw new Error("Integration authority unavailable");
+      for (const [id, current] of [...pending]) {
+        if (pending.get(id) !== current) continue;
+        if (current.deciding) throw new Error("Integration approval already resolving");
+        clearTimeout(current.timer);
+        await current.respond({ behavior: "allow", updatedInput: current.input });
+        if (forget(id, current)) resolved(id, "approve", current);
+      }
+    },
     has(id: string) { return pending.has(id); },
     onToolPermission(request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: Respond): boolean {
       if (!(MATRIX_INTEGRATION_ACTION_TOOLS as readonly string[]).includes(request.toolName)) return false;

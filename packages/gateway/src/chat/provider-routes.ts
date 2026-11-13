@@ -16,7 +16,8 @@ export function createChatProviderRoutes(options: {
     const principal = options.getPrincipal(context);
     try {
       if ((context.req.queries("includeSettingsSetupActions")?.length ?? 0) > 1
-        || (context.req.queries("includeObservationState")?.length ?? 0) > 1) {
+        || (context.req.queries("includeObservationState")?.length ?? 0) > 1
+        || (context.req.queries("includeLivePermissionModes")?.length ?? 0) > 1) {
         return context.json({ error: "Invalid request" }, 400);
       }
       const query = z.object({
@@ -27,6 +28,7 @@ export function createChatProviderRoutes(options: {
         includeChatFunding: z.enum(["true", "false"]).optional(),
         includeSettingsSetupActions: z.enum(["true", "false"]).optional(),
         includeObservationState: z.enum(["true", "false"]).optional(),
+        includeLivePermissionModes: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
@@ -35,6 +37,7 @@ export function createChatProviderRoutes(options: {
         includeChatFunding: context.req.query("includeChatFunding"),
         includeSettingsSetupActions: context.req.query("includeSettingsSetupActions"),
         includeObservationState: context.req.query("includeObservationState"),
+        includeLivePermissionModes: context.req.query("includeLivePermissionModes"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
       const readOptions = query.data.includeSettingsSetupActions === "true"
@@ -50,6 +53,8 @@ export function createChatProviderRoutes(options: {
         ...catalog,
         instances: catalog.instances.map(({ connectionLabel, connectionState, observationState, ...legacy }) => ({
           ...legacy,
+          supports: (() => { const { livePermissionModes, ...supports } = legacy.supports; return { ...supports,
+            ...(query.data.includeLivePermissionModes === "true" && livePermissionModes ? { livePermissionModes } : {}) }; })(),
           ...(query.data.includeObservationState === "true" && observationState ? { observationState } : {}),
           ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
           ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? {

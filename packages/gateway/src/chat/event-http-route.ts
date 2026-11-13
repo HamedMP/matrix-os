@@ -1,3 +1,4 @@
+import { ChatPermissionModeWireVersionSchema, projectChatPermissionModeResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -69,6 +70,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
       return context.json({ error: "Invalid stream cursor" }, 400);
     }
 
+    const permissionModeVersion = ChatPermissionModeWireVersionSchema.safeParse(context.req.query("permissionModeVersion"));
+    if (!permissionModeVersion.success || (context.req.queries("permissionModeVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported permission mode version" }, 400);
     const importSourceVersion = ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion"));
     if (!importSourceVersion.success || (context.req.queries("importSourceVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported import source version" }, 400);
     const assistantTextVersion = ChatAssistantTextWireVersionSchema.safeParse(context.req.query("assistantTextVersion"));
@@ -134,7 +137,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;
-          controller.enqueue(encodeFrame(encoder, projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(projectChatImportSource(readProjected, importSourceVersion.data)), metadataVersion.data), fundingVersion.data)));
+          controller.enqueue(encodeFrame(encoder, projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(projectChatImportSource(projectChatPermissionModeResponse(readProjected, permissionModeVersion.data), importSourceVersion.data)), metadataVersion.data), fundingVersion.data)));
           return true;
         } catch (error: unknown) {
           console.warn("[chat/event-http-route] Frame enqueue failed:", error instanceof Error ? error.name : "UnknownError");

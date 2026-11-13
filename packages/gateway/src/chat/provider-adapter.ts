@@ -203,6 +203,13 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void | "queued">;
   /** Internal acknowledgement only: the user has NOT answered or authorized anything. */
   deferInput?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }): Promise<void>;
+  /** Only called by the owner-authorized run-control service. Persist intent before native changes and applied ACK before releasing pending tools. */
+  setPermissionMode?(input: {
+    owner: CanonicalOwnerScope; chatId: string; runId: string; clientRequestId: string;
+    permissionMode: "supervised" | "full_access"; permissionModeProof: string;
+    begin(): Promise<void>;
+    commit(): Promise<void>;
+  }): Promise<void>;
   submitApproval?(input: {
     owner: CanonicalOwnerScope;
     chatId: string;

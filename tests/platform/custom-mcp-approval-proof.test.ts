@@ -1,3 +1,6 @@
+import { Hono } from "hono";
+import { createChatPermissionModeVerificationRoutes } from "../../packages/platform/src/chat-permission-mode-routes.js";
+import { mintChatPermissionModeProof, verifyChatPermissionModeProof } from "../../packages/platform/src/chat-permission-mode-proof.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   mintCustomMcpApprovalProof,
@@ -19,6 +22,26 @@ const verify = {
 };
 
 describe("Platform-authenticated Custom MCP approval proof", () => {
+  it("signs a dedicated live permission change only from the authenticated owner session", async () => {
+    const path = "/api/chats/chat_1/runs/run_1/permission-mode";
+    const body = JSON.stringify({ clientRequestId: "req_permission_1", permissionMode: "full_access" });
+    const proof = await authenticatedApprovalProxyProof({
+      method: "POST", path, handle: "owner", platformSecret: secret,
+      identity: { handle: "owner", userId: "clerk-owner", source: "auth" },
+      request: new Request(`https://app.example.test${path}`, { method: "POST", body }),
+    });
+    expect(typeof proof).toBe("string");
+    if (typeof proof === "string") expect(proof).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/);
+    // A mode mutation has its own signed scope; ordinary one-time approval proofs remain insufficient.
+    expect(mintCustomMcpApprovalProof({ ...base, path, body })).toBeNull();
+    const unsigned = await authenticatedApprovalProxyProof({
+      method: "POST", path, handle: "owner", platformSecret: secret,
+      identity: { handle: "owner", userId: "clerk-owner", source: "static-route" },
+      request: new Request(`https://app.example.test${path}`, { method: "POST", body }),
+    });
+    expect(unsigned).toBeNull();
+  });
+
   it("mints only after a verified Clerk or platform sync-JWT identity on the exact bounded canonical submit", () => {
     for (const source of ["auth"] as const) {
       const proof = mintCustomMcpApprovalProof({ ...base, identity: { ...base.identity, source } });
@@ -50,6 +73,23 @@ describe("Platform-authenticated Custom MCP approval proof", () => {
     expect(verifyCustomMcpApprovalProof(`${payload}.${mac![0] === "0" ? "1" : "0"}${mac!.slice(1)}`, verify)).toBe(false);
   });
 
+  it("binds live mode proofs to the exact owner, run, client request and mode without widening tool proofs", () => {
+    const input = { ...base, path: "/api/chats/chat_1/runs/run_1/permission-mode",
+      body: JSON.stringify({ clientRequestId: "req_mode", permissionMode: "full_access" }) };
+    const proof = mintChatPermissionModeProof(input)!;
+    const expected = { handle: "owner", actorId: "clerk-owner", chatId: "chat_1", runId: "run_1",
+      clientRequestId: "req_mode", permissionMode: "full_access" as const, secret, now: base.now };
+    expect(verifyChatPermissionModeProof(proof, expected)).toBe(true);
+    for (const mismatch of [{ handle: "other" }, { actorId: "other" }, { chatId: "chat_2" }, { runId: "run_2" },
+      { clientRequestId: "req_other" }, { permissionMode: "supervised" as const }, { secret: "machine-bearer" }, { now: base.now + 60_001 }]) {
+      expect(verifyChatPermissionModeProof(proof, { ...expected, ...mismatch })).toBe(false);
+    }
+    expect(verifyChatPermissionModeProof(mintCustomMcpApprovalProof(base)!, expected)).toBe(false);
+    expect(verifyCustomMcpApprovalProof(proof, verify)).toBe(false);
+    expect(mintChatPermissionModeProof({ ...input, identity: { ...input.identity, source: "static-route" } })).toBeNull();
+    expect(mintChatPermissionModeProof({ ...input, body: JSON.stringify({ clientRequestId: "req_mode", permissionMode: "full_access", actorId: "forged" }) })).toBeNull();
+  });
+
   it("rejects a streaming overlimit body without waiting for a tee cancellation", async () => {
     const cancelled = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ start(controller) {
@@ -79,4 +119,23 @@ describe("Platform-authenticated Custom MCP approval proof", () => {
     expect(result).toEqual({ status: 408 });
     await vi.waitFor(() => expect(cancelled).toHaveBeenCalledOnce());
   });
+});
+
+
+it("verifies live mode consent only for the authenticated machine owner and exact run tuple", async () => {
+  const body = { chatId: "chat_1", runId: "run_1", clientRequestId: "req_mode", permissionMode: "full_access" };
+  const proof = mintChatPermissionModeProof({ ...base, now: Date.now(), path: "/api/chats/chat_1/runs/run_1/permission-mode", body: JSON.stringify({ clientRequestId: body.clientRequestId, permissionMode: body.permissionMode }) })!;
+  const app = new Hono().use("*", async (context, next) => {
+    context.set("internalContainerHandle" as never, "owner" as never);
+    context.set("internalContainerClerkUserId" as never, "clerk-owner" as never);
+    await next();
+  }).route("/", createChatPermissionModeVerificationRoutes(secret));
+  const headers = { "content-type": "application/json", "x-matrix-chat-permission-mode-proof": proof };
+  expect((await app.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify(body) })).status).toBe(200);
+  for (const patch of [{ runId: "run_2" }, { permissionMode: "supervised" }, { clientRequestId: "req_other" }]) {
+    expect((await app.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify({ ...body, ...patch }) })).status).toBe(403);
+  }
+  expect((await app.request("/permission-mode/verify", { method: "POST", headers: { ...headers, "x-matrix-chat-permission-mode-proof": "forged" }, body: JSON.stringify(body) })).status).toBe(403);
+  const unauthenticated = createChatPermissionModeVerificationRoutes(secret);
+  expect((await unauthenticated.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify(body) })).status).toBe(401);
 });
