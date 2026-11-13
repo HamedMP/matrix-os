@@ -99,7 +99,7 @@ describe('owner database size limit', () => {
     sizes.set(fenced.databaseName, 2000);
     const sweeper = createOwnerDatabaseSizeSweeper({ db, ownerDatabases: service, batchSize: 2 });
 
-    expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 2 });
+    expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 2, compacted: 0 });
     expect(await roleSettings(cluster, a.roleName)).toContain('default_transaction_read_only=on');
     expect(await roleSettings(cluster, b.roleName)).not.toContain('default_transaction_read_only=on');
     expect(await roleSettings(cluster, fenced.roleName)).not.toContain('default_transaction_read_only=on');

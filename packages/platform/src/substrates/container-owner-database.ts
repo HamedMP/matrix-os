@@ -54,6 +54,14 @@ export interface OwnerDatabaseCredentials {
   passwordEpoch: number;
 }
 
+export interface CompactionTarget {
+  databaseName: string;
+  holderName: string;
+  holderSql: string;
+  /** Writes come back once the database measures below this. */
+  restoreBelowBytes: number;
+}
+
 export interface ContainerOwnerDatabasesDeps {
   db: PlatformDB;
   admin: OwnerClusterAdmin;
@@ -206,6 +214,11 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       'REVOKE ALL ON SCHEMA public FROM PUBLIC',
       `GRANT ${blocked ? 'USAGE' : 'USAGE, CREATE'} ON SCHEMA public TO ${roleSql}`,
     ], signal);
+  }
+
+  function restoreBelow(row: Row): number {
+    const limit = Number(row.size_limit_bytes);
+    return limit - (restoreMargin ?? Math.floor(limit / 10));
   }
 
   function writeBlockNames(row: Row): WriteBlockNames {
@@ -450,13 +463,24 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       const row = await load(clerkUserId);
       if (row.state !== 'active') throw new ContainerOwnerDatabaseError('fenced');
       const { sizeBytes, overLimit } = await this.measureSize(clerkUserId, signal);
-      const limit = Number(row.size_limit_bytes);
-      const restoreBelow = limit - (restoreMargin ?? Math.floor(limit / 10));
       const wasBlocked = row.writes_blocked_at !== null;
-      const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow);
+      const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow(row));
       if (writesBlocked) await blockWrites(row, signal);
       else if (wasBlocked) await restoreWrites(row, signal);
       return { sizeBytes, overLimit, writesBlocked };
+    },
+
+    /** What compaction needs for an active size-blocked owner; null when there is nothing to compact. */
+    async compactionTarget(clerkUserId: string): Promise<CompactionTarget | null> {
+      const row = await load(clerkUserId);
+      if (row.state !== 'active' || row.writes_blocked_at === null) return null;
+      const names = writeBlockNames(row);
+      return {
+        databaseName: assertOwnerIdentifier(row.database_name, 'mxo_'),
+        holderName: names.holderName,
+        holderSql: names.holderSql,
+        restoreBelowBytes: restoreBelow(row),
+      };
     },
 
     /**

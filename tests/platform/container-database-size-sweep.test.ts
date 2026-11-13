@@ -149,7 +149,7 @@ describe.skipIf(!realUrl)('owner database size sweep on a real PostgreSQL server
         FROM generate_series(1, 8000) g, generate_series(1, 20) s GROUP BY g`);
       await setup.end();
 
-      expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 1 });
+      expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 1, compacted: 0 });
       const blocked = await db.executor.selectFrom('container_owner_databases').select('writes_blocked_at')
         .where('clerk_user_id', '=', owner).executeTakeFirstOrThrow();
       expect(blocked.writes_blocked_at).toBeInstanceOf(Date);
@@ -182,7 +182,7 @@ describe.skipIf(!realUrl)('owner database size sweep on a real PostgreSQL server
       await restarted.query('TRUNCATE bulk');
       await restarted.end();
 
-      expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 1 });
+      expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 1, compacted: 0 });
       const lifted = await db.executor.selectFrom('container_owner_databases').select('writes_blocked_at')
         .where('clerk_user_id', '=', owner).executeTakeFirstOrThrow();
       expect(lifted.writes_blocked_at).toBeNull();
@@ -219,7 +219,7 @@ describe.skipIf(!realUrl)('owner database size sweep on a real PostgreSQL server
     try {
       const first = slow.sweepOnce();
       await started;
-      expect(await other.sweepOnce()).toEqual({ ran: false, enforced: 0 });
+      expect(await other.sweepOnce()).toEqual({ ran: false, enforced: 0, compacted: 0 });
       release();
       expect((await first).ran).toBe(true);
       expect((await other.sweepOnce()).ran).toBe(true);

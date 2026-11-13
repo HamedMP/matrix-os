@@ -3,6 +3,7 @@ import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import { createOwnerDatabaseSizeSweeper } from './container-database-size-sweep.js';
+import { createOwnerDatabaseCompactor } from './container-owner-compaction.js';
 import {
   createContainerOwnerDatabases,
   type ContainerOwnerDatabases,
@@ -177,7 +178,9 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
     connectionLimit: config.ownerDatabase.connectionLimit,
   });
-  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases });
+  // Compaction needs maintenance sessions, which only the real cluster admin provides.
+  const compactor = pgAdmin ? createOwnerDatabaseCompactor({ admin: pgAdmin, ownerDatabases }) : undefined;
+  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases, ...(compactor ? { compactor } : {}) });
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
   const runtime = createContainerRuntimeClient({
     provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
