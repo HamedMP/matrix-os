@@ -1,4 +1,4 @@
-import { isManagedWorkersAiModel, managedWorkersAiModel } from "@matrix-os/contracts";
+import { FUNDED_SONNET_5_PRICE, isManagedWorkersAiModel, managedWorkersAiModel } from "@matrix-os/contracts";
 import { WORKERS_AI_PRICE_SNAPSHOTS } from "./funded-workers-pricing.js";
 import { z } from "zod/v4";
 import { FUNDED_PRICING_VERSIONS, validateFundedPricingReview, type FundedPricingReviews } from "./funded-pricing-review.js";
@@ -31,11 +31,11 @@ const CURRENT_PRICING: FundedPricing = {
   canonicalModelId: CANONICAL_SONNET_5,
   version: FUNDED_PRICING_VERSIONS[CANONICAL_SONNET_5],
   validThrough: "2026-09-30T23:59:59.999Z",
-  inputRateThousandths: 2_000,
-  outputRateThousandths: 10_000,
-  cacheReadRateThousandths: 200,
-  cacheWrite5mRateThousandths: 2_500,
-  cacheWrite1hRateThousandths: 4_000,
+  inputRateThousandths: FUNDED_SONNET_5_PRICE.input,
+  outputRateThousandths: FUNDED_SONNET_5_PRICE.output,
+  cacheReadRateThousandths: FUNDED_SONNET_5_PRICE.cached,
+  cacheWrite5mRateThousandths: FUNDED_SONNET_5_PRICE.cacheWrite5m,
+  cacheWrite1hRateThousandths: FUNDED_SONNET_5_PRICE.cacheWrite1h,
 };
 const WORKERS_PRICING: FundedPricing[] = Object.entries(WORKERS_AI_PRICE_SNAPSHOTS).map(([id, price]) => ({
   canonicalModelId: id, version: price.version, validThrough: "2026-09-30T23:59:59.999Z",

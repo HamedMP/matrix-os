@@ -6,7 +6,7 @@ import {
   resolveKernelModelOption,
 } from "../kernel-settings.js";
 
-export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_10_15";
+export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_11_12";
 export const MATRIX_DEFAULT_MODEL_ID = MANAGED_WORKERS_AI_MODEL_IDS[0];
 export const MATRIX_INCLUDED_MODEL_IDS = ["claude-sonnet-5"] as const;
 export const OWNER_ANTHROPIC_MODEL_IDS = [
@@ -64,7 +64,8 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
   return [
     ...MANAGED_WORKERS_AI_MODELS.map((model): AiModelDescriptorView => ({
       id: model.id, vendor: "cloudflare", displayName: model.displayName,
-      status: "current", capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []), "long_context"],
+      status: "current", capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []),
+        ...(model.vision ? ["vision" as const] : []), "long_context"],
       // Managed harnesses do not expose per-model effort controls yet.
       effortControls: [], eligibleAccessSourceIds: ["matrix_cloudflare"],
       dataPolicies: [{ accessSourceId: "matrix_cloudflare", route: "matrix_relay", disclosureKey: "matrix-cloudflare-workers-ai" }],

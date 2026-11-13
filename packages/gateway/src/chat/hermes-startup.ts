@@ -12,7 +12,7 @@ export class HermesStartupCleanupUnconfirmed extends Error {
 
 /** Only gateway.ready is retried. No session or prompt RPC is sent here. */
 export async function startHermesGateway(options: {
-  client: Parameters<typeof createHermesStdioClient>[0];
+  createClientOptions(): Parameters<typeof createHermesStdioClient>[0];
   signal: AbortSignal;
   onRetry: (progress: { retry: number; maxRetries: 5; label: string }) => Promise<void>;
   onCleanupUnconfirmed(): void;
@@ -24,10 +24,15 @@ export async function startHermesGateway(options: {
     async attempt(signal) {
       signal.throwIfAborted();
       let admittedToCaller = false;
-      const client = createHermesStdioClient({ ...options.client,
+      let retired = false;
+      const attemptOptions = options.createClientOptions();
+      const client = createHermesStdioClient({ ...attemptOptions,
+        onEvent(event) {
+          if (!retired) attemptOptions.onEvent(event);
+        },
         onFailure(error) {
           // A retired attempt must not settle the logical Run's completion.
-          if (admittedToCaller) options.client.onFailure(error);
+          if (admittedToCaller && !retired) attemptOptions.onFailure(error);
         },
       });
       let rejectAbort!: (error: unknown) => void;
@@ -41,6 +46,7 @@ export async function startHermesGateway(options: {
         admittedToCaller = true;
         return client;
       } catch (error) {
+        retired = true;
         if (!await client.close()) {
           options.onCleanupUnconfirmed();
           // Keep the existing adapter iterator and orchestrator capacity owned

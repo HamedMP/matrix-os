@@ -3,9 +3,10 @@ name: Mobile OTA Update
 # Over-the-air (EAS Update) releases for apps/mobile.
 #
 # - Pull requests touching the mobile app run its tests and a bundle dry run.
-# - Pushes to main publish to the `preview` channel.
-# - Production never moves on a push. A manual run promotes an existing preview
-#   update group to `production` unchanged, or rolls production back.
+# - Merging to main publishes nothing. A manual run with `publish-preview`
+#   publishes main to the `preview` channel.
+# - A manual run promotes an existing preview update group to `production`
+#   unchanged, or rolls production back.
 #
 # Operator guide: docs/dev/mobile-shell.md, "Over-the-Air Updates".
 
@@ -18,13 +19,6 @@ on:
       - "pnpm-lock.yaml"
       - "scripts/ci/mobile-ota-native-guard.mjs"
       - ".github/workflows/mobile-ota-update.yml"
-  push:
-    branches: [main]
-    paths:
-      - "apps/mobile/**"
-      - "packages/contracts/**"
-      - "!apps/mobile/__tests__/**"
-      - "!apps/mobile/**/*.md"
   workflow_dispatch:
     inputs:
       action:
@@ -55,11 +49,10 @@ on:
 permissions:
   contents: read
 
-# Everything that can publish to preview (pushes to main and manual publishes)
-# shares one queue, so runs publish in the order they started. Only superseded
-# pull request runs are cancelled.
+# Manual runs of one action share a queue, so preview publishes run in the
+# order they started. Only superseded pull request runs are cancelled.
 concurrency:
-  group: mobile-ota-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish' || inputs.action }}
+  group: mobile-ota-${{ github.event_name == 'pull_request' && github.ref || inputs.action }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -107,8 +100,7 @@ jobs:
     needs: test
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' ||
-       (github.event_name == 'workflow_dispatch' && inputs.action == 'publish-preview'))
+      github.event_name == 'workflow_dispatch' && inputs.action == 'publish-preview'
     runs-on: ubuntu-latest
     environment: mobile-ota-preview
     timeout-minutes: 20

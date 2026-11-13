@@ -13,6 +13,40 @@ const levels: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high",
 const credentials = { OPENAI_API_KEY: "synthetic-test-key", OPENAI_BASE_URL: "https://matrix-relay.invalid/v1" };
 
 describe("managed Workers reasoning through the real Pi SDK", () => {
+  it("sends DeepSeek V4.1 Flash inline images through the configured Pi SDK", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "managed-vision-wire-"));
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQAAAABJRU5ErkJggg==";
+    try {
+      const env = await preparePiRunEnvironment({ homePath, credentials });
+      const provider = JSON.parse(await readFile(join(env.PI_CODING_AGENT_DIR!, "models.json"), "utf8")).providers.cloudflare;
+      const id = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+      const model: Model<"openai-completions"> = {
+        ...provider.models.find((entry: { id: string }) => entry.id === id),
+        api: "openai-completions", provider: "cloudflare", baseUrl: provider.baseUrl,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 8192,
+      };
+      let body: unknown;
+      await streamSimple(model, normalizeContext({
+        messages: [{ role: "user", timestamp: 0, content: [
+          { type: "text", text: "Name the color." }, { type: "image", data: png, mimeType: "image/png" },
+        ] }],
+      }), {
+        apiKey: credentials.OPENAI_API_KEY, maxTokens: 16, maxRetries: 0,
+        fetch: async (_url, init) => {
+          body = JSON.parse(String(init?.body));
+          return Response.json({ error: { message: "synthetic transport stop" } }, { status: 400 });
+        },
+      }).result();
+      const wire = JSON.parse(serializeFundedOpenAiRequest(body).body);
+      expect(wire).toMatchObject({ model: id, max_completion_tokens: 16, messages: [
+        { role: "user", content: [
+          { type: "text", text: "Name the color." },
+          { type: "image_url", image_url: { url: "data:image/png;base64," + png } },
+        ] },
+      ] });
+    } finally { await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it.each(MANAGED_WORKERS_AI_MODELS)("only exposes and sends reviewed efforts for $id", async (reviewed) => {
     const homePath = await mkdtemp(join(tmpdir(), "managed-thinking-wire-"));
     try {

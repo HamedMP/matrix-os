@@ -3,6 +3,7 @@ import { normalizeLeadingGlobalFlags } from "../../sync-client/src/cli/global-fl
 export { normalizeLeadingGlobalFlags } from "../../sync-client/src/cli/global-flags.js";
 
 export const PUBLISHED_CLI_COMMANDS = new Set([
+  "routines",
   "login",
   "logout",
   "sync",

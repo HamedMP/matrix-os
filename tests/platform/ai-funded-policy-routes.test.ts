@@ -3,6 +3,7 @@ import {
   FUNDED_AI_READINESS_TIMEOUTS,
   FundedAiAuthorizationResponseSchema,
   JEV_MODEL_ID,
+  MANAGED_WORKERS_AI_MODEL_IDS,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
@@ -80,16 +81,18 @@ describe("funded AI policy routes", () => {
     topUpEnabled?: boolean;
     routeProbes?: FundedModelProbeService;
     tokenIdFactory?: () => string;
+    allowedModelIds?: string[];
   } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
       tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
     });
-    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    const allowedModelIds = options.allowedModelIds ?? [modelId];
+    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds });
     await repository.setRuntimePolicy({
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
-      expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+      expectedRevision: 0, enabled: true, allowedModelIds, expiresAt: null,
       monthlyBudgetMicrousd: 1_000,
     });
     await repository.grantCredit({
@@ -199,6 +202,38 @@ describe("funded AI policy routes", () => {
     expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
       signal: expect.any(AbortSignal), deadlineAtMs: expect.any(Number),
     }));
+  });
+
+  it("keeps incumbent readiness compatible and only probes the expanded catalog for a capable Gateway", async () => {
+    const deepSeek = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+    const allModels = [...MANAGED_WORKERS_AI_MODEL_IDS, modelId];
+    const incumbentModels = allModels.filter(id => id !== deepSeek);
+    expect(incumbentModels).toHaveLength(10);
+    const probe = vi.fn(async (_id: string) => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
+    const { app } = await createTestApp({ routeProbes: { probe }, allowedModelIds: allModels });
+    const config = loadFundedAiRuntimeConfig({ MATRIX_FUNDED_AI_ENABLED: "true",
+      MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test", PLATFORM_INTERNAL_URL: "https://platform.example.test",
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN: bearerFor("alice"), MATRIX_HANDLE: "alice",
+      MATRIX_CLERK_USER_ID: "user_alice", MATRIX_MACHINE_ID: "machine_123", MATRIX_RUNTIME_SLOT: "primary" })!;
+    const fetchFn = ((url: string, init?: RequestInit) => app.request(url, init)) as typeof fetch;
+    const oldRequest = (headers: Record<string, string> = {}) => fetchFn(config.routeReadinessUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json", ...headers },
+      body: "{}",
+    });
+
+    for (const headers of [{}, { "x-matrix-funded-readiness-catalog-version": "unsupported" }]) {
+      probe.mockClear();
+      const response = await oldRequest(headers);
+      expect(response.status).toBe(200);
+      expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual(incumbentModels);
+      expect(probe.mock.calls.map(([id]) => id)).toEqual(incumbentModels);
+    }
+
+    probe.mockClear();
+    const client = createFundedAiRouteReadinessClient(config, fetchFn);
+    expect((await client.getRouteReadiness()).readyModelIds).toEqual(allModels);
+    expect(probe.mock.calls.map(([id]) => id)).toEqual(allModels);
   });
 
   it("fails closed after an asynchronous probe when owner policy is revoked", async () => {

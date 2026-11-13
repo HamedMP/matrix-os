@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeepStrictEqual } from "node:util";
+import { openDelegatedRoutineCli } from "./routine-cli-delegated-invocation.js";
 import type { BotToolRequest, BotToolResult } from '@matrix-os/contracts';
 import type { NativeProviderProfileGuard } from '../ai-providers/native-provider-profile-guard.js';
 import type { BotRuntimeRegistry, PiRuntimeBinding } from './runtime-registry.js';
@@ -9,23 +12,37 @@ import { openClaudeBotBridge } from './claude-task-bridge.js';
 import { claudeBotCommand } from './claude-task-observation.js';
 /** The task executor owns native lifetime; an aborted broker acknowledgement cannot release its profile lease. */
 export function createNativeBotTasks(deps: {
+  routineCli?: { runtime: Pick<import("./routine-cli-runtime.js").RoutineCliRuntime, "registerBotChild">; binPath: string; endpoint: string };
+  publishRoutineAction?(binding: import("./runtime-registry.js").BotRuntimeBinding, event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent): void;
   homePath: string; connections: Pick<BotProviderConnectionsService, 'admit' | 'saveSession'>; registry: Pick<BotRuntimeRegistry, 'lookupRun'>;
   profileGuard: Pick<NativeProviderProfileGuard, 'acquire'>; lifetime: AbortSignal;
   runTask?: typeof runClaudeBotTask;
   callTool(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<BotToolResult>;
 }) {
-  const active = new Map<string, { controller: AbortController; work: Promise<BotToolResult> }>(); // cap4, released only after drain
+  type Entry = { controller: AbortController; work: Promise<BotToolResult>; binding: PiRuntimeBinding; routine?: Awaited<ReturnType<typeof openDelegatedRoutineCli>> };
+  const bridgeCall = new AsyncLocalStorage<{ entry: Entry; request: BotToolRequest }>();
+  const active = new Map<string, Entry>(); // cap4, released only after drain
   const current = async (binding: PiRuntimeBinding) => {
     if (isManagedPiBinding(binding) || !deps.registry.lookupRun(binding) || deps.lifetime.aborted) throw new BotBrokerActionError('not_granted');
     try { return await deps.connections.admit(binding.ownerId, binding.botId, binding.requestClass); }
     catch (error) { console.warn('[bot-native] Admission refused:', error instanceof Error ? error.name : 'UnknownError'); throw new BotBrokerActionError('not_granted'); }
   };
+  if (deps.routineCli && (typeof deps.publishRoutineAction !== "function" || typeof deps.routineCli.runtime.registerBotChild !== "function")) throw new Error("Native routine publisher unavailable");
   const service = {
+    async routine(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<BotToolResult | undefined> {
+      const call = bridgeCall.getStore();
+      if (!call || call.request !== request) return undefined; // Ordinary canonical tools retain their backend.
+      if (isManagedPiBinding(binding) || active.get(binding.botId) !== call.entry || !isDeepStrictEqual(call.entry.binding, binding) || !call.entry.routine) throw new BotBrokerActionError('not_granted');
+      return call.entry.routine.call(request, signal);
+    },
     async prepare(binding: PiRuntimeBinding) { await current(binding); },
     async execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> {
       if (isManagedPiBinding(binding) || active.has(binding.botId) || active.size >= 4) throw new BotBrokerActionError('not_granted');
-      const controller = new AbortController();
+      const controller = new AbortController(), routineController = new AbortController();
+      let nativeHeld = false;
       const lifecycle = AbortSignal.any([signal, controller.signal, deps.lifetime, AbortSignal.timeout(120000)]);
+      const entry: Entry = { controller, binding: structuredClone(binding), work: Promise.resolve({ ok: false, code: "unavailable" }) };
+      const routineSignal = AbortSignal.any([lifecycle, routineController.signal]);
       const work = (async () => {
         let release: (() => void | Promise<void>) | undefined;
         try { release = await deps.profileGuard.acquire('claude', { kind: 'write', durable: true }); }
@@ -43,20 +60,35 @@ export function createNativeBotTasks(deps: {
             revalidate().catch(error => { console.warn('[bot-native] Task revoked:', error instanceof Error ? error.name : 'UnknownError'); controller.abort(); }).finally(() => { checking = false; });
           }, 2000); timer.unref();
           bridge = await openClaudeBotBridge({ signal: lifecycle, capabilities: binding.capabilities, authorize: revalidate,
-            call: tool => deps.callTool(binding, tool, lifecycle) });
+            call: tool => bridgeCall.run({ entry, request: tool }, () => deps.callTool(binding, tool, lifecycle)) });
           await revalidate();
           const result = await (deps.runTask ?? runClaudeBotTask)({ command: claudeBotCommand(), homePath: deps.homePath, cwd, model: admitted.model,
-            prompt, signal: lifecycle, mcpUrl: bridge.url, mcpToken: bridge.token, ...(admitted.sessionId ? { sessionId: admitted.sessionId } : {}) });
+            prompt, signal: lifecycle, onStart: async () => {
+              nativeHeld = true;
+              if (!deps.routineCli) return;
+              await revalidate();
+              try {
+                const routine = await openDelegatedRoutineCli({ ...deps.routineCli, binding, signal: routineSignal, homePath: deps.homePath, cwd,
+                  current: () => nativeHeld && active.get(binding.botId) === entry && !routineSignal.aborted,
+                  publish: event => deps.publishRoutineAction!(binding, event) });
+                if (routineSignal.aborted || !nativeHeld || active.get(binding.botId) !== entry) { await routine.close(); lifecycle.throwIfAborted(); throw new Error("Routine source unavailable"); }
+                entry.routine = routine;
+              } catch (error: unknown) {
+                // Unsupported parent authority disables new routines, not unrelated native Chat tools.
+                console.warn('[bot-native] Routine source unavailable:', error instanceof Error ? error.name : 'UnknownError');
+                lifecycle.throwIfAborted();
+              }
+            }, onEnd: () => { nativeHeld = false; routineController.abort(); }, mcpUrl: bridge.url, mcpToken: bridge.token, ...(admitted.sessionId ? { sessionId: admitted.sessionId } : {}) });
           await revalidate();
           await deps.connections.saveSession(binding.ownerId, binding.botId, admitted.revision, result.sessionId);
           return { ok: true as const, content: [{ type: 'text' as const, text: `Claude Code task result (separate native session):\n${result.text}` }] };
         } finally {
           if (timer) clearInterval(timer);
-          controller.abort();
-          try { await bridge?.close(); } finally { await release(); }
+          nativeHeld = false; routineController.abort(); controller.abort();
+          try { await bridge?.close(); } finally { try { await entry.routine?.close(); } finally { await release(); } }
         }
       })();
-      active.set(binding.botId, { controller, work });
+      entry.work = work; active.set(binding.botId, entry);
       try { return await work; } finally { active.delete(binding.botId); }
     },
     async close() { for (const entry of active.values()) entry.controller.abort(); await Promise.allSettled([...active.values()].map(entry => entry.work)); },

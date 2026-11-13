@@ -7,6 +7,7 @@ import {
   migratePlatformSchema,
 } from '../../packages/platform/src/database/migrate.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import * as userMachineRecords from '../../packages/platform/src/database/user-machine-records.js';
 import * as userMachines from '../../packages/platform/src/database/user-machines.js';
 import * as userMachineLifecycle from '../../packages/platform/src/database/user-machine-lifecycle.js';
@@ -109,6 +110,28 @@ describe('platform schema registration (S01 foundation)', () => {
     await runPlatformStartupMigrations(fixture.db.kysely);
     await runPlatformStartupMigrations(fixture.db.kysely);
     expect(await capturePublicSchema(fixture.db)).toEqual(baseline);
+  });
+
+  it('installs the pricing registry alongside a newer core revision', async () => {
+    const { db } = fixture;
+    // Model a Preview database from another branch with core DDL and no
+    // pricing registry. Startup must leave the newer core marker intact.
+    await sql`DROP TABLE ai_funded_pricing_reviews, ai_funded_pricing_review_history, ai_funded_pricing_job_state`
+      .execute(db.executor);
+    const newerCore = { generation: PLATFORM_SCHEMA_REVISION.generation + 1, fingerprint: 'preview-core' };
+    await sql`UPDATE platform_schema_revisions SET generation = ${newerCore.generation},
+      fingerprint = ${newerCore.fingerprint} WHERE scope = 'core'`.execute(db.executor);
+    await sql`DELETE FROM platform_schema_revisions WHERE scope = 'funded-pricing-review'`.execute(db.executor);
+    await runPlatformStartupMigrations(db.kysely);
+
+    const { tables } = await capturePublicSchema(db);
+    expect(tables).toEqual(expect.arrayContaining([
+      'ai_funded_pricing_reviews', 'ai_funded_pricing_review_history', 'ai_funded_pricing_job_state',
+    ]));
+    const markers = await sql<{ generation: number; fingerprint: string }>`
+      SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
+    `.execute(db.executor);
+    expect(markers.rows).toEqual([newerCore]);
   });
 });
 

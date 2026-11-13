@@ -1,8 +1,8 @@
 /**
  * A shared project's Chats are inherited scopes on the owner's home. The platform routes each one to
  * the same home and admits its tickets from the parent project's membership, so a member who
- * accepted the project can open its Chats, while invitees, pending organization members, revoked
- * members and outsiders cannot.
+ * is an active organization member can open its Chats, while invitees, pending organization
+ * members, revoked members and outsiders cannot.
  */
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -107,7 +107,7 @@ describe("shared project Chat routes", () => {
       },
     });
     await endpoints.heartbeat(logicalRuntimeId);
-    members = new Set([owner, accepted, invited, revoked, pendingMember]);
+    members = new Set([owner, accepted]);
     issuer = new CollaborationTicketIssuer({
       keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seed } },
       repository,
@@ -226,8 +226,8 @@ describe("shared project Chat routes", () => {
 
   it("denies a project Chat to invitees, pending organization members, revoked members, outsiders and former organization members", async () => {
     await repository.applyDirectoryEvent(chatRoute());
-    // The organization member may open the project itself to accept it, but not its Chats before accepting.
-    await expect(issue(pendingMember, "direct_session", projectScope)).resolves.toBeTruthy();
+    // Pending organization membership cannot open the project or any inherited Chat.
+    await expect(issue(pendingMember, "direct_session", projectScope)).rejects.toMatchObject({ code: "not_found" });
     for (const actorId of [invited, pendingMember, revoked, "user_outsider"]) {
       await expect(issue(actorId)).rejects.toMatchObject({ code: "not_found" });
     }

@@ -1,4 +1,6 @@
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
+import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
+import { createRoutineCliDestinationService } from "../bots/routine-cli-destination-service.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
@@ -130,6 +132,8 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  routineCli?: RoutineCliRuntime;
+  routineDestination?: ReturnType<typeof createRoutineCliDestinationService>;
   routines?: BotRoutineExecution;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
@@ -155,13 +159,17 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  routineCliTransport?: { binPath: string; endpoint: string };
+  routineActionPlatform?: { platformUrl: string; token: string; handle: string; machineId: string; runtimeSlot: string };
   toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
+  /** Fixed trusted runtime config only; preserve each actual principal's existing owner data. */
+  configuredOwnerIds?: readonly string[];
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -224,6 +232,7 @@ export async function startBots(options: {
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
       : async () => ({ available: false, reason: 'unsupported_runtime' }),
   });
+  const routineDestination = createRoutineCliDestinationService({ db, agents: options.agents, ownerId: options.runtimeOwnerId, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds });
   const bindings = createBotBindingsRepository(db);
   const instantiation = createBotInstantiation({
     db,
@@ -303,7 +312,7 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
+      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
       async close() {
         await routines.stop();
         chatgptPlanPeers?.close();
@@ -353,10 +362,12 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const registry = new BotRuntimeRegistry();
+  const routineCli = options.routineActionPlatform && options.computerId && options.configuredOwnerIds?.length
+    ? createRoutineCliRuntime({ db, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds,
+      agents: options.agents, repository: options.repository, transact, approvals: routineApprovals, control: routines, registry,
+      platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
-  const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
-    registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
     listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
@@ -386,6 +397,7 @@ export async function startBots(options: {
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
+    routineProposals: routineCli?.proposals,
     inputHistory,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
@@ -412,7 +424,7 @@ export async function startBots(options: {
       runtimeOwnerId: options.runtimeOwnerId,
       computerId: options.computerId,
       connections: providerConnections,
-      nativeTasks: Boolean(nativeTasks),
+      nativeTasks: Boolean(options.nativeProfileGuard),
     }),
     admission,
     registry,
@@ -422,6 +434,8 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
+  const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
+    registry, ...(routineCli && options.routineCliTransport ? { routineCli: { runtime: routineCli, ...options.routineCliTransport }, publishRoutineAction: orchestrator.publishRoutineAction } : {}), profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
   const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
@@ -482,10 +496,11 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
-    orchestrator, routines,
+    orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   return {
+    routineCli, routineDestination,
     recipes,
     routines,
     instantiation,
@@ -505,6 +520,7 @@ export async function startBots(options: {
     async close() {
       await routines.stop();
       chatgptPlanPeers?.close();
+      await routineCli?.close();
       lifetime.abort();
       await githubDeveloperService.close();
       unregister();

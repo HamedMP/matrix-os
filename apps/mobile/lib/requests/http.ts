@@ -14,6 +14,7 @@ interface AuthenticatedJsonRequest<T> {
 }
 
 interface AuthenticatedRequest {
+  signal?: AbortSignal;
   url: string;
   token: string;
   errorMessage: string;
@@ -65,28 +66,35 @@ export async function fetchAuthenticatedResponse<T>(
     method,
     headers,
     body,
-    expectedStatuses,
+    expectedStatuses, signal,
   }: AuthenticatedRequest,
   read: (response: Response) => Promise<T>,
 ): Promise<T> {
   if (!token.trim()) throw new Error(errorMessage);
 
   const timeout = createRequestTimeout(timeoutMs);
+  const combined = signal ? new AbortController() : null;
+  const abort = () => combined?.abort();
+  if (combined) {
+    signal!.addEventListener("abort", abort, { once: true }); timeout.signal.addEventListener("abort", abort, { once: true });
+    if (signal!.aborted || timeout.signal.aborted) combined.abort();
+  }
   try {
     const response = await fetch(url, {
       method,
       headers: { Authorization: `Bearer ${token}`, ...headers },
       body,
-      signal: timeout.signal,
+      signal: combined?.signal ?? timeout.signal,
     });
     if (!response.ok && !expectedStatuses?.includes(response.status)) {
       throw new Error("Request failed");
     }
     return await read(response);
-  } catch {
+  } catch (error: unknown) {
+    console.warn("[mobile] Request unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new Error(errorMessage);
   } finally {
-    timeout.cancel();
+    signal?.removeEventListener("abort", abort); timeout.signal.removeEventListener("abort", abort); timeout.cancel();
   }
 }
 

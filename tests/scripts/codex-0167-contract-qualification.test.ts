@@ -74,6 +74,10 @@ describe("exact published Codex 0.167.x qualification", () => {
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64",
     })).toThrow("Codex 0.167.3 is not verified");
     expect(() => verifyCodexProviderContracts({
+      version: "0.167.99", execContract, appServerContract,
+      execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64",
+    })).toThrow("Codex 0.167.99 is not verified");
+    expect(() => verifyCodexProviderContracts({
       version: "0.167.2", execContract: { ...execContract, latestVerifiedVersion: "0.167.2" },
       appServerContract: { ...historicalAppServerContract, latestVerifiedVersion: "0.167.2" },
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),

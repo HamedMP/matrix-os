@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import execContract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
 import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
 import { codexContractStatus } from "../../packages/gateway/src/coding-agents/codex-contract-version.js";
-import { codexProtocolMethodDigest, verifyCodexProviderContracts } from "../../scripts/lib/codex-provider-contract-check.mjs";
+import { codexProtocolDefinitionDigest, codexProtocolMethodDigest, verifyCodexProviderContracts } from "../../scripts/lib/codex-provider-contract-check.mjs";
 
 const execBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
 const schemaBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0169/app-server-schema-0169.json.gz", import.meta.url)));
@@ -20,6 +20,23 @@ const changed = {
 };
 
 describe("published Codex 0.169.0 qualification", () => {
+  it("retains the reviewed routine bridge protocol for the new exact release", () => {
+    const routines = appServerContract.routineProtocolsByVersion;
+    const prior = routines["0.167.2"];
+    const reviewed = { ...prior, client: { ...prior.client,
+      "thread/resume": "c01c9ed3e947ea8605db3d0fc34721eeb81255f5f04f865a68a565b2cef2adfb",
+      "turn/start": "2849adb6a1f8af2696af36278a0a20f6a4979fe388f3bb35f9904d58b5c7cbed",
+    } };
+    expect(routines["0.169.0"]).toEqual(reviewed);
+    for (const [method, digest] of Object.entries(reviewed.client)) {
+      expect(codexProtocolMethodDigest(schema, "ClientRequest", method)).toBe(digest);
+    }
+    for (const [definition, digest] of Object.entries(reviewed.definitions)) {
+      expect(codexProtocolDefinitionDigest(schema, definition)).toBe(digest);
+    }
+    expect(codexProtocolMethodDigest(schema, "ServerRequest", "item/tool/call"))
+      .toBe(appServerContract.requiredServerProtocolSchemaDigests["item/tool/call"]);
+  });
   it("accounts for the complete schema delta against retained 0.167 bytes", () => {
     const normalized = structuredClone(schema);
     for (const change of reviewedDelta) {

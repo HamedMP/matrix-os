@@ -49,7 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useConnection.setState(useConnection.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
-  useConnection.setState({ runtimeSlot: "primary", api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+  useConnection.setState({ runtimeSlot: "primary", api: { forRuntime: () => ({ get: vi.fn(async () => null) }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 20, y: 20, left: 20, top: 20, right: 660, bottom: 500, width: 640, height: 480, toJSON: () => ({}) } as DOMRect);
 });

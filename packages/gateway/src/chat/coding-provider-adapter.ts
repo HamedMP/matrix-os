@@ -1,3 +1,5 @@
+import { createCodexRoutineSources } from "./codex-routine-source.js";
+import type { NativeRoutineCliPort } from "./claude-routine-execution.js";
 import { createCodexBrowserRunScope } from "./codex-browser-run-scope.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { sealToolOutput } from "../coding-agents/protected-tool-output.mjs";
@@ -315,6 +317,7 @@ async function* normalizedEvents(
   const toolActivities = new Map<string, ToolActivity>();
   let batch: AgentThreadEvent[] | null = initial;
   while (batch !== null) {
+    for (const event of inbox.takeCanonical()) yield event;
     for (let index = 0; index < batch.length; index += 1) {
       const event = batch[index]!;
       if (recentEventIds.has(event.eventId)) continue;
@@ -369,6 +372,8 @@ async function* normalizedEvents(
 
 async function* projectAssistantText(
   events: AsyncIterable<CanonicalProviderRunEvent>,
+  inbox: ThreadEventInbox,
+  endRoutineSource: () => void,
   options: { homePath: string; executionRoot?: string; showPrivatePaths: boolean },
   context: { ownerType: "personal" | "organization"; ownerId: string; chatId: string; runId: string; key?: Buffer; sharedScopeId?: string },
 ): AsyncGenerator<CanonicalProviderRunEvent> {
@@ -394,6 +399,12 @@ async function* projectAssistantText(
       for (const tail of flush()) yield tail;
       projector = createAssistantTextStreamProjector(options);
       messageId = undefined;
+      // The native journal and private source end travel independently. Fence
+      // new decisions before draining queued decisions and source cancellations.
+      endRoutineSource();
+      for (let pending = inbox.takeCanonical(); pending.length > 0; pending = inbox.takeCanonical()) {
+        yield* pending;
+      }
     } else if (messageId) {
       // Preserve the native activity order when an ordinary word is complete.
       // Path and credential candidates remain buffered across activity events.
@@ -422,8 +433,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
   sharedBrowser?: SharedBrowserBroker;
   gatewayPort?: number;
+  routineCli?: NativeRoutineCliPort;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
+  const routineSources = createCodexRoutineSources(options.providerId === "codex" ? options.routineCli : undefined, options.homePath ?? "/home/matrix/home");
   const browsers = createCodexBrowserRunScope(options.providerId === "codex" && options.sharedBrowser ? { broker: options.sharedBrowser, gatewayPort: options.gatewayPort ?? 4000 } : undefined);
   const activeSteerRuns = new Map<string, {
     ownerId: string;
@@ -431,6 +444,15 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     threadId: string;
     legacyTurnId?: string;
   }>();
+
+  function openRoutineSource(input: CanonicalProviderRunInput, inbox: ThreadEventInbox) {
+    const lifetime = new AbortController();
+    const routine = routineSources.open(
+      { ...input, signal: AbortSignal.any([input.signal, lifetime.signal]) },
+      event => inbox.pushCanonical(event),
+    );
+    return { routine, endRoutineSource: () => lifetime.abort() };
+  }
 
   function registerSteerRun(
     runId: string,
@@ -505,6 +527,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let releaseSteerRun: (() => void) | undefined;
       const browserAttempt = browsers.open(input);
+      const { routine, endRoutineSource } = openRoutineSource(input, inbox);
+      const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
       let sink: { dispose(): void } | undefined;
       try {
         sink = options.threads.registerEventSink((published) => {
@@ -528,7 +552,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           }
         });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
-        const created = await browserAttempt.withContext(() => options.threads.createThread(principal(input.owner.ownerId), {
+        const created = await withSource(() => options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,
           ...(input.projectSlug ? { projectId: input.projectSlug } : {}),
@@ -556,6 +580,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         });
         for await (const event of projectAssistantText(
           normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey),
+          inbox,
+          endRoutineSource,
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
           { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
@@ -571,7 +597,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           if (options.providerId === "codex" && targetThreadId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
             await stopUnprojectedRun(input, targetThreadId, { initialRequestId: legacyRequestId(input.runId) });
           }
-        } finally { await browserAttempt.close(); }
+        } finally { await routine?.close(); await browserAttempt.close(); }
       }
     },
     async *resume(inputValue) {
@@ -584,6 +610,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let restartFresh = false;
       const browserAttempt = browsers.open(input);
+      const { routine, endRoutineSource } = openRoutineSource(input, inbox);
+      const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
       let sink: { dispose(): void } | undefined;
       try {
         sink = options.threads.registerEventSink((published) => {
@@ -592,7 +620,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           }
         });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
-        const accepted = await browserAttempt.withContext(() => options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
+        const accepted = await withSource(() => options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
           attachments: attachments(input),
           model: input.selection.model,
@@ -616,6 +644,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         });
         for await (const event of projectAssistantText(
           normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey),
+          inbox,
+          endRoutineSource,
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
           { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
@@ -643,7 +673,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           if (options.providerId === "codex" && admittedTurnId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
             await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });
           }
-        } finally { await browserAttempt.close(); }
+        } finally { await routine?.close(); await browserAttempt.close(); }
       }
       if (restartFresh) yield* adapter.start(inputValue);
     },

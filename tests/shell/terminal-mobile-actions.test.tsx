@@ -6,6 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode } from "../../shell/src/stores/terminal-store.js";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "../../shell/src/components/terminal/terminal-input-event.js";
 
+vi.mock("@clerk/nextjs", () => {
+  // Standalone UI fixture: no credentials or routine approval authority.
+  const getToken = async () => null;
+  return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) };
+});
+
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: ({ paneTree }: { paneTree: PaneNode }) => {
     const paneId = paneTree.type === "pane" ? paneTree.id : "pane-1";

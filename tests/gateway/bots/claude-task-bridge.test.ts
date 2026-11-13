@@ -32,3 +32,54 @@ describe('bounded native task MCP protocol', () => {
     expect((await exit)[0]).toBe(1);
   });
 });
+it('requires explicit durable mutation UUID independently of random native tool correlation', async () => {
+  const call = vi.fn<Parameters<typeof openClaudeBotBridge>[0]['call']>(async () => ({ ok: true as const, content: [{ type: 'text' as const, text: 'receipt' }] }));
+  const bridge = await openClaudeBotBridge({ capabilities: ['routine.propose'], signal: new AbortController().signal, authorize: async () => {}, call });
+  const args = { name: 'Fixture', prompt: 'Read', schedule: { kind: 'interval', everyMs: 60000 }, selection: { instanceId: 'matrix_chatgpt_plan', model: 'fixture' }, authorizedEffects: ['read'] };
+  const send = (requestId?: string) => fetch(bridge.url, { method: 'POST', signal: AbortSignal.timeout(5000), headers: { authorization: `Bearer ${bridge.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'call', tool: { capability: 'routine.propose', args, ...(requestId ? { requestId } : {}) } }) });
+  try {
+    expect((await send()).status).toBe(403); expect(call).not.toHaveBeenCalled();
+    const requestId = 'de000000-0000-4000-8000-000000000701'; expect((await send(requestId)).status).toBe(200); expect((await send(requestId)).status).toBe(200);
+    expect(call.mock.calls.map(([request]) => "routineRequestId" in request ? request.routineRequestId : undefined)).toEqual([requestId, requestId]);
+    expect(call.mock.calls[0]![0].toolCallId).not.toBe(call.mock.calls[1]![0].toolCallId);
+  } finally { await bridge.close(); }
+});
+
+it('keeps a delegated routine decision connected through the native MCP bridge beyond the ordinary request deadline', async () => {
+  const bridge = await openClaudeBotBridge({
+    capabilities: ['routine.control', 'artifact.read'],
+    signal: new AbortController().signal,
+    authorize: async () => {},
+    call: async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return { ok: true, content: [{ type: 'text', text: 'owner decided' }] };
+    },
+  });
+  const clock = 'const timeout = AbortSignal.timeout.bind(AbortSignal); AbortSignal.timeout = ms => timeout(ms === 60000 ? 10 : ms);';
+  const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(clock)}`, runner], {
+    env: { PATH: process.env.PATH, MATRIX_BOT_TASK_URL: bridge.url, MATRIX_BOT_TASK_TOKEN: bridge.token },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const exit = once(child, 'exit');
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk.toString('utf8'); });
+  try {
+    const tools = [
+      { capability: 'routine.control', args: { operation: 'control', routineId: `rt_${'a'.repeat(24)}`, baseRevision: 1, status: 'paused' }, requestId: 'de000000-0000-4000-8000-000000000708' },
+      { capability: 'routine.control', args: { operation: 'list' } },
+      { capability: 'artifact.read', args: { relPath: 'draft.txt' } },
+    ];
+    for (const [index, args] of tools.entries()) {
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: index + 1, method: 'tools/call', params: { name: 'call', arguments: args } }) + '\n');
+    }
+    child.stdin.end();
+    expect((await exit)[0]).toBe(0);
+    const frames = output.trim().split('\n').map(line => JSON.parse(line));
+    expect(frames).toEqual([
+      expect.objectContaining({ id: 1, result: { content: [{ type: 'text', text: 'owner decided' }] } }),
+      expect.objectContaining({ id: 2, error: { code: -32603, message: 'Task action unavailable' } }),
+      expect.objectContaining({ id: 3, error: { code: -32603, message: 'Task action unavailable' } }),
+    ]);
+  } finally { child.kill('SIGKILL'); await bridge.close(); }
+});

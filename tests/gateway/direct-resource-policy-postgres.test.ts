@@ -604,11 +604,12 @@ describe("S12 direct resource policy", () => {
       expect(otherApp.status).toBe(404);
     });
 
-    it("serves the project-bound app through the project scope with the same preset rules", async () => {
+    it("gives every active organization member write access to a project-bound app", async () => {
       const view = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "count", app: "board", table: "cards" } } });
       expect(view.status).toBe(200);
       const mutation = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "delete", app: "board", table: "cards", id: "card_1" } } });
-      expect(mutation.status).toBe(403);
+      expect(mutation.status).toBe(200);
+      expect(bridgeCalls).toHaveLength(2);
     });
   });
 

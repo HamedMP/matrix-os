@@ -121,17 +121,24 @@ describe("owner-controlled Brain data and durable export audit", () => {
     const scope = await fixture.db.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).executeTakeFirstOrThrow();
     expect(scope).toMatchObject({ lifecycle: "archived", deleted_at: null });
     const context = await authority.authorize({ scopeId, actorId: actors.owner, action: "read" });
+    expect(context.membershipEvidenceEpoch).toBe(kind === "chat" ? "1" : undefined);
     const owner = await fixture.db.selectFrom("collaboration_members").selectAll()
       .where("scope_id", "=", context.membershipScopeId).where("actor_id", "=", actors.owner).executeTakeFirstOrThrow();
     await fixture.db.insertInto("collaboration_members").values({ ...owner, actor_id: actors.editor, role: "editor" }).execute();
-    await expect(authority.authorize({ scopeId, actorId: actors.editor, action: "read" })).resolves.toMatchObject({ role: "editor" });
+    await expect(authority.authorize({ scopeId, actorId: actors.editor, action: "read" }))
+      .resolves.toMatchObject({ role: kind === "chat" ? "editor" : "viewer", membershipEvidenceEpoch: "1" });
     await expect(service.erase(scopeId, actors.editor)).rejects.toBeDefined();
     organizationMember = false;
-    await expect(service.erase(scopeId, actors.owner)).rejects.toBeDefined();
-    organizationMember = true;
-    await expect(service.publish(scopeId, actors.owner, { ...document, audienceScopeId: scopeId, expectedRevision: 1 })).rejects.toBeDefined();
-    expect(await db.selectFrom("company_brain_documents").select("source_id").where("scope_id", "=", scopeId).execute()).toHaveLength(1);
-    await expect(service.erase(scopeId, actors.owner)).resolves.toBeUndefined();
+    if (kind === "chat") {
+      await expect(service.erase(scopeId, actors.owner)).rejects.toBeDefined();
+      organizationMember = true;
+      await expect(service.publish(scopeId, actors.owner, { ...document, audienceScopeId: scopeId, expectedRevision: 1 })).rejects.toBeDefined();
+      expect(await db.selectFrom("company_brain_documents").select("source_id").where("scope_id", "=", scopeId).execute()).toHaveLength(1);
+      await expect(service.erase(scopeId, actors.owner)).resolves.toBeUndefined();
+    } else {
+      await expect(service.erase(scopeId, actors.owner)).resolves.toBeUndefined();
+      organizationMember = true;
+    }
     expect(await db.selectFrom("company_brain_documents").select("source_id").where("scope_id", "=", scopeId).execute()).toEqual([]);
     expect(await db.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).execute()).toEqual([]);
     expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).executeTakeFirstOrThrow()).toEqual(scope);
