@@ -8,12 +8,12 @@ The actual `createClaudeChatProviderAdapter` execution closure supplies the serv
 
 The native control router precedes the existing `can_use_tool` controller. It sends one random initialize request and callback registration, waits for the matching successful ACK with `hooks_applied: true`, then sends the original input exactly once. A timeout/error continues unrelated Chat with routine issuance disabled. The supported routine transport is the exact `2.1.240`, `2.1.280` or `2.1.317` system-init version plus Bash availability, an observed Bash stream tool-use identity and exact callback/request/tool-use correlation. Native callback session, prompt and agent IDs do not become Matrix identity. Subagent callback hints cannot create a Bot source. Unrelated Bash receives an empty hook response and retains native permission/safety checks.
 
-Only a literal single `matrix|matrixos|mos routines` argv command is intercepted. Proposal stdin supports this deliberately small literal form:
+Only a literal single `matrix|matrixos|mos routines` argv command is intercepted. [Conversational scheduling](./conversational-scheduling-design.md) keeps new creation native in ordinary Claude Code Chat. An authorized ordinary source can still inspect and manage existing Matrix routines:
 
 ```sh
-matrix routines propose --input - --request-id <original-uuid> <<'MATRIX_ROUTINE_JSON'
-<strict proposal JSON>
-MATRIX_ROUTINE_JSON
+matrix routines list --json
+matrix routines show <routine-id> --json
+matrix routines request <original-uuid> --json
 ```
 
 Compound commands, expansion, wrappers, redirects, arbitrary executable/identity/gateway/profile flags and other shell grammar are rejected. The host invokes the actual published CLI without a shell; that CLI remains the intent parser and requests private authorization/capability through Task 3 IPC. It then calls the existing source HTTP consumer and backend. There is no direct routine mutation in the adapter.

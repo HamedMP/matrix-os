@@ -7,7 +7,7 @@ const callSchema = z.object({ id: rpcId, method: z.literal("item/tool/call"), pa
 }).strict() }).passthrough();
 const unavailable = JSON.stringify({ v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } });
 export const CODEX_ROUTINE_TOOL = Object.freeze({ type: "function", name: "matrix_routines", deferLoading: false,
-  description: "Run the fixed Matrix routines CLI. Mutations require an explicit original request UUID. Reconcile unknown outcomes with request and the same UUID; never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
+  description: "When the person explicitly asks to schedule work, run propose through the Matrix routine CLI. Clarify the saved Bot's execution model if it is unclear. A proposal awaits separate human approval in this Chat, where scheduled results also appear. Use a fresh request UUID for each new mutation and the current revision for controls. Reconcile unknown outcomes with request and the original request UUID. Never retry a mutation automatically.",
   inputSchema: { type: "object", additionalProperties: false, required: ["args"], properties: {
     args: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 2048 } },
     stdin: { type: "string", maxLength: 32768 },

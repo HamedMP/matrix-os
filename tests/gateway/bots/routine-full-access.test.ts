@@ -14,9 +14,11 @@ it("requires explicit scope consent, a fresh matching turn proof and one actual 
   const release = await f.service.beforeTurnDispatch(admitted);
   const source = f.source(admitted), policy = source.producer.readPolicy();
   expect(policy).toMatchObject({ live: true, originCeiling: "full" });
-  expect(routineActionPolicy(source.producer.source, policy, "propose")).toBe("allow");
+  expect(routineActionPolicy(source.producer.source, policy, "propose")).toBe("deny");
+  expect(routineActionPolicy(source.producer.source, policy, "control")).toBe("allow");
   expect(source.fullAccessTarget).toMatchObject({ botId: BOT, chatId: f.target.chatId, preferenceRevision: 1 });
-  expect(await f.db.transaction().execute(trx => source.producer.validateWithin(source.producer.source, trx, "propose"))).toBe(true);
+  expect(await f.db.transaction().execute(trx => source.producer.validateWithin(source.producer.source, trx, "propose"))).toBe(false);
+  expect(await f.db.transaction().execute(trx => source.producer.validateWithin(source.producer.source, trx, "control"))).toBe(true);
   expect(f.source(admitted).producer.readPolicy().originCeiling, "A second native source cannot inherit the existing lease").toBe("exact");
   release!(); expect(source.producer.readPolicy().live).toBe(false);
   expect(await f.db.selectFrom("bot_grants").selectAll().execute()).toEqual([]);
@@ -83,7 +85,7 @@ it.each(["target reset", "target rebound", "source shared", "source bound", "sou
   if (condition === "source bound") await f.bindings.bindGroup({ ownerId: f.scope.ownerId, botId: BOT, chatId: f.chatId, now: new Date().toISOString() });
   if (condition === "source archived") await f.db.updateTable("chats").set({ lifecycle: "archived" }).where("id", "=", f.chatId).execute();
   if (condition === "run mode") await f.db.updateTable("chat_runs").set({ permission_mode: "supervised" }).where("id", "=", admitted.runId).execute();
-  expect(await f.db.transaction().execute(trx => source.producer.validateWithin(source.producer.source, trx, "propose"))).toBe(false);
+  expect(await f.db.transaction().execute(trx => source.producer.validateWithin(source.producer.source, trx, "control"))).toBe(false);
   expect(source.producer.readPolicy().live).toBe(false);
 });
 

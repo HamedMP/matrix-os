@@ -46,11 +46,10 @@ export function createRoutineCliActionController(options: {
   const ledger = createRoutineCliRequestsRepository(options.db);
   const requireOwnerId = (ownerId: string) => { if (ownerId !== scope.ownerId) throw new RoutineCliError("permission_denied"); };
   const live = (entry: Entry) => {
-    const action = actionFor(entry.operation);
-    const registered = options.registry.read(entry.handle.source, action);
+    const registered = options.registry.read(entry.handle.source);
     return !closed && entries.get(entry.invocationId) === entry && entry.expiresAt > now() && !entry.handle.signal.aborted
       && registered?.handle === entry.handle && registered.fingerprint === entry.fingerprint
-      && routineActionPolicy(entry.handle.source, registered.policy, action) === entry.mode;
+      && routineActionPolicy(entry.handle.source, registered.policy, actionFor(entry.operation)) === entry.mode;
   };
   const emit = (entry: Entry, resolved = false) => {
     if (entry.handle.source.identity.kind === "terminal_launch") return;
@@ -122,23 +121,20 @@ export function createRoutineCliActionController(options: {
   };
   const prepare = async (handle: RoutineSourceHandle, reference: RoutineCliSourceReference, call: Call, boundTarget?: TargetCeiling) => {
     const operation = freezeIntent(RoutineCliOperationSchema.parse(call.operation)), invocationId = z.uuid().parse(call.invocationId).toLowerCase();
-    const action = actionFor(operation);
-    sweep();
-    const registered = options.registry.read(handle.source, action);
-    if (closed || registered?.handle !== handle || call.signal.aborted || entries.has(invocationId)) throw new RoutineCliError("permission_denied");
+    sweep(); if (closed || !options.registry.has(handle) || call.signal.aborted || entries.has(invocationId)) throw new RoutineCliError("permission_denied");
     if (entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("unavailable");
-    const mode = routineActionPolicy(handle.source, registered.policy, action);
+    const registered = options.registry.read(handle.source)!;
+    const mode = routineActionPolicy(handle.source, registered.policy, actionFor(operation));
     if (mode === "deny") throw new RoutineCliError("permission_denied");
     const prepared = await options.db.transaction().execute(async trx => {
       const receipt = "requestId" in operation ? await ledger.get(scope, operation.requestId, trx) : undefined;
       if (receipt && operation.operation !== "request" && receipt.operationDigest !== routineActionHash(operation)) throw new RoutineCliError("request_conflict");
-      const target = receipt ? await targets.validatePinnedWithin(trx, handle.source, action, receipt.target)
-        : await targets.resolveWithin(trx, handle.source, action);
+      const target = receipt ? await targets.validatePinnedWithin(trx, handle.source, actionFor(operation), receipt.target)
+        : await targets.resolveWithin(trx, handle.source, actionFor(operation));
       if (!withinCeiling(target, boundTarget)) throw new RoutineCliError("permission_denied");
       return { target: freezeIntent(target), originalReceipt: !!receipt };
     });
-    const current = options.registry.read(handle.source, action);
-    if (call.signal.aborted || current?.handle !== handle || current.fingerprint !== registered.fingerprint
+    if (call.signal.aborted || !options.registry.has(handle) || options.registry.read(handle.source)?.fingerprint !== registered.fingerprint
       || entries.has(invocationId) || entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("permission_denied");
     let settle!: (value: boolean) => void; const waiting = new Promise<boolean>(resolve => { settle = resolve; });
     // Only an actual human wait receives the longer challenge lifetime. Reads

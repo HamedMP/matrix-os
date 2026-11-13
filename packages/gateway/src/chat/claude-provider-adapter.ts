@@ -577,7 +577,6 @@ export function createClaudeChatProviderAdapter(options: {
     const routineController = new AbortController();
     const routineSignal = AbortSignal.any([processSignal, routineController.signal]);
     const routineExecution = options.routineCli ? createClaudeRoutineExecution({ ...options.routineCli, input, signal: routineSignal,
-      creationPolicy,
       current: () => activeRuns.get(input.runId) === activeRun, publish: humanWait.emit, cwd, homePath: options.homePath }) : undefined;
     const initialInput = () => writeControl!(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`);
     const routineHook = routineExecution ? createClaudeRoutineHook({ signal: routineSignal,

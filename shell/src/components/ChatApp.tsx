@@ -1,5 +1,5 @@
 "use client";
-import { PersistentTaskControl, usePersistentTaskSelection, useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt } from "@matrix-os/ui";
+import { useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt, ScheduledInputText } from "@matrix-os/ui";
 import { routineFullAccessChatPresentationEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -17,7 +17,7 @@ import { ChatNewChatContent, useChatReadState, CanonicalChatInputForm, Supervise
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
@@ -266,6 +266,12 @@ function ChatAppContent({
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
   if (agentDraftRequest && agentDraftRequest.ownerIdentity !== draftIdentity) setAgentDraftRequest(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
+  const submitScope = useMemo(() => ({ composerScope, draftIdentity, authorityKey }), [composerScope, draftIdentity, authorityKey]);
+  const liveSubmitScope = useRef<typeof submitScope | null>(null);
+  useLayoutEffect(() => {
+    liveSubmitScope.current = submitScope;
+    return () => { liveSubmitScope.current = null; };
+  }, [submitScope]);
   const onNewChat = () => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     botDraftNavigation.clearNotice();
@@ -385,20 +391,21 @@ function ChatAppContent({
   useEffect(() => {
     writeHermesSetup(selectedChannels);
   }, [selectedChannels]);
-  const persistentEligible = Boolean(agentClient?.bots?.routineOrigin) && !botIdentityUnknown && routineFullAccessChatPresentationEligible({
+  const routineOriginEligible = Boolean(agentClient?.bots?.routineOrigin) && !botIdentityUnknown && routineFullAccessChatPresentationEligible({
     chat: routineScopeChat, ordinary: !collaborationView && botBinding.status === "ordinary",
     fresh: navigationFresh === true && (isCurrentAuthority?.() ?? false),
   });
-  const persistentScope = useMemo(()=>({client:agentClient,authorityKey,sessionId}),[agentClient,authorityKey,sessionId]);
-  const persistentTask = usePersistentTaskSelection({scope:persistentScope,eligible:persistentEligible});
-  const routineOrigin = useRoutineOrigin({client:agentClient?.bots?.routineOrigin,chatId:sessionId,eligible:persistentEligible,revision:botEventRevision,identity:persistentScope});
-  const persistentControl = persistentEligible ? <PersistentTaskControl selected={persistentTask.selected} onChange={persistentTask.select} client={agentClient} disabled={busy}/> : null;
+  const routineOriginScope = useMemo(()=>({client:agentClient,authorityKey,sessionId}),[agentClient,authorityKey,sessionId]);
+  const routineOrigin = useRoutineOrigin({client:agentClient?.bots?.routineOrigin,chatId:sessionId,eligible:routineOriginEligible,revision:botEventRevision,identity:routineOriginScope});
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
     mentionOptions?: ChatSubmitOptions,
   ) => {
-    if (botIdentityUnknown) return Promise.resolve(false);
+    // Attachment reads can finish after this composer has left its Chat or draft.
+    if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
+      return Promise.resolve(false);
+    }
     if (directBotId) {
       if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
       return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
@@ -411,9 +418,7 @@ function ChatAppContent({
     if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
-    const routineCreation = persistentTask.consume(mentionOptions?.clientRequestId);
     return onSubmit(text, files, {
-      ...(routineCreation ? {routineCreation} : {}),
       displayText: text,
       ...(promptText === text ? {} : { promptText }),
       instanceId: providerState.selected.instanceId,
@@ -719,7 +724,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
-            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, footerControls: persistentControl, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -831,7 +836,6 @@ function ChatAppContent({
               <ChatInput
                 leadingControls={projectControl}
                 toolbarControls={composerToolbar}
-                footerControls={persistentControl}
                 queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}
