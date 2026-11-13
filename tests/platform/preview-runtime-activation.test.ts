@@ -176,10 +176,12 @@ describe("Preview runtime host activation", () => {
     };
     const proofApp = new Hono().route("/internal/containers/:handle/ai",
       createFundedHostActivationRoutes({ db, platformSecret: hostSecret, previewRuntimeSecret: previewSecret,
-        relayOrigin: "https://matrix-ai-relay-production-test.a.run.app", now: () => new Date(now) }));
+        relayOrigin: "https://matrix-ai-relay-production-test.a.run.app", now: clock }));
+    // Proof route and Gateway share the activator's moving clock, so both sides
+    // judge allocation and policy expiry at the same instant.
     const hostApp = new Hono().route("/api/internal/platform-funded-ai",
       createPlatformFundedAiHostConfigRoutes({ env: hostEnv, isIdle: () => true,
-        now: () => now.getTime(), fetch: ((input, init) => proofApp.request(String(input), init)) as typeof fetch,
+        now: () => clock().getTime(), fetch: ((input, init) => proofApp.request(String(input), init)) as typeof fetch,
         applyConfig: async config => {
           hostEnv.MATRIX_FUNDED_AI_ENABLED = "true";
           hostEnv.MATRIX_FUNDED_AI_PLATFORM_URL = config.configuration.platformOrigin;
