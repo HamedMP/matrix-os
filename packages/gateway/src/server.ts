@@ -178,6 +178,7 @@ import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
+import { resolveGatewayScopeRuntimeDeployment } from "./scope-runtime-host/deployment.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { createCompanyBotSetup } from "./startup/slack-company.js";
@@ -854,7 +855,9 @@ export async function createGateway(config: GatewayConfig) {
   let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
     ? null
     : collaborationHealth.reason;
+  const scopeRuntimeDeployment = resolveGatewayScopeRuntimeDeployment(homePath);
   const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
+    profilePolicy: scopeRuntimeDeployment.policy,
     databaseUrl,
     homePath,
     collaborationConfig,
@@ -1557,6 +1560,7 @@ export async function createGateway(config: GatewayConfig) {
     // The host starts before the adapters so the bot adapter can bind to it; shared AI
     // registers on it after the orchestrator exists (below).
     scopeRuntimeHost = await startScopeRuntimeHost({
+      deployment: scopeRuntimeDeployment,
       homePath,
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
@@ -1683,6 +1687,7 @@ export async function createGateway(config: GatewayConfig) {
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
+        deployment: scopeRuntimeDeployment,
         ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
         orchestrator: canonicalChatOrchestrator,
         homePath,

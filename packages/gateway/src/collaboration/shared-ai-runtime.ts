@@ -1,8 +1,9 @@
-import { HOST_NAMESPACE_TRUST, resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
-import {
-  CanonicalChatModelSelectionSchema,
-  type CanonicalChatModelSelection,
-  type CanonicalProviderDriverKind,
+import { acquireSharedAiHost, type GatewayScopeRuntimeDeployment } from "../scope-runtime-host/deployment.js";
+import { deriveSharedAiEligibility, sharedDispatchFenceMatches } from "./shared-ai-profile-admission.js";
+export { deriveSharedAiEligibility, sharedDispatchFenceMatches } from "./shared-ai-profile-admission.js";
+import type {
+  CanonicalChatModelSelection,
+  CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import { SCOPE_RUNTIME_PROFILE_ID } from "@matrix-os/scope-runtime/profile";
 import { LEGACY_SCOPE_RUNTIME_PROFILE_POLICY } from "./scope-runtime-profile-policy.js";
@@ -32,16 +33,13 @@ import {
   CollaborationChatExecutionAdapter,
 } from "./chat-execution-adapter.js";
 import {
-  parseCollaborationAiEligibility,
   sharedAiAdapterFor,
-  sharedAiEligibilitySupportsDriver,
-  SHARED_MATRIX_BOT_ELIGIBILITY,
   type CollaborationAiExecutionEligibility,
 } from "./shared-ai-eligibility.js";
 import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
-import { createScopeRuntimeHost, type ScopeRuntimeHost } from "../scope-runtime-host/index.js";
+import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
@@ -78,7 +76,6 @@ const QUEUE_WAKE_LIMIT = 64;
 export const SHARED_AI_PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
   [SCOPE_RUNTIME_PROFILE_ID]: LEGACY_SCOPE_RUNTIME_PROFILE_POLICY.catalog[SCOPE_RUNTIME_PROFILE_ID]!,
 };
-const ELIGIBILITY: CollaborationAiExecutionEligibility = LEGACY_SCOPE_RUNTIME_PROFILE_POLICY.sharedEligibility;
 /** S07: supplies the authoritative sandbox manifest for one shared Chat run, or null when it cannot be mounted. */
 export interface SharedChatSandboxManifestSource {
   resolve(input: {
@@ -113,37 +110,6 @@ function executionRootSandboxManifests(input: {
   };
 }
 
-/**
- * Shared AI is eligible only when the supervisor advertises the pinned
- * sandbox policy for `chat_ai` (the S07 readiness probe) and a manifest
- * source exists to mount an execution root. Without both, the scope reports
- * no eligibility instead of offering runs that would fail at launch.
- */
-export async function deriveSharedAiEligibility(input: {
-  client: { capability(): ScopeRuntimeCapability; profileCapability?(profileId: string): ScopeRuntimeCapability };
-  sandboxManifests?: SharedChatSandboxManifestSource;
-  matrixBotEnabled?: boolean;
-}): Promise<CollaborationAiExecutionEligibility | null> {
-  const capability = input.client.capability();
-  if (!capability.available || !input.sandboxManifests) return null;
-  if (!await createSandboxReadinessProbe({ client: input.client }).sandboxRunsSupported()) return null;
-  const eligibility: CollaborationAiExecutionEligibility = {
-    ...ELIGIBILITY,
-    adapters: ELIGIBILITY.adapters.filter((expected) => capability.supportedAdapters.some((actual) =>
-      actual.adapterId === expected.adapterId
-      && actual.harnessVersion === expected.harnessVersion
-      && actual.workloads.includes("chat_ai"))),
-  };
-  const bot = input.matrixBotEnabled ? input.client.profileCapability?.(SHARED_MATRIX_BOT_ELIGIBILITY.profileId) : undefined;
-  if (bot?.available && bot.profileId === SHARED_MATRIX_BOT_ELIGIBILITY.profileId
-    && bot.executionGeneration === capability.executionGeneration && bot.sandbox?.workloads.includes("bot_agent")
-    && bot.supportedAdapters.some((adapter) => adapter.adapterId === SHARED_MATRIX_BOT_ELIGIBILITY.adapterId
-      && adapter.harnessVersion === SHARED_MATRIX_BOT_ELIGIBILITY.harnessVersion && adapter.workloads.includes("bot_agent"))) {
-    eligibility.matrixBot = SHARED_MATRIX_BOT_ELIGIBILITY;
-  }
-  return eligibility.adapters.length === 0 ? null : eligibility;
-}
-
 export async function createSharedAiRuntime(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   repository: ChatRepository;
@@ -161,6 +127,7 @@ export async function createSharedAiRuntime(options: {
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
   /** The gateway's shared scope-runtime host; without it this runtime owns a private one. */
   host?: ScopeRuntimeHost;
+  deployment?: GatewayScopeRuntimeDeployment;
   supervisorSocket?: string;
   brokerSocket?: string;
   fetchImpl?: typeof fetch;
@@ -181,22 +148,7 @@ export async function createSharedAiRuntime(options: {
   /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
   executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
-  // One broker socket per gateway: use the shared host, or own a private one (tests, legacy wiring).
-  const deployment = options.host ? undefined : resolveScopeRuntimeHostConfig({ env: process.env, homePath: options.homePath });
-  if (deployment?.namespace !== undefined && ((options.supervisorSocket !== undefined && options.supervisorSocket !== deployment.supervisorSocket)
-    || (options.brokerSocket !== undefined && options.brokerSocket !== deployment.brokerSocket))) {
-    throw new Error("Namespaced scope runtime socket configuration disagrees");
-  }
-  const ownedHost = options.host ? undefined : await createScopeRuntimeHost({
-    homePath: options.homePath,
-    profileCatalog: SHARED_AI_PROFILE_CATALOG,
-    ...(deployment?.namespace !== undefined ? { namespaceTrust: HOST_NAMESPACE_TRUST } : {}),
-    supervisorSocket: options.supervisorSocket ?? deployment!.supervisorSocket,
-    brokerSocket: options.brokerSocket ?? deployment!.brokerSocket,
-    ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
-    ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
-  });
-  const host = options.host ?? ownedHost!;
+  const { host, ownedHost, profilePolicy } = await acquireSharedAiHost(options);
   const client = host.client;
   const capability = await client.refreshCapability();
   if (!capability.available || !host.available) {
@@ -227,7 +179,7 @@ export async function createSharedAiRuntime(options: {
         homePath: options.homePath,
       })
       : undefined);
-  const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests, matrixBotEnabled: options.matrixBot !== undefined });
+  const eligibility = await deriveSharedAiEligibility({ profilePolicy, client, sandboxManifests, matrixBotEnabled: options.matrixBot !== undefined });
   if (!eligibility) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
     await ownedHost?.close();
@@ -281,7 +233,7 @@ export async function createSharedAiRuntime(options: {
           });
           if (context.resourceId !== chatId || context.ownerId.length === 0
             || execution.executionGeneration !== executionGeneration
-            || !eligibilityMatches(execution.executionEligibility, eligibility)) {
+            || !profilePolicy.eligibilityEquals(execution.executionEligibility, eligibility)) {
             throw new SharedChatRunPreparationError("unavailable");
           }
           const dispatchFence = await options.db.selectFrom("collaboration_scopes as scope")
@@ -304,9 +256,9 @@ export async function createSharedAiRuntime(options: {
             executionEligibility: execution.executionEligibility,
             driverKind: execution.driverKind,
             selection: execution.selection,
-          })) throw new SharedChatRunPreparationError("unavailable");
+          }, profilePolicy)) throw new SharedChatRunPreparationError("unavailable");
           if (execution.driverKind === "matrix_bot") {
-            if (!options.matrixBot || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", execution.selection.instanceId)) throw new SharedChatRunPreparationError("unavailable");
+            if (!options.matrixBot || !profilePolicy.supportsDriver(eligibility, "matrix_bot", execution.selection.instanceId)) throw new SharedChatRunPreparationError("unavailable");
             return await prepareSharedMatrixBotAdapter({
               execution, run, context, ownerSource: options.ownerSource, extension: options.matrixBot,
               admit: (decision, modelId) => admitRun({
@@ -401,6 +353,7 @@ export async function createSharedAiRuntime(options: {
   };
 
   const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
+    profilePolicy,
     repository: options.repository,
     commands,
     resolveEffectiveSubmitMode: (scopeId) => options.executionPolicies.effectiveSubmitMode(scopeId),
@@ -449,7 +402,7 @@ export async function createSharedAiRuntime(options: {
         .where("id", "=", scopeId).where("kind", "=", "chat")
         .where("lifecycle", "=", "shared").executeTakeFirst();
       if (!scope || Number(scope.execution_generation) !== executionGeneration
-        || !eligibilityMatches(scope.execution_eligibility, eligibility)) {
+        || !profilePolicy.eligibilityEquals(scope.execution_eligibility, eligibility)) {
         throw new Error("Shared AI execution eligibility changed");
       }
       return scope.execution_eligibility;
@@ -471,7 +424,7 @@ export async function createSharedAiRuntime(options: {
       if (selection.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
         if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
-          || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
+          || !profilePolicy.supportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
           || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
         return { driverKind: "matrix_bot" as const, selection };
       }
@@ -705,24 +658,6 @@ export function createSharedAiApprovalReconciler(options: {
     throw new Error("Shared approval Run remains active after reconciliation");
   };
 }
-function eligibilityMatches(
-  value: unknown,
-  expected: CollaborationAiExecutionEligibility = ELIGIBILITY,
-): boolean {
-  try {
-    const parsed = parseCollaborationAiEligibility(value);
-    return parsed.profileId === expected.profileId
-      && parsed.profileVersion === expected.profileVersion
-      && parsed.profileDigest === expected.profileDigest
-      && JSON.stringify(parsed.adapters) === JSON.stringify(expected.adapters)
-      && JSON.stringify(parsed.matrixBot) === JSON.stringify(expected.matrixBot);
-  } catch (error: unknown) {
-    console.warn("[collaboration] shared AI eligibility validation failed",
-      error instanceof Error ? error.name : "UnknownError");
-    return false;
-  }
-}
-
 function sharedAdapterFor(
   driverKind: CanonicalProviderDriverKind,
   instanceId: string,
@@ -730,46 +665,6 @@ function sharedAdapterFor(
 ): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
   const adapterId = sharedAiAdapterFor(driverKind, instanceId);
   return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
-}
-
-export function sharedDispatchFenceMatches(
-  current: {
-    owner_id: string;
-    resource_id: string;
-    execution_generation: number | null;
-    execution_eligibility: unknown;
-    lifecycle: string;
-    bound_driver_kind: string | null;
-    bound_instance_id: string | null;
-    current_selection: unknown;
-  } | undefined,
-  expected: {
-    ownerId: string;
-    chatId: string;
-    executionGeneration: number;
-    executionEligibility: unknown;
-    driverKind: CanonicalProviderDriverKind;
-    selection: { instanceId: string; model: string };
-  },
-): boolean {
-  if (!current || current.owner_id !== expected.ownerId || current.resource_id !== expected.chatId
-    || current.lifecycle !== "active"
-    || Number(current.execution_generation) !== expected.executionGeneration
-    || current.bound_driver_kind !== expected.driverKind
-    || current.bound_instance_id !== expected.selection.instanceId
-    || !eligibilityMatches(current.execution_eligibility, parseCollaborationAiEligibility(
-      expected.executionEligibility,
-    ))) return false;
-  try {
-    const raw = typeof current.current_selection === "string"
-      ? JSON.parse(current.current_selection) as unknown
-      : current.current_selection;
-    const selection = CanonicalChatModelSelectionSchema.parse(raw);
-    return JSON.stringify(selection) === JSON.stringify(expected.selection);
-  } catch (error: unknown) {
-    if (!(error instanceof Error)) throw new Error("Invalid shared execution selection");
-    return false;
-  }
 }
 
 async function ownerIdFor(

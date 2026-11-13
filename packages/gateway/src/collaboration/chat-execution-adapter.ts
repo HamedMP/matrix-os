@@ -25,18 +25,17 @@ import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
 } from "./authority.js";
-import {
-  parseCollaborationAiEligibility,
-  type CollaborationAiExecutionEligibility,
-} from "./shared-ai-eligibility.js";
+import { LEGACY_SCOPE_RUNTIME_PROFILE_POLICY, type GatewayScopeRuntimeProfilePolicy } from "./scope-runtime-profile-policy.js";
 import type { CollaborationRunLossRepository } from "./shared-run-loss.js";
 import { untilAborted } from "../bots/broker-actions.js";
 
 export class CollaborationChatExecutionAdapter {
+  private readonly profilePolicy: GatewayScopeRuntimeProfilePolicy;
   private readonly now: () => Date;
   private readonly createQueuedTurnId: () => string;
 
   constructor(private readonly options: {
+    profilePolicy?: GatewayScopeRuntimeProfilePolicy;
     repository: Pick<ChatRepository,
       "enqueueSharedQueuedTurn" | "listSharedQueuedTurns" | "listSharedPendingApprovals"
       | "getSharedAiCapability">;
@@ -75,6 +74,7 @@ export class CollaborationChatExecutionAdapter {
     now?: () => Date;
     createQueuedTurnId?: () => string;
   }) {
+    this.profilePolicy = options.profilePolicy ?? LEGACY_SCOPE_RUNTIME_PROFILE_POLICY;
     this.now = options.now ?? (() => new Date());
     this.createQueuedTurnId = options.createQueuedTurnId
       ?? (() => `qturn_${randomUUID().replaceAll("-", "")}`);
@@ -135,7 +135,7 @@ export class CollaborationChatExecutionAdapter {
     if (resolvedCapability.capability.status !== "available") {
       throw new CollaborationAuthorizationError("unavailable", "Shared AI is unavailable");
     }
-    const eligibility = parseCollaborationAiEligibility(
+    const eligibility = this.profilePolicy.parseEligibility(
       await this.options.resolveEligibility(context.scopeId),
     );
     const rootDeadline = AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]);

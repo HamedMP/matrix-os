@@ -5,11 +5,12 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { CollaborationAuthority, AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { createProjectInheritanceResolver } from "../collaboration/project-inheritance.js";
-import { parseCollaborationAiEligibility } from "../collaboration/shared-ai-eligibility.js";
+import { LEGACY_SCOPE_RUNTIME_PROFILE_POLICY, type GatewayScopeRuntimeProfilePolicy } from "../collaboration/scope-runtime-profile-policy.js";
 import { slackIdentity, slackRequestId, threadKey } from "./repository.js";
 import { SlackCompanyError, SlackHomeEnvelopeSchema, type SlackHomeEnvelope, type SlackThreadBinding } from "./schemas.js";
 
 export interface SlackThreadResolverOptions {
+  profilePolicy?: GatewayScopeRuntimeProfilePolicy;
   db: Kysely<OwnerCollaborationDatabase>;
   chats: Pick<ChatRepository, "create">;
   authority: Pick<CollaborationAuthority, "authorize">;
@@ -22,6 +23,7 @@ export interface SlackThreadResolverOptions {
 
 /** Stable Slack thread -> canonical owner Chat, deriving audience from the existing Project resolver. */
 export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
+  const policy = options.profilePolicy ?? LEGACY_SCOPE_RUNTIME_PROFILE_POLICY;
   const now = options.now ?? (() => new Date());
   const inheritance = createProjectInheritanceResolver({ db: options.db, now });
   return async (input: { envelope: SlackHomeEnvelope; project: AuthorizedCollaborationContext }): Promise<SlackThreadBinding> => {
@@ -52,7 +54,7 @@ export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
     if (!binding.resourceScopeId || binding.projectScopeId !== project.scopeId || binding.membershipScopeId !== project.scopeId
       || binding.authorityRuntimeId !== project.authorityRuntimeId || binding.authorityGeneration !== project.authorityGeneration || binding.readiness !== "ready") throw new SlackCompanyError("forbidden");
     const capability = await options.getEligibility({ ownerId: project.ownerId, projectScopeId: project.scopeId, resourceScopeId: binding.resourceScopeId });
-    const eligibility = parseCollaborationAiEligibility(capability.eligibility);
+    const eligibility = policy.parseEligibility(capability.eligibility);
     if (!eligibility.matrixBot || !Number.isSafeInteger(capability.generation) || capability.generation < 1) throw new SlackCompanyError("unavailable");
     await options.db.transaction().execute(async (trx) => {
       // Queue admission, dispatch, Company Brain, and owner assignment all take

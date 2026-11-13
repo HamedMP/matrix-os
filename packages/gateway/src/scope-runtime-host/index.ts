@@ -60,6 +60,13 @@ const FrameOwnerSchema = z.object({
 export type ScopeRuntimeHostClient = ReturnType<typeof createScopeRuntimeClient>;
 
 export interface ScopeRuntimeHost {
+  readonly placement: Readonly<{
+    homePath: string;
+    supervisorSocket: string;
+    brokerSocket: string;
+    namespaceTrust?: NamespacePathTrust;
+    profileCatalog: ScopeRuntimeProfileCatalog;
+  }>;
   readonly client: ScopeRuntimeHostClient;
   /** False when the supervisor was unavailable at start; nothing listens then. */
   readonly available: boolean;
@@ -89,6 +96,13 @@ export async function createScopeRuntimeHost(options: {
     await assertNamespaceSocket(options.supervisorSocket ?? SUPERVISOR_SOCKET, options.namespaceTrust);
     await assertNamespaceSocket(options.brokerSocket ?? BROKER_SOCKET, options.namespaceTrust);
   }
+  const placement = Object.freeze({
+    homePath: options.homePath,
+    supervisorSocket: options.supervisorSocket ?? SUPERVISOR_SOCKET,
+    brokerSocket: options.brokerSocket ?? BROKER_SOCKET,
+    namespaceTrust: options.namespaceTrust,
+    profileCatalog: options.profileCatalog,
+  });
   const client = createScopeRuntimeClient({
     namespaceTrust: options.namespaceTrust,
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
@@ -100,6 +114,7 @@ export async function createScopeRuntimeHost(options: {
 
   const closeClient = retryableClose(() => client.close());
   const unavailable = (): ScopeRuntimeHost => ({
+    placement,
     client,
     available: false,
     registerAuthorizer: () => () => undefined,
@@ -147,6 +162,7 @@ export async function createScopeRuntimeHost(options: {
   }
 
   return {
+    placement,
     client,
     available: true,
     registerAuthorizer(authorizer) {

@@ -1,3 +1,4 @@
+import { LEGACY_SCOPE_RUNTIME_PROFILE_POLICY, type GatewayScopeRuntimeProfilePolicy } from "../collaboration/scope-runtime-profile-policy.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
@@ -423,6 +424,7 @@ export class ChatRepository {
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
     outboxDelivery?: ChatOutboxDelivery,
+    readonly profilePolicy: GatewayScopeRuntimeProfilePolicy = LEGACY_SCOPE_RUNTIME_PROFILE_POLICY,
   ) {
     this.kysely = dialectOrKysely instanceof Kysely
       ? dialectOrKysely
@@ -453,6 +455,7 @@ export class ChatRepository {
         eventType,
         payload,
       ),
+      profilePolicy,
     );
     this.steering = new ChatSteeringRepository(
       (fn) => this.transact(fn),
@@ -510,7 +513,7 @@ export class ChatRepository {
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
-    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
+    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.profilePolicy)));
   }
 
   async appendOutboxEvent(

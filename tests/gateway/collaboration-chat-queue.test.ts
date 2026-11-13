@@ -1,3 +1,4 @@
+import { ownedProfileFixture } from "./owned-profile-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql, type Kysely } from "kysely";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
@@ -599,6 +600,34 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
 
   afterEach(async () => {
     await fixture.destroy();
+  });
+
+  it.each(["local", "migrated", "equal foreign", "mixed Pi"])("checks the accepted proof at claim (%s)", async mode => {
+    const { policy } = ownedProfileFixture();
+    const { policy: foreign } = ownedProfileFixture("profile-b");
+    const owned = new ChatRepository(fixture.db, false, undefined, policy);
+    const setEligibility = async (value: unknown) => fixture.db.updateTable("collaboration_scopes")
+      .set({ execution_eligibility: sql`${JSON.stringify(value)}::jsonb` }).where("id", "=", collaborationIds.scope).execute();
+    const req = request(61, collaborationActors.editor);
+    if (mode === "migrated") await repository.enqueueSharedQueuedTurn(owner, req);
+    else {
+      await setEligibility(foreign.sharedEligibility);
+      await expect(owned.enqueueSharedQueuedTurn(owner, req)).rejects.toMatchObject({ code: "unavailable" });
+      await setEligibility(policy.sharedEligibility);
+      await owned.withTransaction(trx => trx.enqueueSharedQueuedTurn(owner, req));
+    }
+    const current = mode === "equal foreign" ? foreign.sharedEligibility : mode === "mixed Pi"
+      ? { ...policy.sharedEligibility, matrixBot: foreign.matrixBotEligibility } : policy.sharedEligibility;
+    await setEligibility(current);
+    if (mode === "equal foreign" || mode === "mixed Pi") await fixture.db.updateTable("chat_queued_turns")
+      .set({ accepted_execution_eligibility: sql`${JSON.stringify(current)}::jsonb` }).where("id", "=", req.queuedTurnId).execute();
+    const result = await owned.claimNextQueuedTurn(owner, { chatId: collaborationIds.chat, collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_proof", runId: "run_proof", messageId: "msg_proof", claimedAt: now });
+    if (mode === "local") expect(result?.sharedExecution?.executionEligibility).toEqual(current);
+    else {
+      expect(result).toBeNull();
+      expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
+    }
   });
 
   it.each(["activity", "session", "completion acknowledgement"] as const)("locks the collaboration scope before Chat during %s persistence", async kind => {

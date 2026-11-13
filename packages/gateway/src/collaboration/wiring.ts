@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { GatewayScopeRuntimeDeployment } from "../scope-runtime-host/deployment.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { sql, type Kysely } from "kysely";
@@ -268,6 +269,7 @@ export async function createGatewayCollaboration(options: {
     console.warn("[collaboration] owner identity or relay handle missing: the home never registers for direct transport");
   }
   const chatScope = new CollaborationChatScopeService(options.db, {
+    profilePolicy: options.chatRepository.profilePolicy,
     runtimeId: options.config.runtimeId,
     preflightSecret: confirmationSecret,
     onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
@@ -563,6 +565,7 @@ export async function createGatewayCollaboration(options: {
       fundedAdmission?: FundedAdmissionQueue;
       /** The gateway's one scope-runtime host; shared AI registers on it instead of opening its own broker. */
       host?: ScopeRuntimeHost;
+      deployment?: GatewayScopeRuntimeDeployment;
       supervisorSocket?: string;
       brokerSocket?: string;
       fetchImpl?: typeof fetch;
@@ -585,6 +588,7 @@ export async function createGatewayCollaboration(options: {
         return { available: false };
       }
       sharedAiRuntime = await createSharedAiRuntime({
+        deployment: input.deployment,
         db: options.db,
         repository: options.chatRepository,
         chatScope,

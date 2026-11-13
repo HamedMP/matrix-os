@@ -1,3 +1,4 @@
+import { ownedProfileFixture } from "./owned-profile-fixture.js";
 import { signSlackBridgeRequest } from "@matrix-os/contracts/slack-bridge";
 import { createSlackBridgeRoutes } from "../../packages/gateway/src/startup/slack-bridge.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
@@ -40,6 +41,20 @@ describe("Slack thread creation inherits live Project authority", () => {
   function resolver(overrides: Partial<import("../../packages/gateway/src/slack/thread-resolver.js").SlackThreadResolverOptions> = {}) { return createSlackThreadResolver({ db: fixture.db, chats: new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>), authority,
     executionRoots: { resolve }, resolveCompanyBot, initializeThread,
     getEligibility: async () => ({ generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } }), now: () => at, ...overrides }); }
+  it("persists only configured Chat and managed Pi proof for the thread", async () => {
+    const { policy } = ownedProfileFixture();
+    const eligibility = { ...policy.sharedEligibility, matrixBot: policy.matrixBotEligibility };
+    const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
+    const getEligibility = vi.fn().mockResolvedValueOnce({ generation: 4, eligibility })
+      .mockResolvedValueOnce({ generation: 5, eligibility: { ...eligibility, matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } });
+    const resolveThread = resolver({ profilePolicy: policy, getEligibility });
+    const binding = await resolveThread({ envelope, project });
+    await expect(resolveThread({ envelope, project })).rejects.toThrow();
+    const child = await fixture.db.selectFrom("collaboration_scopes").select(["execution_generation", "execution_eligibility"])
+      .where("id", "=", binding.scopeId).executeTakeFirstOrThrow();
+    expect(Number(child.execution_generation)).toBe(4);
+    expect(child.execution_eligibility).toEqual(eligibility);
+  });
   it("creates one owner Chat with Matrix selection and an inherited child, preserving it on replay", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const first = await resolver()({ envelope, project });
