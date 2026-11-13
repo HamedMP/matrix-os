@@ -12,6 +12,7 @@ import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken }
 import {
   initializePreviewRuntimeAccess,
   isBoundedPreviewProvisioningClass,
+  PreviewRuntimeAccessError,
   type PreviewRuntimeAccessConfig,
   type PreviewRuntimeAccessSummary,
 } from "./preview-runtime-access.js";
@@ -63,11 +64,16 @@ export function createPreviewRuntimeAccessActivator(options: {
   const fetchImpl = options.fetchImpl ?? fetch;
   const wait = options.wait ?? ((ms: number) => delay(ms));
   return async request => {
-    const allocation = await initializePreviewRuntimeAccess({
+    const clock = options.now ?? (() => new Date());
+    const initialize = () => initializePreviewRuntimeAccess({
       db: options.db, repository: options.repository, config, request, now: options.now,
     });
-    if (Date.parse(allocation.expiresAt) <= (options.now ?? (() => new Date()))().getTime()) {
-      throw new Error("Preview runtime access has expired");
+    let allocation = await initialize();
+    // The window can lapse between initialization and this check. A second
+    // pass renews the now-expired allocation instead of refusing the redeploy.
+    if (Date.parse(allocation.expiresAt) <= clock().getTime()) allocation = await initialize();
+    if (Date.parse(allocation.expiresAt) <= clock().getTime()) {
+      throw new PreviewRuntimeAccessError("unavailable");
     }
     const machine = await options.db.executor.selectFrom("user_machines").select([
       "machine_id", "clerk_user_id", "handle", "runtime_slot", "runtime_token_epoch",
@@ -77,12 +83,12 @@ export function createPreviewRuntimeAccessActivator(options: {
       || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch
       || !isBoundedPreviewProvisioningClass(machine.provisioning_class)
       || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null
-      || !machine.public_ipv4) throw new Error("Preview runtime is ineligible");
+      || !machine.public_ipv4) throw new PreviewRuntimeAccessError("ineligible");
 
     const runtimeToken = buildPlatformRuntimeVerificationToken({ handle: machine.handle,
       machineId: machine.machine_id, runtimeSlot: machine.runtime_slot }, config.runtimeSecret,
     machine.runtime_token_epoch);
-    const issuedAt = (options.now ?? (() => new Date()))();
+    const issuedAt = clock();
     const activation = FundedHostActivationResponseSchema.parse({
       contractVersion: 1,
       identity: { handle: machine.handle, machineId: machine.machine_id, ownerId: machine.clerk_user_id,

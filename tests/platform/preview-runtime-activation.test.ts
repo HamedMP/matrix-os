@@ -5,7 +5,7 @@ import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-f
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { buildPlatformSpeechRuntimeVerificationToken, buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createPreviewRuntimeAccessActivator } from "../../packages/platform/src/preview-runtime-activation.js";
-import { loadPreviewRuntimeAccessConfig } from "../../packages/platform/src/preview-runtime-access.js";
+import { loadPreviewRuntimeAccessConfig, PreviewRuntimeAccessError } from "../../packages/platform/src/preview-runtime-access.js";
 import { createFundedHostActivationRoutes } from "../../packages/platform/src/funded-host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "../../packages/gateway/src/funded-host-activation.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
@@ -162,5 +162,90 @@ describe("Preview runtime host activation", () => {
     expect(applied).toMatchObject({ identity: { machineId: machine.machineId,
       runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: 1 } });
     expect(speechBody).toMatchObject({ origin: "https://api.matrix-os.com" });
+  });
+
+  function proofRouteActivator(clock: () => Date) {
+    const hostEnv: NodeJS.ProcessEnv = {
+      UPGRADE_TOKEN: buildPlatformVerificationToken(machine.handle, hostSecret),
+      MATRIX_HANDLE: machine.handle,
+      MATRIX_MACHINE_ID: machine.machineId,
+      MATRIX_CLERK_USER_ID: machine.ownerId,
+      MATRIX_RUNTIME_SLOT: machine.runtimeSlot,
+      MATRIX_RUNTIME_TOKEN_EPOCH: "1",
+      MATRIX_FUNDED_AI_ENABLED: "false",
+    };
+    const proofApp = new Hono().route("/internal/containers/:handle/ai",
+      createFundedHostActivationRoutes({ db, platformSecret: hostSecret, previewRuntimeSecret: previewSecret,
+        relayOrigin: "https://matrix-ai-relay-production-test.a.run.app", now: clock }));
+    // Proof route and Gateway share the activator's moving clock, so both sides
+    // judge allocation and policy expiry at the same instant.
+    const hostApp = new Hono().route("/api/internal/platform-funded-ai",
+      createPlatformFundedAiHostConfigRoutes({ env: hostEnv, isIdle: () => true,
+        now: () => clock().getTime(), fetch: ((input, init) => proofApp.request(String(input), init)) as typeof fetch,
+        applyConfig: async config => {
+          hostEnv.MATRIX_FUNDED_AI_ENABLED = "true";
+          hostEnv.MATRIX_FUNDED_AI_PLATFORM_URL = config.configuration.platformOrigin;
+          hostEnv.MATRIX_FUNDED_AI_RELAY_URL = config.configuration.relayOrigin;
+          hostEnv.MATRIX_FUNDED_AI_RUNTIME_TOKEN = config.configuration.runtimeToken;
+        },
+        scheduleRestart: async () => undefined }));
+    let speechBody: Record<string, unknown> | undefined;
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.startsWith("/api/internal/platform-funded-ai/")) return hostApp.request(url.pathname, init);
+      if (url.pathname.endsWith("/api/internal/platform-speech/config") && init?.method === "POST") {
+        speechBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(null, { status: 200 });
+      }
+      if (url.pathname.endsWith("/api/internal/platform-speech/config")) {
+        const body = speechBody as { machineId: string; runtimeSlot: string; origin: string; runtimeToken: string };
+        return Response.json({ configured: true, configurationRevision: createHash("sha256")
+          .update(`${body.machineId}\0${body.runtimeSlot}\0${body.origin}\0${body.runtimeToken}`).digest("hex") });
+      }
+      throw new Error("Unexpected URL");
+    });
+    const repository = createAiFundedPolicyRepository({ db, credentialHashSecret: "c".repeat(32), now: clock });
+    return createPreviewRuntimeAccessActivator({ db, repository,
+      config: loadPreviewRuntimeAccessConfig({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true",
+        MATRIX_PREVIEW_RUNTIME_SECRET: previewSecret, PLATFORM_SECRET: hostSecret }),
+      hostControlSecret: hostSecret, platformOrigin: "https://app.matrix-os.com",
+      speechPlatformOrigin: "https://api.matrix-os.com",
+      relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
+      fetchImpl: fetchImpl as typeof fetch, wait: async () => undefined, now: clock });
+  }
+  const request = { ownerId: machine.ownerId, machineId: machine.machineId,
+    runtimeSlot: machine.runtimeSlot, expectedRuntimeTokenEpoch: 1 };
+
+  it("re-activates a redeployed Preview whose allocation window has expired (ENG-465)", async () => {
+    let clock = new Date(now);
+    const activate = proofRouteActivator(() => new Date(clock));
+    const first = await activate(request);
+    clock = new Date(Date.parse(first.allocation.expiresAt) + 60 * 60_000);
+    const redeployed = await activate(request);
+    expect(redeployed).toMatchObject({ status: "ready", allocation: { ai: { requestsRemaining: 25 },
+      speech: { requestsRemaining: 25 } } });
+    expect(Date.parse(redeployed.allocation.expiresAt)).toBe(clock.getTime() + 6 * 60 * 60_000);
+
+    await db.executor.updateTable("user_machines").set({ runtime_token_epoch: 2 })
+      .where("machine_id", "=", machine.machineId).execute();
+    await expect(activate(request)).rejects.toBeInstanceOf(PreviewRuntimeAccessError);
+  });
+
+  it("renews instead of refusing when the window expires right after initialization", async () => {
+    let clock = new Date(now);
+    const first = await proofRouteActivator(() => new Date(clock))(request);
+    // Initialization sees the last live millisecond; the expiry check runs one millisecond later.
+    const lastLive = Date.parse(first.allocation.expiresAt) - 1;
+    clock = new Date(lastLive);
+    let crossed = false;
+    const activate = proofRouteActivator(() => {
+      if (crossed) return new Date(lastLive + 2);
+      crossed = true;
+      return new Date(lastLive);
+    });
+    const redeployed = await activate(request);
+    expect(redeployed.status).toBe("ready");
+    expect(Date.parse(redeployed.allocation.expiresAt)).toBe(lastLive + 2 + 6 * 60 * 60_000);
+    expect(redeployed.allocation.ai.requestsUsed).toBe(0);
   });
 });
