@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react-native";
-import { Image } from "expo-image";
+import { Image, type ImageProps } from "expo-image";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 
 import { RabbitMark } from "../components/ui/RabbitMark";
@@ -7,7 +7,7 @@ import { RabbitMark } from "../components/ui/RabbitMark";
 const rabbitArtwork = require("../assets/app.icon/Assets/rabbit.svg");
 
 function imageProps() {
-  const { style, ...props } = screen.UNSAFE_getByType(Image).props;
+  const { style, ...props } = screen.UNSAFE_getByType(Image).props as ImageProps;
   return { ...props, style: NativeStyleSheet.flatten(style) as Record<string, number> };
 }
 

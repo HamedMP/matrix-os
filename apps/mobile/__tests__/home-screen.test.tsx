@@ -15,6 +15,9 @@ import { menuItem } from "./context-menu-test-utils";
 // The Chats stack's layout holds the open chat's state above its screens.
 const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
 
+let mockHandoffParams: Record<string,unknown>={};
+const mockSelectChat=jest.fn();
+
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -34,7 +37,7 @@ let mockCatalogLoading = false;
 let mockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isSignedIn: true }),
+  useAuth: () => ({ isSignedIn: true, userId: "user_a" }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -43,6 +46,7 @@ jest.mock("react-native-safe-area-context", () => ({
 
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
+    selectChat: mockSelectChat,
     activeChatId: mockActiveChatId,
     selectionOverride: null,
     setSelectionOverride: jest.fn(),
@@ -82,9 +86,9 @@ jest.mock("@/lib/queries/use-computer-apps", () => ({
   installedAppSlug: (app: { slug: string }) => app.slug,
 }));
 
-jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }), useLocalSearchParams: () => mockHandoffParams }));
 
-beforeEach(() => jest.useFakeTimers());
+beforeEach(() => {jest.useFakeTimers();mockHandoffParams={};mockSelectChat.mockClear();});
 afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRealTimers(); });
 
 describe("drawer home screen", () => {
@@ -427,4 +431,11 @@ it("sends an owner-verified Native bot Chat with its private route while the gen
   fireEvent.press(screen.getByRole("button", { name: "Send message" }));
   expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_bot", baseRevision: 3,
     selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything());
+});
+
+it('opens the requested owner Chat and rejects duplicate handoff references',()=>{
+ mockHandoffParams={chat:'chat_12345678'};
+ const view=render(<ChatScreen/>);expect(mockSelectChat).toHaveBeenCalledWith('chat_12345678');
+ view.unmount();mockSelectChat.mockClear();mockHandoffParams={chat:['chat_12345678','chat_second']};
+ render(<ChatScreen/>);expect(mockSelectChat).not.toHaveBeenCalled();
 });

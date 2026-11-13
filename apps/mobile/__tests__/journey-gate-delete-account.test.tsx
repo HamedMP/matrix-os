@@ -1,8 +1,34 @@
+let mockSearchParams: Record<string, unknown> = {};
+const mockSetGateway = jest.fn();
+const mockSetQueryData = jest.fn();
+const mockCancelQueries = jest.fn(async () => undefined);
+const mockQueryClient = {
+  setQueryData: mockSetQueryData,
+  cancelQueries: mockCancelQueries,
+};
+const mockFetchComputers = jest.fn();
+const mockSavePrimary = jest.fn(async (computer) => ({
+  url: "https://example.test" + computer.gatewayPath,
+  runtimeSlot: "primary",
+}));
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => mockQueryClient,
+}));
+jest.mock("../app/_layout", () => ({
+  useGateway: () => ({ setGateway: mockSetGateway }),
+}));
+jest.mock("@/lib/requests/computers", () => ({
+  fetchComputers: (token: string) => mockFetchComputers(token),
+}));
 const mockReplace = jest.fn();
 const mockPush = jest.fn();
 const mockFetchMobileJourney = jest.fn();
 
-jest.mock("expo-router", () => ({ useRouter: () => ({ replace: mockReplace, push: mockPush }) }));
+const mockRouter = { replace: mockReplace, push: mockPush };
+jest.mock("expo-router", () => ({
+  useLocalSearchParams: () => mockSearchParams,
+  useRouter: () => mockRouter,
+}));
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({
     isSignedIn: true,
@@ -13,6 +39,7 @@ jest.mock("@clerk/clerk-expo", () => ({
 }));
 jest.mock("@/lib/storage", () => ({
   HOSTED_GATEWAY_URL: "https://example.test",
+  saveSelectedHostedComputer: (computer: unknown) => mockSavePrimary(computer),
   getSelectedGatewayConnection: async () => ({ url: "https://example.test" }),
   isHostedGatewayUrl: () => true,
   getMobileJourneyGatewayUrl: (url: string) => url,
@@ -21,7 +48,9 @@ jest.mock("@/lib/journey", () => ({
   ...jest.requireActual("@/lib/journey"),
   fetchMobileJourney: (...args: unknown[]) => mockFetchMobileJourney(...args),
 }));
-jest.mock("@/components/auth/SignInScreen", () => ({ SignInScreen: () => null }));
+jest.mock("@/components/auth/SignInScreen", () => ({
+  SignInScreen: () => null,
+}));
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
@@ -38,6 +67,7 @@ const journey = (phase: string) => ({
 describe("account deletion from the journey gate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSearchParams = {};
   });
 
   it.each(["plan_required", "provisioning_failed"])(
@@ -54,17 +84,24 @@ describe("account deletion from the journey gate", () => {
   );
 
   it.each([
-    ["the session no longer resolves to an account", journey("account_required"), "journey-sign-in"],
+    [
+      "the session no longer resolves to an account",
+      journey("account_required"),
+      "journey-sign-in",
+    ],
     ["the session expired", { status: "unauthorized" }, "journey-sign-in"],
     ["Matrix cannot be reached", { status: "unreachable" }, "journey-retry"],
-  ])("does not offer deletion when %s", async (_name, result, settledTestId) => {
-    mockFetchMobileJourney.mockResolvedValue(result);
-    render(<Index />);
+  ])(
+    "does not offer deletion when %s",
+    async (_name, result, settledTestId) => {
+      mockFetchMobileJourney.mockResolvedValue(result);
+      render(<Index />);
 
-    await screen.findByTestId(settledTestId);
+      await screen.findByTestId(settledTestId);
 
-    expect(screen.queryByLabelText("Delete account")).toBeNull();
-  });
+      expect(screen.queryByLabelText("Delete account")).toBeNull();
+    },
+  );
 
   it("does not offer deletion while the journey is still loading", () => {
     mockFetchMobileJourney.mockReturnValue(new Promise(() => {}));

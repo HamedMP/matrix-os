@@ -12,6 +12,32 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
 
 ## Runtime Shape
 
+### Operator platform origin
+
+Native Mobile uses `EXPO_PUBLIC_MATRIX_APP_URL` for its hosted platform authority;
+Web Canvas, Web Desktop and Web Mobile use `NEXT_PUBLIC_MATRIX_APP_URL` for
+Messaging entry links. Unset values retain `https://app.matrix-os.com`. Explicit
+values must be canonical HTTPS origins (including valid operator ports) without credentials, paths, query or
+fragment; invalid values fail closed. Only explicit development mode permits
+HTTP and development ports on exact `localhost`, `127.0.0.1` or `[::1]`.
+
+Configure the public Expo value in the mobile build/development environment and
+restart the JS runtime after changing it. It is operator configuration, never a
+value returned by an API, selected computer, deep link or persisted connection.
+Settings/inventory requests and hosted WebSockets use that same authority.
+Nonproduction Native builds namespace their saved computer, query cache,
+journey hint, collaboration drafts and push registration state. Production keys and Clerk credential
+storage stay unchanged; there is no migration, reset or deletion of production
+state. Existing offline-message helpers have no production consumers and are
+not part of the hosted Chat path.
+
+Electron Desktop uses its main-owned authenticated profile authority, seeded
+by `OPERATOR_GATEWAY_URL`. A saved authenticated profile retains its original
+authority when operator configuration changes. Isolated verification therefore
+requires a fresh disposable Electron profile; never repoint production
+credentials or derive authority from the selected computer. This configuration
+does not replace genuine Clerk/domain authorization or real-device acceptance.
+
 - Web Mobile: `Desktop.tsx` switches to the mobile launcher after client-side viewport detection.
 - Native Mobile: five bottom tabs (Chats, Agents, Apps, Terminal, Settings) under
   `apps/mobile/app/(drawer)/(tabs)/`. The app opens on Chats. See

@@ -35,6 +35,7 @@ describe("drawer settings hub", () => {
     ["App settings", "/settings-detail/app-settings"],
     ["Connect Apps", "/settings-detail/connect-apps"],
     ["Billing", "/settings-detail/billing"],
+    ["Messaging", "/settings-detail/messaging"],
     ["Help", "/settings-detail/help"],
   ])("opens %s in the settings modal stack", (label, route) => {
     render(<SettingsScreen />);
@@ -48,6 +49,7 @@ describe("drawer settings hub", () => {
     render(<SettingsScreen />);
 
     expect(screen.getAllByLabelText(/^(Open .+|Sign out)$/).map((row) => row.props.accessibilityLabel)).toEqual([
+      "Open Messaging",
       "Open System",
       "Open Account",
       "Open App settings",
