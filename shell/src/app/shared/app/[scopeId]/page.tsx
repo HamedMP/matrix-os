@@ -1,4 +1,5 @@
 import { CollaborationIdSchema, CollaborationRevisionSchema } from "@matrix-os/contracts";
+import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { z } from "zod/v4";
@@ -10,6 +11,11 @@ const SharedAppLaunchQuerySchema = z.object({
   expectedBuildId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   expectedShareRevision: CollaborationRevisionSchema.optional(),
 }).strict();
+
+export const metadata: Metadata = {
+  title: "Shared app | Matrix OS",
+  robots: { index: false, follow: false },
+};
 
 // Viewing another owner's app must not boot this viewer's personal desktop:
 // no OnboardingGate/ShellHome, runtime connection, or dock. Electron attaches
