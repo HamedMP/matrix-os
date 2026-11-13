@@ -205,6 +205,19 @@ it("searches committed history beyond loaded Web Desktop rail rows", async () =>
   expect(open).toHaveBeenCalledWith("chat_oldest");
 });
 
+it("opens archive management from Chat and searches the full archived history", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
+  const search = vi.fn(async () => ({ items: [{ chat: { id: "chat_archived", title: "Older planning", revision: 2, archivedAt: "2026-11-12T00:00:00Z" } }] }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onListArchivedConversations={vi.fn(async () => ({ items: [] })) as never}
+    searchConversations={search as never} onRestoreConversation={vi.fn(async () => true)} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search archived chats" }), { target: { value: "planning" } });
+  expect(await screen.findByRole("checkbox", { name: "Select Older planning" })).toBeTruthy();
+  expect(search).toHaveBeenCalledWith("planning", { lifecycle: "archived", limit: 50 });
+});
+
 it("keeps the owner's projects visible when the account is also an organization member", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_personal", slug: "personal", name: "Personal plan" }] })));
   render(<OrganizationStateProvider value={{ status: "member", organizationId: "org_team" }}><ChatApp

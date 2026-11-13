@@ -799,7 +799,7 @@ function ChatAppContent({
         </ScrollArea>
         <DeleteChatDialog {...deleteChat.dialog} />
         {onListArchivedConversations && onRestoreConversation && onDeleteConversation ? <ArchivedChatsDialog open={archivesOpen} onClose={() => setArchivesOpen(false)}
-          list={onListArchivedConversations} restore={async (chatId, revision) => {
+          list={onListArchivedConversations} search={searchConversations} restore={async (chatId, revision) => {
             const restored = await onRestoreConversation(chatId, revision);
             if (restored) { setDeletedChatIds(current => current.filter(id => id !== chatId)); setSearchRefreshVersion(version => version + 1); }
             return restored;

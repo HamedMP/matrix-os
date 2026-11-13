@@ -3,16 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { CanonicalChatListResponse } from "@matrix-os/contracts";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 type ArchivedChat = CanonicalChatListResponse["items"][number];
 const MAX_RETAINED_ARCHIVE_ROWS = 500;
 
-export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
+export function ArchivedChatsDialog({ open, onClose, list, search, restore, remove }: {
   open: boolean;
   onClose(): void;
   list(cursor?: string): Promise<CanonicalChatListResponse>;
+  search?(query: string, input: { lifecycle: "archived"; limit: number; cursor?: string }): Promise<CanonicalChatListResponse>;
   restore(chatId: string, revision: number): Promise<boolean>;
   remove(chatId: string): Promise<boolean>;
 }) {
@@ -23,16 +25,20 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [query, setQuery] = useState("");
+  const trimmedQuery = query.trim();
   const generation = useRef(0);
   useEffect(() => {
     if (!open) return;
     const current = ++generation.current;
     setRows([]);
     setSelected([]);
+    setConfirmDelete(false);
     setCursor(undefined);
     setLoading(true);
     setError(null);
-    void list().then(page => {
+    const load = () => (trimmedQuery && search
+      ? search(trimmedQuery, { lifecycle: "archived", limit: 50 }) : list()).then(page => {
       if (generation.current !== current) return;
       setRows(page.items);
       setCursor(page.nextCursor);
@@ -41,14 +47,15 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
       console.warn("[chat] Archived chats unavailable:", cause instanceof Error ? cause.name : "UnknownError");
       setError("Archived chats could not be loaded. Try again.");
     }).finally(() => { if (generation.current === current) setLoading(false); });
-    return () => { generation.current++; };
-  }, [open, list]);
+    const timer = window.setTimeout(() => { void load(); }, trimmedQuery ? 250 : 0);
+    return () => { generation.current++; window.clearTimeout(timer); };
+  }, [open, list, search, trimmedQuery]);
   const more = () => {
-    if (!cursor || loading) return;
+    if (!cursor || loading || busy) return;
     const current = generation.current;
     setLoading(true);
     setError(null);
-    void list(cursor).then(page => {
+    void (trimmedQuery && search ? search(trimmedQuery, { lifecycle: "archived", limit: 50, cursor }) : list(cursor)).then(page => {
       if (generation.current !== current) return;
       const retained = [...rows, ...page.items.filter(item => !rows.some(row => row.chat.id === item.chat.id))].slice(-MAX_RETAINED_ARCHIVE_ROWS);
       setRows(retained);
@@ -81,10 +88,13 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
       setBusy(false);
     }
   };
+  const close = () => { setQuery(""); onClose(); };
   return <>
-    <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }}>
+    <Dialog open={open} onOpenChange={next => { if (!next && !busy) close(); }}>
       <DialogContent aria-label="Archived chats" className="sm:max-w-[600px]" style={{ zIndex: SHELL_Z_INDEX.appDialog }} overlayStyle={{ zIndex: SHELL_Z_INDEX.appDialog }}>
         <DialogHeader><DialogTitle>Archived chats</DialogTitle><DialogDescription>Chats stay here until you permanently delete them.</DialogDescription></DialogHeader>
+        {search ? <Input type="search" aria-label="Search archived chats" placeholder="Search titles and messages…"
+          maxLength={200} value={query} disabled={busy} onChange={event => setQuery(event.target.value)}/> : null}
         <div className="max-h-[min(55vh,480px)] overflow-y-auto rounded-lg border border-border">
           {rows.map(row => <label key={row.chat.id} className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 last:border-b-0">
             <input type="checkbox" aria-label={`Select ${row.chat.title}`} checked={selected.includes(row.chat.id)} disabled={busy}
@@ -93,12 +103,12 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
             <time className="text-xs text-muted-foreground" dateTime={row.chat.archivedAt ?? row.chat.updatedAt}>{new Date(row.chat.archivedAt ?? row.chat.updatedAt).toLocaleDateString()}</time>
           </label>)}
           {loading && rows.length === 0 ? <p role="status" className="p-3 text-sm">Loading archived chats…</p> : null}
-          {!loading && rows.length === 0 && !error ? <p className="p-3 text-sm text-muted-foreground">No archived chats.</p> : null}
-          {cursor ? <button type="button" className="p-3 text-sm text-primary" disabled={loading} onClick={more}>Show more</button> : null}
+          {!loading && rows.length === 0 && !error ? <p className="p-3 text-sm text-muted-foreground">{trimmedQuery ? "No archived chats match your search." : "No archived chats."}</p> : null}
+          {cursor ? <button type="button" className="p-3 text-sm text-primary" disabled={loading || busy} onClick={more}>Show more</button> : null}
         </div>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         <DialogFooter>
-          <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>Close</Button>
+          <Button type="button" variant="ghost" disabled={busy} onClick={close}>Close</Button>
           <Button type="button" variant="outline" disabled={busy || selected.length === 0} onClick={() => { void apply("restore"); }}>Restore selected</Button>
           <Button type="button" variant="destructive" disabled={busy || selected.length === 0} onClick={() => setConfirmDelete(true)}>Delete selected</Button>
         </DialogFooter>
