@@ -12,7 +12,7 @@ export const SITE_MAX_EMAIL_INVITES = 100;
 export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
-export const SITE_MANAGEMENT_CONTRACT_VERSION = "2";
+export const SITE_MANAGEMENT_CONTRACT_VERSION = "3";
 /** Matrix.page top-level routes a friendly path can never claim. */
 export const SITE_RESERVED_SLUGS = ["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"] as const;
 const reserved: ReadonlySet<string> = new Set(SITE_RESERVED_SLUGS);
