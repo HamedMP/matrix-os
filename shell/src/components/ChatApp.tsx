@@ -1,5 +1,5 @@
 "use client";
-import { useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt, ScheduledInputText } from "@matrix-os/ui";
+import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt } from "@matrix-os/ui";
 import { routineFullAccessChatPresentationEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -397,6 +397,9 @@ function ChatAppContent({
   });
   const routineOriginScope = useMemo(()=>({client:agentClient,authorityKey,sessionId}),[agentClient,authorityKey,sessionId]);
   const routineOrigin = useRoutineOrigin({client:agentClient?.bots?.routineOrigin,chatId:sessionId,eligible:routineOriginEligible,revision:botEventRevision,identity:routineOriginScope});
+  const routineApprovals = routineApprovalPlacement(routineOrigin.view, grouped.map(group => group.type === "tool_group"
+    ? { id: group.messages[0]!.id }
+    : { id: group.message.id, boundary: group.message.role === "user" || Boolean(group.message.routineReceipt || group.message.scheduledMessage) }));
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -739,9 +742,13 @@ function ChatAppContent({
             <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+                <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.earlier} notices={false} earlier />
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
+                  const id = group.type === "tool_group" ? group.messages[0]!.id : group.message.id;
+                  const inlineApprovals = routineApprovals.after.get(id);
+                  const review = inlineApprovals ? <div className="mt-5"><RoutineOriginApprovals state={routineOrigin} items={inlineApprovals} notices={false}/></div> : null;
                   if (group.type === "tool_group") {
-                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
+                    return <div key={`tg-${id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/>{review}</div>;
                   }
                   const msg = group.message;
                   return (
@@ -795,6 +802,7 @@ function ChatAppContent({
                       )}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
+                    {review}
                     </div>
                   );
                 }}</BotTranscriptMessages>
@@ -809,7 +817,8 @@ function ChatAppContent({
                     </div>
                   </div>
                 )}
-                <RoutineOriginApprovals state={routineOrigin}/>
+                <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.currentChanges} notices={false} label="Pending schedule changes" />
+                <RoutineOriginApprovals state={routineOrigin} items={[]} />
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>

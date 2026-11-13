@@ -1,14 +1,14 @@
 import { beginOriginTransaction, boundOriginQueries, hasAcceptedBinding } from "./routine-chat-origin-target.js";
-import { routineChatOriginPendingIds } from "./routine-chat-origin-pending.js";
+import { routineChatOriginApprovalIds } from "./routine-chat-origin-approval-ids.js";
 import { createHash } from "node:crypto";
 import { type Kysely } from "kysely";
-import { CanonicalChatIdSchema, RoutineChatOriginViewSchema, RoutineOriginDecisionSubmitSchema, type RoutineChatOriginView } from "@matrix-os/contracts";
+import { CanonicalChatIdSchema, RoutineChatOriginViewSchema, RoutineOriginDecisionSubmitSchema, type RoutineChatOriginHistoryItem, type RoutineChatOriginView } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotStateTransactions } from "./events.js";
 import { BotInteractionError, projectBotInteraction, type BotInteractionService } from "./interactions.js";
 import { createBotInteractionsRepository } from "./repositories/interactions.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import { routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
+import { initialRoutineChatOrigin, routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
 import type { VerifiedRoutineOriginApproval } from "./routine-origin-platform-client.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { ChatRepository } from "../chat/repository.js";
@@ -36,6 +36,49 @@ async function liveOrigin(db: BotExecutor, origin: RoutineChatOrigin, lockTarget
     .innerJoin("chat_messages as message", join => join.onRef("message.id", "=", "turn.input_message_id").onRef("message.chat_id", "=", "turn.chat_id"))
     .select("message.id").where("run.id", "=", origin.sourceRunId).where("run.chat_id", "=", origin.sourceChatId)
     .where("message.role", "=", "user").where("message.state", "=", "committed").executeTakeFirst();
+}
+
+async function readApprovalItems(
+  db: BotExecutor, ownerId: string, computerId: string, sourceChatId: string, now: string,
+  mode: "legacy-pending" | "timeline-pending" | "history",
+): Promise<RoutineChatOriginHistoryItem[]> {
+  const history = mode === "history";
+  const repository = createBotInteractionsRepository(db);
+  const candidates = await routineChatOriginApprovalIds(db, ownerId, computerId, sourceChatId, now, history);
+  const readOrigin = history ? initialRoutineChatOrigin : routineChatOriginForInteraction;
+  const items: RoutineChatOriginHistoryItem[] = [];
+  for (const candidate of candidates) {
+    const interaction = await repository.get({ ownerId, interactionId: candidate.interaction_id }, db);
+    if (!interaction || interaction.responderActorId !== ownerId) continue;
+    const stillOpen = interaction.status === "pending" && interaction.expiresAt > now;
+    if (history ? stillOpen : !stillOpen) continue;
+    const origin = await readOrigin(db, interaction);
+    if (!origin || origin.computerId !== computerId || origin.sourceChatId !== sourceChatId) continue;
+    const anchor = await liveOrigin(db, origin);
+    if (!anchor) continue;
+    const decision = interaction.status === "resolved" ? interaction.resolution?.decision : undefined;
+    const projected = projectBotInteraction(interaction, ownerId, { estimateRoutineNextFire: !history });
+    // The canonical resolver already refuses an overdue row, even before the sweep persists expiry.
+    const presentation = history && projected.status === "pending" ? { ...projected, status: "expired" as const } : projected;
+    items.push({ sourceChatId, anchorMessageId: anchor.id, interaction: presentation,
+      ...(mode !== "legacy-pending" ? { createdAt: interaction.createdAt } : {}),
+      ...(decision === "approve" || decision === "deny" ? { decision } : {}) });
+  }
+  return items;
+}
+
+/** Keep the optional history within the existing native owner-browser read limit. */
+function boundedHistory(view: RoutineChatOriginView, candidates: RoutineChatOriginHistoryItem[]) {
+  const history: RoutineChatOriginHistoryItem[] = [];
+  const maxBytes = 128 * 1024;
+  let bytes = Buffer.byteLength(JSON.stringify(view)) + ',"history":[]'.length;
+  if (bytes > maxBytes) return undefined;
+  for (const item of candidates) {
+    bytes += Buffer.byteLength(JSON.stringify(item)) + (history.length ? 1 : 0);
+    if (bytes > maxBytes) break;
+    history.push(item);
+  }
+  return history;
 }
 /** Source presentation and delivery only. This service has no scheduled-work admission/dispatch port. */
 export function createRoutineChatOriginService(deps: RoutineChatOriginDependencies) {
@@ -78,26 +121,23 @@ export function createRoutineChatOriginService(deps: RoutineChatOriginDependenci
     return pending;
   }
   return {
-    read(ownerId: string, sourceChatId: string): Promise<RoutineChatOriginView> { return track(async () => {
+    read(ownerId: string, sourceChatId: string, includeHistory = false): Promise<RoutineChatOriginView> { return track(async () => {
       if (!CanonicalChatIdSchema.safeParse(sourceChatId).success) throw new BotInteractionError("invalid_request");
       await reconcile(ownerId, sourceChatId);
       return deps.transact(ownerId, async tx => {
         await beginOriginTransaction(tx.db, ownerId);
         if (closed || !await privateSource(tx.db, ownerId, sourceChatId)) throw new BotInteractionError("not_found");
-        const repository = createBotInteractionsRepository(tx.db), pendingItems = [];
-        const candidates = await routineChatOriginPendingIds(tx.db, ownerId, deps.computerId, sourceChatId, now().toISOString());
-        for (const candidate of candidates) {
-          const interaction = await repository.get({ ownerId, interactionId: candidate.interaction_id }, tx.db);
-          if (!interaction) continue;
-          const origin = await routineChatOriginForInteraction(tx.db, interaction);
-          if (!origin || origin.computerId !== deps.computerId || origin.sourceChatId !== sourceChatId) continue;
-          const anchor = await liveOrigin(tx.db, origin);
-          if (anchor) pendingItems.push({ sourceChatId, anchorMessageId: anchor.id, interaction: projectBotInteraction(interaction, ownerId) });
-        }
+        const observedAt = now().toISOString();
+        const pendingItems = await readApprovalItems(tx.db, ownerId, deps.computerId, sourceChatId, observedAt,
+          includeHistory ? "timeline-pending" : "legacy-pending");
         const deliveries = await tx.db.selectFrom("routine_chat_deliveries").select(["message_id", "receipt"])
           .where("owner_id", "=", ownerId).where("source_chat_id", "=", sourceChatId).orderBy("created_at", "desc").orderBy("message_id", "desc").limit(33).execute();
-        return RoutineChatOriginViewSchema.parse({ sourceChatId, pending: pendingItems, deliveryPending: await hasPendingRoutineChatOutput(tx.db, ownerId, deps.computerId, sourceChatId),
+        const view = RoutineChatOriginViewSchema.parse({ sourceChatId, pending: pendingItems, deliveryPending: await hasPendingRoutineChatOutput(tx.db, ownerId, deps.computerId, sourceChatId),
           deliveries: deliveries.slice(0, 32).map(row => ({ messageId: row.message_id, receipt: row.receipt })), hasMore: deliveries.length > 32 });
+        if (!includeHistory) return view;
+        const candidates = await readApprovalItems(tx.db, ownerId, deps.computerId, sourceChatId, observedAt, "history");
+        const pending = view.pending.filter(item => !candidates.some(candidate => candidate.interaction.interactionId === item.interaction.interactionId));
+        return RoutineChatOriginViewSchema.parse({ ...view, pending, history: boundedHistory({ ...view, pending }, candidates) });
       });
     }); },
     resolve(ownerId: string, sourceChatId: string, interactionId: string, raw: unknown, verifiedDecision: VerifiedRoutineOriginApproval) { return track(async () => {

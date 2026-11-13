@@ -37,8 +37,9 @@ export function useRoutineOrigin({ client, chatId, eligible, revision = 0, ident
     session.reading = true;
     try {
       const view = await client.get(chatId, session.controller.signal);
-      if (view.sourceChatId !== chatId || view.pending.some(item =>
-        item.sourceChatId !== chatId || !isRoutineOriginApproval(item.interaction))) throw new Error(ROUTINE_ORIGIN_ERROR);
+      if (view.sourceChatId !== chatId || [...view.pending, ...(view.history ?? [])].some(item =>
+        item.sourceChatId !== chatId || !isRoutineOriginApproval(item.interaction)) ||
+        view.history?.some(item => item.interaction.status === "pending")) throw new Error(ROUTINE_ORIGIN_ERROR);
       if (sequence === session.sequence) {
         const pin = session.status.uncertain;
         const stillPending = view.pending.some(({ interaction }) =>

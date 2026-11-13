@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Alert, ScrollView, Text, View } from "react-native";
 import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
-import { routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
+import { routineTaskChat, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { Button } from "@/components/ui";
 import { ScheduleEditor } from "./ScheduleEditor";
@@ -114,10 +114,11 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
   const current = detail?.routine;
+  const taskChat = current ? routineTaskChat(current) : null;
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Approve persistent tasks in their source Chat.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Review scheduled tasks in the Chat where they were requested.</Text>
     {onNewSchedule ? <Button label="New schedule" disabled={busy} onPress={onNewSchedule} /> : null}
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
@@ -128,7 +129,6 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
         <Text accessibilityRole="header" style={styles.heading}>{current.proposal.name}</Text>
         <Text style={styles.text}>{current.proposal.prompt}</Text>
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
-        {onOpenChat?<Button label="Open task Chat" variant="text" disabled={busy} onPress={()=>{void openHistory(current.chatId,current.botId);}}/>:null}
         <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
@@ -136,11 +136,12 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
           <Button label={current.status === "active" ? "Pause" : "Resume"} disabled={busy || !fresh || (current.status === "paused" && (!current.targetAvailable || !current.sourceAvailable || current.requiresReview))}
             onPress={() => void control(current, current.status === "active" ? "paused" : "active")} />
           <Button label="Edit" variant="outline" disabled={busy || !fresh || !current.targetAvailable || !current.sourceAvailable} onPress={() => setEditing(true)} />
-          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and cancels the active occurrence. History is kept; this task cannot be resumed.", [
+          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and requests cancellation of any active run. History remains available in Chat.", [
             {text: "Cancel", style: "cancel"}, {text: "Archive", style: "destructive", onPress: () => void control(current, "archived")},
           ])} />
         </View> : null}
-        {current.originChatId?current.originAvailable?onOpenChat?<Button label="Open source Chat" variant="text" disabled={busy} onPress={()=>void openHistory(current.originChatId!)}/>:null:<Text style={styles.note}>Source Chat unavailable. Execution history remains available.</Text>:null}
+        {taskChat && onOpenChat ? <Button label={taskChat.label} variant="text" disabled={busy} onPress={() => void openHistory(taskChat.chatId, current.originAvailable && current.originChatId === taskChat.chatId ? undefined : current.botId)} /> : null}
+        {current.originChatId && !current.originAvailable ? <Text style={styles.note}>Source Chat unavailable.</Text> : null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}

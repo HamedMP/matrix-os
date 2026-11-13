@@ -7,10 +7,35 @@ import { createRoutineOriginClient } from "../../packages/ui/src/chat/routine-or
 import { useRoutineOrigin } from "../../packages/ui/src/chat/use-routine-origin";
 import { RoutineOriginApprovals } from "../../packages/ui/src/chat/RoutineOriginApprovals";
 import { routineReceiptMessage } from "../../packages/ui/src/chat/routine-receipt";
+import { createOwnerBrowserJsonRequest } from "../../packages/ui/src/routine-action/owner-browser-request";
+import { routineApprovalPlacement } from "../../packages/ui/src/chat/routine-approval-placement";
 import { nativeScheduledMessageFixture } from "../helpers/native-scheduled-message-fixture";
 afterEach(cleanup);
 const interaction: BotInteraction = {interactionId:"in_abcdefgh",chatId:"chat_executor",agentId:"bot_existing",taskId:"task_real_execution",kind:"approval",blocking:true,status:"pending",expiresAt:"2099-01-01T00:00:00.000Z",revision:7,payload:{kind:"approval",tool:"routine.activate",audience:"direct",policyRevision:3,argsDigest:"a".repeat(64),preview:JSON.stringify({proposal:{name:"Morning brief",prompt:"Write a private brief.",schedule:{kind:"once",at:"2099-01-01T00:00:00.000Z"},selection:{instanceId:"matrix_chatgpt_plan",model:"gpt-6-luna"},authorizedEffects:["read"]},source:{accountId:"account_private",computerId:"computer_fixture",grantRevision:3,definitionRevision:2}})}};
 const view = (): RoutineChatOriginView => ({sourceChatId:"chat_source",pending:[{sourceChatId:"chat_source",anchorMessageId:"msg_source",interaction}],deliveries:[],deliveryPending:false,hasMore:false});
+it("keeps two approvals in creation order when the later one is decided first", () => {
+ const earlier = { ...view().pending[0]!, createdAt: "2026-11-07T00:00:01.000Z" };
+ const later = { ...earlier, createdAt: "2026-11-07T00:00:02.000Z", interaction: { ...interaction, interactionId: "in_later" } };
+ const rows = [{ id: "msg_source", boundary: true }, { id: "msg_reply" }, { id: "msg_result", boundary: true }];
+ const order = (source: RoutineChatOriginView) => routineApprovalPlacement(source, rows).after.get("msg_reply")?.map(item => item.interaction.interactionId);
+ const expected = [interaction.interactionId, later.interaction.interactionId];
+ expect(order({ ...view(), pending: [later, earlier] })).toEqual(expected);
+ expect(order({ ...view(), pending: [earlier], history: [{ ...later, interaction: { ...later.interaction, status: "resolved" }, decision: "approve" }] })).toEqual(expected);
+});
+it("falls back to the legacy read on an old host without repeating a decision", async () => {
+ const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+  if (options?.method === "POST") return Response.json({interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}});
+  return String(input).includes("?timeline=1") ? Response.json({}, { status: 400 }) : Response.json(view());
+ });
+ const request = createOwnerBrowserJsonRequest("https://fixture.test", async () => null, fetcher);
+ const client = createRoutineOriginClient((path, method, body, options) => request({ path, method, body, ...options }));
+ await expect(client.get("chat_source")).resolves.toEqual(view());
+ await expect(client.get("chat_source")).resolves.toEqual(view());
+ await client.resolve("chat_source", interaction.interactionId, { kind:"approval",baseRevision:7,decision:"approve" });
+ expect(fetcher.mock.calls.map(([url, options]) => [new URL(String(url)).search, options?.method])).toEqual([
+  ["?timeline=1", "GET"], ["", "GET"], ["", "GET"], ["", "POST"],
+ ]);
+});
 it("uses the source alias and unchanged canonical interaction revision, without a Bot binding context", async () => {
  let decided=false;const request=vi.fn(async (_p:string, method:string)=>{if(method==="GET")return {...view(),pending:decided?[]:view().pending};decided=true;return {interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}};});
  const client=createRoutineOriginClient(request);

@@ -79,7 +79,7 @@ it.each([true, false])("renders 32 approvals from the real Native Mobile transpo
   expect(await screen.findAllByRole("button", { name: "Review in browser" })).toHaveLength(32);
   expect(screen.getByRole("header", { name: "Schedule Fixture 31" })).toBeTruthy();
   expect(expoFetch).toHaveBeenCalledWith(
-    "https://app.matrix-os.com/vm/fixture/~runtime/primary/api/chats/chat_source/routine-origin",
+    "https://app.matrix-os.com/vm/fixture/~runtime/primary/api/chats/chat_source/routine-origin?timeline=1",
     expect.objectContaining({ method: "GET", headers: { authorization: "Bearer fixture-token" } }),
   );
   expect(stream.cancel).not.toHaveBeenCalled();
@@ -113,6 +113,7 @@ it("keeps the same bounded page available in the browser approval handoff", asyn
 
 it.each([
   { path: "/api/unrelated", method: "GET" },
+  { path: "/api/chats/chat_source/routine-origin?timeline=0", method: "GET" },
   { path: "/api/chats/chat_source/routine-origin/in_fixture_0/resolve", method: "POST" },
   { path: "/api/chats/chat_source/routine-origin", method: "POST" },
 ] as const)("keeps the existing owner transport cap on $method $path", async ({ path, method }) => {

@@ -48,7 +48,6 @@ import { pendingSupervisedTool, supervisedToolCallbacks } from "./supervised-too
 import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
-import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
@@ -771,7 +770,6 @@ function CanonicalChatWorkspaceContent({
         }}
       />
 
-      {!directBotId && controller.detail && controller.detail.record.chat.id === routedComposerChatId && globalView === "conversation" ? <SourceChatRoutines key={JSON.stringify([admissionIdentity,draftScope,routedComposerChatId])} client={client.agents} chat={controller.detail.record.chat} ordinary={!botIdentityUnknown && !explicitSharedRoute} revision={botEventRevision}/> : null}
       <BrowserPermissionReminder/>
       <SharedChatComposer
         routineFullAccess={routineFullAccess}
@@ -1001,7 +999,9 @@ function CanonicalChatWorkspaceContent({
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
-            <ConversationTranscript turns={transcript} callbacks={{
+            <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
+              ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
+              identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,
               browserChatId: controller.detail.record.chat.id,
               browserPermissions: client.browserPermissions,

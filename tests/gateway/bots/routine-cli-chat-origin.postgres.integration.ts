@@ -49,6 +49,64 @@ it("warns safely and skips an edit approval with a corrupt persisted preview", a
     expect(warning.mock.calls).toEqual([["[routine-origin] Saved approval preview is invalid"]]);
   } finally { warning.mockRestore(); await service.close(); }
 });
+it.each(["approve", "deny"] as const)("keeps a saved %s decision at its original source message", async decision => {
+  const { admitFixtureRun, originService, decisionProof } = await import("./routine-chat-origin-support.js");
+  await admitFixtureRun(f);
+  await admitFixtureRun(f, "chat_other", "run_other");
+  await f.submit();
+  await f.canonical.drain();
+  const service = originService(f);
+  try {
+    const before = await service.read(OWNER, "chat_source");
+    expect(before).not.toHaveProperty("history");
+    expect(before.pending[0]).not.toHaveProperty("createdAt");
+    const beforeTimeline = await service.read(OWNER, "chat_source", true);
+    expect(beforeTimeline).toMatchObject({ history: [], pending: [{ createdAt: f.state.clock }] });
+    const { interaction } = before.pending[0]!;
+    const input = { kind: "approval" as const, baseRevision: interaction.revision, decision };
+    await service.resolve(OWNER, "chat_source", interaction.interactionId, input, decisionProof(f, interaction.interactionId, input));
+    expect(await service.read(OWNER, "chat_source", true)).toMatchObject({
+      pending: [], history: [{ sourceChatId: "chat_source", anchorMessageId: "msg_run_source",
+        createdAt: f.state.clock, interaction: { interactionId: interaction.interactionId, status: "resolved" }, decision }],
+    });
+    const history = (await service.read(OWNER, "chat_source", true)).history!;
+    const payload = history[0]?.interaction.payload;
+    expect(payload?.kind).toBe("approval");
+    if (payload?.kind === "approval") expect(JSON.parse(payload.preview)).not.toHaveProperty("estimatedNextFireAt");
+    if (decision === "approve") {
+      const { createBotRoutinesRepository } = await import("../../../packages/gateway/src/bots/repositories/routines.js");
+      const routines = createBotRoutinesRepository(f.db);
+      const [routine] = await routines.listOwner(OWNER, {});
+      await routines.control({ ownerId: OWNER, routineId: routine!.routineId, baseRevision: routine!.revision,
+        status: "archived", now: f.state.clock });
+      expect((await service.read(OWNER, "chat_source", true)).history).toEqual(history);
+      await driftBinding(interaction.chatId, "replacement binding");
+      expect((await service.read(OWNER, "chat_source", true)).history).toEqual([]);
+    }
+    expect(await service.read(OWNER, "chat_other", true)).toMatchObject({ history: [] });
+    await expect(service.read("other-owner", "chat_source", true)).rejects.toThrow();
+    expect(await service.read(OWNER, "chat_source")).not.toHaveProperty("history");
+  } finally { await service.close(); }
+});
+it("retains an overdue approval as expired before the canonical sweep without mutating the record", async () => {
+  const { admitFixtureRun, originService, decisionProof } = await import("./routine-chat-origin-support.js");
+  await admitFixtureRun(f);
+  await f.submit();
+  await f.canonical.drain();
+  const service = originService(f);
+  try {
+    const { interaction } = (await service.read(OWNER, "chat_source")).pending[0]!;
+    f.state.clock = interaction.expiresAt;
+    const expired = await service.read(OWNER, "chat_source", true);
+    expect(expired).toMatchObject({ pending: [], history: [{ anchorMessageId: "msg_run_source",
+      interaction: { interactionId: interaction.interactionId, revision: interaction.revision, status: "expired" } }] });
+    expect(expired.history?.[0]).not.toHaveProperty("decision");
+    const input = { kind: "approval" as const, baseRevision: interaction.revision, decision: "approve" as const };
+    await expect(service.resolve(OWNER, "chat_source", interaction.interactionId, input, decisionProof(f, interaction.interactionId, input)))
+      .rejects.toMatchObject({ code: "expired" });
+    expect(await f.db.selectFrom("bot_interactions").select("status").executeTakeFirstOrThrow()).toEqual({ status: "pending" });
+  } finally { await service.close(); }
+});
 it("resolves the same canonical approval once, preserving duplicate/stale and source privacy boundaries", async () => {
   const { admitFixtureRun, originService, decisionProof } = await import("./routine-chat-origin-support.js");
   await admitFixtureRun(f); await f.submit(); await f.canonical.drain();
@@ -184,6 +242,8 @@ it("retains original source across default changes and edit approval while fresh
   f.state.live=false;
   expect((await service.read(OWNER,"chat_source")).pending.map(item=>item.interaction.interactionId)).toEqual([edit.interaction.interactionId]);
   await service.resolve(OWNER,"chat_source",edit.interaction.interactionId,{kind:"approval",baseRevision:1,decision:"approve"},decisionProof(f,edit.interaction.interactionId));
+  expect((await service.read(OWNER, "chat_source", true)).history?.map(item => item.interaction.interactionId))
+    .toEqual([initial.interactionId]);
   await expect(f.execute({operation:"list"})).rejects.toThrow();
   const {createBotRoutineManagement}=await import("../../../packages/gateway/src/bots/routine-management.js");
   expect((await createBotRoutineManagement(f.db,f.approvals).detail(OWNER,routine.routine_id,true)).routine).toMatchObject({chatId:initial.chatId,originChatId:"chat_source",originAvailable:true});

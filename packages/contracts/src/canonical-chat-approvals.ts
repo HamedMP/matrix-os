@@ -4,6 +4,7 @@ import type { BrowserApprovalLifecycleSchema, BrowserGrantView } from "./browser
 import type { CanonicalChatApprovalDecision } from "./canonical-chat.js";
 import { canonicalChatApprovalDisplay } from "#canonical-chat-approval-display";
 import { canonicalSafeLabel } from "#canonical-chat-primitives";
+import { RoutineActionIdSchema } from "#routine-action";
 export { canonicalChatApprovalOutcome } from "#canonical-chat-approval-display";
 
 const ApprovalTitleSchema = canonicalSafeLabel(160, 640);
@@ -79,7 +80,19 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     if (!run) return [];
     const turn = detail.turns.find(t => t.id === run.turnId);
     const input = detail.messages.find(m => m.id === turn?.inputMessageId);
-    const next = input && detail.messages.find(m => m.role === "user" && m.seq > input.seq && m.turnId !== run.turnId);
+    const nextTurn = input && detail.messages.find(m => m.role === "user" && m.seq > input.seq && m.turnId !== run.turnId);
+    // Native routine operation approvals are activities, not persisted message
+    // parts. Without a later turn they used to fall behind scheduled results.
+    const sourceSeq = input?.seq ?? turn?.baseMessageSeq ?? run.historyBoundarySeq;
+    const nextAfterRoutineApproval = RoutineActionIdSchema.safeParse(approval.approvalId).success
+      && !detail.messages.some(message => message.id === approval.id)
+      ? detail.messages.find(message => message.seq > sourceSeq && (!nextTurn || message.seq <= nextTurn.seq)
+        && Date.parse(message.createdAt) > approval.timestamp
+        && ((message.role === "assistant" || message.role === "user")
+          && message.parts.some(part => part.type === "text" || part.type === "summary" || part.type === "attachment_reference")
+          || message.role === "system" && message.state === "committed" && message.parts.some(part => part.type === "routine_receipt")))
+      : undefined;
+    const next = nextAfterRoutineApproval ?? nextTurn;
     const outcome = resolved.get(identity);
     const browser = browserResolved.get(identity)?.browserApproval ?? approval.browserApproval;
     const active = ["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(run.status);

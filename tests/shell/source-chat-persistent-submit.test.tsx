@@ -60,6 +60,6 @@ it("Electron retains the selected runtime while reading the same strict origin r
  const fetchFn=vi.fn(async(url:string,options?:RequestInit)=>{const current=new URL(url);return routes.request((readExplicitVmRoute(current.pathname)?.upstreamPath??current.pathname)+buildForwardedQueryString(url),options);});
  const api=createApiClient({baseUrl:"https://fixture.test/vm/test-pc",getRuntimeSlot:()=>"dev",fetchFn});
  const origin=createCanonicalChatClient(api).agents!.bots!.routineOrigin!;
- await expect(origin.get("chat_source")).resolves.toMatchObject({sourceChatId:"chat_source"});expect(new URL(fetchFn.mock.calls[0]![0]).search).toBe("?runtime=dev");
+ await expect(origin.get("chat_source")).resolves.toMatchObject({sourceChatId:"chat_source"});expect(new URL(fetchFn.mock.calls[0]![0]).search).toBe("?timeline=1&runtime=dev");
  await expect(api.get("/api/chats/chat_source/routine-origin?forged=value")).rejects.toMatchObject({httpStatus:400});expect(read).toHaveBeenCalledOnce();
 });
