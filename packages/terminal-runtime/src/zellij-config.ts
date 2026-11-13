@@ -36,7 +36,9 @@ const MATRIX_TERMINAL_PATH_BOOTSTRAP = `matrix_prepend_terminal_path() {
   export PATH
 }
 
-matrix_prepend_terminal_path "/opt/matrix/bin"
+if [ -z "\${MATRIX_TERMINAL_RUNTIME_NAMESPACE:-}" ]; then
+  matrix_prepend_terminal_path "/opt/matrix/bin"
+fi
 matrix_prepend_terminal_path "\${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"
 if [ -n "\${MATRIX_HOME:-}" ]; then
   matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"
