@@ -2,9 +2,9 @@ import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
+import { createOwnerDatabaseSizeSweeper } from './container-database-size-sweep.js';
 import {
   createContainerOwnerDatabases,
-  createOwnerDatabaseSizeSweeper,
   type ContainerOwnerDatabases,
   type OwnerClusterAdmin,
 } from './container-owner-database.js';

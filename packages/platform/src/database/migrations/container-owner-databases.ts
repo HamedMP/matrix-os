@@ -22,4 +22,6 @@ export async function migrateContainerOwnerDatabases(db: PlatformMigrationExecut
       deleted_at TIMESTAMPTZ
     )
   `.execute(db);
+  // T055a: set while the size sweep holds the owner's writes revoked.
+  await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS writes_blocked_at TIMESTAMPTZ`.execute(db);
 }

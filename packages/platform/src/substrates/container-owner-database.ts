@@ -2,14 +2,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHmac, randomBytes as nodeRandomBytes } from 'node:crypto';
 import { sql, type ColumnType, type Generated, type Selectable } from 'kysely';
 import type { PlatformDB } from '../db.js';
+import { writeBlockStatements, writeRestoreStatements, type WriteBlockNames } from './container-owner-write-block.js';
 
 /**
  * Per-owner database and role on the shared owner cluster for container
  * runtimes (spike S5). Postgres enforces the connection limit on the role and
  * the database. Postgres has no database size quota, so the platform measures
- * size and, over the limit, makes the role's sessions read-only by default.
- * That default is a role setting the owner can override per session; it stops
- * ordinary writes, not a hostile owner. Passwords are derived from a platform
+ * size and, over the limit, makes the role's sessions read-only by default
+ * and moves ownership of the owner's objects to a holder role (see
+ * container-owner-write-block.ts), which the owner cannot undo. Passwords are derived from a platform
  * secret and the generation that last rotated them, so nothing secret is stored.
  */
 
@@ -23,6 +24,7 @@ export interface ContainerOwnerDatabasesTable {
   size_bytes: ColumnType<number | string | null, number | null | undefined, number | null>;
   state: 'active' | 'fenced' | 'deleting';
   password_epoch: number;
+  writes_blocked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
@@ -57,15 +59,20 @@ export interface ContainerOwnerDatabasesDeps {
   admin: OwnerClusterAdmin;
   passwordSecret: string;
   sizeLimitBytes: number;
+  /** Writes come back once the size is below the limit minus this margin. Defaults to a tenth of the limit. */
+  sizeRestoreMarginBytes?: number;
   connectionLimit?: number;
   randomBytes?: (size: number) => Buffer;
 }
 
-const IDENTIFIER = /^(mxo|mxr)_[a-z2-7]{26}$/;
+const IDENTIFIER = /^(mxo|mxr|mxh)_[a-z2-7]{26}$/;
 const PASSWORD = /^[A-Za-z0-9_-]{43}$/;
 const OWNER_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const ROLE_ATTRIBUTES = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS';
+// Only a role holding SUPERUSER, REPLICATION or BYPASSRLS may restate them, so a
+// non-superuser admin re-asserts the rest; it could never have granted those three.
+const ALTERABLE_ROLE_ATTRIBUTES = 'NOCREATEDB NOCREATEROLE NOINHERIT';
 const ROLE_DEFAULTS = [
   "statement_timeout = '30s'",
   "idle_in_transaction_session_timeout = '60s'",
@@ -77,14 +84,15 @@ const OWNER_LOCK_WAIT_MS = 30_000;
 const OWNER_LOCK_POLL_MS = 50;
 /** Owners with operations queued in this process; beyond it new operations answer busy. */
 const MAX_LOCAL_OWNER_QUEUES = 10_000;
-const READ_ONLY_SETTING = 'default_transaction_read_only=on';
 
-export function assertOwnerIdentifier(value: string, prefix: 'mxo_' | 'mxr_'): string {
+type IdentifierPrefix = 'mxo_' | 'mxr_' | 'mxh_';
+
+export function assertOwnerIdentifier(value: string, prefix: IdentifierPrefix): string {
   if (!IDENTIFIER.test(value) || !value.startsWith(prefix)) throw new ContainerOwnerDatabaseError('invalid_identifier');
   return value;
 }
 
-function quoteIdentifier(value: string, prefix: 'mxo_' | 'mxr_'): string {
+function quoteIdentifier(value: string, prefix: IdentifierPrefix): string {
   return `"${assertOwnerIdentifier(value, prefix)}"`;
 }
 
@@ -123,6 +131,10 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     throw new Error('Owner database connection limit is invalid');
   }
   const randomBytes = deps.randomBytes ?? nodeRandomBytes;
+  const restoreMargin = deps.sizeRestoreMarginBytes;
+  if (restoreMargin !== undefined && (!Number.isSafeInteger(restoreMargin) || restoreMargin < 0)) {
+    throw new Error('Owner database size restore margin is invalid');
+  }
 
   function opaqueName(prefix: 'mxo_' | 'mxr_'): string {
     const bytes = randomBytes(26);
@@ -178,7 +190,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       await createIfAbsent(`CREATE ROLE ${roleSql} NOLOGIN ${ROLE_ATTRIBUTES}`, signal);
     }
     await admin.query(
-      `ALTER ROLE ${roleSql} WITH LOGIN ${ROLE_ATTRIBUTES} CONNECTION LIMIT ${connectionLimit} `
+      `ALTER ROLE ${roleSql} WITH LOGIN ${ALTERABLE_ROLE_ATTRIBUTES} CONNECTION LIMIT ${connectionLimit} `
         + `PASSWORD ${quotePassword(passwordFor(row.role_name, row.password_epoch))}`,
       [], signal);
     for (const setting of ROLE_DEFAULTS) await admin.query(`ALTER ROLE ${roleSql} SET ${setting}`, [], signal);
@@ -187,11 +199,54 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     }
     await admin.query(`ALTER DATABASE ${dbSql} CONNECTION LIMIT ${connectionLimit}`, [], signal);
     await admin.query(`REVOKE ALL ON DATABASE ${dbSql} FROM PUBLIC`, [], signal);
-    await admin.query(`GRANT CONNECT, CREATE ON DATABASE ${dbSql} TO ${roleSql}`, [], signal);
+    // A size-blocked owner gets CONNECT and USAGE only; the size sweep alone grants CREATE back.
+    const blocked = row.writes_blocked_at !== null;
+    await admin.query(`GRANT ${blocked ? 'CONNECT' : 'CONNECT, CREATE'} ON DATABASE ${dbSql} TO ${roleSql}`, [], signal);
     await admin.executeInDatabase(row.database_name, [
       'REVOKE ALL ON SCHEMA public FROM PUBLIC',
-      `GRANT USAGE, CREATE ON SCHEMA public TO ${roleSql}`,
+      `GRANT ${blocked ? 'USAGE' : 'USAGE, CREATE'} ON SCHEMA public TO ${roleSql}`,
     ], signal);
+  }
+
+  function writeBlockNames(row: Row): WriteBlockNames {
+    const holderName = `mxh_${row.role_name.slice(4)}`;
+    return {
+      databaseSql: quoteIdentifier(row.database_name, 'mxo_'),
+      ownerSql: quoteIdentifier(row.role_name, 'mxr_'),
+      holderSql: quoteIdentifier(holderName, 'mxh_'),
+      ownerName: assertOwnerIdentifier(row.role_name, 'mxr_'),
+      holderName,
+    };
+  }
+
+  async function ensureHolder(names: WriteBlockNames, signal: AbortSignal): Promise<void> {
+    if (!await exists('pg_roles', names.holderName, signal)) {
+      await createIfAbsent(`CREATE ROLE ${names.holderSql} NOLOGIN ${ROLE_ATTRIBUTES}`, signal);
+    }
+  }
+
+  /** Recorded first, so a crash mid-block leaves a row the next sweep re-blocks or lifts. */
+  async function blockWrites(row: Row, signal: AbortSignal): Promise<void> {
+    const names = writeBlockNames(row);
+    const changed = row.writes_blocked_at === null;
+    if (changed) {
+      await db.executor.updateTable('container_owner_databases').set({ writes_blocked_at: sql<Date>`now()` })
+        .where('clerk_user_id', '=', row.clerk_user_id).where('writes_blocked_at', 'is', null).execute();
+    }
+    await admin.query(`ALTER ROLE ${names.ownerSql} SET default_transaction_read_only = on`, [], signal);
+    if (changed) await terminateSessions(row.role_name, signal);
+    await ensureHolder(names, signal);
+    await admin.executeInDatabase(row.database_name, writeBlockStatements(names), signal);
+  }
+
+  async function restoreWrites(row: Row, signal: AbortSignal): Promise<void> {
+    const names = writeBlockNames(row);
+    await ensureHolder(names, signal);
+    await admin.executeInDatabase(row.database_name, writeRestoreStatements(names), signal);
+    await admin.query(`ALTER ROLE ${names.ownerSql} RESET default_transaction_read_only`, [], signal);
+    await db.executor.updateTable('container_owner_databases').set({ writes_blocked_at: null })
+      .where('clerk_user_id', '=', row.clerk_user_id).execute();
+    await terminateSessions(row.role_name, signal);
   }
 
   async function applyPassword(row: Row, epoch: number, signal: AbortSignal): Promise<void> {
@@ -387,24 +442,21 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     },
 
     /**
-     * Measures, then blocks or lifts default writes when the database crosses
-     * its limit. Sessions are terminated only on a change, so they reconnect
-     * under the new default.
+     * Measures, then blocks writes over the limit or lifts the block once the
+     * size is below the limit minus the restore margin; in between, the
+     * recorded state holds. A block is re-applied on every sweep.
      */
     async enforceSizeLimit(clerkUserId: string, signal: AbortSignal) {
       const row = await load(clerkUserId);
       if (row.state !== 'active') throw new ContainerOwnerDatabaseError('fenced');
       const { sizeBytes, overLimit } = await this.measureSize(clerkUserId, signal);
-      const roleSql = quoteIdentifier(row.role_name, 'mxr_');
-      const blocked = (await admin.query(
-        'SELECT 1 FROM pg_roles WHERE rolname = $1 AND $2 = ANY(rolconfig)', [row.role_name, READ_ONLY_SETTING], signal)).length > 0;
-      if (overLimit !== blocked) {
-        await admin.query(overLimit
-          ? `ALTER ROLE ${roleSql} SET default_transaction_read_only = on`
-          : `ALTER ROLE ${roleSql} RESET default_transaction_read_only`, [], signal);
-        await terminateSessions(row.role_name, signal);
-      }
-      return { sizeBytes, overLimit, writesBlocked: overLimit };
+      const limit = Number(row.size_limit_bytes);
+      const restoreBelow = limit - (restoreMargin ?? Math.floor(limit / 10));
+      const wasBlocked = row.writes_blocked_at !== null;
+      const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow);
+      if (writesBlocked) await blockWrites(row, signal);
+      else if (wasBlocked) await restoreWrites(row, signal);
+      return { sizeBytes, overLimit, writesBlocked };
     },
 
     /**
@@ -437,6 +489,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       [row.role_name, row.database_name], signal);
     await admin.query(`DROP DATABASE IF EXISTS ${dbSql} WITH (FORCE)`, [], signal);
     await admin.query(`DROP ROLE IF EXISTS ${roleSql}`, [], signal);
+    await admin.query(`DROP ROLE IF EXISTS ${writeBlockNames(row).holderSql}`, [], signal);
     await db.executor.updateTable('container_owner_databases').set({ deleted_at: sql<Date>`now()` })
       .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
       .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
@@ -445,64 +498,3 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
 }
 
 export type ContainerOwnerDatabases = ReturnType<typeof createContainerOwnerDatabases>;
-
-export interface OwnerDatabaseSizeSweeperDeps {
-  db: PlatformDB;
-  ownerDatabases: Pick<ContainerOwnerDatabases, 'enforceSizeLimit'>;
-  intervalMs?: number;
-  batchSize?: number;
-  logError?: (message: string, detail: Record<string, string>) => void;
-}
-
-const SIZE_SWEEP_INTERVAL_MS = 5 * 60_000;
-const SIZE_SWEEP_BATCH = 50;
-const SIZE_ENFORCE_TIMEOUT_MS = 30_000;
-
-/** Recurring size enforcement over active owner databases, least recently measured first. */
-export function createOwnerDatabaseSizeSweeper(deps: OwnerDatabaseSizeSweeperDeps) {
-  const intervalMs = deps.intervalMs ?? SIZE_SWEEP_INTERVAL_MS;
-  const batchSize = deps.batchSize ?? SIZE_SWEEP_BATCH;
-  const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let running: Promise<number> | null = null;
-
-  async function sweepOnce(): Promise<number> {
-    const rows = await deps.db.executor.selectFrom('container_owner_databases').select('clerk_user_id')
-      .where('state', '=', 'active').where('deleted_at', 'is', null)
-      .orderBy(sql`size_measured_at ASC NULLS FIRST`).limit(batchSize).execute();
-    let enforced = 0;
-    for (const row of rows) {
-      try {
-        await deps.ownerDatabases.enforceSizeLimit(row.clerk_user_id, AbortSignal.timeout(SIZE_ENFORCE_TIMEOUT_MS));
-        enforced += 1;
-      } catch (error: unknown) {
-        logError('[container-owner-db] size enforcement failed', {
-          cause: error instanceof ContainerOwnerDatabaseError ? error.code : error instanceof Error ? error.name : 'unknown',
-        });
-      }
-    }
-    return enforced;
-  }
-
-  function tick(): void {
-    if (running) return;
-    running = sweepOnce().catch((error: unknown) => {
-      logError('[container-owner-db] size sweep failed', { cause: error instanceof Error ? error.name : 'unknown' });
-      return 0;
-    }).finally(() => { running = null; });
-  }
-
-  return {
-    sweepOnce,
-    start(): void {
-      if (timer) return;
-      timer = setInterval(tick, intervalMs);
-      timer.unref?.();
-    },
-    async shutdown(): Promise<void> {
-      if (timer) clearInterval(timer);
-      timer = null;
-      if (running) await running;
-    },
-  };
-}
