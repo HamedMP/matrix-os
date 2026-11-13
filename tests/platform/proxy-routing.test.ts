@@ -4047,6 +4047,22 @@ describe("platform proxy routing", () => {
     });
     expect(fontRes.status).toBe(200);
     expect(fetchMock.mock.calls[3]?.[0]).toBe("https://203.0.113.34:443/apps/chess/assets/font.woff2");
+    const headers = { host: "app.matrix-os.com", origin: "null" };
+    fetchMock.mockResolvedValueOnce(new Response("primary"));
+    const primary = assetPath!.replace("/alice/", "/alice/~runtime/primary/");
+    expect((await app.request(primary, { headers })).status).toBe(200);
+    expect(fetchMock.mock.calls[4]?.[0]).toBe("https://203.0.113.34:443/apps/chess/assets/index.js");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff141", clerkUserId: "user_alice",
+      handle: "alice", runtimeSlot: "review", status: "running", hetznerServerId: 123485,
+      publicIPv4: "203.0.113.35", imageVersion: "fixture", provisionedAt: "2026-04-27T12:00:00.000Z",
+    });
+    expect((await app.request(assetPath!.replace("/alice/", "/alice/~runtime/review/"), { headers })).status).toBe(401);
+    // Without an explicit slot the general handle lookup prefers primary but
+    // falls back to the latest peer. A primary capability must never do so.
+    await db.executor.deleteFrom("user_machines").where("machine_id", "=", "9f05824c-8d0a-4d83-9cb4-b312d43ff140").execute();
+    expect((await app.request(assetPath!, { headers })).status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("binds cookie-free Vite assets and lazy chunks to the selected same-handle runtime", async () => {
@@ -4116,7 +4132,16 @@ describe("platform proxy routing", () => {
       /^\/vm\/alice\/apps\/chess\/assets\/index\.js\?runtime=review&matrix_asset_token=/,
     );
 
-    const entryRes = await app.request(entryAssetPath ?? "/invalid", {
+    const headers = { host: "app.matrix-os.com", origin: "null" };
+    const explicit = entryAssetPath!.replace("/alice/", "/alice/~runtime/review/");
+    for (const conflict of [
+      entryAssetPath!.replace("/alice/", "/alice/~runtime/primary/"),
+      explicit + "&runtime=primary",
+    ]) {
+      expect((await app.request(conflict, { headers })).status).toBe(401);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+    const entryRes = await app.request(explicit.replace("runtime=review&", ""), {
       headers: { host: "app.matrix-os.com", origin: "null" },
     });
     expect(entryRes.status).toBe(200);
@@ -4200,7 +4225,7 @@ describe("platform proxy routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("asset", {
         status: 200,
-        headers: { "content-type": "text/javascript" },
+        headers: { "content-type": "text/javascript", "cache-control": "public, max-age=31536000, immutable" },
       }),
     );
     const app = createApp({
@@ -4226,6 +4251,10 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
   });
 
@@ -5691,14 +5720,19 @@ describe("platform proxy routing", () => {
     expect(url).toBe("http://172.18.0.14:4000/icons/workspace.png?v=icon-etag");
   });
 
-  it("uses private browser caching and disables shared CDN cache for app-domain static assets", async () => {
+  it.each([
+    ["production immutable", "public, max-age=31536000, immutable", "private, max-age=31536000, immutable"],
+    ["development no-store", "no-store", "no-store"],
+    ["development no-cache", "no-cache", "no-cache"],
+    ["development max-age zero", "public, max-age=0, must-revalidate", "public, max-age=0, must-revalidate"],
+  ])("preserves %s browser caching and disables shared CDN cache for app-domain static assets", async (_mode, upstreamPolicy, browserPolicy) => {
     const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("chunk", {
         status: 200,
         headers: {
           "content-type": "application/javascript",
-          "cache-control": "no-store",
+          "cache-control": upstreamPolicy,
           "cdn-cache-control": "public, max-age=31536000",
         },
       }),
@@ -5719,7 +5753,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cache-control")).toBe(browserPolicy);
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toContain("Cookie");
@@ -5755,7 +5789,13 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
   });
 
-  it("routes app-domain shell static assets with the short-lived shell route cookie", async () => {
+  it.each([
+    ["production immutable", "public, max-age=31536000, immutable", "private, max-age=31536000, immutable"],
+    ["development no-store", "no-store", "private, no-store"],
+    ["development no-cache", "no-cache", "private, no-store"],
+    ["development max-age zero", "public, max-age=0, must-revalidate", "private, no-store"],
+    ["missing upstream policy", undefined, "private, no-store"],
+  ])("routes app-domain shell static assets with the short-lived shell route cookie (%s)", async (_mode, upstreamPolicy, browserPolicy) => {
     await insertUserMachine(db, {
       machineId: "machine-alice",
       clerkUserId: "user_alice",
@@ -5773,6 +5813,7 @@ describe("platform proxy routing", () => {
           "content-encoding": "gzip",
           "content-length": "999",
           "content-type": "text/javascript",
+          ...(upstreamPolicy ? { "cache-control": upstreamPolicy } : {}),
         },
       }),
     );
@@ -5803,7 +5844,7 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-verified")).toBeNull();
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).toBeNull();
-    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cache-control")).toBe(browserPolicy);
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toContain("Cookie");

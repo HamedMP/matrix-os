@@ -15,6 +15,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Explicit local adoption is separate from the legacy ops-VPS staging path.
+if [[ "${1:-}" == "local" ]]; then
+  shift
+  exec node "$REPO_ROOT/scripts/devstack/cli.mjs" "$@"
+fi
 STATE_DIR="${STAGING_SLOT_STATE_DIR:-$HOME/.matrixos/staging-slots}"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.staging-slot.yml"
 ENV_FILE="${STAGING_SLOT_ENV_FILE:-$REPO_ROOT/.env}"

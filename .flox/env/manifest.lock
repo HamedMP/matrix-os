@@ -14,6 +14,9 @@
       },
       "pnpm_10": {
         "pkg-path": "pnpm_10"
+      },
+      "python3": {
+        "flake": "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e#python3"
       }
     },
     "hook": {
@@ -514,6 +517,126 @@
       },
       "system": "x86_64-linux",
       "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "install_id": "python3",
+      "locked-url": "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e?narHash=sha256-ZojAnPuCdy657PbTq5V0Y%2BAHKhZAIwSIT2cb8UgAz/U%3D",
+      "flake-description": "A collection of packages for the Nix package manager",
+      "locked-flake-attr-path": "legacyPackages.aarch64-darwin.python3",
+      "derivation": "/nix/store/krwwaljrhx0f8rykjbxzwhjqhn8iq64d-python3-3.13.12.drv",
+      "outputs": {
+        "out": "/nix/store/qabiwfbf61gaky68k0klvyjvd8zavmxb-python3-3.13.12"
+      },
+      "output-names": [
+        "out"
+      ],
+      "outputs-to-install": [
+        "out"
+      ],
+      "requested-outputs-to-install": [],
+      "package-system": "aarch64-darwin",
+      "system": "aarch64-darwin",
+      "name": "python3-3.13.12",
+      "pname": "python3",
+      "version": "3.13.12",
+      "description": "High-level dynamically-typed programming language",
+      "licenses": [
+        "Python-2.0"
+      ],
+      "broken": false,
+      "unfree": false,
+      "priority": 5
+    },
+    {
+      "install_id": "python3",
+      "locked-url": "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e?narHash=sha256-ZojAnPuCdy657PbTq5V0Y%2BAHKhZAIwSIT2cb8UgAz/U%3D",
+      "flake-description": "A collection of packages for the Nix package manager",
+      "locked-flake-attr-path": "legacyPackages.aarch64-linux.python3",
+      "derivation": "/nix/store/nxvwxd34qjxfwm1cx3kpalrd6xcsydla-python3-3.13.12.drv",
+      "outputs": {
+        "debug": "/nix/store/q6kvsi3vgc4xvnp3yzibg03a22cw86r2-python3-3.13.12-debug",
+        "out": "/nix/store/nnz5k19wbai97d7y2x11qaq6dgxzhq4w-python3-3.13.12"
+      },
+      "output-names": [
+        "out",
+        "debug"
+      ],
+      "outputs-to-install": [
+        "out"
+      ],
+      "requested-outputs-to-install": [],
+      "package-system": "aarch64-linux",
+      "system": "aarch64-linux",
+      "name": "python3-3.13.12",
+      "pname": "python3",
+      "version": "3.13.12",
+      "description": "High-level dynamically-typed programming language",
+      "licenses": [
+        "Python-2.0"
+      ],
+      "broken": false,
+      "unfree": false,
+      "priority": 5
+    },
+    {
+      "install_id": "python3",
+      "locked-url": "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e?narHash=sha256-ZojAnPuCdy657PbTq5V0Y%2BAHKhZAIwSIT2cb8UgAz/U%3D",
+      "flake-description": "A collection of packages for the Nix package manager",
+      "locked-flake-attr-path": "legacyPackages.x86_64-darwin.python3",
+      "derivation": "/nix/store/0bqzghzk3p5ss7wvxgfjw2k49wmiddkj-python3-3.13.12.drv",
+      "outputs": {
+        "out": "/nix/store/qcpx0pjlgkigibqijdy1wsy2kmc8shd2-python3-3.13.12"
+      },
+      "output-names": [
+        "out"
+      ],
+      "outputs-to-install": [
+        "out"
+      ],
+      "requested-outputs-to-install": [],
+      "package-system": "x86_64-darwin",
+      "system": "x86_64-darwin",
+      "name": "python3-3.13.12",
+      "pname": "python3",
+      "version": "3.13.12",
+      "description": "High-level dynamically-typed programming language",
+      "licenses": [
+        "Python-2.0"
+      ],
+      "broken": false,
+      "unfree": false,
+      "priority": 5
+    },
+    {
+      "install_id": "python3",
+      "locked-url": "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e?narHash=sha256-ZojAnPuCdy657PbTq5V0Y%2BAHKhZAIwSIT2cb8UgAz/U%3D",
+      "flake-description": "A collection of packages for the Nix package manager",
+      "locked-flake-attr-path": "legacyPackages.x86_64-linux.python3",
+      "derivation": "/nix/store/makmgpqhagbsvfs49dywc7r7a0kv8any-python3-3.13.12.drv",
+      "outputs": {
+        "debug": "/nix/store/nj0fy51wymai8wp1y7dbk08g6pvjw1a1-python3-3.13.12-debug",
+        "out": "/nix/store/pzdalg368npikvpq4ncz2saxnz19v53k-python3-3.13.12"
+      },
+      "output-names": [
+        "out",
+        "debug"
+      ],
+      "outputs-to-install": [
+        "out"
+      ],
+      "requested-outputs-to-install": [],
+      "package-system": "x86_64-linux",
+      "system": "x86_64-linux",
+      "name": "python3-3.13.12",
+      "pname": "python3",
+      "version": "3.13.12",
+      "description": "High-level dynamically-typed programming language",
+      "licenses": [
+        "Python-2.0"
+      ],
+      "broken": false,
+      "unfree": false,
       "priority": 5
     }
   ]

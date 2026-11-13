@@ -52,20 +52,21 @@ describe("Docker development entrypoint dependency layout", () => {
         const base = join(fixture, "packages", name);
         expect(existsSync(join(base, "dist"))).toBe(true);
         expect(existsSync(join(base, ".matrix-build-cache"))).toBe(true);
-        expect(calls).toContain(`-hR matrixos:matrixos ${base}/dist ${base}/.matrix-build-cache`);
+        expect(existsSync(join(base, ".matrix-build-output"))).toBe(true);
+        expect(calls).toContain(`-hR matrixos:matrixos ${fixture}/packages/.matrix-publish-${name} ${base}/.matrix-build-cache ${base}/.matrix-build-output`);
         expect(readFileSync(join(base, "src/unchanged.ts"), "utf8")).toBe("owner source");
       }
       expect(readFileSync(join(existingCache, ".matrix.tsbuildinfo"), "utf8")).toBe("existing incremental data");
     } finally { rmSync(fixture, { recursive: true, force: true }); }
   });
 
-  it("rejects symlinked generated directories before ownership changes", () => {
+  it.each([".matrix-build-cache", ".matrix-build-output"])("rejects symlinked %s before ownership changes", output => {
     const { fixture, run } = buildOutputFixture();
     try {
       const external = join(fixture, "owner-data");
       mkdirSync(external);
       writeFileSync(join(external, "identity"), "preserve me");
-      symlinkSync(external, join(fixture, "packages/brand/.matrix-build-cache"));
+      symlinkSync(external, join(fixture, "packages/brand", output));
       const result = run();
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("Refusing symlinked build output");
@@ -168,7 +169,7 @@ describe("Docker development entrypoint dependency layout", () => {
       expect(launch.status).toBe(0);
       expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
         "pnpm --filter @matrix-os/terminal-runtime build",
-        "node --import=tsx --watch packages/gateway/src/main.ts",
+        "node scripts/dev-gateway.mjs",
       ]);
     } finally {
       rmSync(fixture, { recursive: true, force: true });

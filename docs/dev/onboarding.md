@@ -214,6 +214,52 @@ secret key or interactive sign-in. The gateway native addon is built before
 services start. Press Ctrl-C to stop the source processes; infrastructure
 continues in Docker and can be stopped with `bun run dev:infra:stop`.
 
+Gateway, proxy, and platform use `tsx watch`, including when source files are
+replaced atomically by a sync tool. The source runner and Docker development gateway launcher own a Kernel compiler
+watcher: changes to Kernel source or its package/root TypeScript configuration
+rebuild `packages/kernel/dist`, and Gateway observes successful emitted updates.
+Kernel source errors remain visible in the foreground output while the last successful
+Kernel stays available; correcting the error resumes updates. Ctrl-C stops this
+watcher and its compiler descendants with the other source processes.
+
+Shared TypeScript builds compile inside a private `0700` `.matrix-build-output`.
+Cold builds publish a complete directory with a single rename, including fresh
+Windows Desktop builds. Windows protects staging with a build-account ACL.
+A byte-identical rerun reuses the live directory. To rebuild changed outputs
+on Windows, stop consumers and remove that package’s generated `dist` first.
+On Linux and macOS, when existing output changes, the builder publishes the entire validated directory
+with one native filesystem operation (Linux `renameat2(RENAME_EXCHANGE)` or
+macOS `renamex_np(RENAME_SWAP)`). Python 3 with standard-library ctypes is a
+**build-time** prerequisite. The staging and output directories must be on the
+same filesystem and support atomic exchange; unsupported setups fail closed.
+An unchanged build leaves the existing output untouched. Gateway's watcher
+observes `packages/kernel/matrix-kernel-published.tsbuildinfo`, a digest written
+after publication, so failed compiles do not restart the healthy consumer.
+
+A writable checkout keeps `dist` as a real directory. For Docker development
+the stopped entrypoint prepares a generated same-depth peer so the unprivileged
+builder can replace `dist` without gaining write access to source parents.
+The peer supplies the same package metadata, source and dependency lookup paths.
+Host bundles ship regular output directories and exclude staging and watch state.
+`dev:kernel` alone still watches the package entrypoint rather than generating
+`dist`; when using a narrower command, build the Kernel explicitly with
+`pnpm --filter @matrix-os/kernel build`.
+
+An engineer or agent launching the source runner receives the same compiler and
+service stdout/stderr in its terminal session. Focused feedback checks can run
+without Clerk/provider credentials:
+
+```bash
+pnpm test tests/scripts/source-watch.test.ts tests/scripts/kernel-source-watch.test.ts
+```
+
+Those tests use isolated source/compiler/consumer fixtures and controlled startup
+callbacks. They verify edit/error/recovery and owned-process cleanup, not real
+sign-in, model calls, database bootstrap or several complete running stacks. The
+stock source mode still uses fixed local service ports and explicit development
+auth bypasses; full worktree data/port/auth isolation needs its own configured
+composition and acceptance.
+
 Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
 The narrower `bun run dev` command still starts exactly three source processes:
 gateway, proxy, and shell; it assumes any required infrastructure is already
@@ -245,6 +291,54 @@ curl --fail http://localhost:8080/health
 ```
 
 Docker and source-HMR modes are convenience loops, not production topology.
+
+### Connected DevStack identity
+
+For real Clerk and Pipedream checks, use an explicitly owned local runtime and
+an independent platform database. The bootstrap below does not start services
+or inherit the auth bypasses in `dev:source`. Configure real Clerk verification
+and Pipedream credentials on the local Platform separately; keep server secrets
+out of source projections and the browser.
+
+Create an empty database named `matrixos_devstack_local` in your local Postgres
+first. Set `PLATFORM_DATABASE_URL` to its literal-loopback connection URL, without
+query parameters, and supply a verified Clerk test user's identity. Check that
+the container name and ports refer to the runtime you own, then run:
+
+```bash
+export PLATFORM_RUNTIME_MODE=local
+pnpm exec tsx scripts/devstack-bootstrap.ts \
+  --instance local \
+  --clerk-user-id "$DEVSTACK_CLERK_USER_ID" \
+  --handle devstack-local \
+  --email "$DEVSTACK_EMAIL" \
+  --container-id "$(docker inspect --type container --format '{{.Id}}' matrixos-devstack-local)" \
+  --gateway-port 4000 --shell-port 3000
+```
+
+For another instance, use another database: `matrixos_devstack_<instance>`, with
+hyphens replaced by underscores. Initialization commits the local user and
+legacy-container route together. Repeating the exact command keeps the user ID
+and existing Pipedream mapping; it refuses to adopt foreign rows or change a
+retained route. Use the full immutable Docker ID; names and short IDs are rejected.
+The initializer refuses ambiguous aliases already present in its local database.
+For each legacy name, verify ownership and use normal local Docker endpoint
+resolution to retain its inspected ID before replaying. The command prints a targeted receipt, never the database URL.
+It does not create VPS records, change paid entitlements, or grant AI credit.
+
+After normal sign-in to the local Platform, use its existing
+`POST /api/integrations/connect` route. That route persists the local user's
+Pipedream external ID before creating a Connect session. Complete normal OAuth
+consent, then use `POST /api/integrations/sync` to reconcile accounts when
+production Pipedream webhooks cannot reach the local environment. Browser
+connections use the existing popup/SDK completion flow; the route's explicit
+`redirectUri` currently supports only the native mobile integration deep link.
+Do not replace the shared production webhook configuration for a local test.
+
+Validate sign-in, one read, revocation, and restart recovery separately. Bootstrap
+success alone does not qualify a provider connection, native runtime, funded AI,
+or complete Preview parity. The broader architecture is tracked in
+[the DevStack specification](https://github.com/HamedMP/matrix-os/pull/3023).
 
 ## Project Structure
 

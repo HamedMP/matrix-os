@@ -18,6 +18,7 @@ import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { resolveSitesObjectStorage } from './sites/storage-config.js';
 import { createPlatformStartupWorkerCleanup, runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
+import { createRuntimeModuleImporter } from './runtime-module-imports.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -303,9 +304,7 @@ export interface StartPlatformServerOptions {
   ): Promise<EntitlementAccessDecision>;
 }
 
-async function importRuntimeModule<T>(specifier: string): Promise<T> {
-  return import(specifier) as Promise<T>;
-}
+const importRuntimeModule = createRuntimeModuleImporter(import.meta.url);
 
 async function startPlatformServerWithCleanup(
   opts: StartPlatformServerOptions,
