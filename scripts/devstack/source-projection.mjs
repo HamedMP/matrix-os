@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
-  chmod, lstat, mkdir, open, readlink, readdir, realpath, rename, rmdir, symlink, unlink, writeFile,
+  chmod, lstat, mkdir, open, opendir, readlink, readdir, realpath, rename, rmdir, symlink, unlink, writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify, TextDecoder } from "node:util";
@@ -37,6 +37,21 @@ export async function canonicalWorktree(path) {
   const root = (await git(path, "rev-parse", "--show-toplevel")).replace(/\r?\n$/, "");
   if (!isAbsolute(root)) throw new Error("Git did not return an absolute worktree root.");
   return realpath(root);
+}
+
+export async function identifySourceWorktree(path) {
+  const root = await canonicalWorktree(path);
+  const gitDir = (await git(root, "rev-parse", "--absolute-git-dir")).replace(/\r?\n$/, "");
+  if (path !== root || !isAbsolute(gitDir)) throw new Error("DevStack requires the canonical Git worktree root.");
+  const canonicalGitDir = await realpath(gitDir);
+  const [worktreeStat, gitDirStat] = await Promise.all([
+    lstat(root, { bigint: true }), lstat(canonicalGitDir, { bigint: true }),
+  ]);
+  if (!worktreeStat.isDirectory() || !gitDirStat.isDirectory()) throw new Error("DevStack worktree identity is unavailable.");
+  return createHash("sha256").update(JSON.stringify([
+    root, String(worktreeStat.dev), String(worktreeStat.ino), String(worktreeStat.birthtimeNs),
+    canonicalGitDir, String(gitDirStat.dev), String(gitDirStat.ino), String(gitDirStat.birthtimeNs),
+  ])).digest("hex");
 }
 
 function inside(root, path) {
@@ -260,7 +275,16 @@ async function withStaging(path, role, action) {
         await handle.close();
       }
       const leaf = await statIfPresent(file);
-      if (leaf) await unlink(file);
+      if (leaf?.isDirectory() && role === "stage3-project" && ownerOnly(leaf)) {
+        const names = await readdir(file);
+        if (names.length > maxPaths || names.some(name => !/^[0-9]{1,5}$/.test(name))) {
+          throw new Error("The DevStack source staging directory is invalid.");
+        }
+        for (const name of names) await unlink(join(file, name));
+        await rmdir(file);
+      } else if (leaf) {
+        await unlink(file);
+      }
       await unlink(marker);
     }
     await rmdir(directory);
@@ -312,15 +336,41 @@ async function assertSourceParents(root, path) {
   if (await realpath(parent) !== parent) throw new Error("A DevStack source parent became a symbolic link.");
 }
 
-async function project(snapshot, destination, statePath, force) {
+async function stageEntry(worktree, entry, stagedPath, recordDigest = false) {
+  await assertSourceParents(worktree, entry.path);
+  const source = join(worktree, entry.path);
+  if (entry.link !== undefined) {
+    if (await readlink(source) !== entry.link) throw new Error("A DevStack source link changed during projection.");
+    await symlink(entry.link, stagedPath);
+    return recordDigest ? createHash("sha256").update("link\0").update(entry.link).digest("hex") : undefined;
+  }
+  const contents = await boundedContents(source, entry);
+  const executable = Number(entry.stat.mode) & 0o111;
+  await writeFile(stagedPath, contents, { flag: "wx", mode: 0o600 });
+  await chmod(stagedPath, 0o600 | executable);
+  return recordDigest ? createHash("sha256").update(`file\0${executable}\0`).update(contents).digest("hex") : undefined;
+}
+
+function revisionOf(entries) {
+  const hash = createHash("sha256");
+  for (const [path, entry] of entries) hash.update(JSON.stringify([path, entry.contentDigest]));
+  return hash.digest("hex");
+}
+
+function assertDestinationStamp(existing, expected) {
+  if ((existing && stamp(existing)) !== expected) {
+    throw new Error("The DevStack target diverged from its managed source. Inspect it before retrying.");
+  }
+}
+
+async function project(snapshot, destination, statePath, { force, beforePublish, protectDestination }) {
   const { worktree, entries, ...summary } = snapshot;
   const previous = await loadManifest(statePath, worktree, destination);
   const root = await statIfPresent(destination);
   if (root && (!root.isDirectory() || !ownerOnly(root))) {
     throw new Error("The DevStack source projection must be an owner-only directory.");
   }
-  if (!root) await mkdir(destination, { mode: 0o700 });
-  else if (!previous && (await readdir(destination)).length) {
+  if (root && !previous && (await readdir(destination)).length) {
     throw new Error("A new DevStack source projection must be empty.");
   }
 
@@ -346,6 +396,9 @@ async function project(snapshot, destination, statePath, force) {
   for (let i = 0; i < paths.length; i += 128) {
     await Promise.all(paths.slice(i, i + 128).map(async path => {
       const existing = await observe(path);
+      if (protectDestination && oldEntries.has(path)) {
+        assertDestinationStamp(existing, oldEntries.get(path).destinationStamp);
+      }
       if (existing && !managed.has(path)) throw new Error("An unmanaged path blocks the DevStack source projection.");
       if (existing && !existing.isDirectory() && !existing.isFile() && !existing.isSymbolicLink()) {
         throw new Error("An unsupported destination entry blocks the DevStack source projection.");
@@ -367,65 +420,86 @@ async function project(snapshot, destination, statePath, force) {
   const pendingDirs = new Set([...oldDirs, ...newDirs]);
   const stalePaths = [...oldEntries.keys()].filter(path => !entries.has(path));
   const staleDirs = [...oldDirs].filter(path => !newDirs.has(path)).sort((a, b) => byDepth(b, a));
+  if (protectDestination) {
+    for (const path of staleDirs) {
+      if (!(await observe(path))?.isDirectory()) continue;
+      for await (const child of await opendir(join(destination, path))) {
+        if (!managed.has(join(path, child.name))) {
+          throw new Error("An unmanaged path blocks the DevStack source projection.");
+        }
+      }
+    }
+  }
   const updates = [];
   for (const entry of entries.values()) {
     const existing = await observe(entry.path);
     const before = oldEntries.get(entry.path);
-    if (force || !existing || before?.stamp !== entry.stamp || before.destinationStamp !== stamp(existing)) updates.push(entry);
+    if (force || !existing || before?.stamp !== entry.stamp || before.destinationStamp !== stamp(existing) ||
+        (protectDestination && !/^[a-f0-9]{64}$/.test(before.contentDigest))) updates.push(entry);
   }
   if (previous && !stalePaths.length && !staleDirs.length && !updates.length) {
-    return { worktree, ...summary, updated: 0, removed: 0 };
+    await beforePublish?.();
+    return { worktree, ...summary, updated: 0, removed: 0, ...(protectDestination && { revision: revisionOf(oldEntries) }) };
   }
 
-  // Record pending ownership before touching leaves. Retrying after a partial update
-  // can reconcile these same paths without adopting a different destination.
-  await saveManifest(statePath, { ...base, entries: [...pendingEntries.values()], directories: [...pendingDirs] });
-  let removed = 0;
-  for (const path of stalePaths.sort((a, b) => byDepth(b, a))) {
-    const existing = await observe(path);
-    if (!existing || existing.isDirectory()) continue;
-    await assertSourceParents(destination, path);
-    await unlink(join(destination, path));
-    removed++;
-  }
-  for (const path of staleDirs) {
-    if (!(await observe(path))?.isDirectory()) continue;
-    await assertSourceParents(destination, path);
-    try {
-      await rmdir(join(destination, path));
-    } catch (error) {
-      if (error.code !== "ENOTEMPTY" || entries.has(path)) throw error;
+  const stagingRole = protectDestination ? "stage3-project" : "project";
+  return withStaging(destination, stagingRole, async stage => {
+    // A later source edit must not leave an incomplete protected projection.
+    const stagedDigests = [];
+    if (protectDestination) {
+      await mkdir(stage, { mode: 0o700 });
+      for (const [index, entry] of updates.entries()) {
+        stagedDigests.push(await stageEntry(worktree, entry, join(stage, String(index)), true));
+      }
     }
-  }
-  for (const path of [...newDirs].sort(byDepth)) {
-    if ((await observe(path))?.isDirectory()) continue;
-    await assertSourceParents(destination, path);
-    await mkdir(join(destination, path), { mode: 0o700 });
-  }
+    await beforePublish?.();
+    if (!root) await mkdir(destination, { mode: 0o700 });
+    // Journal the set of managed paths before mutating the projection.
+    await saveManifest(statePath, { ...base, entries: [...pendingEntries.values()], directories: [...pendingDirs] });
+    let removed = 0;
+    for (const path of stalePaths.sort((a, b) => byDepth(b, a))) {
+      const existing = await observe(path);
+      if (!existing || existing.isDirectory()) continue;
+      await assertSourceParents(destination, path);
+      const target = join(destination, path);
+      if (protectDestination) assertDestinationStamp(await statIfPresent(target), oldEntries.get(path).destinationStamp);
+      await unlink(target);
+      removed++;
+    }
+    for (const path of staleDirs) {
+      if (!(await observe(path))?.isDirectory()) continue;
+      await assertSourceParents(destination, path);
+      try {
+        await rmdir(join(destination, path));
+      } catch (error) {
+        if (error.code !== "ENOTEMPTY" || entries.has(path)) throw error;
+      }
+    }
+    for (const path of [...newDirs].sort(byDepth)) {
+      if ((await observe(path))?.isDirectory()) continue;
+      await assertSourceParents(destination, path);
+      await mkdir(join(destination, path), { mode: 0o700 });
+    }
 
-  await withStaging(destination, "project", async next => {
     const newEntries = new Map([...entries.keys()].map(path => [path, oldEntries.get(path)]));
-    for (const entry of updates) {
-      await assertSourceParents(worktree, entry.path);
+    for (const [index, entry] of updates.entries()) {
       await assertSourceParents(destination, entry.path);
       const target = join(destination, entry.path);
-      const source = join(worktree, entry.path);
-      if (entry.link !== undefined) {
-        if (await readlink(source) !== entry.link) throw new Error("A DevStack source link changed during projection.");
-        await symlink(entry.link, next);
-      } else {
-        await writeFile(next, await boundedContents(source, entry), { flag: "wx", mode: 0o600 });
-        await chmod(next, 0o600 | (Number(entry.stat.mode) & 0o111));
-      }
+      const next = protectDestination ? join(stage, String(index)) : stage;
+      const contentDigest = protectDestination ? stagedDigests[index] : await stageEntry(worktree, entry, next);
+      if (protectDestination) assertDestinationStamp(await statIfPresent(target), oldEntries.get(entry.path)?.destinationStamp);
       await rename(next, target);
-      newEntries.set(entry.path, { path: entry.path, stamp: entry.stamp, destinationStamp: stamp(await statIfPresent(target)) });
+      newEntries.set(entry.path, {
+        path: entry.path, stamp: entry.stamp, destinationStamp: stamp(await statIfPresent(target)),
+        ...(protectDestination && { contentDigest }),
+      });
     }
     await saveManifest(statePath, { ...base, entries: [...newEntries.values()], directories: [...newDirs] });
+    return { worktree, ...summary, updated: updates.length, removed, ...(protectDestination && { revision: revisionOf(newEntries) }) };
   });
-  return { worktree, ...summary, updated: updates.length, removed };
 }
 
-export async function projectSource({ worktree, destination, statePath, force = false }) {
+export async function projectSource({ worktree, destination, statePath, force = false, beforePublish, protectDestination = false }) {
   if (typeof force !== "boolean") throw new Error("The DevStack projection force option must be a boolean.");
   destination = resolve(destination);
   statePath = resolve(statePath);
@@ -443,7 +517,7 @@ export async function projectSource({ worktree, destination, statePath, force = 
         inside(destination, statePath) || inside(statePath, destination) || inside(statePath, root)) {
       throw new Error("The Git worktree, DevStack source projection and state paths cannot overlap.");
     }
-    return await project(snapshot, destination, statePath, force);
+    return await project(snapshot, destination, statePath, { force, beforePublish, protectDestination });
   } finally {
     activeDestinations.delete(destination);
     activeDestinations.delete(statePath);

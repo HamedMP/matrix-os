@@ -1,6 +1,6 @@
 # Open a registered Stage 3 worktree preview
 
-ENG-449 adds the Stage 3 browser entry to the Matrix CLI. The developer's agent edits its assigned worktree from Main Computer. DevStack serves the corresponding isolated checkout for browser validation. Connect only selects an existing registration and opens its preview. The developer's ordinary browser handles Clerk sign-in.
+ENG-449 adds the Stage 3 browser entry to the Matrix CLI. The developer's agent edits its assigned worktree from Main Computer. DevStack serves the corresponding isolated checkout for browser validation. The explicit Stage 3 browser command selects an existing registration and opens its preview. The developer's ordinary browser handles Clerk sign-in.
 
 Run `matrix devstack --stage 3 --platform https://devstack.example.test` on a machine that can reach the approved origin. An interactive terminal opens the browser automatically. A non-interactive caller gets the entry URL and can pass `--open` to open it or `--json` to read `entryUrl`. If a DevStack CLI profile already names that origin, run `matrix devstack --stage 3` with the default `devstack` profile or add `--profile <name>`. Pass `--worktree <worktree-id>` to select the preview at `/devstack/worktrees/<worktree-id>/`. Omit the worktree to pick one in the browser. `--computer` remains accepted with `--worktree` on connect. The worktree ID selects the preview. Stage 2 uses the existing local adapter and flags.
 
@@ -46,3 +46,52 @@ The adapter writes one JSON object per stdout line in this order:
 `revision` is a 64-character lowercase SHA-256 digest, `exitCode` is an integer from 0 through 255, and `log` is a normalized, single-line test summary of up to 4096 characters. A test failure is reported and leaves the watcher available for the next edit. Each update has one matching test event. Interruption may end an update before its test finishes. The CLI rejects unknown fields, malformed or oversized lines, and out-of-order receipts. Adapter stderr stays private.
 
 With `--json`, each receipt uses the standard CLI response envelope and includes the selected Computer and worktree. The command succeeds only after `stopped` and a zero adapter exit. SIGINT and SIGTERM request adapter cleanup and allow up to 45 seconds for it to finish. The CLI also bounds startup to 90 seconds. The adapter remains responsible for recovery if it loses its process before cleanup finishes.
+
+## Hosted CLI pairing and one-shot source sync
+
+The hosted CLI derives a checkout fingerprint from the current Git root and
+Git directory identities. It starts approval on the hosted DevStack origin
+and prints the fingerprint and browser link. The signed-in developer selects
+an enrolled worktree and approves the connection. The terminal receives the
+canonical preview URL. An existing Stage 2 adapter retains its default
+behavior. Use `matrix devstack --hosted` to explicitly select hosted DevStack.
+
+The source pilot requires an operator-pinned checkout fingerprint and a
+single pre-enrolled destination with an isolated receiver. On the Matrix
+DevStack origin, a source-enabled connection uploads the current Git delta
+after approval. Run `matrix devstack sync --hosted` to explicitly require a
+source-enabled destination. A successful upload returns the applied content revision, test exit code and a bounded log
+summary for that revision. This is a one-shot command. Each invocation
+requires browser approval and sends source only to the Matrix DevStack
+origin. It applies staged, unstaged and eligible untracked changes against the exact pinned Git commit. An empty delta
+restores that baseline. The pilot supports up to 1,000 regular-file changes
+within a 4 MiB JSON request. It rejects changed links, ambiguous paths and
+changes that replace a directory with a file or the reverse. Git metadata,
+ignored, sensitive and generated files stay out of the delta.
+
+| Route | Authorization and behavior |
+| --- | --- |
+| `POST /devstack/cli/pair` | Exact hosted origin, rate-limited request, bounded checkout fingerprint. Returns separate one-time approval and poll identifiers. Source-enabled deployments require the configured source fingerprint. |
+| `GET /devstack/cli/pair/:approvalId` | An anonymous navigation shows normal Clerk sign-in and returns to the exact approval path. A verified session with live Private Preview membership sees only enabled worktrees owned by that account and backed by the live registry. |
+| `POST /devstack/cli/pair/:approvalId` | Same-origin browser form, verified Clerk session, current membership and exact owner/worktree/runtime/container. One explicit approval. |
+| `POST /devstack/cli/poll` | Separate random poll secret, one exchange. The opaque bearer expires no later than the approving Clerk token and stays in the CLI process. |
+| `POST /devstack/cli/source` | Available only with a configured publisher. The dedicated bearer is bound to the approved source and exact target. Check its expiry, current membership and live registration before staging, before publication and before returning results. The request cannot select paths on the server, an owner, a runtime or a test command. |
+
+Use a persistent, private staging Git checkout and a separate managed
+projection. Keep the staging checkout and publication journal inaccessible
+to the runtime. Run tests in an isolated unprivileged environment with the
+projected source and no Platform or production credentials. A staging
+failure before publication leaves the prior serving mirror available. A
+pending journal after a partial filesystem mutation requires operator recovery. Preserve the bound
+owner, source and target through retries. The checkout fingerprint identifies
+the CLI's selected checkout and is a client assertion. It does not attest
+which Matrix Computer is running the CLI.
+
+The combined route and Git receiver test uses a fixture Clerk identity and
+runs a real test process against two successive revisions. HEL1 deployment
+also requires wiring a private publisher and verifying browser HMR with a
+real account. Before the writer is exposed to additional users, serve its
+approval on a trusted origin separate from editable preview code, or use a
+separate user-presence check. Continuous sync, retained run log recovery
+and additional developer acceptance are follow-up gates. Publish the corresponding Matrix OS
+site guide once the real workflow is released and qualified.

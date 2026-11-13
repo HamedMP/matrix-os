@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { MatrixComputerListSchema } from '@matrix-os/contracts';
 import type { MiddlewareHandler } from 'hono';
 import { browserAuthContentSecurityPolicy } from './auth-pages.js';
+import { isDevstackCliPath } from './devstack-cli-routes.js';
 import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import { isDevstackBrowserOperator, matchesRegisteredPreviewTarget, readDevstackBrowserSession, type DevstackBrowserMembership } from './devstack-preview-auth.js';
 import { readDevstackWorktreePreviewPath } from './devstack-preview-path.js';
@@ -24,6 +25,8 @@ interface PublicPreviewDeps {
   clerkAuth: ClerkAuth;
   publishableKey: string;
   edgeRouterSecret?: string;
+  cliPairingEnabled?: boolean;
+  cliSourceEnabled?: boolean;
   isMember: DevstackBrowserMembership;
   resolve(target: DevstackPreviewTarget): Promise<RegisteredRuntimeEndpoint | null>;
 }
@@ -152,6 +155,7 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
     if (!matchesHost(trustedHost)) return c.text('Not Found', 404);
     const url = new URL(c.req.url);
     const path = url.pathname;
+    if (deps.cliPairingEnabled && isDevstackCliPath(c.req.method, path, deps.cliSourceEnabled)) return next();
     const cookie = c.req.header('cookie');
     const navigationMethod = c.req.method === 'GET' || c.req.method === 'HEAD';
     if (navigationMethod && path === '/') return c.redirect('/devstack', 302);

@@ -9,6 +9,7 @@ import { openBrowser } from "../../auth/oauth.js";
 import { getConfigDir } from "../../lib/config.js";
 import { loadProfiles } from "../../lib/profiles.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
+import { hostedDevstackOrigin, pairHostedStageThree, syncHostedStageThree } from "./devstack-stage3-connect.js";
 import { watchStageThree } from "./devstack-stage3-watch.js";
 
 const exec = promisify(execFile);
@@ -53,7 +54,7 @@ const errors: Record<Action | "list" | "discover" | "enroll", string> = {
 };
 
 // The operator installs an owner-only adapter outside any Git worktree.
-async function localAdapter(stage: 2 | 3): Promise<string> {
+async function inspectLocalAdapter(stage: 2 | 3): Promise<string | null> {
   const directory = getConfigDir();
   const path = join(directory, stage === 3 ? "devstack-stage3-adapter" : "devstack-adapter");
   try {
@@ -68,6 +69,12 @@ async function localAdapter(stage: 2 | 3): Promise<string> {
       throw cliError("devstack_adapter_unavailable", `Could not inspect the local Stage ${stage} adapter.`);
     }
   }
+  return null;
+}
+
+async function localAdapter(stage: 2 | 3): Promise<string> {
+  const adapter = await inspectLocalAdapter(stage);
+  if (adapter) return adapter;
   throw cliError("devstack_adapter_unavailable", `A private Stage ${stage} adapter must be enrolled on this computer first.`);
 }
 
@@ -131,7 +138,7 @@ async function canonicalPath(path: string): Promise<string> {
   }
 }
 
-async function currentWorktree(): Promise<string> {
+async function currentWorktree(guidance = "Run from the enrolled worktree or pass --worktree <path>."): Promise<string> {
   try {
     // Repo overrides must not change which binding a command targets from cwd.
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
@@ -142,7 +149,7 @@ async function currentWorktree(): Promise<string> {
     if (!(error instanceof Error)) throw error;
     // An explicit worktree is required when cwd cannot identify the binding.
   }
-  throw cliError("devstack_selection_required", "Run from the enrolled worktree or pass --worktree <path>.");
+  throw cliError("devstack_selection_required", guidance);
 }
 
 function matchingBindings(bindings: Binding[], computer?: string, worktree?: string): Binding[] {
@@ -232,6 +239,7 @@ const commandArgsSchema = z.strictObject({
   computer: computerSchema.optional(),
   worktree: safeText.optional(),
   stage: z.enum(["2", "3"]).optional(),
+  hosted: z.boolean().optional(),
   profile: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,30}$/).optional(),
   platform: safeText.max(512).optional(),
   open: z.boolean().optional(),
@@ -279,11 +287,36 @@ async function connectStageThree(options: CommandOptions, interactive: boolean, 
   if (options.open ?? interactive) openBrowser(entryUrl);
 }
 
+async function connectHosted(options: CommandOptions, interactive: boolean, json: boolean): Promise<void> {
+  const origin = httpsOrigin(options.platform ?? hostedDevstackOrigin);
+  if (options._[0] === "sync" && origin !== hostedDevstackOrigin) {
+    throw cliError("devstack_invalid_origin", "Hosted source sync sends changes only to the Matrix DevStack origin.");
+  }
+  const source = await currentWorktree("Run `matrix devstack` from the Git worktree you want to connect.");
+  const grant = await pairHostedStageThree({ origin, worktree: source, open: options.open ?? interactive });
+  const { binding } = grant;
+  if (options._[0] === "sync" && !binding.sourceSync) {
+    throw cliError("devstack_source_unavailable", "The approved DevStack worktree does not have a source publisher.");
+  }
+  const receipt = binding.sourceSync && origin === hostedDevstackOrigin
+    ? await syncHostedStageThree({ origin, worktree: source, grant }) : undefined;
+  const entryUrl = `${origin}/devstack/worktrees/${binding.worktree}/`;
+  if (json) {
+    console.log(formatCliSuccess({ computer: binding.runtime, worktree: binding.worktree, state: receipt ? "synced" : "connected", entryUrl, ...receipt }));
+  } else if (receipt) {
+    console.log(`Synced ${receipt.revision}. Tests exited ${receipt.test.exitCode}: ${receipt.test.log}\nPreview: ${entryUrl}`);
+  } else {
+    console.log(`Connected to ${binding.worktree}. Preview: ${entryUrl}`);
+  }
+  if (receipt?.test.exitCode) process.exitCode = receipt.test.exitCode;
+}
+
 export const devstackCommand = defineCommand({
   meta: { name: "devstack", description: "Connect to a DevStack worktree preview" },
   args: {
     action: { type: "positional", required: false, description: "connect (default), sync, diff, status, reset, or watch (Stage 3)" },
-    stage: { type: "string", description: "Stage 2 local sync (default) or Stage 3 registered browser preview" },
+    stage: { type: "string", description: "Stage 2 local adapter or Stage 3 registered browser preview" },
+    hosted: { type: "boolean", description: "Connect the current Git worktree to hosted DevStack" },
     profile: { type: "string", description: "Stage 3 CLI profile (default: devstack)" },
     platform: { type: "string", description: "Approved Stage 3 HTTPS origin" },
     computer: { type: "string", description: "Dev Computer for Stage 2 or watch. Stage 3 connect accepts this for compatibility; the worktree selects the preview." },
@@ -300,6 +333,13 @@ export const devstackCommand = defineCommand({
       }
       const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
       const action = parsed.data._[0] ?? "connect";
+      if (parsed.data.hosted) {
+        if ((action !== "connect" && action !== "sync") || parsed.data.stage || parsed.data.profile || parsed.data.computer || parsed.data.worktree) {
+          throw cliError("devstack_selection_required", "Run `matrix devstack --hosted` from your Git worktree to select a hosted preview.");
+        }
+        await connectHosted(parsed.data, interactive, json);
+        return;
+      }
       if (action === "watch") {
         if (parsed.data.stage !== "3") {
           throw cliError("devstack_action_unsupported", "Watch requires --stage 3.");
@@ -322,11 +362,20 @@ export const devstackCommand = defineCommand({
       if (action !== "connect" && parsed.data.open !== undefined) {
         throw cliError("devstack_selection_required", "--open applies only when connecting a Stage 2 preview.");
       }
+      let implicitAdapter: string | undefined;
+      if (action === "connect" && parsed.data.stage === undefined && !parsed.data.computer && !parsed.data.worktree) {
+        const adapter = await inspectLocalAdapter(2);
+        if (!adapter) {
+          await connectHosted(parsed.data, interactive, json);
+          return;
+        }
+        implicitAdapter = adapter;
+      }
       if (action === "connect" && !interactive && (!parsed.data.computer || !parsed.data.worktree)) {
         throw cliError("devstack_selection_required", "Use --computer <handle> and --worktree <path>.");
       }
 
-      const adapter = await localAdapter(2);
+      const adapter = implicitAdapter ?? await localAdapter(2);
       const bindings = await adapterRequest(adapter, bindingsSchema, "list");
       const worktree = parsed.data.worktree === undefined ? undefined : await canonicalPath(parsed.data.worktree);
       const options = { computer: parsed.data.computer, worktree, json };
