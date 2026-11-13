@@ -1,7 +1,6 @@
 import { CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
 import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
-import { CanonicalChatIdSchema } from '@matrix-os/contracts';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
 const MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH = 4_096;
