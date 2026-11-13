@@ -8,6 +8,7 @@ import { useAppSite } from "./use-app-site";
 import { formatSiteDate } from "./format-site-date";
 import { SiteSubmissions } from "./SiteSubmissions";
 import { SiteAccessLinks } from "./SiteAccessLinks";
+import { SiteEmailInvitations } from "./SiteEmailInvitations";
 
 export function AppSitePanel(props: { appSlug: string; client: SiteClient; variant?: "default" | "share"; ownerIdentity?: string }) {
   return <AppSitePanelSession key={props.appSlug} {...props} />;
@@ -24,9 +25,9 @@ function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSl
   const [title, setTitle] = useState(site?.title ?? appSlug);
   const [description, setDescription] = useState(site?.description ?? "");
   const [slug, setSlug] = useState(site?.slug ?? "");
-  const [accessModeOverride, setAccessModeOverride] = useState<"public" | "private_link" | null>(null);
+  const [accessModeOverride, setAccessModeOverride] = useState<SiteRecord["accessMode"] | null>(null);
   const accessMode = accessModeOverride ?? site?.accessMode ?? "public";
-  const setAccessMode = (value: "public" | "private_link") => setAccessModeOverride(value);
+  const setAccessMode = (value: SiteRecord["accessMode"]) => setAccessModeOverride(value);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [config, setConfig] = useState<SitePublishing | null>(null);
@@ -45,7 +46,7 @@ function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSl
   const share = variant === "share";
   const publishingControls = <>
     {!share ? <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p> : null}
-    <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} />
+    <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} emailAvailable={site?.capabilities?.privateEmailInvitations === true} />
     <SitePublicLinks {...{ site, disabled, action }} />
     <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
     {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
@@ -99,12 +100,8 @@ function ShareInviteSection({ appSlug, client, state, disabled, ownerIdentity, o
   return <section aria-label="Invite" className="space-y-2 rounded-lg border bg-[var(--matrix-card)] p-2.5" style={{ borderColor: "var(--matrix-border)" }}>
     <div className="space-y-1">
       <h3 className="text-sm font-semibold">Invite</h3>
-      <p className="text-xs leading-4" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Invite collaborators to use this app. Email invitations are not available yet.</p>
     </div>
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-8 min-w-0 rounded-md border px-3 text-sm disabled:cursor-not-allowed" style={{ borderColor: "var(--matrix-border)", background: "var(--muted, var(--matrix-card))", color: "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
-      <Button disabled size="sm">Invite</Button>
-    </div>
+    <SiteEmailInvitations {...{ appSlug, client, site: state.site, state, disabled }} />
     <div className="flex items-center gap-3">
       <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold" style={{ background: "var(--matrix-primary)", color: "var(--matrix-primary-fg)" }}>Y</span>
       <div className="min-w-0 flex-1">
@@ -117,15 +114,15 @@ function ShareInviteSection({ appSlug, client, state, disabled, ownerIdentity, o
   </section>;
 }
 
-function SiteMetadataFields({ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }: {
-  fieldId: string; disabled: boolean; title: string; description: string; slug: string; accessMode: "public" | "private_link"; invalid: boolean;
-  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; setAccessMode: (value: "public" | "private_link") => void; invalidateReview: () => void;
+function SiteMetadataFields({ fieldId, disabled, title, description, slug, accessMode, invalid, emailAvailable, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }: {
+  fieldId: string; disabled: boolean; title: string; description: string; slug: string; accessMode: SiteRecord["accessMode"]; invalid: boolean; emailAvailable: boolean;
+  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; setAccessMode: (value: SiteRecord["accessMode"]) => void; invalidateReview: () => void;
 }) { return <fieldset disabled={disabled} className="space-y-3">
       <Input label="Title" id={`${fieldId}-title`} maxLength={200} value={title} onChange={event => { setTitle(event.target.value); invalidateReview(); }} />
       <Input label="Description" id={`${fieldId}-description`} maxLength={1000} value={description} onChange={event => { setDescription(event.target.value); invalidateReview(); }} />
       <Input label="Friendly path (optional)" id={`${fieldId}-slug`} maxLength={63} placeholder="matrix-launch" value={slug} onChange={event => { setSlug(event.target.value); invalidateReview(); }} />
       <p className="text-xs">matrix.page/{slug || "your-permanent-id"}</p>
-      <label className="block space-y-1 text-sm" htmlFor={`${fieldId}-access`}><span className="font-medium">Access</span><select id={`${fieldId}-access`} className="block w-full rounded border bg-transparent p-2" value={accessMode} onChange={event => { setAccessMode(event.target.value as "public" | "private_link"); invalidateReview(); }}><option value="public">Public</option><option value="private_link">Private — one-time links</option></select></label>
+      <label className="block space-y-1 text-sm" htmlFor={`${fieldId}-access`}><span className="font-medium">Access</span><select id={`${fieldId}-access`} className="block w-full rounded border bg-transparent p-2" value={accessMode} onChange={event => { setAccessMode(event.target.value as SiteRecord["accessMode"]); invalidateReview(); }}><option value="public">Public</option><option value="private_link">Private — one-time links</option>{emailAvailable || accessMode === "private_email" ? <option value="private_email" disabled={!emailAvailable}>Private — invited email</option> : null}</select></label>
       {invalid && slug ? <p className="text-xs">Use 2–63 lowercase letters, numbers, or hyphens, starting with a letter. Some paths are reserved.</p> : null}
     </fieldset>; }
 function SiteDeploymentReview({ config, reviewed, setReviewed }: { config: SitePublishing | null; reviewed: boolean; setReviewed: (value: boolean) => void }) {
@@ -155,7 +152,7 @@ function SiteUnpublish({ appSlug, client, state, disabled }: SiteSectionProps) {
 function SitePublicationStatus({ state, onRefreshPublication }: { state: ReturnType<typeof useAppSite>; onRefreshPublication: () => void }) {
   const { site, loading, loadFailed, error, message } = state;
   const published = site?.status === "published";
-  return <>{loading ? <p role="status">Loading publication…</p> : loadFailed ? null : <p role="status">{published ? site?.accessMode === "private_link" ? "Your app uses one-time links." : "Your app is public." : "This app is private."}</p>}
+  return <>{loading ? <p role="status">Loading publication…</p> : loadFailed ? null : <p role="status">{published ? site?.accessMode === "private_link" ? "Your app uses one-time links." : site?.accessMode === "private_email" ? "Your app uses email invitations." : "Your app is public." : "This app is private."}</p>}
     {error ? <p role="alert" className="text-sm">{error}</p> : null}
     {loadFailed ? <Button variant="secondary" onClick={state.refresh}>Retry</Button> : null}
     {state.conflict ? <Button variant="secondary" disabled={state.pending || loading} onClick={onRefreshPublication}>Refresh publication</Button> : null}
@@ -169,12 +166,12 @@ function SitePublicLinks({ site, disabled, action }: { site: SiteRecord | null; 
       <p className="text-xs">Permanent URL</p>
       <p className="break-all text-sm">{permanentUrl}</p>
       <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void action(async () => navigator.clipboard.writeText(permanentUrl), () => {}, "Permanent URL copied.")}>Copy permanent URL</Button>
-      {friendlyUrl ? <><p className="break-all text-sm">{friendlyUrl}</p><Button size="sm" variant="secondary" disabled={disabled} onClick={() => void action(async () => navigator.clipboard.writeText(friendlyUrl), () => {}, "Friendly URL copied.")}>Copy friendly URL</Button></> : null}
+      {friendlyUrl && site.accessMode === "public" ? <><p className="break-all text-sm">{friendlyUrl}</p><Button size="sm" variant="secondary" disabled={disabled} onClick={() => void action(async () => navigator.clipboard.writeText(friendlyUrl), () => {}, "Friendly URL copied.")}>Copy friendly URL</Button></> : null}
     </div>;
 }
 function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }: SiteSectionProps & {
   invalid: boolean; reviewed: boolean; previewReady: boolean; config: SitePublishing | null;
-  metadata: { title: string; description: string; slug: string | null; accessMode: "public" | "private_link"; baseRevision?: number }; review: () => Promise<void>;
+  metadata: { title: string; description: string; slug: string | null; accessMode: SiteRecord["accessMode"]; baseRevision?: number }; review: () => Promise<void>;
 }) {
   const { site, pending, mutate } = state;
   const published = site?.status === "published";
