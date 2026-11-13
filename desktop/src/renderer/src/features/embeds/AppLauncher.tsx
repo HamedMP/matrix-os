@@ -30,20 +30,16 @@ type LauncherEntry =
   | { type: "installed"; key: string; name: string; app: MatrixApp };
 
 function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const prev = useRef<string | null>(null);
-  if (prev.current !== url) {
-    prev.current = url;
-    if (failed) setFailed(false);
-  }
-  if (url && !failed) {
+  // Keyed by URL so a new artwork digest gets a fresh attempt after an earlier failure.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (url && failedUrl !== url) {
     return (
       <img
         src={url}
         alt=""
         className={`${large ? "h-16 w-16" : "h-11 w-11"} object-contain drop-shadow-[0_5px_8px_rgba(0,0,0,0.15)]`}
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(url)}
       />
     );
   }

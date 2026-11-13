@@ -32,9 +32,13 @@ serve. Shared launch targets also used `appId` as the `name`.
    an older platform rejects it (404/422) and keeps directory delivery working.
    It sends `PUT .../presentation` with the name and artwork digest. If the
    platform reports `artworkRequired`, the publisher uploads the raw bytes to
-   `PUT .../artwork/:sha256`. Fingerprints (app, name, digest) are cached per
-   scope (capped at 500), and file hashes are cached by path, mtime, and size,
-   so unchanged icons are neither re-hashed nor re-uploaded.
+   `PUT .../artwork/:sha256`. Fingerprints (app, binding and readiness
+   revisions, name, digest) are cached per scope (capped at 500). The owner
+   re-asserts an unchanged snapshot every 15 minutes, so a platform copy
+   retired by a recheck or lost in a restore heals itself. File hashes are
+   cached by inode, size, and mtime, so unchanged icons are neither re-hashed
+   nor re-uploaded. Failed publications back off from 30 seconds to 10
+   minutes.
 3. **Platform storage.** `collaboration_app_presentations` holds one row per
    shared scope, bound to the directory's owner, runtime, and `app_id`. Bytes
    are stored only after the uploaded digest, length, and sniffed type match the
@@ -66,12 +70,15 @@ serve. Shared launch targets also used `appId` as the `name`.
 
 | Route | Caller and auth | Checks | Limits and response |
 | --- | --- | --- | --- |
-| `PUT /internal/collaboration/shared-apps/:scopeId/presentation` | Owner runtime: `x-matrix-runtime-id` + runtime bearer | UUID scope; strict body; directory row is an active `current_membership` app whose owner, runtime, and `app_id` match | 96 KiB body; 204/200 `{ artworkRequired }`; 404 when not shared; generic errors |
-| `PUT /internal/collaboration/shared-apps/:scopeId/artwork/:sha256` | Owner runtime: same | Hex digest; allowlisted `content-type`; byte SHA-256 = path digest; sniffed type and length = declared presentation; share still active | 4 MiB `bodyLimit`; 204; 409 on mismatch or stale; 413 when too large |
+| `PUT /internal/collaboration/shared-apps/:scopeId/presentation` | Owner runtime: `x-matrix-runtime-id` + runtime bearer | UUID scope; strict body; directory row is an active `current_membership` app whose owner, runtime, and `app_id` match | 96 KiB body; 200 `{ artworkRequired }`; 404 when not shared; generic errors |
+| `PUT /internal/collaboration/shared-apps/:scopeId/artwork/:sha256` | Owner runtime: same | Hex digest; allowlisted `content-type`; byte SHA-256 = path digest; sniffed type and length = declared presentation; share still active | 4 MiB `bodyLimit`; 204; 409 on mismatch or stale; 413 when too large; 415 for non-raster types |
 | `GET /api/collaboration/shared-apps/:scopeId/artwork/:sha256` | Signed-in actor (platform cookie or bearer) | UUID scope, hex digest; fresh current membership of the share's organization; share active; digest is current and bytes are stored | Per-actor rate limit; `private, no-cache`, ETag/304, `nosniff`, `default-src 'none'; sandbox` CSP; 404 for every unauthorized or stale case |
 | `GET /api/collaboration/shared-apps[/:scopeId]?presentation=1` | Existing signed-in actor | Existing checks, unchanged | Adds the optional `presentation` field only when requested |
 
-Responses never include owner file paths, runtime tokens, or raw errors.
+No `Cross-Origin-Resource-Policy` restriction is set on artwork, because the
+Electron renderer is cross-origin to the platform. Authentication and fresh
+membership protect the bytes. Responses never include owner file paths,
+runtime tokens, or raw errors.
 Recipients never fetch from their own app directory or the owner's home
 filesystem.
 

@@ -23,7 +23,6 @@ const ARTWORK_HEADERS = {
   "Cache-Control": "private, no-cache",
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "default-src 'none'; sandbox",
-  "Cross-Origin-Resource-Policy": "same-site",
 } as const;
 
 /** The launcher field for one listed share; the icon appears only once verified bytes exist. */

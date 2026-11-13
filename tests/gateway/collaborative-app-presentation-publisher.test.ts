@@ -240,6 +240,29 @@ describe("owner app presentation reaches the recipient launcher", () => {
     expect(platformFetch).not.toHaveBeenCalled();
   });
 
+  it("republishes after the platform loses presentation, such as a recheck or restore", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(9));
+    expect(await publisher.runOnce()).toBe(1);
+    await platform.collaborationDb.deleteFrom("collaboration_app_presentations").execute();
+    expect((await launcher())[0]).not.toHaveProperty("presentation");
+
+    currentTime += 15 * 60_000;
+    expect(await publisher.runOnce()).toBe(1);
+    expect((await launcher())[0]!.presentation?.iconUrl).toContain(sha256(png(9)));
+  });
+
+  it("republishes when the share's binding changes even though name and artwork did not", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(10));
+    expect(await publisher.runOnce()).toBe(1);
+    await owner.db.updateTable("collaboration_app_bindings").set((eb) => ({ revision: eb("revision", "+", 1) }))
+      .where("scope_id", "=", scopeId).execute();
+    platformFetch.mockClear();
+    expect(await publisher.runOnce()).toBe(1);
+    expect(platformFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("backs off without disturbing directory delivery when the platform does not support presentation", async () => {
     await writeApp("Sprint Board");
     await writeIcon(png(6));

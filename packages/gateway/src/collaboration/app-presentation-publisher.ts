@@ -13,10 +13,13 @@ const UPLOAD_TIMEOUT_MS = 30_000;
 const MAX_TRACKED_SCOPES = 500;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 10 * 60_000;
+/** Re-asserts unchanged presentation so platform-side removal (recheck, restore) heals itself. */
+const REFRESH_MS = 15 * 60_000;
 
 interface TrackedScope {
   /** What the platform last accepted for this scope; absent until a publication succeeds. */
   fingerprint?: string;
+  publishedAt?: number;
   failures: number;
   retryAt: number;
 }
@@ -82,13 +85,17 @@ export class CollaborativeAppPresentationPublisher {
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    if (this.active) await this.active.catch(() => 0);
+    if (this.active) {
+      await this.active.catch((error: unknown) => {
+        console.warn("[collaborative-app-presentation] final cycle failed", error instanceof Error ? error.name : "UnknownError");
+      });
+    }
   }
 
   private async publishChanged(): Promise<number> {
     const shares = await this.options.db.selectFrom("collaboration_app_bindings as binding")
       .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
-      .select(["binding.scope_id", "readiness.app_id"])
+      .select(["binding.scope_id", "binding.revision as binding_revision", "readiness.app_id", "readiness.revision as readiness_revision"])
       .where("binding.state", "=", "active")
       .where("readiness.owner_id", "=", this.options.ownerId)
       .orderBy("binding.scope_id")
@@ -105,16 +112,20 @@ export class CollaborativeAppPresentationPublisher {
       if (this.closing) break;
       const presentation = presentations.get(share.app_id);
       if (!presentation) continue;
-      const fingerprint = JSON.stringify([share.app_id, presentation.name, presentation.artwork?.sha256 ?? null]);
+      // A binding or readiness change (stop/restart, recheck) may have retired the platform copy.
+      const fingerprint = JSON.stringify([
+        share.app_id, Number(share.binding_revision), Number(share.readiness_revision),
+        presentation.name, presentation.artwork?.sha256 ?? null,
+      ]);
       const tracked = this.tracked.get(share.scope_id);
-      if (tracked?.fingerprint === fingerprint) continue;
+      if (tracked?.fingerprint === fingerprint && nowMs - (tracked.publishedAt ?? 0) < REFRESH_MS) continue;
       if (await this.publish(share.scope_id, share.app_id, presentation)) {
-        this.tracked.set(share.scope_id, { fingerprint, failures: 0, retryAt: 0 });
+        this.tracked.set(share.scope_id, { fingerprint, publishedAt: nowMs, failures: 0, retryAt: 0 });
         published += 1;
       } else {
         const failures = (tracked?.failures ?? 0) + 1;
         this.tracked.set(share.scope_id, {
-          ...(tracked?.fingerprint ? { fingerprint: tracked.fingerprint } : {}),
+          ...(tracked?.fingerprint ? { fingerprint: tracked.fingerprint, publishedAt: tracked.publishedAt } : {}),
           failures,
           retryAt: nowMs + Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5)),
         });
