@@ -25,7 +25,8 @@ export function Win11ManagedAccountActions({ onClose }: { onClose: () => void })
     const redirectUrl = getSignInRedirectUrl();
     try {
       await clearMatrixAppSession();
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[auth] Matrix app session sign-out failed", error instanceof Error ? error.name : typeof error);
       setSigningOut(false);
       setSignOutError("Sign-out is temporarily unavailable. Try again.");
       return;
