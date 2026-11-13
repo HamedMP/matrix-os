@@ -94,9 +94,9 @@ export function DesktopAppOrgSharingSection({ appId, api, buildEpoch }: {
   };
 
   return <section aria-label="Share with your org" className="space-y-2 rounded-lg border p-3 text-[13px]"
-    style={{ borderColor: "var(--border, var(--border-default))", background: "var(--card, var(--bg-surface))" }}>
+    style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)" }}>
     <h3 className="text-sm font-semibold">Share with your org</h3>
-    <p className="text-xs leading-5" style={{ color: "var(--muted-foreground, var(--text-secondary))" }}>
+    <p className="text-xs leading-5" style={{ color: "var(--text-secondary)" }}>
       All current members, including guests, can use existing app data and make changes. The app and its data stay on your Matrix. Stopping sharing removes their access without deleting your records.
     </p>
     <OrganizationShareStatus {...{ active, sharing, organizationId, organizationStatus, listing }} />
