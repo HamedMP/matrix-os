@@ -1,3 +1,4 @@
+import { routineCliProposalView } from "./routine-cli-proposal-view.js";
 import { RoutineCliRoutineViewSchema, RoutineCliReceiptSchema, type RoutineCliRoutineView, type RoutineCliResult } from "@matrix-os/contracts";
 import { createBotRoutinesRepository, type BotRoutine } from "./repositories/routines.js";
 import type { BotExecutor } from "./repositories/shared.js";
@@ -44,7 +45,8 @@ export function createRoutineCliViews(executor: BotExecutor, now: () => Date = (
         approval = interaction?.status === "pending" && new Date(interaction.expires_at).getTime() <= now().getTime()
           ? "expired" : interaction?.status ?? null;
       }
-      return { kind: "receipt", receipt, current, approval,
+      const proposal = await routineCliProposalView(executor, record, now());
+      return { kind: "receipt", receipt, current, approval, ...(proposal ? { proposal } : {}),
         ...(receipt.disposition === "applied" && (receipt.operation === "pause" || receipt.operation === "archive")
           ? { execution: { stop: "unconfirmed" as const } } : {}) };
     },

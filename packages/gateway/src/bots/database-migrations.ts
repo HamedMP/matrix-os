@@ -1,3 +1,4 @@
+import { migrateRoutineCliProposalsV15 } from "./routine-cli-proposal-migration.js";
 /**
  * Versioned migrations for owner bot state (spec 536, data-model.md). Each
  * version runs once, in order, inside its own transaction; the runner in
@@ -367,4 +368,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 12, name: "routine_cli_preferences", up: migrateRoutineCliPreferencesV12 },
   { version: 13, name: "routine_cli_sources", up: migrateRoutineCliSourcesV13 },
   { version: 14, name: "routine_cli_requests", up: migrateRoutineCliRequestsV14 },
+  { version: 15, name: "routine_cli_proposals", up: migrateRoutineCliProposalsV15 },
 ];

@@ -15,6 +15,7 @@ import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, type BotEvent } from "@matrix-os/co
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
+  CanonicalProviderRunRecoveryPendingError,
   parseCanonicalProviderRunInput,
   type CanonicalChatProviderAdapter,
   type CanonicalProviderRunEvent,
@@ -112,11 +113,13 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 export function createMatrixBotChatProviderAdapter(options: {
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   stopRuntime(runtimeHandle: string): Promise<void>;
+  proposals?: Pick<import("./routine-cli-proposals.js").RoutineCliProposalRuntime, "recover">;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"prepareRun"|"completeRun">;
 }): CanonicalChatProviderAdapter<BotChatState> {
   return {
     driverKind: "matrix_bot",
     stateSchemaVersion: 1,
+    ...(options.proposals ? { recoveryFailureMode: "pending" as const } : {}),
     parseState: (value) => BotChatStateSchema.parse(value),
     serializeState: (value) => BotChatStateSchema.parse(value),
     async *start(inputValue) {
@@ -203,6 +206,10 @@ export function createMatrixBotChatProviderAdapter(options: {
           }
         }
       }
+      if (options.proposals && !scheduled && result.status === "uncertain") throw new CanonicalProviderRunRecoveryPendingError({
+        code: "run_unavailable", safeMessage: "The routine approval result is unknown. Matrix will check it before closing this Run.",
+        retryable: false, recoveryActions: [],
+      });
       yield CanonicalProviderRunEventSchema.parse(completion(result,Boolean(scheduled)));
     },
     async steer(input) {
@@ -216,8 +223,10 @@ export function createMatrixBotChatProviderAdapter(options: {
     async recover(input) {
       if (input.owner.type !== "personal") return null;
       if (input.state.runtimeHandle) await options.stopRuntime(input.state.runtimeHandle);
-      await options.orchestrator.abandon({ ownerId: input.owner.ownerId, taskId: input.state.taskId });
-      return { outcome: "failed", messages: [] };
+      const task = { ownerId: input.owner.ownerId, runId: input.runId, taskId: input.state.taskId };
+      if (await options.proposals?.recover(task)) return { outcome: "completed", messages: [] };
+      const recovered = await options.orchestrator.abandon(task);
+      return { outcome: recovered === "waiting_person" ? "completed" : "failed", messages: [] };
     },
   };
 }

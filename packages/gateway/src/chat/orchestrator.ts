@@ -53,6 +53,7 @@ import {
 } from "./provider-catalog.js";
 import {
   CanonicalProviderRunEventSchema,
+  CanonicalProviderRunRecoveryPendingError,
   type CanonicalChatProviderAdapter,
   type CanonicalProviderRunEvent,
   type CanonicalProviderRunInput,
@@ -684,6 +685,10 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
       if (controller.signal.reason instanceof BackgroundProjectionDetached) return;
+      if (error instanceof CanonicalProviderRunRecoveryPendingError) {
+        await this.persistActivities(owner, run, [{ type: "run.error", error: error.safeError }]);
+        return;
+      }
       if (cleanupUnconfirmed) {
         controller.abort();
         console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
