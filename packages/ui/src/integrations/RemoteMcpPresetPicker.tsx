@@ -1,9 +1,11 @@
 "use client";
 
-import { Plus, Search } from "lucide-react";
+import { CloudOff, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { REMOTE_MCP_DEPARTMENTS, type RemoteMcpDepartment } from "@matrix-os/contracts/remote-mcp-catalog";
+import { McpInlineNotice } from "./McpInlineNotice.js";
 import { McpServiceLogo } from "./McpServiceLogo.js";
+import { McpRowAction } from "./McpToolPolicyList.js";
 import { mcpTokens as t } from "./mcp-settings-tokens.js";
 import { REMOTE_MCP_DEPARTMENT_LABELS, filterRemoteMcpPresets, type RemoteMcpPreset } from "./remote-mcp-presets.js";
 
@@ -55,7 +57,7 @@ export function RemoteMcpPresetPicker({ presets, state, connections, connectingI
         ))}
       </div>
       {state === "loading" ? (
-        <div role="status" aria-label="Loading MCP services" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <div role="status" aria-label="Loading MCP services" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <span className="sr-only">Loading MCP services…</span>
           {Array.from({ length: 6 }, (_, index) => (
             <div key={index} aria-hidden="true" className="h-[72px] animate-pulse rounded-xl border" style={{ borderColor: t.border, background: t.sunken }} />
@@ -63,11 +65,8 @@ export function RemoteMcpPresetPicker({ presets, state, connections, connectingI
         </div>
       ) : null}
       {state === "error" ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-8 text-center" role="status" style={{ borderColor: t.border }}>
-          <p className="text-sm font-medium" style={{ color: t.text }}>Could not load MCP services</p>
-          <p className="text-sm" style={{ color: t.muted }}>You can still add any MCP server by URL below.</p>
-          <button type="button" aria-label="Retry loading MCP services" onClick={onRetry} className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: t.borderStrong, color: t.text }}>Retry</button>
-        </div>
+        <McpInlineNotice icon={<CloudOff size={15} />} title="Could not load MCP services" description="You can still add any MCP server by URL below."
+          action={<McpRowAction aria-label="Retry loading MCP services" onClick={onRetry}>Retry</McpRowAction>} />
       ) : null}
       {state === "ready" && visible.length === 0 ? (
         <div className="rounded-xl border border-dashed py-8 text-center" role="status" style={{ borderColor: t.border }}>
@@ -76,7 +75,7 @@ export function RemoteMcpPresetPicker({ presets, state, connections, connectingI
         </div>
       ) : null}
       {state === "ready" && visible.length > 0 ? (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {visible.map(preset => {
             const saved = byUrl.get(normalized(preset.url));
             const isConnecting = connectingId === preset.id;

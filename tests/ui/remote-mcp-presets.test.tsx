@@ -113,13 +113,13 @@ describe("McpConnectionInventory", () => {
 });
 
 describe("connectedMcpServices", () => {
-  // Fault: the endpoint card claims it routes to a service that still needs sign-in.
+  // Fault: the endpoint card claims it routes to a service that still needs sign-in, or to a connected app the external endpoint does not expose.
   it("lists only live connections, keeping the catalog id for the logo", () => {
     const inventory = buildMcpConnectionInventory(
       [{ id: "s1", name: "Linear", url: "https://mcp.linear.app/mcp", status: "ready" }, { id: "s2", name: "Figma", url: "https://mcp.figma.com/mcp", status: "auth_required" }],
       [{ id: "p1", service: "gmail", status: "active" }],
       { gmail: "Gmail" },
     );
-    expect(connectedMcpServices(inventory)).toEqual([{ name: "Linear", presetId: "linear" }, { name: "Gmail" }]);
+    expect(connectedMcpServices(inventory)).toEqual([{ name: "Linear", presetId: "linear" }]);
   });
 });

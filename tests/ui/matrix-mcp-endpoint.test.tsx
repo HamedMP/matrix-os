@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MATRIX_MCP_ENDPOINT, matrixMcpEndpointUrl } from "../../packages/ui/src/integrations/matrix-mcp-endpoint.js";
 import { MatrixMcpEndpointCard } from "../../packages/ui/src/integrations/MatrixMcpEndpointCard.js";
-import { McpServiceLogo } from "../../packages/ui/src/integrations/McpServiceLogo.js";
+import { McpServiceLogo, McpServiceLogoStack } from "../../packages/ui/src/integrations/McpServiceLogo.js";
 
 afterEach(() => {
   cleanup();
@@ -57,5 +57,12 @@ describe("McpServiceLogo", () => {
     expect(container.querySelector("[data-mcp-logo='linear'] path")).toBeTruthy();
     rerender(<McpServiceLogo presetId="__proto__" name="research tools" />);
     expect(container.querySelector("[data-mcp-logo='fallback']")?.textContent).toBe("R");
+  });
+
+  // Fault: connected apps carry only a display name, so the endpoint card showed first letters instead of logos.
+  it("matches a name-only service to its brand mark and shows each service once", () => {
+    const { container } = render(<McpServiceLogoStack services={[{ name: "Gmail" }, { name: "Gmail" }, { name: "Google Drive" }]} />);
+    expect(container.querySelectorAll("[data-mcp-logo='gmail']")).toHaveLength(1);
+    expect(container.querySelector("[data-mcp-logo='google_drive'] path")).toBeTruthy();
   });
 });
