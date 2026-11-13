@@ -41,6 +41,21 @@ function normalizedAddress(raw: string): { normalized: string; display: string }
   return { normalized: display.toLowerCase(), display };
 }
 
+const MAX_OWNER_OUTSTANDING_DELIVERIES = 500;
+async function assertOwnerDeliveryCapacity(db: PlatformDB, ownerId: string, additional: number, exceptInvitationId?: string) {
+  if (!additional) return;
+  let query = db.executor.selectFrom('public_site_invitation_deliveries as d')
+    .innerJoin('public_site_email_invitations as i', 'i.id', 'd.invitation_id')
+    .innerJoin('public_sites as s', 's.id', 'i.site_id')
+    .select(sql<number>`count(*)::int`.as('outstanding'))
+    .where('s.owner_id', '=', ownerId)
+    .where(eb => eb.or([eb('d.state', 'in', ['queued', 'leased']),
+      eb.and([eb('d.state', 'in', ['failed', 'ambiguous']), eb('d.attempts', '<', 5)])]));
+  if (exceptInvitationId) query = query.where('d.invitation_id', '!=', exceptInvitationId);
+  const { outstanding } = await query.executeTakeFirstOrThrow();
+  if (outstanding + additional > MAX_OWNER_OUTSTANDING_DELIVERIES) throw new SiteError('unavailable');
+}
+
 /** One owner transaction persists inventory, delivery intent, and audit before any mail call. */
 export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwner, raw: unknown) {
   const parsed = SiteEmailInvitationCreateRequestSchema.safeParse(raw);
@@ -67,6 +82,8 @@ export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwne
       .where('site_id', '=', site.id).where('normalized_email', 'in', valid.map(entry => entry.address.normalized))
       .orderBy('normalized_email', 'asc').orderBy('id', 'asc').forUpdate().execute() : [];
     const known = new Map(rows.map(row => [row.normalized_email, row]));
+    await assertOwnerDeliveryCapacity(trx, owner.ownerId,
+      valid.filter(entry => !known.has(entry.address.normalized)).length);
     const results: Array<Record<string, unknown>> = new Array(input.emailAddresses.length);
     let createdCount = 0;
     for (const entry of prepared) if ('outcome' in entry) results[entry.index] = { inputIndex: entry.index, outcome: entry.outcome };
@@ -131,6 +148,7 @@ async function mutateSiteEmailInvitation(
         || ['failed', 'ambiguous', 'suppressed'].includes(invitation.delivery_state)));
     if (action === 'resend' ? !canResend : invitation.state !== 'pending' && invitation.state !== 'accepted')
       throw new SiteError('conflict');
+    if (action === 'resend') await assertOwnerDeliveryCapacity(trx, owner.ownerId, 1, id.data);
     const generation = Number(invitation.generation);
     if (!Number.isSafeInteger(generation + 1) || !Number.isSafeInteger(Number(invitation.revision) + 1))
       throw new SiteError('conflict');
