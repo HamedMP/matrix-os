@@ -46,7 +46,11 @@ describe("collaborative app owner/member common Postgres data", () => {
     await new ChatRepository(fixture.db).bootstrap();
     await bootstrapCollaborationDatabase(fixture.db);
     await sql`CREATE SCHEMA teamtracker`.execute(fixture.db);
-    await sql`CREATE TABLE teamtracker.tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL)`.execute(fixture.db);
+    // Mirrors a generated Matrix app table: the registry adds created_at/updated_at timestamptz columns.
+    await sql`CREATE TABLE teamtracker.tasks (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT false, due DATE, score DOUBLE PRECISION,
+      meta JSONB, completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`.execute(fixture.db);
     for (let index = 1; index <= 20; index += 1) {
       await sql`INSERT INTO teamtracker.tasks (id, title) VALUES (${`task-${index}`}, ${`Task ${index}`})`.execute(fixture.db);
     }
@@ -127,6 +131,64 @@ describe("collaborative app owner/member common Postgres data", () => {
     expect(events.at(-1)).toMatchObject({ event_type: "resource.app.changed", revision: 1 });
     expect(JSON.stringify(events.at(-1)?.payload)).not.toContain("Shared task");
     expect(onCommitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads an existing timestamp-bearing task identically for the owner and a member, then edits and deletes it", async () => {
+    onCommitted.mockClear();
+    await sql`DELETE FROM teamtracker.tasks`.execute(fixture.db);
+    await sql`INSERT INTO teamtracker.tasks (id, title, meta, created_at, updated_at)
+      VALUES ('existing', 'Existing task', ${JSON.stringify({ tags: ["ops"], nested: { level: 1, when: "2026-11-12" } })}::jsonb,
+        '2026-11-12T13:44:05.123Z', '2026-11-12T14:00:00.000+02:00')`.execute(fixture.db);
+    const expected = {
+      id: "existing", title: "Existing task", done: false, due: null, score: null,
+      meta: { tags: ["ops"], nested: { level: 1, when: "2026-11-12" } }, completed_at: null,
+      created_at: "2026-11-12T13:44:05.123Z", updated_at: "2026-11-12T12:00:00.000Z",
+    };
+    const owner = await authority.authorize({ scopeId, actorId: ownerId, action: "read" });
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "mutate_resource" });
+    const find = { action: "find", app: appId, table: "tasks", orderBy: { created_at: "desc", id: "asc" }, limit: 100 };
+
+    await expect(adapter.query(owner, appId, find)).resolves.toEqual({ result: [expected], revision: 0 });
+    await expect(adapter.query(member, appId, find)).resolves.toEqual({ result: [expected], revision: 0 });
+    await expect(adapter.query(member, appId, { action: "findOne", app: appId, table: "tasks", id: "existing" }))
+      .resolves.toEqual({ result: expected, revision: 0 });
+    await expect(adapter.query(member, appId, { action: "count", app: appId, table: "tasks" }))
+      .resolves.toEqual({ result: 1, revision: 0 });
+
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 0,
+      action: { action: "update", app: appId, table: "tasks", id: "existing", data: { done: true, completed_at: "2026-11-13T09:30:00.000Z" } },
+    })).resolves.toEqual({ result: { ok: true }, revision: 1, replayed: false });
+    const edited = (await adapter.query(owner, appId, find)) as { result: Array<Record<string, unknown>>; revision: number };
+    expect(edited).toEqual({ result: [{ ...expected, done: true, completed_at: "2026-11-13T09:30:00.000Z" }], revision: 1 });
+    expect(JSON.parse(JSON.stringify(edited.result))).toEqual(edited.result);
+
+    await expect(adapter.mutate(owner, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 1,
+      action: { action: "delete", app: appId, table: "tasks", id: "existing" },
+    })).resolves.toEqual({ result: { ok: true }, revision: 2, replayed: false });
+    await expect(adapter.query(member, appId, find)).resolves.toEqual({ result: [], revision: 2 });
+    expect(onCommitted).toHaveBeenCalledTimes(2);
+    const events = await fixture.db.selectFrom("collaboration_events").select(["event_type", "revision"])
+      .where("scope_id", "=", scopeId).where("event_type", "=", "resource.app.changed").orderBy("scope_seq").execute();
+    expect(events.map((event) => Number(event.revision))).toEqual([1, 2]);
+  });
+
+  it("fails closed without partial data for non-finite numbers and oversized results", async () => {
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "mutate_resource" });
+    await sql`UPDATE teamtracker.tasks SET score = 'NaN'::double precision WHERE id = 'task-1'`.execute(fixture.db);
+    await expect(adapter.query(member, appId, { action: "findOne", app: appId, table: "tasks", id: "task-1" }))
+      .rejects.toMatchObject({ code: "unavailable" });
+    await expect(adapter.query(member, appId, { action: "findOne", app: appId, table: "tasks", id: "task-2" }))
+      .resolves.toMatchObject({ result: { id: "task-2", created_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/) } });
+
+    await sql`UPDATE teamtracker.tasks SET score = NULL, title = repeat('x', 1024 * 1024) WHERE id = 'task-1'`.execute(fixture.db);
+    await expect(adapter.query(member, appId, { action: "findOne", app: appId, table: "tasks", id: "task-1" }))
+      .rejects.toMatchObject({ code: "unavailable" });
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 0,
+      action: { action: "update", app: appId, table: "tasks", id: "task-2", data: { title: "Still writable" } },
+    })).resolves.toMatchObject({ revision: 1 });
   });
 
   it("rejects a stale writer in the binding update and preserves the winning owner record", async () => {
