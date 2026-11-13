@@ -3,6 +3,7 @@
 import React, { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SupervisedToolApprovalCard } from "../../packages/ui/src/chat/SupervisedToolApprovalCard";
 import {
   Conversation,
   ConversationContent,
@@ -15,18 +16,26 @@ import {
 describe("Conversation scroller (MessageScroller semantics)", () => {
   const observe = vi.fn();
   const disconnect = vi.fn();
-  let resizeCallbacks: Array<() => void>;
+  let resizeObservers: Array<{ callback: () => void; targets: Element[] }>;
 
   beforeEach(() => {
     observe.mockClear();
     disconnect.mockClear();
-    resizeCallbacks = [];
+    resizeObservers = [];
     class ResizeObserverStub {
+      entry: { callback: () => void; targets: Element[] };
       constructor(callback: () => void) {
-        resizeCallbacks.push(callback);
+        this.entry = { callback, targets: [] };
+        resizeObservers.push(this.entry);
       }
-      observe = observe;
-      disconnect = disconnect;
+      observe = (target: Element) => {
+        this.entry.targets.push(target);
+        observe(target);
+      };
+      disconnect = () => {
+        this.entry.targets = [];
+        disconnect();
+      };
       unobserve() {}
     }
     globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
@@ -49,9 +58,18 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
   }
 
   function fireContentResize() {
-    const callback = resizeCallbacks.at(-1);
-    expect(callback).toBeTruthy();
-    act(() => callback?.());
+    const content = document.querySelector("[data-slot='message-scroller-content']");
+    expect(content).not.toBeNull();
+    expect(resizeObservers.some(entry => entry.targets.includes(content!))).toBe(true);
+    fireObservedResize(content!);
+  }
+
+  function fireObservedResize(target: Element) {
+    act(() => {
+      for (const entry of resizeObservers) {
+        if (entry.targets.includes(target)) entry.callback();
+      }
+    });
   }
 
   it("exposes a labelled, keyboard-focusable scroll region and a live transcript log", () => {
@@ -93,6 +111,43 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     metrics.scrollHeight = 800;
     fireContentResize();
     expect(el.scrollTop).toBe(100);
+  });
+
+  it.each([false, true])("keeps a pending approval at the live edge when its viewport shrinks (scroll event first: %s)", (scrollEventFirst) => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="earlier-work">Earlier command output</ConversationItem>
+          <ConversationItem messageId="request:next-command">
+            <SupervisedToolApprovalCard
+              anchorId="tool-approval-next-command"
+              approval={{ kind: "waiting", title: "Run a command", summary: "Review the next command.", bar: "Run a command", allowOnce: true, decline: true }}
+              onDecision={vi.fn()}
+            />
+          </ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+    expect(screen.getByRole("group", { name: "Needs your approval" })).toBeTruthy();
+
+    // The approval banner/composer reduces the message viewport. Long content
+    // keeps the same height, so only a viewport observer can detect this.
+    metrics.clientHeight = 200;
+    if (scrollEventFirst) fireEvent.scroll(el);
+    fireObservedResize(el);
+
+    expect(el.scrollTop).toBe(1000);
+    expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
+
+    // A subsequent card expansion must continue following without remounting.
+    metrics.scrollHeight = 1400;
+    fireContentResize();
+    expect(el.scrollTop).toBe(1200);
   });
 
   it("lets the browser anchor an unpinned reader when nested content grows", () => {
