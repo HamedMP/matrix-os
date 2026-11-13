@@ -32,6 +32,12 @@ GH_ARCHIVE="${GH_DIST}.tar.gz"
 GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
+# Keep pure argument validation above the baseline dispatch, before any writes.
+# No environment marker can bypass the actual platform/arch/libc check inside.
+if ! node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs" --check; then
+  exec node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs"
+fi
+
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
@@ -195,5 +201,8 @@ HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREF
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json funded-host-config
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
+
+# Load the final archive's copied native/runtime closure without the build tree.
+node "$ROOT_DIR/scripts/smoke-host-bundle-native.mjs" "$DIST_DIR/$BUNDLE_NAME"
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"
