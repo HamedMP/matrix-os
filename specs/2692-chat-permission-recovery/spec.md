@@ -70,14 +70,23 @@ permission change is allowed.
 ## Implemented authority and recovery boundary
 
 - The existing ordered run-control queue serializes owner intent before reads.
-  The context read has a 3-second bound; the native transition has a 40-second
+  The context read has a 3-second bound; the native transition has a 35-second
   deadline including proof verification, correlated settings/mode acknowledgements,
-  capability updates and persistence. Clients allow 45 seconds for this operation.
-- `appendRunActivities` holds the existing owner/chat/run transaction. The
-  permission event and effective run mode commit together, before eligible pending
-  built-in/integration requests resolve. The original capability snapshot is not
-  rewritten. Duplicate request IDs are checked against the stored event and current
-  mode; stale/opposite-mode reuse cannot replay authority.
+  capability updates and applied-audit persistence. The final confirmation write
+  has a 5-second bound (43 seconds total); clients allow 45 seconds.
+- `appendRunActivities` holds the existing owner/chat/run transaction. After exact
+  proof verification, a deterministic **pending** receipt is durable before native
+  mutation. The **applied** receipt records native ACKs/capability changes before
+  pending built-in/integration requests resolve. Neither receipt changes the run's
+  mode: that row always represents the last **confirmed** permission. Only after
+  the helper fully succeeds does its exact request/run/mode-bound **confirmed**
+  receipt atomically update the row and publish a mode event. Confirmation requires
+  matching pending/applied receipts, including after fast terminal completion.
+  Internal phases are omitted from public activity projection; the confirmed event
+  loses its phase metadata. The original capability snapshot stays unchanged.
+  Exact duplicate recovery requires a matching confirmed receipt and current mode;
+  opposite-mode reuse, superseded requests, and outstanding intents cannot replay
+  authority.
 - Server-owned capability closures update integration authority and the exact
   Browser lease. Downgrade preserves its per-run authorizer and shrinks, never
   extends, its expiry. A waiting Browser action is canceled and drained before
@@ -86,10 +95,17 @@ permission change is allowed.
 - A native request canceled during transition is removed from the bounded queue;
   retransmitted native IDs do not enqueue duplicate allows. Partial/uncertain
   changes close controls, abort the process and revoke run capabilities.
-- If a database write completes after the transition deadline, an aborted Run may
-  retain the effective permission event. This is an acceptable orphan state:
-  grants have been revoked and no live process retains that authority. The event
-  is provenance, never permission to start another process.
+- A late applied write cannot promote durable/public mode. Unmatched pending
+  intent blocks retry in preflight and again under the repository admission lock,
+  including after process loss/recovery and failed downgrades. A failed native
+  transition never invokes confirmation. A lost confirmation ACK after full native
+  success is ambiguous completion: a late exact confirmation may safely commit;
+  canonical reread/identical-request recovery can observe it. Until then no new
+  mode transition/retry is admitted. Successful confirmed changes remain valid for
+  retry after an unrelated ordinary failure. New messages choose their own mode.
+- Full access still dispatches Custom MCP `call_tool` requests through their exact
+  receipt producer, including requests queued during a permission change. It never
+  replaces those inputs with a raw native allow or bypasses always-ask challenges.
 - Same-run steering restarts with the latest acknowledged mode, including its
   sandbox and newly issued capabilities. It cannot restore the original broader
   mode after a downgrade. Routine sources retain their exact-owner consent

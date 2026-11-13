@@ -21,21 +21,31 @@ provenance?: { permissionModeProof?: string }): Promise<CanonicalSetChatPermissi
   ]).finally(() => { if (readTimer) clearTimeout(readTimer); });
   if (!context || context.shared || context.run.context?.agent || context.run.interactionMode !== "default"
     || (!["supervised", "full_access"].includes(context.run.permissionMode) || !context.run.capabilitySnapshot.permissionModes.includes(input.permissionMode))) throw unavailable();
+  if (context.unconfirmed) throw unavailable();
   if (context.previous) {
     if (context.previous.permissionMode !== input.permissionMode || context.run.permissionMode !== input.permissionMode) throw unavailable();
     return { chatId, runId, permissionMode: input.permissionMode, submission: "already_applied" };
   }
+  if (context.attempted) throw unavailable();
   const active = options.active;
   if (!active || active.chatId !== chatId || active.owner.type !== owner.type || active.owner.ownerId !== owner.ownerId
     || active.sharedScopeId || active.controller.signal.aborted || !active.adapter.setPermissionMode
     || !["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(context.run.status)) throw unavailable();
+  const appendPhase = async (phase: "pending" | "applied" | "confirmed") => {
+    const activity: CanonicalChatRunActivity = { type: "run.permission_mode", ...input, phase,
+      id: permissionModeActivityId(runId, input.clientRequestId, phase), chatId, runId,
+      occurredAt: (options.now?.() ?? new Date()).toISOString() };
+    await options.repository.appendRunActivities(owner, chatId, runId, [activity]);
+  };
   try {
     await active.adapter.setPermissionMode({ ...input, owner, chatId, runId, permissionModeProof: provenance.permissionModeProof,
+      async begin() {
+        if (active.controller.signal.aborted) throw unavailable();
+        await appendPhase("pending");
+      },
       async commit() {
         if (active.controller.signal.aborted) throw unavailable();
-        const activity: CanonicalChatRunActivity = { type: "run.permission_mode", ...input,
-          id: permissionModeActivityId(runId, input.clientRequestId), chatId, runId, occurredAt: (options.now?.() ?? new Date()).toISOString() };
-        await options.repository.appendRunActivities(owner, chatId, runId, [activity]);
+        await appendPhase("applied");
       },
     });
   } catch (error: unknown) {
@@ -44,5 +54,17 @@ provenance?: { permissionModeProof?: string }): Promise<CanonicalSetChatPermissi
     // aborts/revokes partial changes itself. Never replay a failed native control.
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError("run_unavailable", "Could not change permission mode. Try again.", true, ["retry"]), 503);
   }
+  // Native authority and pending-tool release have fully succeeded. Only this
+  // receipt promotes durable/public authority. A lost DB ACK is ambiguous success;
+  // never convert it into a failed native grant or start a second transition.
+  let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([appendPhase("confirmed"), new Promise<never>((_resolve, reject) => {
+      receiptTimer = setTimeout(() => reject(unavailable()), 5_000); receiptTimer.unref?.();
+    })]);
+  } catch (error: unknown) {
+    console.warn("[chat/permission] Confirmation unavailable", error instanceof Error ? error.name : "UnknownError");
+    throw new CanonicalChatOrchestrationError(canonicalChatSafeError("run_unavailable", "Could not confirm permission mode. Refresh this Chat.", true, ["retry"]), 503);
+  } finally { if (receiptTimer) clearTimeout(receiptTimer); }
   return { chatId, runId, permissionMode: input.permissionMode, submission: "accepted" };
 }

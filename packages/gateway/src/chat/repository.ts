@@ -1,4 +1,4 @@
-import { getPermissionModeContext } from "./permission-mode-repository.js";
+import { getPermissionModeContext, hasUnconfirmedPermissionMode } from "./permission-mode-repository.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
@@ -195,6 +195,7 @@ export interface ChatTurnRunContext {
   userMessages: CanonicalChatMessage[];
   turn: CanonicalChatTurn;
   latestRun: CanonicalChatRun;
+  permissionModeUnconfirmed?: boolean;
 }
 
 export interface SharedPendingApproval {
@@ -1254,9 +1255,11 @@ export class ChatRepository {
         .where("turn_id", "=", turnId).orderBy("attempt", "desc").forUpdate().executeTakeFirst();
       if (!latest || ACTIVE_RUNS.includes(latest.status as typeof ACTIVE_RUNS[number])
         || run.attempt !== latest.attempt + 1 || latest.attempt >= 100
-        || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id) {
+        || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id
+        || run.permissionMode !== latest.permission_mode) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
+      if (await hasUnconfirmedPermissionMode(trx, chatId, latest.id)) throw new ChatConflictError(chatId, Number(current.revision));
       if (!run.context?.agent && (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId)) {
         throw new ChatProviderInstanceLockedError(chatId);
       }
@@ -1376,6 +1379,7 @@ export class ChatRepository {
       userMessages: userMessageRows.map(toMessage),
       turn: toTurn(turnRow),
       latestRun: toRun(runRow),
+      permissionModeUnconfirmed: await hasUnconfirmedPermissionMode(this.kysely, parsedChatId, runRow.id),
     };
   }
 

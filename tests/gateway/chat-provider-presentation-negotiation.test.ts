@@ -74,9 +74,14 @@ it("negotiates live mode capabilities independently and preserves strict legacy 
   const current = await (await routes.request("/api/chat-providers?includeLivePermissionModes=true")).json();
   expect(current.instances[0].supports.livePermissionModes).toEqual(["supervised", "full_access"]);
   expect((await routes.request("/api/chat-providers?includeLivePermissionModes=true&includeLivePermissionModes=false")).status).toBe(400);
-  const response = { activities: [{ type: "run.permission_mode", permissionMode: "full_access" }, { type: "run.status", status: "running" }] };
+  const response = { activities: [
+    ...["pending", "applied", "confirmed"].map(phase => ({ type: "run.permission_mode", phase, permissionMode: "full_access" })),
+    { type: "run.status", status: "running" },
+  ] };
   expect(projectChatPermissionModeResponse(response, "0").activities).toEqual([{ type: "run.status", status: "running" }]);
   expect(projectChatPermissionModeResponse({ type: "chat.content", content: response }, "0").content.activities).toHaveLength(1);
-  expect(projectChatPermissionModeResponse(response, "1")).toBe(response);
-  expect(response.activities).toHaveLength(2);
+  expect(projectChatPermissionModeResponse(response, "1").activities).toEqual([
+    { type: "run.permission_mode", permissionMode: "full_access" }, { type: "run.status", status: "running" },
+  ]);
+  expect(response.activities).toHaveLength(4);
 });

@@ -515,6 +515,7 @@ export const CanonicalChatToolOutputTextSchema = canonicalSafeErrorText(4_000, 1
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.permission_mode"), permissionMode: z.enum(["supervised", "full_access"]),
+    phase: z.enum(["pending", "applied", "confirmed"]).optional(),
     clientRequestId: canonicalReferenceId(128),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({

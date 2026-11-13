@@ -1,3 +1,4 @@
+import { CALL_TOOL } from "./claude-custom-mcp-approval.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
@@ -75,12 +76,12 @@ export function createClaudePermissionControl(options: {
         if (queued.length >= 16) { fail(unavailable()); return true; }
         queued.push({ request, respond }); return true;
       }
-      if (fullAccess) { allow(respond, request.input); return true; }
+      if (fullAccess && request.toolName !== CALL_TOOL) { allow(respond, request.input); return true; }
       return false;
     },
     async change(input: Change) {
       const deadline = new AbortController();
-      const timer = setTimeout(() => { deadline.abort(); options.abort(); }, 40_000);
+      const timer = setTimeout(() => { deadline.abort(); options.abort(); }, 35_000);
       timer.unref?.();
       const signal = AbortSignal.any([options.signal, deadline.signal]);
       const wait = <T>(work: Promise<T>) => new Promise<T>((resolve, reject) => {
@@ -94,14 +95,16 @@ export function createClaudePermissionControl(options: {
           || !input.permissionModeProof || !options.verify || !await wait(options.verify({ chatId: input.chatId, runId: input.runId,
             clientRequestId: input.clientRequestId, permissionMode: input.permissionMode, permissionModeProof: input.permissionModeProof }))) throw unavailable();
         if (closed || options.signal.aborted || changing) throw unavailable();
-        if (currentMode === input.permissionMode) { await wait(input.commit()); return; }
         changing = true;
         try {
-          await wait(request({ subtype: "apply_flag_settings", settings: input.permissionMode === "full_access" ? { sandbox: { enabled: false } } : options.supervisedSettings }));
-          const mode = input.permissionMode === "full_access" ? "bypassPermissions" : "default";
-          const acknowledged = await wait(request({ subtype: "set_permission_mode", mode }));
-          if (!z.object({ mode: z.literal(mode) }).safeParse(acknowledged).success) throw unavailable();
-          await wait(options.setAuthority(input.permissionMode === "full_access"));
+          await wait(input.begin());
+          if (currentMode !== input.permissionMode) {
+            await wait(request({ subtype: "apply_flag_settings", settings: input.permissionMode === "full_access" ? { sandbox: { enabled: false } } : options.supervisedSettings }));
+            const mode = input.permissionMode === "full_access" ? "bypassPermissions" : "default";
+            const acknowledged = await wait(request({ subtype: "set_permission_mode", mode }));
+            if (!z.object({ mode: z.literal(mode) }).safeParse(acknowledged).success) throw unavailable();
+            await wait(options.setAuthority(input.permissionMode === "full_access"));
+          }
           if (closed || options.signal.aborted) throw unavailable();
           await wait(input.commit());
           if (closed || options.signal.aborted) throw unavailable();
@@ -111,7 +114,7 @@ export function createClaudePermissionControl(options: {
           changing = false;
           while (queued.length) {
             const item = queued.shift()!;
-            if (fullAccess) await wait(item.respond({ behavior: "allow", updatedInput: item.request.input }));
+            if (fullAccess && item.request.toolName !== CALL_TOOL) await wait(item.respond({ behavior: "allow", updatedInput: item.request.input }));
             else if (!options.dispatch(item.request, item.respond)) await wait(item.respond({ behavior: "deny", message: "Tool approval unavailable." }));
           }
         } catch (error: unknown) { close(); fail(error); throw unavailable(); }

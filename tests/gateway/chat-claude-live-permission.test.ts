@@ -58,10 +58,10 @@ describe("Claude live owner permission control", () => {
     try {
       await vi.waitFor(() => expect(events.some(event => event.type === "approval.requested")).toBe(true));
       const liveAdapter = adapter as typeof adapter & { setPermissionMode?: (input: {
-        owner: typeof owner; chatId: string; runId: string; clientRequestId: string; permissionMode: "full_access"; permissionModeProof: string; commit(): Promise<void>;
+        owner: typeof owner; chatId: string; runId: string; clientRequestId: string; permissionMode: "full_access"; permissionModeProof: string; begin(): Promise<void>; commit(): Promise<void>;
       }) => Promise<void> };
       await liveAdapter.setPermissionMode?.({ owner, chatId: "chat_live", runId: "run_live",
-        clientRequestId: "req_live_permission", permissionMode: "full_access", permissionModeProof: "signed-owner-intent", commit: async () => {} });
+        clientRequestId: "req_live_permission", permissionMode: "full_access", permissionModeProof: "signed-owner-intent", begin: async () => {}, commit: async () => {} });
       expect(writes.filter(frame => frame.type === "control_request").map(frame => frame.request)).toEqual([
         { subtype: "apply_flag_settings", settings: { sandbox: { enabled: false } } },
         { subtype: "set_permission_mode", mode: "bypassPermissions" },
@@ -101,7 +101,7 @@ function permissionController(options: { verify?: boolean; reject?: string; comm
     },
   });
   const input = { owner: { type: "personal" as const, ownerId: "owner_live" }, chatId: "chat_live", runId: "run_live",
-    clientRequestId: "req_mode", permissionMode: "full_access" as const, permissionModeProof: "signed", commit };
+    clientRequestId: "req_mode", permissionMode: "full_access" as const, permissionModeProof: "signed", begin: async () => {}, commit };
   return { control, input, frames, abort, signal, authority, allowPending, commit };
 }
 
@@ -153,7 +153,7 @@ it("deduplicates and removes cancelled native requests while a mode acknowledgem
     },
   });
   const change = control.change({ owner: { type: "personal", ownerId: "owner" }, chatId: "chat_live", runId: "run_live",
-    clientRequestId: "req_cancel_queue", permissionMode: "full_access", permissionModeProof: "signed", commit: async () => {} });
+    clientRequestId: "req_cancel_queue", permissionMode: "full_access", permissionModeProof: "signed", begin: async () => {}, commit: async () => {} });
   await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function"));
   const respond = vi.fn(async () => {});
   const request = { nativeRequestId: "cancelled_native", toolName: "Bash", input: { command: "pwd" } };
@@ -203,7 +203,7 @@ it.each([
   try {
     await vi.waitFor(() => expect(events.some(event => event.type === "state.updated")).toBe(true));
     await adapter.setPermissionMode!({ owner, chatId: "chat_steer", runId: "run_steer", clientRequestId: "req_mode_steer",
-      permissionMode: targetMode, permissionModeProof: "signed", commit: async () => {} });
+      permissionMode: targetMode, permissionModeProof: "signed", begin: async () => {}, commit: async () => {} });
     await adapter.steer!({ owner, chatId: "chat_steer", runId: "run_steer", turnId: "cturn_steer", clientRequestId: "req_steer",
       prompt: "Continue carefully", parts: [{ type: "text", text: "Continue carefully" }] });
     await consuming;
@@ -233,4 +233,80 @@ it("cancels a permission transition without committing or releasing queued tools
   state.signal.abort(); await failed;
   expect(state.commit).not.toHaveBeenCalled(); expect(state.allowPending).not.toHaveBeenCalled();
   state.control.close();
+});
+
+
+it.each(["already_full", "during_upgrade"] as const)("keeps always-ask Custom MCP on the receipt path when %s", async phase => {
+  const owner = { type: "personal" as const, ownerId: "owner_custom" }, approvalId = "123e4567-e89b-42d3-a456-426614174001";
+  const toolInput = { server_id: "123e4567-e89b-42d3-a456-426614174000", tool: "read", arguments: { path: "/public/fixture" } };
+  const prepare = vi.fn(async () => ({ kind: "pending" as const, approvalId, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+  const decide = vi.fn(async () => ({ receipt: "a".repeat(64) })), writes: Frame[] = [];
+  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+  const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+    const child = new EventEmitter() as ReturnType<CanonicalCliSpawn>;
+    child.stdout = new EventEmitter() as typeof child.stdout; child.stderr = new EventEmitter() as typeof child.stderr;
+    const emit = (value: unknown) => queueMicrotask(() => child.stdout!.emit("data", Buffer.from(`${JSON.stringify(value)}\n`)));
+    const custom = () => emit({ type: "control_request", request_id: "native_custom", request: {
+      subtype: "can_use_tool", tool_name: "mcp__matrix-integrations__call_custom_mcp_tool", input: toolInput } });
+    child.kill = vi.fn(() => { queueMicrotask(() => child.emit("exit", 0, null)); return true; });
+    child.stdin = { write(chunk: string, callback?: (error?: Error | null) => void) {
+      callback?.(); const frame = JSON.parse(chunk) as Frame; writes.push(frame);
+      if (frame.type === "user") {
+        if (phase === "already_full") custom();
+        else emit({ type: "control_request", request_id: "native_builtin", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pwd" } } });
+      }
+      if (frame.type === "control_request") {
+        if (frame.request?.subtype === "set_permission_mode") custom();
+        emit({ type: "control_response", response: { subtype: "success", request_id: frame.request_id,
+          response: frame.request?.subtype === "set_permission_mode" ? { mode: frame.request.mode } : {} } });
+      }
+      if (frame.type === "control_response" && frame.response?.request_id === "native_custom") {
+        emit({ type: "result", subtype: "success", result: "done" }); queueMicrotask(() => child.emit("exit", 0, null));
+      }
+      return true;
+    }, end() {} } as typeof child.stdin;
+    return child;
+  });
+  const controller = new AbortController(), events: CanonicalProviderRunEvent[] = [];
+  const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn, resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry,
+    customMcpApprovalClient: { prepare, decide, registerRun: async () => ({ generation: 1 }), revokeRun: async () => true,
+      verifyPermissionMode: async () => true, verifyIntegrationDecision: async () => true } as unknown as CustomMcpApprovalClient });
+  const consuming = (async () => { for await (const event of adapter.start({ owner, chatId: "chat_custom", turnId: "cturn_custom", runId: "run_custom", prompt: "Read", parts: [{ type: "text", text: "Read" }],
+    selection: { instanceId: "claude_code_default", model: "claude-sonnet-4-5" }, interactionMode: "default", permissionMode: phase === "already_full" ? "full_access" : "supervised", signal: controller.signal })) events.push(event); })();
+  try {
+    if (phase === "during_upgrade") {
+      await vi.waitFor(() => expect(events.some(event => event.type === "approval.requested")).toBe(true));
+      await adapter.setPermissionMode!({ owner, chatId: "chat_custom", runId: "run_custom", clientRequestId: "req_custom_mode", permissionMode: "full_access", permissionModeProof: "signed", begin: async () => {}, commit: async () => {} });
+    }
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "approval.requested", approvalId })));
+    expect(writes.filter(frame => frame.type === "control_response" && frame.response?.request_id === "native_custom")).toEqual([]);
+    await adapter.submitApproval!({ owner, chatId: "chat_custom", runId: "run_custom", approvalId, decision: "approve", clientRequestId: "req_custom_approve", platformApprovalProof: "signed-exact-tool" });
+    await consuming;
+    expect(decide).toHaveBeenCalledWith("run_custom", approvalId, "approve", { chatId: "chat_custom", clientRequestId: "req_custom_approve", platformApprovalProof: "signed-exact-tool" });
+    expect(writes.find(frame => frame.type === "control_response" && frame.response?.request_id === "native_custom")?.response?.response)
+      .toEqual({ behavior: "allow", updatedInput: { ...toolInput, approval_receipt: "a".repeat(64) } });
+  } finally { controller.abort(); await consuming; registry.close(); }
+});
+
+
+it.each(["supervised", "full_access"] as const)("drains queued tools after a same-mode %s owner operation", async permissionMode => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const begin = vi.fn(() => held);
+  const dispatch = vi.fn(() => true), respond = vi.fn(async () => {}), write = vi.fn(async () => {});
+  const control = createClaudePermissionControl({ chatId: "chat_same", runId: "run_same", initialMode: permissionMode,
+    enabled: true, signal: new AbortController().signal, verify: async () => true, write,
+    supervisedSettings: {}, setAuthority: async () => {}, allowPending: async () => {}, dispatch, abort: () => {} });
+  const change = control.change({ owner: { type: "personal", ownerId: "owner" }, chatId: "chat_same", runId: "run_same",
+    clientRequestId: "req_same", permissionMode, permissionModeProof: "signed", begin, commit: async () => {} });
+  await vi.waitFor(() => expect(begin).toHaveBeenCalledOnce());
+  control.gate({ nativeRequestId: "same_builtin", toolName: "Bash", input: {} }, respond);
+  control.gate({ nativeRequestId: "same_custom", toolName: "mcp__matrix-integrations__call_custom_mcp_tool", input: {} }, respond);
+  release(); await change;
+  expect(write).not.toHaveBeenCalled();
+  expect(dispatch).toHaveBeenCalledTimes(permissionMode === "supervised" ? 2 : 1);
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ toolName: "mcp__matrix-integrations__call_custom_mcp_tool" }), respond);
+  expect(respond).toHaveBeenCalledTimes(permissionMode === "full_access" ? 1 : 0);
+  control.close();
 });

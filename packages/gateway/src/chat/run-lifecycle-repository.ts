@@ -384,8 +384,9 @@ export class ChatRunLifecycleRepository {
         .where("status", "in", [...ACTIVE_RUNS]).executeTakeFirst();
       const existingRun = run ?? await trx.selectFrom("chat_runs").select("id")
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
-      if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
-      if (!run) throw new ChatNotFoundError(chatId);
+      const terminalReceipt = activities.every(activity => activity.type === "run.permission_mode" && activity.phase === "confirmed");
+      if (existingRun && !run && !terminalReceipt) throw new ChatRunNotActiveError(chatId, runId);
+      if (!existingRun) throw new ChatNotFoundError(chatId);
       await assertPrivateRoutineRun(trx, owner, chatId, runId);
       if (expectedInputClaim) {
         const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
