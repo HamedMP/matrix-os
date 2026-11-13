@@ -1,3 +1,5 @@
+import { recoverExistingRoutineProposal } from "./routine-cli-existing-recovery.js";
+import { proposeWithinExistingRoutineBinding } from "./routine-cli-existing-binding.js";
 import type { Kysely, Transaction } from "kysely";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
@@ -13,6 +15,7 @@ import { createRoutineCliProposalsRepository } from "./repositories/routine-cli-
 import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
+import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { ROUTINE_CLI_REQUEST_PREFIX, newRoutineCliCanonicalRequestId, routineCliProposalInput, routineCliCanonicalRun, routineCliCanonicalHashMatches } from "./routine-cli-proposal-identity.js";
 import { assertRoutineCliProposalBinding } from "./routine-cli-proposal-runtime.js";
 
@@ -67,9 +70,14 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     return { run, dispatch, receipt };
   };
   const recover: RoutineCliProposalRuntime["recover"] = async input => deps.transact(input.ownerId, async tx => {
-    const row = await tx.db.selectFrom("routine_cli_proposals").selectAll().where("owner_id", "=", input.ownerId).where("computer_id", "=", scope.computerId)
-      .where("task_id", "=", input.taskId).executeTakeFirst();
-    if (!row || row.stage !== "pending_approval" || !row.interaction_id || input.runId && row.run_id !== input.runId) return false;
+    // A queued proposal's dispatch remains immutable after the task continues in a later run.
+    const row = await tx.db.selectFrom("routine_cli_proposals as dispatch")
+      .innerJoin("bot_tasks as task", join => join.onRef("task.owner_id", "=", "dispatch.owner_id")
+        .onRef("task.task_id", "=", "dispatch.task_id").onRef("task.run_id", "=", "dispatch.run_id"))
+      .selectAll("dispatch").where("dispatch.owner_id", "=", input.ownerId).where("dispatch.computer_id", "=", scope.computerId)
+      .where("dispatch.task_id", "=", input.taskId).executeTakeFirst();
+    if (!row) return recoverExistingRoutineProposal(tx, scope, input);
+    if (row.stage !== "pending_approval" || !row.interaction_id || input.runId && row.run_id !== input.runId) return false;
     const receipt = await requireReceipt(row.client_request_id, tx);
     if (input.chatId && receipt.target.chatId !== input.chatId) return false;
     const interaction = await tx.db.selectFrom("bot_interactions as i").innerJoin("bot_approvals as a", "a.approval_id", "i.interaction_id")
@@ -78,20 +86,21 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
       .where("a.bot_id", "=", receipt.target.botId).where("i.chat_id", "=", receipt.target.chatId).where("i.interaction_id", "=", row.interaction_id)
       .where("i.kind", "=", "approval").where("a.tool", "=", "routine.activate").executeTakeFirst();
     const task = await createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db);
+    if (task && task.runId !== row.run_id) return recoverExistingRoutineProposal(tx, scope, input);
     return !!interaction && !!task && task.botId === receipt.target.botId && task.chatId === receipt.target.chatId
       && interaction.task_id === task.taskId && interaction.source_run_id === row.run_id && interaction.run_id === row.run_id
-      && task.runId === row.run_id && (interaction.status !== "pending" || task.status === "waiting_person");
+      && (interaction.status !== "pending" || task.status === "waiting_person");
   });
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, source, target, operation }) => {
     if (operation.operation !== "propose") throw new RoutineCliError("unavailable");
-    // The still-unwired delegated path must never queue behind its own live target run.
-    if (source.identity.kind === "bot_child" || source.identity.kind === "chat_run" && source.identity.chatId === target.chatId) throw new RoutineCliError("permission_denied");
+    if (source.identity.kind === "bot_child") return proposeWithinExistingRoutineBinding({ registry: deps.registry, approvals: deps.approvals, transaction, source, target, operation, now: now() });
+    if (source.identity.kind === "chat_run" && source.identity.chatId === target.chatId) throw new RoutineCliError("permission_denied");
     await dispatches.reserve({ scope, requestId: operation.requestId, canonicalRequestId: newRoutineCliCanonicalRequestId(),
       requestHash: routineCliProposalInput({ operation }).hash, now: now() }, transaction.db);
     return { disposition: "queued" };
   };
-  const afterMutationCommit: RoutineCliAfterMutationCommit = async ({ operation }) => {
-    if (operation.operation !== "propose") return;
+  const afterMutationCommit: RoutineCliAfterMutationCommit = async ({ operation, admission }) => {
+    if (operation.operation !== "propose" || admission.disposition === "pending_approval") return;
     const selected = await deps.transact(scope.ownerId, async tx => {
       await lockRoutineCliRequest(tx.db as Transaction<OwnerBotDatabase>, scope, operation.requestId);
       const receipt = await requireReceipt(operation.requestId, tx), dispatch = await dispatches.get(scope, operation.requestId, tx.db, true);
@@ -138,12 +147,15 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
         const found = await resolveRun(binding, tx);
         if (!found) return undefined;
         intent = true;
-        await lockRoutineCliRequest(tx.db as Transaction<OwnerBotDatabase>, scope, found.receipt.requestId);
+        const trx = tx.db as Transaction<OwnerBotDatabase>;
+        // Receipt reads take the same policy locks before the request gate.
+        await lockRoutineCliPolicyScope(trx, scope);
+        await lockRoutineCliRequest(trx, scope, found.receipt.requestId);
         const dispatch = await dispatches.get(scope, found.receipt.requestId, tx.db, true);
         if (!dispatch || dispatch.stage !== "target_task_claimed") throw new RoutineCliError("permission_denied");
         const { receipt } = found;
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
-        await deps.targets.validateClaimedTargetWithin(tx.db as Transaction<OwnerBotDatabase>, receipt.target);
+        await deps.targets.validateClaimedTargetWithin(trx, receipt.target);
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
         const pending = await deps.approvals.proposeWithin(tx, binding, receipt.operation.operation === "propose" ? receipt.operation.proposal : undefined);
         const tasks = createBotTasksRepository(tx.db), task = await tasks.get({ ownerId: binding.ownerId, taskId: binding.taskId }, tx.db);
@@ -151,7 +163,7 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
         const waiting = await tasks.transition({ ownerId: binding.ownerId, taskId: task.taskId, baseRevision: task.revision, to: "waiting_person", now: now() }, tx.db);
         await tx.publish(binding.chatId, "bot.task.updated", { taskId: task.taskId, chatId: task.chatId, agentId: task.botId, status: waiting.status, revision: waiting.revision });
         await dispatches.advance(dispatch, { stage: "pending_approval", interaction_id: pending.interactionId, runtime_handle: binding.runtimeHandle, execution_generation: binding.executionGeneration }, now(), tx.db);
-        await deps.targets.validateClaimedTargetWithin(tx.db as Transaction<OwnerBotDatabase>, receipt.target);
+        await deps.targets.validateClaimedTargetWithin(trx, receipt.target);
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
         return { status: "waiting_person" as const }; // Already atomically settled; no generic settle afterward.
       });

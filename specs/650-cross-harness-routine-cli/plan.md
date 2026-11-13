@@ -61,6 +61,9 @@ Task4a owns default routing UI. Task4b owns the approved exact one-operation act
 ### Task 5: Claude/Codex/Hermes ordinary Chat and offered delegated Claude
 
 Own existing adapter lifecycle seams; per-turn source capability; actual CLI child/tool invocation. Hermes child channel and Codex native resumed-turn evidence gates must be primary-source verified.
+- [x] Task5a ordinary Claude and offered delegated Claude: actual admitted source → published CLI/private IPC → HTTP/PG/canonical path; real existing-binding reuse and immutable target ceiling. Independent review closed pre-close authority and cross-entrypoint lock-order defects; 128 PostgreSQL/221 related tests before fixes, then 59 affected PostgreSQL/83 affected unit tests and strict scoped types pass after original-fault restoration. Native/model/auth fixtures and separate pinned Linux ARM64 protocol observations do not establish a combined live run.
+- [ ] Task5b Codex ordinary Chat source and native turn/resume compatibility.
+- [ ] Task5c Hermes ordinary Chat source and native plugin/worker-context qualification.
 - [ ] Add failure-first source isolation/revocation/actual CLI process tests.
 - [ ] Implement scoped hooks without broad shell authority; review/commit.
 

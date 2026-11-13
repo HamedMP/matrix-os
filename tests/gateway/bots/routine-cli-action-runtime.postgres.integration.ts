@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { sql } from "kysely";
 import { SignJWT } from "jose";
 import { createRealBotStateDatabase } from "./bot-state-support.js";
 import { proposalFixture } from "./routine-cli-proposal-support.js";
@@ -71,3 +72,71 @@ it("actual owner namespaces, source capability lookup, owner HTTP and shared can
   expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);
   vi.unstubAllGlobals();
 });
+
+it("serializes an authorized receipt read with the target Bot consuming the same proposal", async () => {
+  const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
+  if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required");
+  data = await createRealBotStateDatabase(url, { routineAuthority: true });
+  f = await proposalFixture(data.db, vi.fn);
+  const handle = "computer-one";
+  runtime = createRoutineCliRuntime({ db: data.db, computerId: scope.computerId, configuredOwnerIds: [scope.ownerId], agents: f.agents,
+    repository: f.chats, transact: f.transact, approvals: f.approvals, registry: f.registry, now: () => new Date(f.state.clock),
+    control: createBotRoutineExecution({ db: data.db, transact: f.transact, approvals: f.approvals, available: () => true }),
+    platform: { platformUrl: "https://platform.example.test", handle, machineId: "machine_current", runtimeSlot: "primary",
+      token: buildPlatformVerificationToken(handle, "fixture-owner-receipt") } });
+  runtime.bindCanonical(f.canonical);
+  const beginConsume = Promise.withResolvers<void>(), releaseReader = Promise.withResolvers<void>();
+  let consumeEntered = false;
+  f.taskDependencies.routineProposals = { ...f.proposals, async consume(binding, signal) {
+    consumeEntered = true;
+    await beginConsume.promise;
+    return runtime.proposals.consume(binding, signal);
+  } };
+  const operation = { operation: "request" as const, requestId: invocation(803) };
+  let readPid = 0, pauseReader = false, reading: ReturnType<typeof runtime.execute> | undefined;
+  try {
+    await expect(f.submit(propose(803))).resolves.toMatchObject({ receipt: { disposition: "queued", requestId: operation.requestId } });
+    await expect.poll(() => consumeEntered, { timeout: 3000 }).toBe(true);
+    const source = await runtime.register({ source: { ...context("receipt_read_race"), identity: { kind: "terminal_launch",
+      sessionId: "fixture_receipt_reader", incarnationId: "inc_1", launchId: "launch_1" } }, signal: new AbortController().signal,
+      readPolicy: () => ({ live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "receipt_fixture" }),
+      async validateWithin(_source, trx, action, request) {
+        if (pauseReader && action === "read" && request && !readPid) {
+          readPid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid;
+          await releaseReader.promise;
+        }
+        return true;
+      } });
+    const issue = async (id: number) => {
+      const call = { operation, invocationId: invocation(id), signal: new AbortController().signal };
+      await expect(source.authorize(call)).resolves.toBe(true);
+      return (await source.issue(call)).takeToken();
+    };
+    const token = await issue(804);
+    pauseReader = true;
+    reading = runtime.execute({ operation, token });
+    void reading.catch(() => undefined);
+    await expect.poll(() => readPid, { timeout: 3000 }).toBeGreaterThan(0);
+    beginConsume.resolve();
+    // Wait for real policy contention before allowing the reader to take the request lock.
+    await expect.poll(async () => {
+      const row = (await sql<{ waiting: boolean }>`SELECT EXISTS(
+        SELECT 1 FROM pg_stat_activity WHERE ${readPid}=ANY(pg_blocking_pids(pid))
+          AND wait_event_type='Lock') AS waiting`.execute(data.db)).rows[0];
+      return row?.waiting;
+    }, { timeout: 3000 }).toBe(true);
+    releaseReader.resolve();
+    await expect(reading).resolves.toMatchObject({ kind: "receipt", receipt: { disposition: "queued", requestId: operation.requestId } });
+    await f.canonical.drain();
+    expect(await data.db.selectFrom("bot_tasks").select(["owner_id", "status"]).execute()).toEqual([{ owner_id: scope.ownerId, status: "waiting_person" }]);
+    expect(await data.db.selectFrom("bot_approvals").select(["owner_id", "tool"]).execute()).toEqual([{ owner_id: scope.ownerId, tool: "routine.activate" }]);
+    expect(await data.db.selectFrom("routine_cli_proposals").select("stage").execute()).toEqual([{ stage: "pending_approval" }]);
+    await expect(runtime.execute({ operation, token: await issue(805) })).resolves.toMatchObject({
+      kind: "receipt", receipt: { disposition: "queued", requestId: operation.requestId } });
+    expect(await data.db.selectFrom("bot_approvals").select("owner_id").execute()).toEqual([{ owner_id: scope.ownerId }]);
+  } finally {
+    beginConsume.resolve();
+    releaseReader.resolve();
+    if (reading) await Promise.allSettled([reading]);
+  }
+}, 15000);
