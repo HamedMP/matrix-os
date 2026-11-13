@@ -14,6 +14,11 @@ const historicalServerDigests = {
   "item/completed": "8ec2ff52d10fe877ce3353550dd0cbd9f4ca7358f8f47a572807994ae08a16c7",
   "turn/completed": "e8d4a5e2287d87bfcea1fc04428f44545ce243ef56381cbf6c8102f423f63dde",
 };
+const historical0167ServerDigests = {
+  "item/started": "91a60058ca9e9b9dee61f91aa674d5577f48ab94ecd80833b7500573ed19d644",
+  "item/completed": "091914fa7fb2f8aa285ce5c2452b3abbd7177c6d7193d56d7bb3e8c0f1dcddff",
+  "turn/completed": "a422130287e89c148ef74c9c38773df548c11153e68cfd57409705154ca16940",
+};
 
 it("guards the native callback and the exact managed request and response schemas", () => {
   expect(CODEX_VERIFIED_VERSION).toBe("0.162.1");
@@ -47,8 +52,8 @@ const mutations = [
   })),
 ];
 
-it.each(["0.166.0", "0.167.0", "0.167.1", "0.167.2"])("rejects every changed routine payload in %s after a whole-schema digest refresh", version => {
-  const fixture = version === "0.166.0" ? "0166" : "0167";
+it.each(["0.166.0", "0.167.0", "0.167.1", "0.167.2", "0.169.0"])("rejects every changed routine payload in %s after a whole-schema digest refresh", version => {
+  const fixture = version === "0.166.0" ? "0166" : version === "0.169.0" ? "0169" : "0167";
   const schemaBytes = gunzipSync(readFileSync(new URL(
     `../fixtures/codex-${fixture}/app-server-schema-${fixture}.json.gz`, import.meta.url,
   )));
@@ -57,7 +62,9 @@ it.each(["0.166.0", "0.167.0", "0.167.1", "0.167.2"])("rejects every changed rou
     latestVerifiedVersion: version,
     requiredServerProtocolSchemaDigests: version === "0.166.0"
       ? { ...app.requiredServerProtocolSchemaDigests, ...historicalServerDigests }
-      : app.requiredServerProtocolSchemaDigests,
+      : version.startsWith("0.167.")
+        ? { ...app.requiredServerProtocolSchemaDigests, ...historical0167ServerDigests }
+        : app.requiredServerProtocolSchemaDigests,
   };
   const verify = (bytes: Buffer, contract: typeof appServerContract) => verifyCodexProviderContracts({
     version, execContract: { ...exec, latestVerifiedVersion: version }, appServerContract: contract,
