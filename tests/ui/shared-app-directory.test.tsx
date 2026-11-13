@@ -50,6 +50,39 @@ it("reports a discovery failure and retries without treating it as an empty succ
   expect(result.current.unavailable).toBe(false);
 });
 
+it("stops a repeating server cursor and recovers through Retry", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  let repeat = true;
+  const api = { get: vi.fn(async () => ({ items: [target], ...(repeat ? { nextCursor: "loop" } : {}) })) };
+  const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
+  await waitFor(() => expect(result.current.unavailable).toBe(true));
+  expect(api.get).toHaveBeenCalledTimes(2);
+  repeat = false;
+  act(() => result.current.retry());
+  await waitFor(() => expect(result.current.unavailable).toBe(false));
+  expect(result.current.items).toEqual([target]);
+});
+
+it("lets an in-flight page finish when the polling timer fires", async () => {
+  vi.useFakeTimers();
+  let complete!: (value: unknown) => void;
+  const api = { get: vi.fn(() => new Promise((resolve) => { complete = resolve; })) };
+  const { result, rerender } = renderHook(({ enabled }) => useSharedAppDirectory(api, "user_member", enabled), {
+    initialProps: { enabled: false },
+  });
+  expect(api.get).not.toHaveBeenCalled();
+  expect(result.current.items).toEqual([]);
+  rerender({ enabled: true });
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(api.get).toHaveBeenCalledTimes(1);
+  await act(async () => complete({ items: [target] }));
+  expect(result.current.items).toEqual([target]);
+  rerender({ enabled: false });
+  expect(result.current.items).toEqual([]);
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(api.get).toHaveBeenCalledTimes(1);
+});
+
 it("marks and opens a shared app in the Web Mobile launcher", () => {
   const app = { id: "shared:tasks", name: "Shared tasks lab", path: `__shared-app__:${target.scopeId}`,
     iconSlug: "apps", sharedAppTarget: target };

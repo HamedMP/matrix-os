@@ -79,11 +79,9 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
     if (!api || !enabled) return;
     const reload = () => {
       const current = latest.current;
-      if (current?.api === api && current.identity === identity) {
-        if (current.loading) return;
-        setPageRequest({ api, identity, pages: [], hasEarlier: current.hasEarlier,
-          cursor: current.pages[0]?.cursor, pageCount: Math.max(current.pages.length, 1) });
-      } else setPageRequest(null);
+      if (!current || current.api !== api || current.identity !== identity || current.loading) return;
+      setPageRequest({ api, identity, pages: [], hasEarlier: current.hasEarlier,
+        cursor: current.pages[0]?.cursor, pageCount: Math.max(current.pages.length, 1) });
       setRefresh((value) => value + 1);
     };
     const unsubscribe = subscribeCollaborationDiscoveryChanged(reload);
