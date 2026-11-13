@@ -114,6 +114,16 @@ permission change is allowed.
   ceiling; only canonical Claude Supervised/Full-access supersession, supported by
   the original capability snapshot, preserves their existing source continuity.
   A permission change does not grant unattended routine authority.
+- Preview setup exposed an optional-provider coupling: the built-in permission
+  proof verifier was mounted only when Pipedream routes existed. Its focused
+  handler is now always registered behind the unchanged exact-machine/owner,
+  Preview/private eligibility and account-deletion guard. Without integrations,
+  the guard is scoped to that verifier only; absent optional endpoints preserve
+  their previous fallback behavior. Real application registration tests cover
+  owner/mode/run/request binding, forged proofs, machine authentication, bounded
+  bodies, shared Preview denial and live Private Preview membership revocation.
+  This fixes provider independence; it does not connect a Private Preview to an
+  unmerged Platform or relax its protected setup requirements.
 - Unsupported shared/Bot/plan/auto contexts remain unavailable. Ordinary custom
   MCP challenges keep their existing exact approval model. Older clients do not
   receive unrecognized activity variants or support fields without opting in.

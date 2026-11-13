@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createIntegrationChatApprovalRoutes } from "../../packages/platform/src/integration-chat-approval.js";
+import { createChatPermissionModeVerificationRoutes } from "../../packages/platform/src/chat-permission-mode-routes.js";
 import { mintChatPermissionModeProof, verifyChatPermissionModeProof } from "../../packages/platform/src/chat-permission-mode-proof.js";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -129,13 +129,13 @@ it("verifies live mode consent only for the authenticated machine owner and exac
     context.set("internalContainerHandle" as never, "owner" as never);
     context.set("internalContainerClerkUserId" as never, "clerk-owner" as never);
     await next();
-  }).route("/", createIntegrationChatApprovalRoutes(secret));
+  }).route("/", createChatPermissionModeVerificationRoutes(secret));
   const headers = { "content-type": "application/json", "x-matrix-chat-permission-mode-proof": proof };
   expect((await app.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify(body) })).status).toBe(200);
   for (const patch of [{ runId: "run_2" }, { permissionMode: "supervised" }, { clientRequestId: "req_other" }]) {
     expect((await app.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify({ ...body, ...patch }) })).status).toBe(403);
   }
   expect((await app.request("/permission-mode/verify", { method: "POST", headers: { ...headers, "x-matrix-chat-permission-mode-proof": "forged" }, body: JSON.stringify(body) })).status).toBe(403);
-  const unauthenticated = createIntegrationChatApprovalRoutes(secret);
+  const unauthenticated = createChatPermissionModeVerificationRoutes(secret);
   expect((await unauthenticated.request("/permission-mode/verify", { method: "POST", headers, body: JSON.stringify(body) })).status).toBe(401);
 });

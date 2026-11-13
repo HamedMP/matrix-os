@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
+import { createChatPermissionModeVerificationRoutes } from './chat-permission-mode-routes.js';
 import { createIntegrationChatApprovalRoutes } from './integration-chat-approval.js';
 import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
@@ -24,7 +25,6 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
   /** Spec 537 P5; without it every Private Preview stays denied. */
   privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
-  if (!options.internalIntegrationRoutes) return;
   const { db, platformSecret } = options;
   const internalIntegrationApp = new Hono<{
     Variables: {
@@ -34,7 +34,10 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
     };
   }>();
   const integrationGuard = createInternalIntegrationGuard();
-  internalIntegrationApp.use('*', async (c, next) => {
+  // Without an integration provider, expose only built-in permission verification.
+  // Keep absent optional endpoints on their existing fallback path.
+  const guardedPath = options.internalIntegrationRoutes ? '*' : '/permission-mode/verify';
+  internalIntegrationApp.use(guardedPath, async (c, next) => {
     const parsedHandle = HandleSchema.safeParse(c.req.param('handle'));
     if (!parsedHandle.success) {
       return c.json({ error: 'Invalid handle' }, 400);
@@ -99,9 +102,12 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       await next();
     });
   });
-  internalIntegrationApp.use('*', createAccountDeletionMutationGuard({ db,
+  internalIntegrationApp.use(guardedPath, createAccountDeletionMutationGuard({ db,
     resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
-  internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
-  internalIntegrationApp.route('/', options.internalIntegrationRoutes);
+  internalIntegrationApp.route('/', createChatPermissionModeVerificationRoutes(platformSecret));
+  if (options.internalIntegrationRoutes) {
+    internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
+    internalIntegrationApp.route('/', options.internalIntegrationRoutes);
+  }
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
 }
