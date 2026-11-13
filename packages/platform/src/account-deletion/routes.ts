@@ -11,7 +11,7 @@ const Owner = z.string().regex(/^user_[A-Za-z0-9_-]{1,150}$/);
 const Confirm = z.object({ confirm: z.literal(true) }).strict();
 const DeletedEvent = z.object({type:z.literal('user.deleted'),data:z.object({id:Owner,deleted:z.literal(true)})});
 const UpdatedEvent = z.object({type:z.literal('user.updated'),data:z.object({
-  id:Owner,banned:z.boolean().optional(),locked:z.boolean().optional(),
+  id:Owner,banned:z.boolean().optional(),locked:z.boolean().optional(),deprovisioned:z.boolean().optional(),
 })});
 const SessionEvent = z.object({ type:z.enum(['session.ended','session.revoked']),
   data:z.object({id:z.string().regex(/^sess_[A-Za-z0-9_-]{1,200}$/),user_id:Owner}) });
@@ -81,10 +81,6 @@ export function createAccountDeletionRoutes(options: {
       if (!path.endsWith('/cancel') && options.newRequestsEnabled === false) return c.json(unavailable(),503);
       try {
         const status=path.endsWith('/cancel') ? await options.service.cancel(owner) : await options.service.schedule(owner);
-        if (options.recordRecipientLifecycle)
-          await options.recordRecipientLifecycle({ userId: owner,
-            state: path.endsWith('/cancel') ? 'active' : 'inactive',
-            eventId: `matrix_deletion_${randomBytes(16).toString('hex')}`, eventAt: new Date() });
         return c.json(status,path.endsWith('/cancel')||status.status==='completed'?200:202);
       } catch(error:unknown) {
         if (error instanceof AccountDeletionOwnershipError) return c.json({error:'Transfer organization and shared project ownership before deleting your account.',code:'ownership_transfer_required'},409);
@@ -131,7 +127,8 @@ export function createAccountDeletionRoutes(options: {
     const occurred=z.object({timestamp:z.number().int().positive().max(8.64e15)}).safeParse(payload);
     const inactive=kind.data.type==='user.updated'
       && (('banned' in event.data.data && event.data.data.banned === true)
-        || ('locked' in event.data.data && event.data.data.locked === true));
+        || ('locked' in event.data.data && event.data.data.locked === true)
+        || ('deprovisioned' in event.data.data && event.data.data.deprovisioned === true));
     const state=kind.data.type==='user.deleted' ? 'deleted' : inactive ? 'inactive' : 'active';
     try {
       if (options.recordRecipientLifecycle) await options.recordRecipientLifecycle({
