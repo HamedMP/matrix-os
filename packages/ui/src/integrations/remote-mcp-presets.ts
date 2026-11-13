@@ -96,3 +96,10 @@ export function buildMcpConnectionInventory(
   }));
   return [...mcp, ...legacy];
 }
+
+/** Connections that are live right now, for the "routes to" summary of the Matrix MCP endpoint card. */
+export function connectedMcpServices(inventory: readonly McpInventoryEntry[]): Array<{ name: string; presetId?: string }> {
+  return inventory
+    .filter(entry => entry.statusLabel === "Connected")
+    .map(entry => (entry.kind === "mcp" && entry.presetId ? { name: entry.name, presetId: entry.presetId } : { name: entry.name }));
+}
