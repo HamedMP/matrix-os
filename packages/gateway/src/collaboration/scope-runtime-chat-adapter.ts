@@ -10,7 +10,7 @@ import {
   type CanonicalChatProviderAdapter,
 } from "../chat/provider-adapter.js";
 import type { CollaborationRunInterruptionReason } from "@matrix-os/contracts";
-import type { ScopeRuntimeCapability } from "./scope-runtime-client.js";
+import { ScopeRuntimeClientError, type ScopeRuntimeCapability } from "./scope-runtime-client.js";
 import { classifySharedRunLoss } from "./shared-run-loss.js";
 const StateSchema = z.object({
   runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/),
@@ -76,10 +76,20 @@ export function createScopeRuntimeChatProviderAdapter(options: {
       await stopInFlight;
       if (stoppedRuntimeHandle === state.runtimeHandle) return;
     }
-    const operation = options.client.stopRuntime({ runtimeHandle: state.runtimeHandle }).then(() => {
+    const confirmStopped = () => {
       stoppedRuntimeHandle = state.runtimeHandle;
       options.runtimes.release(state.runtimeHandle);
-    });
+    };
+    const operation = options.client.stopRuntime({ runtimeHandle: state.runtimeHandle }).then(
+      confirmStopped,
+      (error: unknown) => {
+        if (error instanceof ScopeRuntimeClientError && error.code === "runtime_not_found") {
+          confirmStopped();
+          return;
+        }
+        throw error;
+      },
+    );
     stopInFlight = operation;
     try {
       await operation;

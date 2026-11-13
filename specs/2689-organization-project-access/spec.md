@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/eng-29-shared-codex-subscription`
 **Created**: 2026-11-04
-**Status**: Draft
+**Status**: Implementation complete; live qualification pending
 **Tracking**: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os)
 **Input**: Simplify Matrix OS V1 collaboration so sharing a project with an organization gives every current and future organization member full project work access, including shared Chats, AI, tools, terminals, and project content. The owner alone manages sharing, whole-project deletion, and their AI accounts and billing; organization membership remains governed by organization policy. Shared AI follows the owner's current global AI Settings with request-time verification and no fallback.
 
@@ -147,7 +147,7 @@ As a project owner or organization administrator, I can remove access through th
 - The owner accepts responsibility for usage charges when confirming organization-wide project sharing; the confirmation copy states this consequence without a separate checkbox.
 - Provider Settings remains the single owner-facing place to select, change, or disconnect AI connections.
 - Installed capabilities may still be unavailable for operational reasons; universal project access does not bypass runtime availability or project isolation.
-- Public documentation ships in a separate `FinnaAI/matrix-os-site` pull request.
+- Public documentation ships in [FinnaAI/matrix-os-site#338](https://github.com/FinnaAI/matrix-os-site/pull/338).
 - Product, collaboration, provider-runtime, and security owners should review the authorization simplification; the requester has approved the V1 product direction.
 
 ## Explicit Exclusions
@@ -172,3 +172,11 @@ As a project owner or organization administrator, I can remove access through th
 - **SC-005**: Across account-change, logout, unavailable-source, and concurrent-change tests, 0 provider requests use an unselected account and 0 requests fall back to another funding source.
 - **SC-006**: Member prompts and AI responses remain present exactly once after project close/reopen, owner-runtime restart, and reconnect.
 - **SC-007**: Web Canvas, Web Desktop, and Electron Desktop each provide live evidence of the same share, member-work, AI, persistence, and denial behavior at the exact reviewed build.
+
+## Implementation Notes
+
+- The shipped access decision is role-free for shared projects: current owner and requester organization membership plus project lifecycle are authoritative. Historical project grants, activation rows, and execution policies are not serving authority; standalone compatibility remains unchanged.
+- Revocation is coordinated from pushed membership denials and post-commit unshare. It drains project and inherited WebSocket, terminal, sandbox, and shared-AI work while preserving the owner's private project data.
+- Shared AI resolves the owner's exact current ready Provider Settings V3 route at admission and rechecks the immutable tuple at queue claim, dispatch, and broker credential resolution. There is no alternate-provider, collaborator-credential, or Matrix-credit fallback.
+- No product-scope deviation was required. The implementation reuses the existing authority/session fence and runtime registries instead of introducing a second project policy system.
+- Exact commands, red/green results, environment-limited lanes, and remaining evidence requirements are recorded in `tasks.md` and `quickstart.md`.

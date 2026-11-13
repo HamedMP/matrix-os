@@ -150,6 +150,31 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it.each(["project.unshare", "membership.departure_cleanup"])(
+    "does not prepare a re-share while committed %s is pending",
+    async (operationKind) => {
+      await fixture.db.insertInto("collaboration_operations").values({
+        scope_id: SCOPE_ID,
+        actor_id: OWNER_ID,
+        client_request_id: "50000000-0000-4000-8000-000000000052",
+        operation_kind: operationKind,
+        payload_hash: "d".repeat(64),
+        status: "accepted",
+        result_ref: { scopeId: SCOPE_ID, lifecycle: "private", revision: 4 },
+        expected_revision: 3,
+        accepted_auth_epoch: 0,
+        created_at: NOW,
+        expires_at: new Date(NOW.getTime() + 60_000),
+      }).execute();
+
+      await expect(prepare()).rejects.toMatchObject({ code: "conflict" });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select("lifecycle")
+        .where("id", "=", SCOPE_ID)
+        .executeTakeFirstOrThrow()).resolves.toEqual({ lifecycle: "private" });
+    },
+  );
+
   it("moves to a new authority generation on the same owner runtime", async () => {
     await expect(journal().prepare({
       scopeId: SCOPE_ID,
@@ -821,7 +846,41 @@ describe("project collaboration transition journal", () => {
     expect(cleanupStaging).not.toHaveBeenCalled();
   });
 
-  it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
+  it("does not clean staging after another operation settles the transition", async () => {
+    const queryPause = createQueryResultPause();
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db.withPlugin(queryPause.plugin),
+      now: () => NOW,
+      createTransitionId: () => TRANSITION_ID,
+    });
+    await prepare();
+    await journal().beginStaging(TRANSITION_ID);
+    const cleanupStaging = vi.fn(async () => undefined);
+    const gate = queryPause.arm();
+
+    const recovery = transitions.recoverTransition(TRANSITION_ID, {
+      cleanupStaging,
+      completePublication: vi.fn(async () => undefined),
+    });
+    await gate.paused;
+    await fixture.db.transaction().execute(async (trx) => {
+      await trx.updateTable("collaboration_transitions").set({
+        status: "failed",
+        error_code: "owner_membership_ended",
+        updated_at: NOW,
+      }).where("id", "=", TRANSITION_ID).executeTakeFirstOrThrow();
+      await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "private",
+        updated_at: NOW,
+      }).where("id", "=", SCOPE_ID).executeTakeFirstOrThrow();
+    });
+    gate.release();
+
+    await expect(recovery).resolves.toBe("failed");
+    expect(cleanupStaging).not.toHaveBeenCalled();
+  });
+
+  it("removes staged bindings but preserves inherited scope identity when recovery restores privacy", async () => {
     const transitions = journal();
     await prepare();
     const childScopeId = "10000000-0000-4000-8000-000000000053";
@@ -869,7 +928,12 @@ describe("project collaboration transition journal", () => {
     await expect(fixture.db.selectFrom("collaboration_resource_bindings")
       .select("id").where("project_scope_id", "=", SCOPE_ID).execute()).resolves.toEqual([]);
     await expect(fixture.db.selectFrom("collaboration_scopes")
-      .select("id").where("id", "=", childScopeId).executeTakeFirst()).resolves.toBeUndefined();
+      .select(["id", "lifecycle", "auth_epoch"])
+      .where("id", "=", childScopeId).executeTakeFirstOrThrow()).resolves.toEqual({
+      id: childScopeId,
+      lifecycle: "private",
+      auth_epoch: 1,
+    });
   });
 
   it.each(["prepared", "staging", "fenced", "committing"] as const)(

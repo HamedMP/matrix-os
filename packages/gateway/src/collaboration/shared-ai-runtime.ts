@@ -687,6 +687,19 @@ export async function createSharedAiRuntime(options: {
         orchestrator: options.orchestrator,
       });
     },
+    async revokeScope(scopeId: string, actorId?: string): Promise<void> {
+      registry.releaseScope(scopeId, actorId);
+      if (actorId === undefined) await sandboxRuntimes.stopForScope(scopeId);
+      else await sandboxRuntimes.stopForActor(scopeId, actorId);
+      await interruptActiveSharedRuns({
+        db: options.db,
+        loss: options.runLoss,
+        reason: "run_unit_exit",
+        orchestrator: options.orchestrator,
+        scopeId,
+        ...(actorId === undefined ? {} : { requestingActorId: actorId }),
+      });
+    },
     async shutdown(): Promise<void> {
       stopped = true;
       clearInterval(wakeTimer);

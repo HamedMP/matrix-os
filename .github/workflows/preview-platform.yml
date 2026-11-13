@@ -127,7 +127,8 @@ jobs:
         id: config
         run: |
           set -euo pipefail
-          if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ]; then
+          if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ] &&
+             [ "${CONNECT_SHARE_PREVIEW:-false}" != "true" ]; then
             echo "connect_collaboration_preview runs only together with connect_share_preview for the same PR." >&2
             exit 1
           fi
@@ -1377,18 +1378,22 @@ jobs:
             session_minted_at=$SECONDS
           }
           send_runtime_command() {
-            local retry=(--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30)
-            # A transient systemd unit is not idempotent: never replay it after a lost response.
-            if [ "${2:-}" = once ]; then
-              retry=()
-            fi
             if [ $((SECONDS - session_minted_at)) -gt 200 ]; then
               mint_session_token || return 1
             fi
-            curl --fail --silent --show-error --max-time 45 "${retry[@]}" \
-              -o "$response" -X POST "$terminal_url" \
-              -H "authorization: Bearer ${preview_session_token}" \
-              -H 'content-type: application/json' --data-binary "$1" || return 1
+            # A transient systemd unit is not idempotent: never replay it after a lost response.
+            if [ "${2:-}" = once ]; then
+              curl --fail --silent --show-error --max-time 45 \
+                -o "$response" -X POST "$terminal_url" \
+                -H "authorization: Bearer ${preview_session_token}" \
+                -H 'content-type: application/json' --data-binary "$1" || return 1
+            else
+              curl --fail --silent --show-error --max-time 45 \
+                --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+                -o "$response" -X POST "$terminal_url" \
+                -H "authorization: Bearer ${preview_session_token}" \
+                -H 'content-type: application/json' --data-binary "$1" || return 1
+            fi
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
