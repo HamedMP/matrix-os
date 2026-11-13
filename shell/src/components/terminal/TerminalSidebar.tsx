@@ -226,7 +226,7 @@ export function LocalTerminalSidebar({
 }: {
   canvasZoom?: number;
   desktopParity?: boolean;
-  onDesktopSessionStateChange?: (state: DesktopTerminalSessionState) => void;
+  onDesktopSessionStateChange?: (state: Partial<DesktopTerminalSessionState>) => void;
 } = {}) {
   const ctx = useTerminalAppContext();
   const [listedShells, setShells] = useState<ShellSessionSummary[]>([]);
@@ -576,9 +576,11 @@ export function LocalTerminalSidebar({
   const desktopSessionsReady = shellsAuthoritative || Boolean(shellsError);
   const desktopSessionName = shells.find((shell) => shell.name === activeShellName)?.subtitle?.trim();
   useEffect(() => {
-    onDesktopSessionStateChange?.({ count: desktopSessionCount, ready: desktopSessionsReady,
-      sessionId: activeShellName, name: desktopSessionName });
-  }, [desktopSessionCount, desktopSessionsReady, activeShellName, desktopSessionName, onDesktopSessionStateChange]);
+    onDesktopSessionStateChange?.({ count: desktopSessionCount, ready: desktopSessionsReady });
+  }, [desktopSessionCount, desktopSessionsReady, onDesktopSessionStateChange]);
+  useEffect(() => {
+    onDesktopSessionStateChange?.({ sessionId: activeShellName, name: desktopSessionName });
+  }, [activeShellName, desktopSessionName, onDesktopSessionStateChange]);
   const queueFocusAfterManagedShellDelete = (shellName: string) => {
     const shellIndex = unfilteredRenderedShells.findIndex((shell) => shell.name === shellName);
     const remainingShells = unfilteredRenderedShells.filter((shell) => shell.name !== shellName);

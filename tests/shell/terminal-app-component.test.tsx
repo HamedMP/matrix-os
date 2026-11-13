@@ -425,6 +425,31 @@ describe("TerminalApp workspace contract", () => {
     expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: unknown }).paneTree).toBe(tree);
   });
 
+  // Fault detected (Greptile on #3299): moving focus to another shell before the next
+  // inventory poll re-reported the sidebar's stale empty count, so Web Desktop replaced the
+  // live panes with "No shell sessions yet" until polling caught up.
+  it("keeps new Desktop shells visible when focus moves before inventory catches up", async () => {
+    const created = [SECOND_TAB_ID, TAB_ID];
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [] });
+      if (url.endsWith("/api/terminal/workspaces/ensure")) return json({ workspace: workspace([]) });
+      if (url.endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") {
+        return json({ tab: tab(created.shift()!, JSON.parse(String(init.body)).name) }, 201);
+      }
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "New shell session" })[0]!);
+    await settle();
+    fireEvent.keyDown(screen.getByRole("application", { name: "Terminal" }), { key: "t", ctrlKey: true, shiftKey: true });
+    await settle();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(`${WORKSPACE_ID}:${TAB_ID}`);
+    expect(screen.queryByText("No shell sessions yet")).toBeNull();
+  });
+
   it("creates a tab under the ensured workspace", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
