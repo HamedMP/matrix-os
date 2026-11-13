@@ -7,7 +7,7 @@ import { SiteClientError, type SiteClient } from "../../shell/src/lib/site-clien
 
 const published = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Join us", slug: "matrix-launch", url: "https://matrix.page/matrix-launch", revision: 1, status: "published" as const, accessMode: "public" as const, activeVersion: "22222222-2222-4222-8222-222222222222", versions: [{ id: "22222222-2222-4222-8222-222222222222", createdAt: "2026-10-09T12:00:00Z" }, { id: "33333333-3333-4333-8333-333333333333", createdAt: "2026-10-08T12:00:00Z" }], config: { data: {}, forms: [] } };
 function client(overrides: Partial<SiteClient> = {}): SiteClient {
-  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(async () => undefined), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
+  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(async () => undefined), emailInvitations: vi.fn(async () => ({ invitations: [], nextCursor: null, siteRevision: 1 })), createEmailInvitations: vi.fn(), resendEmailInvitation: vi.fn(), revokeEmailInvitation: vi.fn(), emailInvitationAudit: vi.fn(async () => ({ events: [], nextCursor: null })), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
 }
 afterEach(cleanup);
 describe("shared app publishing", () => {
@@ -71,6 +71,73 @@ describe("shared app publishing", () => {
     expect(publishing.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByLabelText("Title")).toHaveProperty("value","Launch");
     expect(screen.getByText("Host the whole app at a stable Matrix.page URL.")).toBeTruthy();
+  });
+  it("uses the existing Share email row for capable email publications and shows ordered results", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const invitation={id:"44444444-4444-4444-8444-444444444444",emailAddress:"first@example.com",state:"pending" as const,
+      deliveryState:"queued" as const,generation:1,revision:0,issuedAt:"2026-11-13T00:00:00.000Z",
+      expiresAt:"2026-11-20T00:00:00.000Z",updatedAt:"2026-11-13T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const createEmailInvitations=vi.fn(async()=>({siteRevision:2,results:[
+      {inputIndex:0,outcome:"queued" as const,invitation},
+      {inputIndex:1,outcome:"invalid" as const},
+    ]}));
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations,
+      emailInvitations:vi.fn(async()=>({invitations:[invitation],nextCursor:null,siteRevision:2}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" ownerIdentity="owner@example.com" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const input=screen.getByLabelText("Invite by email");
+    fireEvent.change(input,{target:{value:"first@example.com, invalid-address"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    await waitFor(()=>expect(createEmailInvitations).toHaveBeenCalledWith("launch",
+      {baseRevision:1,emailAddresses:["first@example.com","invalid-address"]},expect.any(AbortSignal)));
+    expect(await screen.findByText("first@example.com — queued")).toBeTruthy();
+    expect(screen.getByText("invalid-address — invalid address")).toBeTruthy();
+    expect(screen.getAllByRole("heading",{name:"Invite"})).toHaveLength(1);
+    expect(screen.getByText("One-time invite link")).toBeTruthy();
+  });
+  it("offers email as a separate access mode only when the capability is ready", async () => {
+    const publicSite={...published,capabilities:{privateEmailInvitations:true}};
+    const emailSite={...publicSite,accessMode:"private_email" as const,revision:2};
+    const api=client({get:vi.fn(async()=>publicSite),update:vi.fn(async()=>emailSite)});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await screen.findByText("Your app is public.");
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",true);
+    fireEvent.click(screen.getByRole("button",{name:/Publish app to a permanent URL/}));
+    fireEvent.change(screen.getByLabelText("Access"),{target:{value:"private_email"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save URL and details"}));
+    await waitFor(()=>expect(api.update).toHaveBeenCalledWith("launch",
+      expect.objectContaining({accessMode:"private_email",baseRevision:1}),expect.any(AbortSignal)));
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    expect(screen.getByText("Your app uses email invitations.")).toBeTruthy();
+  });
+  it("keeps an unsent address visible after a conflict and asks for an authoritative refresh", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations:vi.fn(async()=>{throw new SiteClientError(409);})});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    fireEvent.change(screen.getByLabelText("Invite by email"),{target:{value:"viewer@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    expect((await screen.findByRole("alert")).textContent).toContain("Refresh and try again");
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("value","viewer@example.com");
+    expect(screen.getByRole("button",{name:"Refresh publication"})).toBeTruthy();
+  });
+  it("pages email inventory and resends an expired invitation with its revisions", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const expired={id:"44444444-4444-4444-8444-444444444444",emailAddress:"older@example.com",state:"expired" as const,
+      deliveryState:"failed" as const,generation:1,revision:3,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-11-08T00:00:00.000Z",updatedAt:"2026-11-08T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const emailInvitations=vi.fn().mockResolvedValueOnce({invitations:[],nextCursor:"page-two",siteRevision:1})
+      .mockResolvedValue({invitations:[expired],nextCursor:null,siteRevision:1});
+    const resendEmailInvitation=vi.fn(async()=>({invitation:{...expired,state:"pending" as const,deliveryState:"queued" as const,
+      generation:2,revision:4},siteRevision:2}));
+    const api=client({get:vi.fn(async()=>emailSite),emailInvitations,resendEmailInvitation});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Load more invitations"}));
+    expect(await screen.findByText(/older@example.com/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Resend"}));
+    await waitFor(()=>expect(resendEmailInvitation).toHaveBeenCalledWith("launch",expired.id,
+      {baseRevision:1,invitationRevision:3},expect.any(AbortSignal)));
+    expect(screen.getByText(/older@example.com/)).toBeTruthy();
   });
   it("creates an invite in one click by privately publishing a new app", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
