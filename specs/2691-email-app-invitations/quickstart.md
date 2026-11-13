@@ -336,7 +336,10 @@ production-domain Clerk result or a live release qualification.
   after optional Sites registration was moved into the focused registration
   module; the complete proxy-routing and Sites-management suites then passed
   (149 tests).
-- Platform TypeScript and Edge Worker typechecks passed. The production shell
+- Platform, Gateway, and Edge Worker typechecks passed. Gateway's first check
+  found a missing installed workspace link for the already locked `smol-toml`
+  dependency; `pnpm install --frozen-lockfile` restored it without a lockfile
+  change, and the rerun passed. The production shell
   build passed with a synthetic build-only Clerk publishable key. The first
   build reached prerender and failed because this worktree had no Clerk key;
   the synthetic key proves packaging only and cannot prove real sign-in.
@@ -347,6 +350,14 @@ production-domain Clerk result or a live release qualification.
   as above. The full suite has **not** passed at this checkpoint, and the
   focused lanes do not replace it. `bun` was unavailable here, so `pnpm run`
   invoked the same package scripts.
+- A 45-file Sites/Gateway/UI/contracts run finished with 353 passing and three
+  failing assertions. One exposed a regression in the Gateway's existing
+  rollback timeout: it had been shortened from 30 to 10 seconds. The rollback
+  budget was restored while new invitation mutations keep 10 seconds; the
+  complete Gateway platform-client file then passed all eight tests. The other
+  two failures are deployment-script tests that require `jq`, which is absent
+  from this host. The 45-file run was not repeated after the timeout fix, and
+  these two deployment assertions remain unqualified locally.
 - The site docs PR passed its 540-test suite and hosted Vercel build. The
   hosted page was inspected at 375, 768, and 1440 px without horizontal
   overflow. Documentation captures remain outside the repo under
