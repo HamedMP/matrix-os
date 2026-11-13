@@ -150,11 +150,13 @@ describe("shared project deep link", () => {
 });
 
 describe("shared app deep link", () => {
-  it("opens the common shared-app renderer inside the complete shell", async () => {
+  it("opens the common shared-app renderer on its own, without the viewer's personal desktop", async () => {
     const page = await SharedAppPage({ params: Promise.resolve({ scopeId }) });
     const names = componentNames(page);
 
-    expect(names).toContain("ShellHome");
+    expect(names).toContain("SharedAppStandalone");
+    expect(names).not.toContain("ShellHome");
+    expect(names).not.toContain("OnboardingGate");
     expect(names).not.toContain("CollaborationPage");
     expect(JSON.stringify(page)).toContain(`"kind":"app","scopeId":"${scopeId}"`);
   });
