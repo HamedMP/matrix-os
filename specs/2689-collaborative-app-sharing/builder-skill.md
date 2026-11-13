@@ -53,8 +53,8 @@ separately. Provide copyable Slack text only; no automatic channel post.
 - The schema-preservation test uses the existing PostgreSQL-compatible test engine
   and real app registry/query engine. UI failure tests use a schema-checked bridge
   fixture. Neither is live owner/member authentication or VPS qualification.
-- Focused `bun run test`: 151 tests passed across eight suites before the owner-retry
-  review fixes; its expanded artifact lane passes 36 tests. Full repository
+- Focused tests: 159 passed across eight suites after the review fixes, with no
+  skips; the artifact coverage lane passes 36 tests. Full repository
   typecheck passed. Pattern scan: zero violations, five existing warnings.
 - Follow-up recovery/CLI qualification: 36 tests pass against the shipped artifacts.
   Focused example/helper coverage passes the existing 99% statement/line/function
@@ -69,8 +69,23 @@ separately. Provide copyable Slack text only; no automatic channel post.
 - A second review reproduced a confirmed-write/late-rejection race. Initial saves
   and retries now show a failure only while their exact attempt remains unresolved.
 - Public-site tests: 540 passed after building its workspace prerequisites.
-- Live Matrix login is available, but this skill/example is not installed there
-  and a second account was not exercised. Four-surface evidence remains pending.
+- Installed the example with an unused qualification name/slug on the existing
+  owner host (build `6ef6b8ff`, v2026.11.12-1996). App-local pnpm 10.33.4 install
+  and production build pass with React 19.3.1/Vite 6.4.6. The genuine authenticated
+  readiness control reports this exact build ready on Web Desktop, Web Canvas and
+  web mobile (375px); captures are attached to ENG-29 and the PR. This supersedes
+  the first unavailable result before dependencies were installed. No share or OS
+  update was created. The sample is retained for human verification.
+- These captures prove launch/readiness only. Built-in-browser iframe input was
+  unavailable, so owner save/reopen and two-account behavior remain unverified.
+  Electron UI is unavailable under the requester's browser-only constraint.
+  Full surface/journey qualification remains pending; do not call this merge-ready.
+- Local full-suite execution was attempted and stopped after 16 minutes; the
+  checked-in duration profile totals 152 serial minutes. No complete local result
+  is claimed. Full CI was triggered; unit shards 1/4 and 4/4 and Electron E2E were
+  interrupted by runner shutdown signals without assertion failures before
+  cancellation. Retry CI on the reviewed head rather than changing test policy.
+- Public-guide verification:
   The local public-guide preview failed during Next compilation when disk space
   was exhausted; its generated cache was removed. The hosted PR #356 preview then
   passed visual checks at 375, 768 and 1280 pixels, with no root horizontal overflow.
