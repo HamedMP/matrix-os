@@ -1,3 +1,4 @@
+import { builtinToolPermissionModeCallback } from "@matrix-os/ui";
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { CanonicalRoutineActionMessage } from "./CanonicalRoutineActionMessage";
 import { BrowserPermissionCard, type BrowserPermissionClient } from "@matrix-os/ui";
@@ -72,7 +73,7 @@ export function CanonicalApprovalMessage({
   onOpenPermissionMode?: () => void;
   submitting: boolean;
   permissionMode?: string;
-  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void | Promise<void>;
   onTryAgain?: (prompt: string) => void;
   onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision, browserChoice?: BrowserPermissionChoice) => Promise<void>;
 }) {
@@ -103,7 +104,7 @@ export function CanonicalApprovalMessage({
         anchorId={`tool-approval-${approval.approvalId}`}
         submitting={submitting}
         permissionMode={permissionMode}
-        onPermissionMode={onPermissionMode}
+        onPermissionMode={builtinToolPermissionModeCallback(approval.approvalId, onPermissionMode)}
         onTryAgain={onTryAgain}
         onDecision={onSubmit ? (decision) => void submitGeneric(decision) : undefined}
       />

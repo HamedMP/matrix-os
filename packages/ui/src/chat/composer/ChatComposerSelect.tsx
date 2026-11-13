@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 export interface ChatComposerSelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 /** Compact composer-toolbar picker (effort, permission mode) shared by Web and Electron Desktop Chat. */
@@ -17,6 +18,8 @@ export function ChatComposerSelect({
   menuSide,
   menuZIndex,
   onChange,
+  disabled = false,
+  disabledReason,
 }: {
   openRequest?: number;
   label: string;
@@ -25,18 +28,23 @@ export function ChatComposerSelect({
   menuSide: "top" | "bottom";
   menuZIndex?: number;
   onChange: (value: string) => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => { if (openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest]);
+  useEffect(() => { if (!disabled && openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest, disabled]);
   if (options.length <= 1) return null;
   const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
           type="button"
           ref={trigger}
+          disabled={disabled}
+          title={disabledReason}
+          aria-description={disabledReason}
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}
@@ -71,6 +79,8 @@ export function ChatComposerSelect({
                 key={option.value}
                 type="button"
                 role="menuitemradio"
+                disabled={option.disabled}
+                title={option.disabled ? "Available after this run finishes." : undefined}
                 aria-checked={option.value === selected.value}
                 className="flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-checked:bg-[var(--composer-idle-bg,var(--bg-active))]"
                 style={{ color: "var(--text-primary)" }}

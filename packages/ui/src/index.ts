@@ -348,5 +348,6 @@ export { RoutineActionConfirmation, RoutineActionInbox } from "./routine-action/
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 
 export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
+export { useLiveChatPermissionMode, liveChatPermissionModes, builtinToolPermissionModeCallback, setCanonicalChatPermissionMode, CHAT_PERMISSION_MODE_ERROR, type ChatPermissionMode, type ChatPermissionModeClient, type ChatPermissionModeChangeResult } from "./chat/live-permission-mode.js";
 
 export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";

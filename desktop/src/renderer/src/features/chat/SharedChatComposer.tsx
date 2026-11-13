@@ -96,6 +96,7 @@ function SuggestionMenu({
 
 export function SharedChatComposer({
   permissionModeRequest = 0,
+  permissionControl,
   value,
   onChange,
   draftScopeKey,
@@ -137,6 +138,7 @@ export function SharedChatComposer({
   speech,
 }: {
   permissionModeRequest?: number;
+  permissionControl?: ReturnType<typeof import("@matrix-os/ui").useLiveChatPermissionMode>;
   value: string;
   onChange: (value: string) => void;
   draftScopeKey?: string;
@@ -358,6 +360,7 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
+  const permissionNotice = permissionControl?.error ?? permissionControl?.notice;
   const optionControls: ChatComposerOptionControl[] = selection ? [
     ...composerOptions.flatMap((option) => option.kind === "enum" ? [{
       id: option.id,
@@ -370,9 +373,11 @@ export function SharedChatComposer({
       id: "permission-mode",
       label: "Permission mode",
       value: selection.permissionMode,
-      options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
+      options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode), disabled: Boolean(permissionControl?.activeRun && mode !== "supervised" && mode !== "full_access") })),
       openRequest: permissionModeRequest,
-      onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
+      disabled: permissionControl?.disabled,
+      disabledReason: permissionControl?.disabledReason,
+      onChange: permissionControl?.selectFromComposer ?? ((permissionMode: string) => onSelectionChange({ ...selection, permissionMode })),
     },
   ] : [];
   const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
@@ -520,6 +525,7 @@ export function SharedChatComposer({
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />}
+            {permissionNotice ? <span role="alert" className="text-xs">{permissionNotice}</span> : null}
             <ChatComposerOptionControls controls={optionControls} openRequest={permissionModeRequest} menuSide={menuSide} />
           </>
         )}

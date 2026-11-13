@@ -89,9 +89,11 @@ function AccessMenu({
 function PermissionModeControl({
   mode,
   onSelect,
+  disabled,
 }: {
   mode: string | undefined;
   onSelect: (mode: "supervised" | "full_access") => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,7 +118,7 @@ function PermissionModeControl({
   }, [open]);
   return (
     <div ref={containerRef} className="relative">
-      <button ref={triggerRef} type="button" className="h-6 px-2 text-[12px] font-medium" style={{ color: muted }} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((current) => !current)}>
+      <button ref={triggerRef} type="button" disabled={disabled} className="h-6 px-2 text-[12px] font-medium" style={{ color: muted }} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((current) => !current)}>
         Always allow → Full access
       </button>
       {open ? <AccessMenu mode={mode} onSelect={(next) => { setOpen(false); triggerRef.current?.focus(); onSelect(next); }} /> : null}
@@ -153,7 +155,7 @@ export function SupervisedToolApprovalCard({
   submitting?: boolean;
   permissionMode?: string;
   onDecision?: (decision: CanonicalChatApprovalDecision) => void;
-  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void | Promise<void>;
   onTryAgain?: (prompt: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -199,21 +201,39 @@ function ApprovalActions({
   submitting: boolean;
   permissionMode?: string;
   onDecision?: (decision: CanonicalChatApprovalDecision) => void;
-  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void | Promise<void>;
 }) {
-  const disabled = submitting || !onDecision;
-  // Full access applies from the next request, so it also approves this one; Supervised changes nothing.
-  const choosePermission = (mode: "supervised" | "full_access") => {
-    if (mode !== "full_access" || !onPermissionMode) return;
-    onPermissionMode("full_access");
-    if (!disabled && approval.allowOnce) onDecision?.("approve");
+  const [changing, setChanging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const disabled = submitting || changing || !onDecision;
+  const choosePermission = async (mode: "supervised" | "full_access") => {
+    if (mode !== "full_access" || !onPermissionMode || disabled || inFlight.current) return;
+    inFlight.current = true;
+    setChanging(true);
+    setError(null);
+    try {
+      // Only the canonical permission mutation can upgrade a run and settle its tools.
+      await onPermissionMode("full_access");
+    } catch (failure: unknown) {
+      console.warn("[chat] Permission mode change failed:", failure instanceof Error ? failure.name : "UnknownError");
+      if (mounted.current) setError("Could not change permission mode. Try again.");
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setChanging(false);
+    }
   };
   return (
+    <div className="flex flex-col gap-2">
     <div className="relative flex items-center gap-2">
       {approval.allowOnce ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: ink, color: paper }} onClick={() => onDecision?.("approve")}>Allow once</button> : null}
       {approval.decline ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: "transparent", color: ink }} onClick={() => onDecision?.("decline")}>Not now</button> : null}
       <span className="flex-1" />
-      {onPermissionMode ? <PermissionModeControl mode={permissionMode} onSelect={choosePermission} /> : null}
+      {onPermissionMode ? <PermissionModeControl mode={permissionMode} disabled={disabled} onSelect={(mode) => { void choosePermission(mode); }} /> : null}
+    </div>
+    {error ? <p role="alert" className="text-[13px]" style={{ color: ink }}>{error}</p> : null}
     </div>
   );
 }

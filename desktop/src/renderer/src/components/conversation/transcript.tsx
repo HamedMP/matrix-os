@@ -1,3 +1,4 @@
+import { builtinToolPermissionModeCallback } from "@matrix-os/ui";
 import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
 import { BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
@@ -116,9 +117,9 @@ function SupervisedToolRequest({
       <SupervisedToolApprovalCard
         approval={tool}
         anchorId={`tool-approval-${request.requestId}`}
-        submitting={pending}
+        submitting={pending || callbacks.permissionModePending}
         permissionMode={callbacks.permissionMode}
-        onPermissionMode={callbacks.onPermissionMode}
+        onPermissionMode={builtinToolPermissionModeCallback(request.requestId, callbacks.onPermissionMode)}
         onTryAgain={callbacks.onTryAgain}
         onDecision={canAct ? (decision) => {
           const action = offeredApprovalAction(request, callbacks, decision);

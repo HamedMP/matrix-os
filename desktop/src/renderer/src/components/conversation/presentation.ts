@@ -159,7 +159,8 @@ export interface ConversationPresentationCallbacks {
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   permissionMode?: string;
-  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  permissionModePending?: boolean;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void | Promise<void>;
   onTryAgain?: (prompt: string) => void;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;

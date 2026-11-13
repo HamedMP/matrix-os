@@ -1,5 +1,6 @@
-import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
+import { setCanonicalChatPermissionMode } from "@matrix-os/ui";
+import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
@@ -967,6 +968,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     newChat,
     switchConversation,
     abortCurrent,
+    setPermissionMode: (runId, permissionMode, clientRequestId) => setCanonicalChatPermissionMode({
+      client, runId, permissionMode, clientRequestId, getDetail: () => detailRef.current, isCurrent,
+      commit: update => { const next = update(detailRef.current); detailRef.current = next; setDetail(next); }, refresh: loadDetail,
+    }),
     submitApproval,
     submitInput,
   };

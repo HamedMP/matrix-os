@@ -1,3 +1,4 @@
+import { CanonicalSetChatPermissionModeRequestSchema, CanonicalSetChatPermissionModeResponseSchema, type CanonicalSetChatPermissionModeRequest, type CanonicalSetChatPermissionModeResponse } from "@matrix-os/contracts";
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
@@ -79,6 +80,7 @@ export interface CanonicalShellChatClient {
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
   uploadAttachment(file: ShellAttachmentInput, retryKey?: string): Promise<CanonicalAttachmentReference>;
   deleteAttachment(ownerReference: string): Promise<void>;
+  setPermissionMode?(chatId: string, runId: string, input: CanonicalSetChatPermissionModeRequest): Promise<CanonicalSetChatPermissionModeResponse>;
   submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   submitApproval(
     chatId: string,
@@ -391,6 +393,15 @@ export function createCanonicalShellChatClient(options: {
         || !("deleted" in response) || typeof response.deleted !== "boolean") {
         throw new Error("InvalidAttachmentDeleteResponse");
       }
+    },
+    async setPermissionMode(chatId, runId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const run = CanonicalChatRunIdSchema.parse(runId);
+      const body = CanonicalSetChatPermissionModeRequestSchema.parse(input);
+      const path = `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(run)}/permission-mode`;
+      return CanonicalSetChatPermissionModeResponseSchema.parse(await request(path, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }, { timeoutMs: 45_000 }));
     },
     async submitInput(chatId, runId, requestId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);

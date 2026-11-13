@@ -1,4 +1,5 @@
 "use client";
+import { useLiveChatPermissionMode, liveChatPermissionModes } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
@@ -197,6 +198,7 @@ interface ChatAppProps {
   executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
   onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
+  onSetPermissionMode?: (runId: string, mode: "supervised" | "full_access", clientRequestId: string) => Promise<void | import("@matrix-os/ui").ChatPermissionModeChangeResult>;
   onSubmitApproval?: (
     runId: string,
     approvalId: string,
@@ -238,6 +240,7 @@ function ChatAppContent({
   boundProviderInstanceId,
   browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
+  onSetPermissionMode,
   onSubmitInput,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -390,10 +393,14 @@ function ChatAppContent({
     const view = supervisedToolApproval(approval);
     return view?.kind === "waiting" ? [{ id: approval.approvalId, bar: view.bar }] : [];
   })[0] ?? null;
+  const permissionControl = useLiveChatPermissionMode({
+    scope: `${authorityKey ?? ""}:${sessionId ?? ""}:${activeRunId ?? ""}`,
+    activeRunId, liveModes: liveChatPermissionModes(providerState.catalog, executionControls, activeRunId, !directBotId && !collaborationView),
+    change: directBotId ? undefined : onSetPermissionMode, changeDraft: providerState.selectPermissionMode,
+  });
   const approvalPermissionMode = directBotId ? botPresentation?.permissionMode : providerState.selected?.permissionMode;
-  const onApprovalPermissionMode = !directBotId && providerState.selected?.permissionModes.includes("full_access")
-    ? providerState.selectPermissionMode
-    : undefined;
+  const onApprovalPermissionMode = !directBotId && activeRunId && permissionControl.supported
+    ? permissionControl.select : undefined;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the writeHermesSetup useEffect dependency array below; keep an explicit useMemo so the persisted-setup effect only re-runs when the channel set actually changes, not on every render.
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
   useEffect(() => {
@@ -504,7 +511,7 @@ function ChatAppContent({
   };
 
   const composerToolbar = !collaborationView && !botIdentityUnknown && !directBotId
-    ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
+    ? <WebChatComposerControls permissionControl={permissionControl} providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
       onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
     : undefined;
   // Electron Desktop's pane toggle at the top-left of the Chat pane; the phone drawer has its own close button.
@@ -774,7 +781,7 @@ function ChatAppContent({
                           onOpenPermissionMode={!directBotId && !collaborationView ? () => setPermissionModeRequest(value => value + 1) : undefined}
                           submitting={(() => {
                             const approval = canonicalApproval(msg);
-                            return approval !== null
+                            return permissionControl.pending || approval !== null
                               && submittingApprovalId === `${approval.runId}\0${approval.approvalId}`;
                           })()}
                           permissionMode={approvalPermissionMode}

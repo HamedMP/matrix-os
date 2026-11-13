@@ -350,12 +350,12 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true&includeLivePermissionModes=true$/);
 
     fireEvent(window, new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true&includeLivePermissionModes=true");
   });
 
   it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
@@ -380,7 +380,7 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByText("Not supported in this runtime")).toBeVisible();
     expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/), expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true&includeLivePermissionModes=true$/), expect.any(Object));
 
     fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));

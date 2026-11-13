@@ -14,8 +14,9 @@ function glyphKind(route: { instanceId: string; driverKind: CanonicalProviderIns
 }
 
 /** Model, effort and access pickers for the Web Chat composer toolbar, matching Electron Desktop. */
-export function WebChatComposerControls({ providerState, lockedInstanceId, permissionModeRequest = 0, onSetupAction }: {
+export function WebChatComposerControls({ providerState, permissionControl, lockedInstanceId, permissionModeRequest = 0, onSetupAction }: {
   providerState: ChatProviderState;
+  permissionControl?: ReturnType<typeof import("@matrix-os/ui").useLiveChatPermissionMode>;
   lockedInstanceId?: string;
   /** Bumping this opens the Permission mode picker (or the narrow Chat settings menu). */
   permissionModeRequest?: number;
@@ -24,6 +25,7 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
   const { selected, activeInstance } = providerState;
   const label = canonicalProviderModelRouteLabel(activeInstance ?? undefined, providerState.displayModelLabel ?? "Choose model");
   const statusLabel = providerState.loading && providerState.selectionStatus !== "Credit reserved" ? null : providerState.selectionStatus;
+  const permissionNotice = permissionControl?.error ?? permissionControl?.notice;
   const controls: ChatComposerOptionControl[] = selected ? [
     ...selected.options.flatMap((option) => option.kind === "enum" && option.placement === "composer" ? [{
       id: option.id,
@@ -36,9 +38,11 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
       id: "permission-mode",
       label: "Permission mode",
       value: selected.permissionMode,
-      options: selected.permissionModes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
+      options: selected.permissionModes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode), disabled: Boolean(permissionControl?.activeRun && mode !== "supervised" && mode !== "full_access") })),
       openRequest: permissionModeRequest,
-      onChange: providerState.selectPermissionMode,
+      disabled: permissionControl?.disabled,
+      disabledReason: permissionControl?.disabledReason,
+      onChange: permissionControl?.selectFromComposer ?? providerState.selectPermissionMode,
     },
   ] : [];
   return (
@@ -63,6 +67,7 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
         onSetupAction={onSetupAction}
         onOpenSettings={openProviderSettings}
       />
+      {permissionNotice ? <span role="alert" className="text-xs">{permissionNotice}</span> : null}
       <ChatComposerOptionControls controls={controls} openRequest={permissionModeRequest} menuSide="top" menuZIndex={SHELL_Z_INDEX.popover} />
     </>
   );

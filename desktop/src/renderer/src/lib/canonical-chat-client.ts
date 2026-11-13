@@ -1,3 +1,4 @@
+import { CanonicalSetChatPermissionModeRequestSchema, CanonicalSetChatPermissionModeResponseSchema, type CanonicalSetChatPermissionModeRequest, type CanonicalSetChatPermissionModeResponse } from "@matrix-os/contracts";
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
@@ -193,6 +194,7 @@ export interface CanonicalChatClient {
     runId: string,
     input: CanonicalCancelChatRunRequest,
   ): Promise<CanonicalChatRunCancellationResponse>;
+  setPermissionMode?(chatId: string, runId: string, input: CanonicalSetChatPermissionModeRequest): Promise<CanonicalSetChatPermissionModeResponse>;
   submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   submitApproval(
     chatId: string,
@@ -520,6 +522,13 @@ export function createCanonicalChatClient(
       ));
     },
 
+    async setPermissionMode(chatId, runId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const run = CanonicalChatRunIdSchema.parse(runId);
+      const body = CanonicalSetChatPermissionModeRequestSchema.parse(input);
+      const path = `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(run)}/permission-mode`;
+      return CanonicalSetChatPermissionModeResponseSchema.parse(await api.post(path, body, { timeoutMs: 45_000 }));
+    },
     async submitInput(chatId, runId, requestId, input) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);

@@ -57,6 +57,8 @@ export function useCanonicalComposerSelection({
   const observedCatalog = useRef(false);
   const controlsRunId = executionControls?.chatId === chatId ? executionControls.runId : undefined;
   const observedControlsRunId = useRef(controlsRunId);
+  const controlsPermissionMode = executionControls?.chatId === chatId ? executionControls.permissionMode : undefined;
+  const observedPermissionMode = useRef(controlsPermissionMode);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -67,6 +69,8 @@ export function useCanonicalComposerSelection({
     selectionIdentityKey.current = identityKey;
     const chatChanged = selectionChatId.current !== chatId;
     const acceptedControlsChanged = observedControlsRunId.current !== controlsRunId;
+    const acceptedPermissionChanged = observedPermissionMode.current !== controlsPermissionMode;
+    observedPermissionMode.current = controlsPermissionMode;
     observedControlsRunId.current = controlsRunId;
     if (chatChanged || scopeChanged || acceptedControlsChanged) {
       selectionChatId.current = chatId;
@@ -103,7 +107,9 @@ export function useCanonicalComposerSelection({
         && currentInstance.supports.permissionModes.includes(current.permissionMode)
         && rememberedOptions(catalog, current).length === current.options.length
         && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
-      if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
+      if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) {
+        return acceptedPermissionChanged && boundModes ? { ...current, permissionMode: boundModes.permissionMode } : current;
+      }
       if (!chatChanged && !scopeChanged && (composerSelectionTouched.current || hadObservedCatalog) && current
         && (!currentInstance || currentInstance.availability !== "available"
           || !currentInstance.models.some(model => model.id === current.model && model.availability === "available"))
@@ -185,6 +191,7 @@ export function useCanonicalComposerSelection({
     chatId,
     currentSelection,
     controlsRunId,
+    controlsPermissionMode,
     executionControls,
     lastComposerInstanceId,
     providerPreferencesHydrated,
