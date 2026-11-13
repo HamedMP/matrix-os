@@ -19,6 +19,26 @@ const verify = {
 };
 
 describe("Platform-authenticated Custom MCP approval proof", () => {
+  it("signs a dedicated live permission change only from the authenticated owner session", async () => {
+    const path = "/api/chats/chat_1/runs/run_1/permission-mode";
+    const body = JSON.stringify({ clientRequestId: "req_permission_1", permissionMode: "full_access" });
+    const proof = await authenticatedApprovalProxyProof({
+      method: "POST", path, handle: "owner", platformSecret: secret,
+      identity: { handle: "owner", userId: "clerk-owner", source: "auth" },
+      request: new Request(`https://app.example.test${path}`, { method: "POST", body }),
+    });
+    expect(typeof proof).toBe("string");
+    if (typeof proof === "string") expect(proof).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/);
+    // A mode mutation has its own signed scope; ordinary one-time approval proofs remain insufficient.
+    expect(mintCustomMcpApprovalProof({ ...base, path, body })).toBeNull();
+    const unsigned = await authenticatedApprovalProxyProof({
+      method: "POST", path, handle: "owner", platformSecret: secret,
+      identity: { handle: "owner", userId: "clerk-owner", source: "static-route" },
+      request: new Request(`https://app.example.test${path}`, { method: "POST", body }),
+    });
+    expect(unsigned).toBeNull();
+  });
+
   it("mints only after a verified Clerk or platform sync-JWT identity on the exact bounded canonical submit", () => {
     for (const source of ["auth"] as const) {
       const proof = mintCustomMcpApprovalProof({ ...base, identity: { ...base.identity, source } });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { SupervisedToolApprovalCard } from "../../packages/ui/src/chat/SupervisedToolApprovalCard";
 import type { SupervisedToolApproval } from "../../packages/contracts/src/supervised-tool-approval";
@@ -17,6 +17,50 @@ const waiting: SupervisedToolApproval = {
 };
 
 describe("Supervised tool approval card", () => {
+  it("waits for confirmed Full access and never sends an independent approve-once decision", async () => {
+    let confirm!: () => void;
+    const confirmation = new Promise<void>((resolve) => { confirm = resolve; });
+    const onPermissionMode = vi.fn(() => confirmation);
+    const onDecision = vi.fn();
+    render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Full access/ }));
+    expect(onPermissionMode).toHaveBeenCalledWith("full_access");
+    expect(onDecision).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Not now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Always allow → Full access" })).toBeDisabled();
+
+    await act(async () => { confirm(); await confirmation; });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Allow once" })).not.toBeDisabled());
+    expect(onDecision).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed Full access change waiting and reports a safe error instead of approving", async () => {
+    let reject!: (error: Error) => void;
+    const confirmation = new Promise<void>((_resolve, fail) => { reject = fail; });
+    // Observe the rejection here as well: the regression must not leak an unhandled rejection.
+    const observedFailure = confirmation.catch((error: unknown) => error);
+    const onDecision = vi.fn();
+    const onPermissionMode = vi.fn(() => confirmation);
+    render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Full access/ }));
+
+    await act(async () => {
+      reject(new Error("provider secret /private/runtime/path"));
+      await observedFailure;
+    });
+    expect(onDecision).not.toHaveBeenCalled();
+    expect(screen.getByText("Needs your approval")).toBeTruthy();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not change permission mode. Try again.");
+    expect(screen.queryByText(/provider secret|private\/runtime/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Allow once" })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
+    expect(screen.getByRole("menuitemradio", { name: /Supervised/ })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("offers Allow once and Not now, and no chat-wide grant", () => {
     const onDecision = vi.fn();
     render(<SupervisedToolApprovalCard approval={waiting} onDecision={onDecision} />);
