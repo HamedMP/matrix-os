@@ -3,7 +3,6 @@
 import { Plug } from "lucide-react";
 import type { ReactNode } from "react";
 import { McpServiceLogo } from "./McpServiceLogo.js";
-import { MCP_SERVICE_MARKS } from "./mcp-service-marks.js";
 import { mcpTokens as t, toneColor, type McpStatusTone } from "./mcp-settings-tokens.js";
 import type { McpInventoryEntry } from "./remote-mcp-presets.js";
 
@@ -18,12 +17,6 @@ const LABEL_TONES: Record<string, McpStatusTone> = {
   Connected: "success", "Sign-in required": "warning", "Action required": "warning", "Needs attention": "warning",
   Degraded: "danger", Disabled: "neutral", Pending: "neutral",
 };
-
-/** Legacy connected apps carry a display name only; match it to a catalog mark when one exists. */
-function logoIdForName(name: string): string | undefined {
-  const id = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  return Object.hasOwn(MCP_SERVICE_MARKS, id) ? id : undefined;
-}
 
 export function McpStatusPill({ label }: { label: string }) {
   const color = toneColor(LABEL_TONES[label] ?? "warning");
@@ -57,7 +50,7 @@ export function McpConnectionInventory({ entries, renderActions, renderDetails }
             ? { borderColor: `color-mix(in srgb, ${t.warning} 40%, transparent)`, background: `color-mix(in srgb, ${t.warning} 8%, ${t.surface})` }
             : { borderColor: t.border, background: t.surface }}>
           <div className="flex flex-wrap items-center gap-3 p-4">
-            <McpServiceLogo presetId={entry.kind === "mcp" ? entry.presetId : logoIdForName(entry.name)} name={entry.name} size={40} />
+            <McpServiceLogo presetId={entry.kind === "mcp" ? entry.presetId : undefined} name={entry.name} size={40} />
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium" style={{ color: t.text }}>{entry.name}</p>

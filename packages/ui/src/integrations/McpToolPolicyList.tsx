@@ -53,7 +53,7 @@ export function McpToolPolicyList({ tools, serverEnabled, onToolEnabledChange, o
                 <span className="absolute size-3 rounded-full bg-white shadow transition-transform" style={{ transform: `translateX(${tool.enabled ? 14 : 2}px)` }} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium" style={{ fontFamily: t.mono, color: tool.enabled ? t.text : t.muted }}>{tool.name}</span>
+                <span className="block truncate text-xs font-medium" title={tool.name} style={{ fontFamily: t.mono, color: tool.enabled ? t.text : t.muted }}>{tool.name}</span>
                 {tool.description ? <span className="block truncate text-xs" title={tool.description} style={{ color: t.muted }}>{tool.description}</span> : null}
               </span>
             </label>

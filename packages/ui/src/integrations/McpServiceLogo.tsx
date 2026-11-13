@@ -1,6 +1,6 @@
 "use client";
 
-import { MCP_SERVICE_MARKS } from "./mcp-service-marks.js";
+import { MCP_SERVICE_MARKS, mcpMarkIdForName } from "./mcp-service-marks.js";
 
 export interface McpServiceLogoProps {
   /** Remote MCP catalog id; custom servers have none and get a neutral monogram. */
@@ -22,7 +22,9 @@ const tile = (size: number) => ({
  * name is always rendered next to it.
  */
 export function McpServiceLogo({ presetId, name, size = 40, className }: McpServiceLogoProps) {
-  const mark = presetId && Object.hasOwn(MCP_SERVICE_MARKS, presetId) ? MCP_SERVICE_MARKS[presetId] : undefined;
+  // Connected apps and custom servers carry only a name; match it to a catalog mark when one exists.
+  const markId = presetId && Object.hasOwn(MCP_SERVICE_MARKS, presetId) ? presetId : mcpMarkIdForName(name);
+  const mark = markId ? MCP_SERVICE_MARKS[markId] : undefined;
   const glyph = Math.round(size * 0.56);
   const base = `flex shrink-0 select-none items-center justify-center overflow-hidden ${className ?? ""}`;
 
@@ -37,7 +39,7 @@ export function McpServiceLogo({ presetId, name, size = 40, className }: McpServ
 
   if (mark.kind === "monogram") {
     return (
-      <span aria-hidden="true" data-mcp-logo={presetId} className={base}
+      <span aria-hidden="true" data-mcp-logo={markId} className={base}
         style={{ ...tile(size), background: mark.color, color: mark.foreground, fontSize: Math.round(size * (mark.text.length > 1 ? 0.34 : 0.44)), fontWeight: 700, letterSpacing: "-0.02em" }}>
         {mark.text}
       </span>
@@ -45,7 +47,7 @@ export function McpServiceLogo({ presetId, name, size = 40, className }: McpServ
   }
 
   return (
-    <span aria-hidden="true" data-mcp-logo={presetId} className={base}
+    <span aria-hidden="true" data-mcp-logo={markId} className={base}
       style={{ ...tile(size), background: "#FFFFFF", boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.08)" }}>
       {mark.kind === "monday" ? (
         <svg width={glyph} height={glyph} viewBox="0 0 24 24" focusable="false">
@@ -62,25 +64,30 @@ export function McpServiceLogo({ presetId, name, size = 40, className }: McpServ
   );
 }
 
-/** Overlapping logos for a set of connected services (endpoint card summary). */
+/** Connected services as a row of logos, one per service (several Gmail accounts show one Gmail mark). */
 export function McpServiceLogoStack({ services, max = 6, size = 28 }: {
   services: ReadonlyArray<{ presetId?: string; name: string }>;
   max?: number;
   size?: number;
 }) {
-  const shown = services.slice(0, max);
-  const extra = services.length - shown.length;
+  const unique: Array<{ presetId?: string; name: string }> = [];
+  const seen: Record<string, true> = {};
+  for (const service of services) {
+    const key = (service.presetId && Object.hasOwn(MCP_SERVICE_MARKS, service.presetId) ? service.presetId : mcpMarkIdForName(service.name)) ?? `name:${service.name.trim().toLowerCase()}`;
+    if (Object.hasOwn(seen, key)) continue;
+    seen[key] = true;
+    unique.push(service);
+  }
+  const shown = unique.slice(0, max);
+  const extra = unique.length - shown.length;
   return (
-    <span className="flex items-center" aria-hidden="true">
-      {shown.map((service, index) => (
-        <span key={`${service.presetId ?? "custom"}:${service.name}:${index}`} className="rounded-[30%]"
-          style={{ marginLeft: index === 0 ? 0 : -Math.round(size * 0.28), boxShadow: "0 0 0 2px var(--bg-surface, var(--card, #fff))", borderRadius: Math.round(size * 0.26) }}>
-          <McpServiceLogo presetId={service.presetId} name={service.name} size={size} />
-        </span>
+    <span className="flex items-center gap-1" aria-hidden="true">
+      {shown.map(service => (
+        <McpServiceLogo key={`${service.presetId ?? "name"}:${service.name}`} presetId={service.presetId} name={service.name} size={size} />
       ))}
       {extra > 0 ? (
         <span className="flex items-center justify-center text-[11px] font-semibold"
-          style={{ ...tile(size), marginLeft: -Math.round(size * 0.28), background: "var(--bg-surface-hover, var(--muted))", color: "var(--text-secondary, var(--muted-foreground))", boxShadow: "0 0 0 2px var(--bg-surface, var(--card, #fff))" }}>
+          style={{ ...tile(size), background: "var(--bg-surface-hover, var(--muted))", color: "var(--text-secondary, var(--muted-foreground))" }}>
           +{extra}
         </span>
       ) : null}

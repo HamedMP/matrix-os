@@ -9,10 +9,12 @@
  * arguments and the client name are deliberately not exposed, so the owner
  * reviews which tool on which service is asking, never upstream payloads.
  */
-import { ShieldCheck } from "lucide-react";
+import { CloudOff, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../Button.js";
+import { McpInlineNotice } from "./McpInlineNotice.js";
 import { McpServiceLogo } from "./McpServiceLogo.js";
+import { McpRowAction } from "./McpToolPolicyList.js";
 import { MCP_SERVICE_MARKS } from "./mcp-service-marks.js";
 import { mcpTokens } from "./mcp-settings-tokens.js";
 import {
@@ -148,8 +150,8 @@ export function ExternalMcpApprovalsPanel({ transport }: { transport: ExternalMc
       </div>
       {error ? <div role="alert" className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger, var(--destructive))" }}>{error}</div> : null}
       {state.status === "loading" ? <p role="status" className="text-sm" style={muted}>Loading approvals…</p> : null}
-      {state.status === "failed" ? <div role="alert" className="rounded-2xl border p-4 text-sm" style={{ borderColor: t.border, background: t.surface }}>{EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
-        {transport ? <div className="mt-2"><Button size="sm" variant="secondary" onClick={() => { void reload(); }}>Try again</Button></div> : null}</div> : null}
+      {state.status === "failed" ? <McpInlineNotice role="alert" icon={<CloudOff size={15} />} title={EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
+        action={transport ? <McpRowAction onClick={() => { void reload(); }}>Try again</McpRowAction> : undefined} /> : null}
       {state.status === "loaded" && state.approvals.length === 0 ? <EmptyState onCheck={() => { void reload(); }} /> : null}
       {state.status === "loaded" && state.approvals.length > 0 ? <ul aria-label="Pending external MCP approvals" className="space-y-2">
         {state.approvals.map(approval => <ApprovalRow key={approval.approvalId} approval={approval} busy={busyId !== null}

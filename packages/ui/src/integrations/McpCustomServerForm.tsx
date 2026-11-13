@@ -31,16 +31,16 @@ export function McpCustomServerForm(props: McpCustomServerFormProps) {
         <p className="text-sm font-semibold" style={{ color: t.text }}>Paste any MCP server URL</p>
         <p className="text-xs" style={{ color: t.muted }}>Not in the list? Add any remote HTTPS MCP server. It joins your Matrix MCP like the others.</p>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <label className="space-y-1.5 text-xs font-medium sm:col-span-1" style={{ color: t.secondary }}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+        <label className="space-y-1.5 text-xs font-medium sm:col-span-3" style={{ color: t.secondary }}>
           <span>Name</span>
           <input aria-label="MCP server name" value={name} onChange={event => props.onNameChange(event.target.value)} placeholder="Research tools" maxLength={100} className={field} style={fieldStyle} />
         </label>
-        <label className="space-y-1.5 text-xs font-medium sm:col-span-2" style={{ color: t.secondary }}>
+        <label className="space-y-1.5 text-xs font-medium sm:col-span-5" style={{ color: t.secondary }}>
           <span>Server URL</span>
           <input aria-label="MCP server URL" value={url} onChange={event => props.onUrlChange(event.target.value)} placeholder="https://example.com/mcp" maxLength={2048} className={field} style={{ ...fieldStyle, fontFamily: t.mono }} />
         </label>
-        <label className="space-y-1.5 text-xs font-medium sm:col-span-1" style={{ color: t.secondary }}>
+        <label className="space-y-1.5 text-xs font-medium sm:col-span-2" style={{ color: t.secondary }}>
           <span>Sign-in</span>
           <select aria-label="Authentication mode" value={authMode} onChange={event => props.onAuthModeChange(event.target.value as McpCustomAuthMode)} className={field} style={fieldStyle}>
             <option value="oauth">MCP OAuth</option>
@@ -49,19 +49,19 @@ export function McpCustomServerForm(props: McpCustomServerFormProps) {
             <option value="api_key">X-API-Key</option>
           </select>
         </label>
+        <div className="flex items-end sm:col-span-2">
+          <button type="button" disabled={!canSubmit} onClick={props.onSubmit}
+            className="h-9 w-full whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-50"
+            style={{ background: t.primary, color: t.primaryFg }}>
+            Add MCP server
+          </button>
+        </div>
         {needsCredential ? (
-          <label className="space-y-1.5 text-xs font-medium sm:col-span-4" style={{ color: t.secondary }}>
+          <label className="space-y-1.5 text-xs font-medium sm:col-span-12" style={{ color: t.secondary }}>
             <span>Secret</span>
             <input aria-label="MCP credential" type="password" autoComplete="off" value={credential} onChange={event => props.onCredentialChange(event.target.value)} placeholder="Secret credential" maxLength={4096} className={field} style={fieldStyle} />
           </label>
         ) : null}
-      </div>
-      <div className="flex justify-end">
-        <button type="button" disabled={!canSubmit} onClick={props.onSubmit}
-          className="h-9 rounded-lg px-3.5 text-sm font-medium transition-colors disabled:opacity-50"
-          style={{ background: t.primary, color: t.primaryFg }}>
-          Add MCP server
-        </button>
       </div>
     </section>
   );
