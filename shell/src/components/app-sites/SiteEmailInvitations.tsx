@@ -27,10 +27,12 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
   const [results, setResults] = useState<Result[]>([]);
   const [page, setPage] = useState<SiteEmailInvitationPage | null>(null);
   const [hasLoadedMore, setHasLoadedMore] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const mutationVersion = useRef(0);
+  const pagingVersion = useRef(0);
   const capability = site?.capabilities?.privateEmailInvitations === true;
   const ready = capability && site?.status === "published" && site.accessMode === "private_email";
 
@@ -41,7 +43,7 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
     void client.emailInvitations(appSlug, controller.signal).then(next => {
       if (controller.signal.aborted) return;
       if (mutationVersion.current !== version) { setReload(value => value + 1); return; }
-      setPage(next); setHasLoadedMore(false); setLoadError(null);
+      setPage(next); setHasLoadedMore(false); setResetting(false); setLoadError(null);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setLoadError(siteActionError(error));
     });
@@ -81,15 +83,24 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
   }
 
   function loadMore() {
-    if (!ready || !page?.nextCursor) return;
+    if (!ready || resetting || !page?.nextCursor) return;
     const version = mutationVersion.current;
+    const pagingRequestVersion = pagingVersion.current;
     void state.action(signal => client.emailInvitations(appSlug, signal, page.nextCursor), next => {
+      if (pagingVersion.current !== pagingRequestVersion) return;
       if (mutationVersion.current !== version) { setReload(value => value + 1); return; }
       setPage(current => current ? { ...next,
         invitations: [...current.invitations, ...next.invitations.filter(item =>
           !current.invitations.some(existing => existing.id === item.id))].slice(-100) } : next);
       setHasLoadedMore(true);
     });
+  }
+
+  function showNewest() {
+    if (!ready || resetting) return;
+    pagingVersion.current += 1;
+    setResetting(true);
+    setReload(value => value + 1);
   }
 
   const explanation = !capability ? "Email invitations are not available yet."
@@ -122,8 +133,8 @@ export function SiteEmailInvitations({ appSlug, client, site, state, disabled }:
         </span>
       </li>)}
     </ul> : ready && page ? <p className="text-xs">No email invitations yet.</p> : null}
-    {ready && page?.nextCursor ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict} onClick={loadMore}>Load more invitations</Button> : null}
-    {ready && hasLoadedMore ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict}
-      onClick={() => setReload(value => value + 1)}>Show newest invitations</Button> : null}
+    {ready && page?.nextCursor ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict || resetting} onClick={loadMore}>Load more invitations</Button> : null}
+    {ready && hasLoadedMore ? <Button size="sm" variant="secondary" disabled={disabled || state.conflict || resetting}
+      onClick={showNewest}>Show newest invitations</Button> : null}
   </div>;
 }
