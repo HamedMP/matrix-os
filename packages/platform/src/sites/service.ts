@@ -22,6 +22,7 @@ import { packagePrivateSiteHtml } from './private-package.js';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
 import { authorizeEmailViewerSession } from './email-viewer-sessions.js';
+import { revokeSiteEmailAuthorityForTransition } from './email-invitations.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
@@ -164,8 +165,13 @@ export function createSitesService(options: {
                 }
                 await trx.executor.insertInto('public_site_versions').values({ id: version, site_id: row.id, created_at: new Date().toISOString(), config: sql `${JSON.stringify(request.config)}::jsonb`, files: sql `${JSON.stringify(files)}::jsonb` }).execute();
                 check();
-                if (request.accessMode === 'public' && row.access_mode === 'private_link')
+                if (request.accessMode !== undefined && request.accessMode !== 'private_link'
+                    && row.access_mode === 'private_link')
                     await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+                if (row.access_mode === 'private_email' && request.accessMode !== undefined
+                    && request.accessMode !== 'private_email')
+                    await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
+                        'mode_changed', request.accessMode);
                 const changed = await trx.executor.updateTable('public_sites').set({ title: request.title, description: request.description,
                     ...(request.slug !== undefined ? { slug: request.slug } : {}),
                     ...(request.accessMode !== undefined ? { access_mode: request.accessMode } : {}),
@@ -229,8 +235,13 @@ export function createSitesService(options: {
         const result = await mutate(owner, request.baseRevision, async (trx, row) => {
             previousAccessMode = row.access_mode;
             await claimAlias(trx, row.id, request.slug);
-            if (request.accessMode === 'public' && row.access_mode === 'private_link')
+            if (request.accessMode !== undefined && request.accessMode !== 'private_link'
+                && row.access_mode === 'private_link')
                 await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+            if (row.access_mode === 'private_email' && request.accessMode !== undefined
+                && request.accessMode !== 'private_email')
+                await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
+                    'mode_changed', request.accessMode);
             const { baseRevision: _, accessMode, ...changes } = request;
             return { ...changes, ...(accessMode !== undefined ? { access_mode: accessMode } : {}) };
         });
@@ -244,6 +255,8 @@ export function createSitesService(options: {
     async function unpublish(owner: SiteOwner, revision?: number) {
         const result = await mutate(owner, revision, async (trx, row) => {
             await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+            if (row.access_mode === 'private_email' && row.status === 'published')
+                await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId, 'unpublished');
             return { status: 'unpublished' };
         });
         emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_UNPUBLISHED,
