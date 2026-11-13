@@ -4,6 +4,7 @@ import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-fund
 import {
   initializePreviewRuntimeAccess,
   loadPreviewRuntimeAccessConfig,
+  PreviewRuntimeAccessError,
 } from "../../packages/platform/src/preview-runtime-access.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
@@ -110,6 +111,82 @@ describe("bounded Preview runtime access", () => {
     const replayedActivation = await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request, now: () => new Date(clock) });
     expect(replayedActivation.ai).toMatchObject({ requestsUsed: 1, requestsRemaining: 1 });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toHaveLength(1);
+  });
+
+  it("renews an expired same-generation allocation with one fresh bounded window", async () => {
+    const request = { ...identity, expectedRuntimeTokenEpoch: 1 };
+    const config = enabledConfig();
+    const ttlMs = 6 * 60 * 60_000;
+    const first = await initializePreviewRuntimeAccess({ db, repository, config, request, now: () => new Date(clock) });
+    const credential = await repository.issueRuntimeCredential(identity);
+    for (const requestId of ["window_one_a", "window_one_b"]) {
+      const use = await repository.authorize({ credential: credential.credential.token, requestId, modelId,
+        maxCostMicrousd: 100 });
+      await repository.releaseReservation({ reservationId: use.reservation.reservationId,
+        tokenId: credential.credential.tokenId, reason: "pre_upstream_failure" });
+    }
+    await db.executor.updateTable("preview_runtime_allocations").set({ speech_requests_used: 2 })
+      .where("machine_id", "=", machineId).execute();
+
+    clock = new Date(Date.parse(first.expiresAt) + 60_000);
+    const renewed = await initializePreviewRuntimeAccess({ db, repository, config, request, now: () => new Date(clock) });
+    expect(renewed).toMatchObject({
+      identity: { ...identity, runtimeTokenEpoch: 1 },
+      ai: { requestLimit: 2, requestsUsed: 0, requestsRemaining: 2, budgetMicrousd: 1000 },
+      speech: { requestLimit: 2, requestsUsed: 0, requestsRemaining: 2 },
+      maxConcurrency: 1,
+    });
+    expect(Date.parse(renewed.expiresAt) - clock.getTime()).toBe(ttlMs);
+
+    const policy = await db.executor.selectFrom("ai_funded_runtime_policies").selectAll()
+      .where("machine_id", "=", machineId).executeTakeFirstOrThrow();
+    expect(policy).toMatchObject({ enabled: true, expires_at: renewed.expiresAt, revision: 2,
+      monthly_budget_microusd: 1000 });
+    // The expired grant is retired before the fresh one lands, so credit never accumulates.
+    const balance = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+      .where("machine_id", "=", machineId).executeTakeFirstOrThrow();
+    expect(Number(balance.credit_balance_microusd)).toBe(1000);
+    expect(Number(balance.promotional_balance_microusd)).toBe(1000);
+    const grants = await db.executor.selectFrom("ai_funded_credit_ledger").select(["kind", "amount_microusd"])
+      .where("machine_id", "=", machineId).execute();
+    expect(grants.map(row => `${row.kind}:${Number(row.amount_microusd)}`).sort()).toEqual([
+      "promotional_expiry:-1000", "promotional_grant:1000", "promotional_grant:1000",
+    ]);
+
+    const renewedUse = await repository.authorize({ credential: (await repository.issueRuntimeCredential(identity))
+      .credential.token, requestId: "window_two_a", modelId, maxCostMicrousd: 100 });
+    expect(renewedUse.identity).toMatchObject(identity);
+
+    // A replay inside the renewed window reads counters; it never refills or regrants.
+    const replay = await initializePreviewRuntimeAccess({ db, repository, config, request, now: () => new Date(clock) });
+    expect(replay.ai).toMatchObject({ requestsUsed: 1, requestsRemaining: 1 });
+    expect(replay.expiresAt).toBe(renewed.expiresAt);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("kind", "=", "promotional_grant").execute()).toHaveLength(2);
+  });
+
+  it("keeps expired renewal fail-closed for identity mismatch and ineligible machines", async () => {
+    const request = { ...identity, expectedRuntimeTokenEpoch: 1 };
+    const first = await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
+      now: () => new Date(clock) });
+    clock = new Date(Date.parse(first.expiresAt) + 1);
+    await db.executor.updateTable("preview_runtime_allocations").set({ owner_id: "user_other" })
+      .where("machine_id", "=", machineId).execute();
+    await expect(initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
+      now: () => new Date(clock) })).rejects.toMatchObject({ code: "identity_mismatch" });
+    await db.executor.updateTable("preview_runtime_allocations").set({ owner_id: identity.ownerId })
+      .where("machine_id", "=", machineId).execute();
+    await db.executor.updateTable("user_machines").set({ status: "stopped" })
+      .where("machine_id", "=", machineId).execute();
+    const ineligible = initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(), request,
+      now: () => new Date(clock) });
+    await expect(ineligible).rejects.toBeInstanceOf(PreviewRuntimeAccessError);
+    await expect(ineligible).rejects.toMatchObject({ code: "ineligible" });
+    const allocation = await db.executor.selectFrom("preview_runtime_allocations").selectAll()
+      .where("machine_id", "=", machineId).executeTakeFirstOrThrow();
+    expect(allocation.expires_at).toBe(first.expiresAt);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("kind", "=", "promotional_grant").execute()).toHaveLength(1);
   });
 
   it("gives an exact owner-only Private Preview its own bounded allocation", async () => {

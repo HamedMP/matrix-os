@@ -867,6 +867,11 @@ jobs:
             echo "Preview access activation is temporarily unavailable; retrying (${attempt}/3)." >&2
             sleep 15
           done
+          if [ "$code" = "409" ]; then
+            echo "Preview access was refused for this exact machine generation (HTTP 409, $(jq -r ".code // \"unknown\"" /tmp/preview-access.json 2>/dev/null || echo unknown)); not retrying." >&2
+            echo "Check the preview machine's owner, status, and runtime token epoch, or delete and recreate the preview VPS." >&2
+            exit 1
+          fi
           if [ "$code" != "200" ] || ! jq -e '
             .status == "ready"
             and .fundedAiConfigured == true

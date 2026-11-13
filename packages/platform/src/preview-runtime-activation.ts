@@ -12,6 +12,7 @@ import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken }
 import {
   initializePreviewRuntimeAccess,
   isBoundedPreviewProvisioningClass,
+  PreviewRuntimeAccessError,
   type PreviewRuntimeAccessConfig,
   type PreviewRuntimeAccessSummary,
 } from "./preview-runtime-access.js";
@@ -67,7 +68,7 @@ export function createPreviewRuntimeAccessActivator(options: {
       db: options.db, repository: options.repository, config, request, now: options.now,
     });
     if (Date.parse(allocation.expiresAt) <= (options.now ?? (() => new Date()))().getTime()) {
-      throw new Error("Preview runtime access has expired");
+      throw new PreviewRuntimeAccessError("expired");
     }
     const machine = await options.db.executor.selectFrom("user_machines").select([
       "machine_id", "clerk_user_id", "handle", "runtime_slot", "runtime_token_epoch",
@@ -77,7 +78,7 @@ export function createPreviewRuntimeAccessActivator(options: {
       || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch
       || !isBoundedPreviewProvisioningClass(machine.provisioning_class)
       || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null
-      || !machine.public_ipv4) throw new Error("Preview runtime is ineligible");
+      || !machine.public_ipv4) throw new PreviewRuntimeAccessError("ineligible");
 
     const runtimeToken = buildPlatformRuntimeVerificationToken({ handle: machine.handle,
       machineId: machine.machine_id, runtimeSlot: machine.runtime_slot }, config.runtimeSecret,

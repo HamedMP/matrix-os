@@ -20,6 +20,7 @@ import {
   PreviewRuntimeAccessActivationRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import { isPermanentPreviewRuntimeAccessError } from './preview-runtime-access.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
 import { refreshVpsMetrics, refreshVpsRuntimeMetrics, vpsProvisionFailuresTotal } from './metrics.js';
 import type { VpsRuntimeMetricInput } from './metrics.js';
@@ -433,6 +434,13 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.activatePreviewRuntimeAccess(parsed.data), 200);
     } catch (err: unknown) {
       logCustomerVpsError('/vps/preview/access/activate', err);
+      // Permanent refusals are 409 so callers stop retrying; everything else
+      // (host reachability, readiness polling, races) stays a retryable 503.
+      if (isPermanentPreviewRuntimeAccessError(err)) {
+        return err.code === 'expired'
+          ? c.json({ error: 'Preview access has expired', code: 'preview_access_expired' }, 409)
+          : c.json({ error: 'Preview access is not eligible', code: 'preview_access_ineligible' }, 409);
+      }
       return c.json({ error: 'Preview access activation failed' }, 503);
     }
   });
