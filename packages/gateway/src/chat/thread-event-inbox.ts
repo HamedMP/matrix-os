@@ -1,3 +1,4 @@
+import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 import type { AgentThreadEvent } from "@matrix-os/contracts";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { boundedOperation } from "../bounded-operation.js";
@@ -8,6 +9,8 @@ const RECONCILE_MS = 30_000;
 
 /** Server-side delivery repair, never a tool retry or a client polling loop. */
 export class ThreadEventInbox {
+  private readonly direct: CanonicalProviderRunEvent[] = []; // max128 /256KiB, drained with the native inbox.
+  private directBytes = 0;
   private readonly queued: AgentThreadEvent[] = [];
   private queuedBytes = 0;
   private failure: Error | undefined;
@@ -37,6 +40,15 @@ export class ThreadEventInbox {
     if (tokenUsage) this.tokenUsage = tokenUsage;
     this.wake?.();
   }
+
+  pushCanonical(value: CanonicalProviderRunEvent): void {
+    if (this.signal.aborted || this.failure) return;
+    const event = CanonicalProviderRunEventSchema.parse(value), bytes = Buffer.byteLength(JSON.stringify(event));
+    if (this.direct.length >= 128 || this.directBytes + bytes > 256 * 1024) { this.fail(new Error("Canonical source event buffer exceeded")); return; }
+    this.direct.push(event); this.directBytes += bytes; this.wake?.();
+  }
+
+  takeCanonical(): CanonicalProviderRunEvent[] { this.directBytes = 0; return this.direct.splice(0); }
 
   takeTokenUsage(): AiTokenUsage | undefined {
     const usage = this.tokenUsage;
@@ -73,6 +85,7 @@ export class ThreadEventInbox {
       // A stream of heartbeats must not postpone durable reconciliation.
       if (this.recover && Date.now() >= this.nextRecoveryAt) await this.repair();
       if (this.failure) throw this.failure;
+      if (this.direct.length > 0) return [];
       if (this.queued.length > 0) {
         const events = this.queued.splice(0);
         this.queuedBytes = 0;
