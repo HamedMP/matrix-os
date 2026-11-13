@@ -319,3 +319,40 @@ Rollback:
 5. retain additive columns/tables and historical rows;
 6. never narrow the access-mode constraint while a `private_email` publication
    exists and never resurrect revoked grants.
+
+## 8. Local implementation checkpoint (2026-11-13)
+
+The draft [native code stack](https://github.com/HamedMP/matrix-os/pull/3341)
+and separate [site documentation PR](https://github.com/FinnaAI/matrix-os-site/pull/358)
+are linked from ENG-29. This checkpoint is local code verification, not a
+production-domain Clerk result or a live release qualification.
+
+- Real PostgreSQL focused checks passed for owner export/deletion (15 tests),
+  full-path visitor and Gateway isolation (17 tests before the later
+  performance additions), 100-address batch latency, built private-email app
+  admission, and capability schema/readiness gating. The later performance
+  assertions also passed individually. The proxy-only Platform regression was
+  reproduced red in `tests/platform/proxy-routing.test.ts` and passed green
+  after optional Sites registration was moved into the focused registration
+  module; its paired Sites dependency test also passed (2 focused tests).
+- Platform TypeScript and Edge Worker typechecks passed. The production shell
+  build passed with a synthetic build-only Clerk publishable key. The first
+  build reached prerender and failed because this worktree had no Clerk key;
+  the synthetic key proves packaging only and cannot prove real sign-in.
+- A full `pnpm run test --maxWorkers=2` attempt started the repository's test
+  script against 3,780 test files. It was interrupted after the host reached
+  7.3 of 8 GiB swap while the shell build was also running. Before interruption,
+  the existing proxy-only test failed; it was reproduced in isolation and fixed
+  as above. The full suite has **not** passed at this checkpoint, and the
+  focused lanes do not replace it. `bun` was unavailable here, so `pnpm run`
+  invoked the same package scripts.
+- The site docs PR passed its 540-test suite and hosted Vercel build. The
+  hosted page was inspected at 375, 768, and 1440 px without horizontal
+  overflow. Documentation captures remain outside the repo under
+  `/tmp/matrix-page-email-evidence/docs/`; these are not product-surface
+  evidence for T058–T064.
+
+T001 exact-URL Clerk qualification, T002 approved provider and sender, the
+concrete mail adapter, full test-suite completion, and all five live product
+surface captures remain open. `privateEmailInvitations` is disabled; PR #3200's
+email row must remain disabled until those gates and rollout readiness pass.

@@ -60,3 +60,11 @@ export function registerSiteRoutes(app: Hono<any>, options: {
         edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options),
         captureEvent: options.captureEvent, email }));
 }
+
+/** Proxy-only deployments do not mount Sites; explicit Sites startup still validates its secret. */
+export function registerSiteRoutesIfConfigured(
+    app: Hono<any>, options: Parameters<typeof registerSiteRoutes>[1],
+) {
+    if (!options.platformSecret && (options.env ?? process.env).MATRIX_PUBLIC_SITES_ENABLED !== 'true') return;
+    registerSiteRoutes(app, options);
+}
