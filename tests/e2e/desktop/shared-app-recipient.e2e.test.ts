@@ -223,7 +223,7 @@ suite("Electron Desktop shared-app recipient journey", () => {
           signedTicket: CollaborationSignedConnectionTicketSchema.parse({
             ticket: {
               protocolVersion: 2, ticketId: "60000000-0000-4000-8000-000000000001", nonce: "a".repeat(64),
-              actorId: recipient.userId, organizationId, resource: { scopeId: target.scopeId, kind: "app" },
+              actorId: recipient.userId, organizationId, resource: { scopeId: target.scopeId, kind: "app_instance" },
               purpose: body.purpose, runtime: { runtimeId: homeRuntimeId, authorityGeneration: 1 },
               proofKeyThumbprint: proofKeyThumbprint(String(body.proofPublicKey)), maxActions: 32,
               issuedAt: issuedAt.toISOString(), expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
