@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.localStorage.clear(); });
 
-it.each(["Web", "Electron"] as const)("keeps %s approval Review inside the transcript viewport", async (surface) => {
+it.each(["shared Web ChatApp wiring", "Electron Desktop workspace wiring"] as const)("keeps approval Review inside the transcript through %s", async (surface) => {
   const { snapshot, providerCatalog } = createCanonicalChatFixture("approval_required");
   const run = snapshot.runs[0]!;
   const approvalId = "approval_review_scroll";
@@ -41,7 +41,7 @@ it.each(["Web", "Electron"] as const)("keeps %s approval Review inside the trans
       allowedDecisions: ["approve" as const, "decline" as const],
     }],
   };
-  if (surface === "Web") {
+  if (surface === "shared Web ChatApp wiring") {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog)));
     render(<ChatApp messages={projectCanonicalTranscript(detail)} sessionId={snapshot.chat.id}
       busy connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
@@ -62,7 +62,7 @@ it.each(["Web", "Electron"] as const)("keeps %s approval Review inside the trans
   const anchor = document.getElementById(`tool-approval-${approvalId}`)!;
   expect(anchor).toBeTruthy();
   // These are the real renderer-owned scroll elements, not a substitute scroller.
-  const viewport = surface === "Electron"
+  const viewport = surface === "Electron Desktop workspace wiring"
     ? anchor.closest<HTMLElement>('[data-slot="message-scroller-viewport"]')!
     : screen.getByRole("log").firstElementChild as HTMLElement;
   expect(viewport.contains(anchor)).toBe(true);

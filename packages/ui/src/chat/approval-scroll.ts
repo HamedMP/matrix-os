@@ -9,8 +9,13 @@ export function revealChatApproval(viewport: HTMLElement | null | undefined, app
   if (!target) return false;
   const bounds = target.getBoundingClientRect();
   const viewportBounds = viewport.getBoundingClientRect();
-  const centeredTop = viewport.scrollTop + bounds.top - viewportBounds.top - viewport.clientTop
-    - (viewport.clientHeight - bounds.height) / 2;
+  // Canvas windows are transformed by zoom. Rectangles use screen pixels;
+  // scrollTop/clientHeight use layout pixels. Normalize before combining them.
+  const scaleY = viewport.offsetHeight > 0 && viewportBounds.height > 0
+    ? viewportBounds.height / viewport.offsetHeight
+    : 1;
+  const centeredTop = viewport.scrollTop + (bounds.top - viewportBounds.top) / scaleY - viewport.clientTop
+    - (viewport.clientHeight - bounds.height / scaleY) / 2;
   const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
   viewport.scrollTo({ top: Math.min(maximum, Math.max(0, centeredTop)), behavior: "instant" });
   return true;

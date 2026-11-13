@@ -12,6 +12,7 @@ function transcript(approvalId: string, targetTop: number) {
   document.body.append(viewport);
   Object.defineProperties(viewport, {
     clientHeight: { value: 300 }, scrollHeight: { value: 1500 }, clientTop: { value: 2 },
+    offsetHeight: { value: 304 },
   });
   viewport.scrollTop = 100;
   vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 40, height: 304 } as DOMRect);
@@ -29,6 +30,15 @@ it.each([
   const { viewport, scrollTo } = transcript("command", top);
   expect(revealChatApproval(viewport, "command")).toBe(true);
   expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: expected, behavior: "instant" });
+});
+
+it.each([0.5, 0.75, 1.5, 2])("normalizes approval geometry for Web Canvas zoom (scale %s)", (scale) => {
+  const { viewport, target, scrollTo } = transcript("command", 742);
+  vi.mocked(viewport.getBoundingClientRect).mockReturnValue({ top: 40, height: 304 * scale } as DOMRect);
+  vi.mocked(target.getBoundingClientRect).mockReturnValue({ top: 40 + 702 * scale, height: 100 * scale } as DOMRect);
+
+  expect(revealChatApproval(viewport, "command")).toBe(true);
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 700, behavior: "instant" });
 });
 
 it("selects its own approval even when another Chat has the same request id", () => {

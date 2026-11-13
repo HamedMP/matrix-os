@@ -29,10 +29,26 @@ The exact resize-event ordering in the original recording remains unverified.
 ## Implementation and boundaries
 
 Reuse a shared viewport-scrolling helper, with explicit viewport ownership and
-clamped coordinates. Never fall back to document-wide `scrollIntoView`.
+clamped layout coordinates, normalizing transformed screen rectangles for Web
+Canvas zoom. Never fall back to document-wide `scrollIntoView`.
 Observe Electron's viewport and content, clean up observers/animation frames,
 and distinguish geometry changes from intentional reader navigation. No API,
 database, permission, authentication or owner-data changes belong to this PR.
+
+## Large-file extraction plan
+
+`CanonicalChatWorkspace.tsx` and `ChatApp.tsx` exceed the repository's file-size
+guidance. This PR extracts the new scroll algorithm into
+`packages/ui/src/chat/approval-scroll.ts`; entrypoints only pass their owned
+viewport refs and approval ids. No scroll calculations belong in those files.
+
+For a separate engineering-reviewed refactor, extract Electron's transcript and
+approval-bar composition from `CanonicalChatWorkspace.tsx` into a focused
+`CanonicalChatTranscriptPane` receiving turns, callbacks and the composer slot.
+Extract the equivalent Web transcript/approval-bar composition from `ChatApp.tsx`
+into `WebChatTranscriptPane`. Retain their existing controllers and move behavior
+without changing permissions or data ownership. This follow-up plan requires
+owner scoping; no additional ticket or implementation is included in this fix.
 
 ## Acceptance
 
