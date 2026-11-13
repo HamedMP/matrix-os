@@ -22,7 +22,7 @@ const build = {
 };
 const readiness = { readinessId: "40000000-0000-4000-8000-000000000001", build, status: "ready", revision: "2", checks: [{ code: "cleanup", status: "passed" }], verifiedAt: "2026-11-11T18:00:00.000Z" };
 const activeShare = { scopeId: "10000000-0000-4000-8000-000000000001", organizationId: "org_matrix", owner: { actorId: "user_owner", displayName: "Owner" }, build, readinessId: readiness.readinessId, state: "active", shareRevision: "3", bindingRevision: "4", dataRevision: "5", createdAt: "2026-11-11T18:00:00.000Z", updatedAt: "2026-11-11T18:00:00.000Z" };
-const MEMBERS = "/api/organizations/org_matrix/members?include=imageUrl";
+const MEMBERS = "/api/organizations/org_matrix/members?limit=100&include=imageUrl";
 let share: typeof activeShare | null;
 let shareError = false;
 const gateway = {
@@ -135,7 +135,7 @@ it("falls back to initials for a broken photo and retries an unavailable roster"
   expect(await screen.findByText("Members are unavailable.")).toBeTruthy();
   expect(screen.queryByText(/upstream secret/)).toBeNull();
   // A platform without the photo opt-in rejects the query once; the roster is then read without photos.
-  expect(platform.get).toHaveBeenCalledWith("/api/organizations/org_matrix/members");
+  expect(platform.get).toHaveBeenCalledWith("/api/organizations/org_matrix/members?limit=100");
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   const members = await screen.findByRole("list", { name: "Members of Matrix team" });
   fireEvent.error(members.querySelector("img")!);
@@ -174,4 +174,18 @@ it("keeps Escape dismissal and the native overlay lease from the details view", 
   expect(useUi.getState().rendererOverlayCount).toBe(0);
   fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
   expect(await screen.findByRole("button", { name: /Shared with Matrix team/ })).toBeTruthy();
+});
+
+it("labels a roster that stops at the bounded page limit as incomplete", async () => {
+  let page = 0;
+  platform.get.mockImplementation(async (path: string) => {
+    if (path === "/api/organizations") return { complete: true, organizations: [{ organizationId: "org_matrix", name: "Matrix team" }] };
+    page += 1;
+    return { members: [{ ...roster[0]!, actorId: `user_page${page}` }], nextCursor: `page${page}` };
+  });
+  await open();
+  fireEvent.click(await screen.findByRole("button", { name: /Shared with Matrix team/ }));
+  expect(await screen.findByText(/^Showing the first 20 members/)).toBeTruthy();
+  expect(screen.getByText("20+")).toBeTruthy();
+  expect(platform.get).toHaveBeenCalledTimes(21);
 });

@@ -10,7 +10,8 @@ import { useConnection } from "../../stores/connection";
 
 export type DesktopOrganizationDirectory =
   | { state: "loading"; members: []; invitations: [] }
-  | { state: "loaded"; members: OrganizationManagementMember[]; invitations: OrganizationManagementInvitation[] }
+  /** `complete` is false when the bounded read stopped before the last member page. */
+  | { state: "loaded"; members: OrganizationManagementMember[]; invitations: OrganizationManagementInvitation[]; complete?: boolean }
   | { state: "failed"; members: []; invitations: [] };
 
 const LOADING: DesktopOrganizationDirectory = { state: "loading", members: [], invitations: [] };
@@ -51,11 +52,13 @@ export function useDesktopOrganizationDirectory(
       const cursors = new Set<string>();
       let cursor: string | undefined;
       let images = profileImages;
+      let complete = false;
+      // 20 full pages cover the 2,000-member organization limit.
       for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-        const query = new URLSearchParams();
+        const query = new URLSearchParams({ limit: "100" });
         if (cursor) query.set("cursor", cursor);
         if (images) query.set("include", "imageUrl");
-        const path = `/api/organizations/${organizationId}/members${query.size ? `?${query}` : ""}`;
+        const path = `/api/organizations/${organizationId}/members?${query}`;
         let raw: unknown;
         try {
           raw = await api.get(path);
@@ -68,19 +71,20 @@ export function useDesktopOrganizationDirectory(
         }
         const page = OrganizationManagementMembersPageSchema.parse(raw);
         members.push(...page.members);
-        if (!page.nextCursor || cursors.has(page.nextCursor)) break;
+        if (!page.nextCursor) { complete = true; break; }
+        if (cursors.has(page.nextCursor)) break;
         cursors.add(page.nextCursor);
         cursor = page.nextCursor;
       }
-      return members.slice(0, 2_000);
+      return { members: members.slice(0, 2_000), complete: complete && members.length <= 2_000 };
     };
     void Promise.all([
       listMembers(),
       admin
         ? api.get(`/api/organizations/${organizationId}/invitations`).then((value) => OrganizationManagementInvitationsSchema.parse(value).invitations)
         : Promise.resolve([]),
-    ]).then(([members, invitations]) => {
-      if (active) setDirectory({ organizationId, value: { state: "loaded", members, invitations } });
+    ]).then(([{ members, complete }, invitations]) => {
+      if (active) setDirectory({ organizationId, value: { state: "loaded", members, invitations, complete } });
     }).catch((error: unknown) => {
       console.warn("[organization-management] directory unavailable", error instanceof Error ? error.name : "UnknownError");
       if (active) setDirectory({ organizationId, value: { state: "failed", members: [], invitations: [] } });

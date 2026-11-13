@@ -80,14 +80,24 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     finally { await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); }
   });
 
-  it("keeps the native app behind one owner popover, recognizes the share, and never publishes when sharing", async () => {
-    await page.getByRole("button", { name: "Open App Launcher" }).click();
-    await page.getByText("Pomodoro", { exact: true }).last().click();
-    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
-    await trigger.waitFor();
-    await trigger.click();
+  /** Opens Pomodoro and its Publish app popover unless they are already open, so each test stands alone. */
+  async function openSharingPopover() {
     const dialog = page.getByRole("dialog", { name: "Share app" });
+    if (await dialog.isVisible()) return dialog;
+    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
+    if (!(await trigger.isVisible())) {
+      await page.getByRole("button", { name: "Open App Launcher" }).click();
+      await page.getByText("Pomodoro", { exact: true }).last().click();
+      await trigger.waitFor();
+    }
+    await trigger.click();
     await dialog.waitFor();
+    return dialog;
+  }
+
+  it("keeps the native app behind one owner popover, recognizes the share, and never publishes when sharing", async () => {
+    const dialog = await openSharingPopover();
+    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
     const notShared = dialog.getByRole("button", { name: /Share with your organization.*Matrix Team · Not shared/ });
     await notShared.waitFor();
     expect(await page.getByRole("button", { name: "Publish app", exact: true }).count()).toBe(1);
@@ -145,7 +155,7 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
       };
     });
     const motion = () => page.evaluate(() => (window as unknown as { __shareMotion: string[] }).__shareMotion.splice(0));
-    const dialog = page.getByRole("dialog", { name: "Share app" });
+    const dialog = await openSharingPopover();
     const summary = dialog.getByRole("button", { name: /Share with your organization/ });
     const back = dialog.getByRole("button", { name: "Back to sharing options" });
     await summary.click();

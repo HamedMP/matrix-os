@@ -65,7 +65,9 @@ export function DesktopOrganizationMemberList({ organizationId, organizationName
     <section aria-labelledby={headingId} className="space-y-2">
       <h3 id={headingId} className="flex items-baseline gap-1.5 text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>
         Members
-        {directory.state === "loaded" ? <span className="font-normal tabular-nums">{directory.members.length}</span> : null}
+        {directory.state === "loaded" ? (
+          <span className="font-normal tabular-nums">{directory.members.length}{directory.complete === false ? "+" : ""}</span>
+        ) : null}
       </h3>
       {directory.state === "loading" ? <>
         <p role="status" className="sr-only">Loading members…</p>
@@ -95,6 +97,11 @@ export function DesktopOrganizationMemberList({ organizationId, organizationName
             </li>
           ))}
         </ul>
+      ) : null}
+      {directory.state === "loaded" && directory.complete === false ? (
+        <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+          Showing the first {directory.members.length} members. Every current member can use the app.
+        </p>
       ) : null}
     </section>
   );
