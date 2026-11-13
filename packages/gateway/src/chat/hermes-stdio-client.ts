@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { HermesGatewayRequestError } from "./hermes-failure-diagnostic.js";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
+import type { Duplex } from "node:stream";
 
 const JsonRpcIdSchema = z.union([z.string().max(128), z.number().int().safe()]);
 const JsonRpcResponseSchema = z.object({
@@ -40,6 +41,7 @@ interface HermesGatewayWritable {
 
 interface HermesGatewayReadable {
   on(event: "data", listener: (chunk: Buffer) => void): void;
+  on(event: "end" | "close", listener: () => void): void;
 }
 
 export interface HermesGatewayProcess {
@@ -47,6 +49,7 @@ export interface HermesGatewayProcess {
   stdin: HermesGatewayWritable;
   stdout: HermesGatewayReadable;
   stderr: HermesGatewayReadable;
+  readonly stdio?: readonly unknown[];
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   once(event: "error", listener: (error: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
@@ -55,7 +58,7 @@ export interface HermesGatewayProcess {
 export type HermesGatewaySpawn = (
   command: string,
   args: string[],
-  options: { cwd: string; env: Record<string, string>; stdio: ["pipe", "pipe", "pipe"] },
+  options: { cwd: string; env: Record<string, string>; stdio: ["pipe", "pipe", "pipe"] | ["pipe", "pipe", "pipe", "pipe"] },
 ) => HermesGatewayProcess;
 
 interface PendingRequest {
@@ -129,6 +132,8 @@ export function createHermesStdioClient(options: {
   requestTimeoutMs?: number;
   onEvent(event: HermesGatewayEvent): void;
   onFailure(error: Error): void;
+  /** Owned fourth descriptor, independent of public RPC/log frames. Missing FD disables routines only. */
+  routines?: { attach(socket: Duplex): void; end(): void };
 }): HermesStdioClient {
   const pending = new Map<string | number, PendingRequest>();
   const decoder = new StringDecoder("utf8");
@@ -152,8 +157,15 @@ export function createHermesStdioClient(options: {
   const child = (options.spawnFn ?? defaultSpawn)(options.command, options.args, {
     cwd: options.cwd,
     env: options.inheritEnvironment === false ? { ...options.env } : { ...process.env, ...options.env } as Record<string, string>,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: options.routines ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
   });
+  if (options.routines) {
+    const pipe = child.stdio?.[3] as Duplex | undefined;
+    if (pipe && typeof pipe.write === "function" && typeof pipe.destroy === "function") options.routines.attach(pipe);
+    else options.routines.end();
+  }
+  child.stdout.on("end", () => options.routines?.end());
+  child.stdout.on("close", () => options.routines?.end());
 
   const readyTimer = setTimeout(() => {
     fail(new HermesGatewayReadyTimeout());
@@ -177,6 +189,7 @@ export function createHermesStdioClient(options: {
   }
 
   function fail(error: Error): void {
+    options.routines?.end();
     if (failed || closing) return;
     failed = error;
     settleReady(error);
@@ -281,6 +294,7 @@ export function createHermesStdioClient(options: {
     fail(safeError("Hermes gateway could not start", error));
   });
   child.once("exit", (code, signal) => {
+    options.routines?.end();
     exited = true;
     resolveExit();
     if (closing) return;
@@ -320,6 +334,7 @@ export function createHermesStdioClient(options: {
       });
     },
     close() {
+      options.routines?.end();
       if (closePromise) return closePromise;
       closing = true;
       clearTimeout(readyTimer);

@@ -4,11 +4,11 @@ import { parseCanonicalProviderRunInput, type CanonicalProviderRunInput, type Ca
 /** Identity comes exclusively from the admitted execute closure. Native mode can narrow, never expand.
  * Full-access mode does not prove parent/human provenance: all mutations require the exact owner decision. */
 export function createChatRoutineSourceProducer(options: { input: CanonicalProviderRunInput; computerId: string; signal: AbortSignal;
-  publish(event: CanonicalProviderRunEvent): void; current(): boolean; provider?: "claude" | "codex" }) {
+  publish(event: CanonicalProviderRunEvent): void; current(): boolean; provider?: "claude" | "codex" | "hermes" }) {
   const input = parseCanonicalProviderRunInput(options.input), generation = `native_${randomBytes(24).toString("hex")}`;
   const provider = options.provider ?? "claude";
-  if (provider !== "claude" && provider !== "codex") throw new Error("Routine source provider unavailable");
-  const driver = provider === "codex" ? "codex" : "claude_code";
+  if (provider !== "claude" && provider !== "codex" && provider !== "hermes") throw new Error("Routine source provider unavailable");
+  const driver = provider === "claude" ? "claude_code" : provider;
   let narrowed = false;
   const policy: RoutineSourcePolicy = { live: true, scope: input.owner.type === "personal" && !input.sharedScopeId ? "personal" : input.owner.type === "organization" ? "org" : "shared",
     interactionMode: input.interactionMode === "default" ? "default" : input.interactionMode === "review" ? "review" : "plan",
