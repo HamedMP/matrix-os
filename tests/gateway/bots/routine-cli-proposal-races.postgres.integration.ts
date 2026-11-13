@@ -27,7 +27,7 @@ it("claim holds original source gate through actual task/run/progress commit, th
   const submitting = f.submit(); void submitting.catch(() => undefined); let revoking: Promise<unknown> | undefined;
   try {
     await reached(entered.promise);
-    revoking = f.db.transaction().execute(async trx => { revokerPid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid; return f.sources.revokeWithin(trx, f.source); });
+    revoking = f.db.transaction().execute(async trx => { revokerPid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid; return f.sources.revokeWithin(trx, f.requireSource()); });
     void revoking.catch(() => undefined);
     let observedWait = false; const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
@@ -52,7 +52,7 @@ it.each(["revoke", "expiry"] as const)("%s winning before task claim blocks the 
   const submitting = f.submit(); void submitting.catch(() => undefined);
   try {
     await reached(entered.promise);
-    if (mode === "revoke") await f.sources.revoke(f.source); else f.state.clock = at(300001);
+    if (mode === "revoke") await f.sources.revoke(f.requireSource()); else f.state.clock = at(300001);
     release.resolve(); await submitting; await f.canonical.drain();
     expect(await f.db.selectFrom("routine_cli_requests").select("admission").execute()).toEqual([{ admission: { disposition: "queued" } }]);
     expect(await f.db.selectFrom("bot_tasks").selectAll().execute()).toHaveLength(0);

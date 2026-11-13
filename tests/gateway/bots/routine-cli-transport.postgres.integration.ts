@@ -36,7 +36,7 @@ async function transport(f: Awaited<ReturnType<typeof canonicalFixture>> | Await
   const invoker = createFixedNativeRoutineCliInvoker({ binPath, cwd,
     endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute`,
     authorize: async () => true, // Explicit exact-action approval fixture; Task4b/5 installs actual trusted policy.
-    issue: async input => f.sources.issue(f.source, { invocationId: input.invocationId, operation: input.operation }), cancel: async () => undefined });
+    issue: async input => f.sources.issue(f.requireSource(), { invocationId: input.invocationId, operation: input.operation }), cancel: async () => undefined });
   closers.push(invoker.close);
   return { invoke: invoker.invoke, calls: () => calls };
 }
