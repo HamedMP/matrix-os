@@ -21,6 +21,10 @@ const changedMethodDigests: Record<string, string> = {
   "turn/completed": "a422130287e89c148ef74c9c38773df548c11153e68cfd57409705154ca16940",
 };
 
+const historicalAppServerContract = { ...appServerContract, requiredServerProtocolSchemaDigests: {
+  ...appServerContract.requiredServerProtocolSchemaDigests, ...changedMethodDigests,
+} };
+
 type ProtocolVariant = { properties: { method: { enum: string[] } } };
 
 describe("exact published Codex 0.167.x qualification", () => {
@@ -30,7 +34,7 @@ describe("exact published Codex 0.167.x qualification", () => {
     expect(() => verifyCodexProviderContracts({
       version: "0.167.0",
       execContract: { ...execContract, latestVerifiedVersion: "0.167.0" },
-      appServerContract: { ...appServerContract, latestVerifiedVersion: "0.167.0" },
+      appServerContract: { ...historicalAppServerContract, latestVerifiedVersion: "0.167.0" },
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
     })).not.toThrow();
   });
@@ -44,7 +48,7 @@ describe("exact published Codex 0.167.x qualification", () => {
     expect(() => verifyCodexProviderContracts({
       version,
       execContract: { ...execContract, latestVerifiedVersion: version },
-      appServerContract: { ...appServerContract, latestVerifiedVersion: version },
+      appServerContract: { ...historicalAppServerContract, latestVerifiedVersion: version },
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
     })).not.toThrow();
   });
@@ -70,7 +74,8 @@ describe("exact published Codex 0.167.x qualification", () => {
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64",
     })).toThrow("Codex 0.167.3 is not verified");
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.2", execContract, appServerContract,
+      version: "0.167.2", execContract: { ...execContract, latestVerifiedVersion: "0.167.2" },
+      appServerContract: { ...historicalAppServerContract, latestVerifiedVersion: "0.167.2" },
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),
       runtimeTarget: "darwin-arm64",
     })).toThrow("Codex app-server schema digest changed");
