@@ -16,35 +16,37 @@ export function siteEmailGate(siteId: string, publishableKey: string): { html: s
     const csp = `default-src 'none'; script-src 'nonce-${nonce}' ${CLERK_SCRIPT_ORIGIN}; style-src 'unsafe-inline' ${CLERK_SCRIPT_ORIGIN}; img-src data: ${CLERK_SCRIPT_ORIGIN}; font-src data: ${CLERK_SCRIPT_ORIGIN}; connect-src 'self' ${CLERK_SCRIPT_ORIGIN}; form-action 'self' ${CLERK_SCRIPT_ORIGIN}; frame-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open shared Matrix app</title><style>
 html,body{margin:0;min-height:100%;font-family:${desktopFonts.sans};background:${desktopPalette.canvas};color:${desktopPalette.forest}}body{display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{width:min(100%,440px);border:1px solid ${desktopPalette.blue};border-radius:16px;background:${desktopPalette.paper};padding:28px;box-sizing:border-box;box-shadow:0 16px 48px rgba(14,52,34,.12)}h1{margin:0 0 10px;font-size:24px}p{line-height:1.5;color:${desktopPalette.textMuted}}button{border:0;border-radius:10px;background:${desktopPalette.forest};color:${desktopPalette.paper};padding:10px 14px;font:inherit;font-weight:600;cursor:pointer}.actions{display:flex;gap:8px;flex-wrap:wrap}.error{min-height:24px;color:${desktopPalette.danger};font-size:14px}
-</style></head><body><main class="card"><h1>Open shared Matrix app</h1><p>Sign in with the email address this app was shared with.</p><div id="auth" aria-live="polite"></div><p class="error" role="alert" aria-live="polite"></p><div class="actions"><button id="sign-up" type="button">Create account</button><button id="sign-in" type="button">Sign in</button><button id="switch-account" type="button" hidden>Use another account</button></div></main>
+</style></head><body><main class="card"><h1>Open shared Matrix app</h1><p>Sign in with the email address this app was shared with.</p><div id="auth" aria-live="polite"></div><p class="error" role="alert" aria-live="polite"></p><div class="actions"><button id="sign-up" type="button">Create account</button><button id="sign-in" type="button">Sign in</button><button id="switch-account" type="button" hidden>Use another account</button><button id="retry-access" type="button" hidden>Try again</button></div></main>
 <script id="clerk-script" nonce="${nonce}" async crossorigin="anonymous" data-clerk-publishable-key="${escape(publishableKey)}" src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>
 <script nonce="${nonce}">
-const canonical=${JSON.stringify(canonical)};const auth=document.getElementById('auth');const error=document.querySelector('.error');
+const canonical=${JSON.stringify(canonical)};const auth=document.getElementById('auth');const error=document.querySelector('.error');const retry=document.getElementById('retry-access');
 let exchanging=false;let attemptedSession=null;let mode='sign-in';
 function showError(message){error.textContent=message}
+async function withDeadline(operation){let timer;try{return await Promise.race([operation,new Promise((_,reject)=>{timer=window.setTimeout(()=>reject(Error('timeout')),10000)})])}finally{if(timer!==undefined)window.clearTimeout(timer)}}
 async function exchange(){
  const session=window.Clerk?.session;
  if(!session||exchanging||attemptedSession===session.id)return;
- exchanging=true;attemptedSession=session.id;showError('');
- try{const token=await session.getToken({skipCache:true});if(!token)throw Error();
+ exchanging=true;attemptedSession=session.id;retry.hidden=true;showError('');
+ try{const token=await withDeadline(session.getToken({skipCache:true}));if(!token)throw Error();
   const response=await fetch(canonical+'/access/email',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:'{}',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(10000)});
-  if(!response.ok){showError(response.status===404?'This account does not have access. Use another account or ask the publisher to invite you.':'Unable to open this app right now.');return}
+  if(!response.ok){if(response.status!==404)attemptedSession=null;retry.hidden=false;showError(response.status===404?'This account does not have access. Use another account or ask the publisher to invite you.':'Unable to open this app right now.');return}
   window.location.replace(canonical)
- }catch(failure){console.warn('[sites] email access failed',failure instanceof TypeError?'TypeError':failure instanceof Error?'Error':'UnknownError');showError('Unable to open this app right now.')}
+ }catch(failure){attemptedSession=null;retry.hidden=false;console.warn('[sites] email access failed',failure instanceof TypeError?'TypeError':failure instanceof Error?'Error':'UnknownError');showError('Unable to open this app right now.')}
  finally{exchanging=false}
 }
-function mount(next){mode=next;auth.replaceChildren();showError('');const options={routing:'hash',forceRedirectUrl:canonical,fallbackRedirectUrl:canonical,signInForceRedirectUrl:canonical,signInFallbackRedirectUrl:canonical,signUpForceRedirectUrl:canonical,signUpFallbackRedirectUrl:canonical,signInUrl:canonical,signUpUrl:canonical};
+function mount(next){mode=next;auth.replaceChildren();retry.hidden=true;showError('');const options={routing:'hash',forceRedirectUrl:canonical,fallbackRedirectUrl:canonical,signInForceRedirectUrl:canonical,signInFallbackRedirectUrl:canonical,signUpForceRedirectUrl:canonical,signUpFallbackRedirectUrl:canonical,signInUrl:canonical,signUpUrl:canonical};
  if(mode==='sign-up')window.Clerk.mountSignUp(auth,options);else window.Clerk.mountSignIn(auth,options)}
-async function init(){try{await window.Clerk.load({signInUrl:canonical,signUpUrl:canonical});
+async function init(){try{await withDeadline(window.Clerk.load({signInUrl:canonical,signUpUrl:canonical}));
  window.Clerk.addListener(()=>{if(window.Clerk.session){document.getElementById('switch-account').hidden=false;void exchange()}});
  if(window.Clerk.session){document.getElementById('switch-account').hidden=false;await exchange()}else mount('sign-in')
  }catch(failure){console.warn('[sites] Clerk gate unavailable',failure instanceof Error?'Error':'UnknownError');showError('Unable to sign in right now.')}}
 document.getElementById('sign-up').addEventListener('click',()=>{if(window.Clerk)mount('sign-up')});
 document.getElementById('sign-in').addEventListener('click',()=>{if(window.Clerk)mount('sign-in')});
+retry.addEventListener('click',()=>{attemptedSession=null;void exchange()});
 document.getElementById('switch-account').addEventListener('click',async()=>{if(!window.Clerk?.session)return;showError('');
- try{const token=await window.Clerk.session.getToken({skipCache:true});if(!token)throw Error();
+ try{const token=await withDeadline(window.Clerk.session.getToken({skipCache:true}));if(!token)throw Error();
   const response=await fetch(canonical+'/access/email/sign-out',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:'{}',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(10000)});
-  if(!response.ok)throw Error();await window.Clerk.signOut();window.location.replace(canonical)
+  if(!response.ok)throw Error();await withDeadline(window.Clerk.signOut());window.location.replace(canonical)
  }catch(failure){console.warn('[sites] account switch unavailable',failure instanceof Error?'Error':'UnknownError');showError('Unable to switch accounts right now.')}});
 if(window.Clerk)void init();else document.getElementById('clerk-script').addEventListener('load',()=>void init());
 </script></body></html>`;
