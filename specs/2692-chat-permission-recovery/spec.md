@@ -99,9 +99,11 @@ permission change is allowed.
   intent blocks retry in preflight and again under the repository admission lock,
   including after process loss/recovery and failed downgrades. A failed native
   transition never invokes confirmation. A lost confirmation ACK after full native
-  success is ambiguous completion: a late exact confirmation may safely commit;
-  canonical reread/identical-request recovery can observe it. Until then no new
-  mode transition/retry is admitted. Successful confirmed changes remain valid for
+  success is ambiguous completion: close the exact active run and revoke its
+  live grants before returning the error, preventing tools or same-run steering
+  from continuing with uncertain authority. A late exact confirmation may safely
+  commit; canonical reread/identical-request recovery can observe it. Until then
+  no new mode transition/retry is admitted. Successful confirmed changes remain valid for
   retry after an unrelated ordinary failure. New messages choose their own mode.
 - Full access still dispatches Custom MCP `call_tool` requests through their exact
   receipt producer, including requests queued during a permission change. It never

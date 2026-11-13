@@ -231,7 +231,9 @@ describe("Chat effective permission persistence", () => {
         if (args[3][0]?.type === "run.permission_mode" && args[3][0].phase === "confirmed") throw new Error("Confirmation ACK lost");
         return result;
       } };
-    await expect(setCanonicalPermissionMode({ repository: lostAck, active: { owner, chatId: chat.id, adapter, controller: new AbortController() } }, owner, chat.id, "run_permission", input, { permissionModeProof: "signed" })).rejects.toMatchObject({ status: 503 });
+    const controller = new AbortController();
+    await expect(setCanonicalPermissionMode({ repository: lostAck, active: { owner, chatId: chat.id, adapter, controller } }, owner, chat.id, "run_permission", input, { permissionModeProof: "signed" })).rejects.toMatchObject({ status: 503 });
+    expect(controller.signal.aborted).toBe(true);
     await expect(setCanonicalPermissionMode({ repository }, owner, chat.id, "run_permission", input, { permissionModeProof: "signed" })).resolves.toMatchObject({ submission: "already_applied" });
     expect((await repository.getTurnRunContext(owner, chat.id, "cturn_permission"))?.permissionModeUnconfirmed).toBe(false);
   });
@@ -249,6 +251,54 @@ describe("Chat effective permission persistence", () => {
       clientRequestId: "req_race_retry", run: { ...before.latestRun, id: "run_retry_race", attempt: 2, status: "accepted" } })).rejects.toThrow();
     expect((await repository.exportChat(owner, chat.id))?.runs).toHaveLength(1);
   });
+
+  it.each(["rejected", "timeout"] as const)("stops live authority when final confirmation is %s", async failure => {
+    const { chat } = await admit();
+    const controller = new AbortController();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let lateConfirmation: Promise<number> | undefined;
+    const interrupted = { getPermissionModeContext: repository.getPermissionModeContext.bind(repository),
+      async appendRunActivities(...args: Parameters<ChatRepository["appendRunActivities"]>) {
+        if (args[3][0]?.type === "run.permission_mode" && args[3][0].phase === "confirmed") {
+          if (failure === "rejected") throw new Error("Confirmation transaction rejected");
+          lateConfirmation = held.then(() => repository.appendRunActivities(...args));
+          return lateConfirmation;
+        }
+        return repository.appendRunActivities(...args);
+      } };
+    let control!: ReturnType<typeof createClaudePermissionControl>;
+    control = createClaudePermissionControl({ chatId: chat.id, runId: "run_permission", initialMode: "supervised", enabled: true,
+      signal: controller.signal, verify: async () => true, supervisedSettings: {}, setAuthority: async () => {}, allowPending: async () => {}, dispatch: () => false,
+      abort: () => controller.abort(), async write(frame) {
+        const value = JSON.parse(frame) as { request_id: string; request: { subtype: string; mode?: string } };
+        queueMicrotask(() => control.handle({ type: "control_response", response: { subtype: "success", request_id: value.request_id,
+          response: value.request.subtype === "set_permission_mode" ? { mode: value.request.mode } : {} } }));
+      } });
+    const input = { clientRequestId: "req_final_receipt", permissionMode: "full_access" as const };
+    await expect(setCanonicalPermissionMode({ repository: interrupted,
+      active: { owner, chatId: chat.id, controller, adapter: { setPermissionMode: control.change } as unknown as CanonicalChatProviderAdapter } },
+      owner, chat.id, "run_permission", input, { permissionModeProof: "signed" })).rejects.toMatchObject({ status: 503 });
+    expect(controller.signal.aborted).toBe(true);
+    const respond = vi.fn(async () => {});
+    expect(control.gate({ nativeRequestId: "after_failed_confirmation", toolName: "Bash", input: {} }, respond)).toBe(true);
+    expect(respond).toHaveBeenCalledWith(expect.objectContaining({ behavior: "deny" }));
+    expect((await repository.exportChat(owner, chat.id))?.runs[0]?.permissionMode).toBe("supervised");
+    const fresh = retryRuntime();
+    try {
+      await fresh.orchestrator.reconcileActiveRuns(owner);
+      const record = await repository.get(owner, chat.id);
+      await expect(fresh.orchestrator.retryTurn({ userId: owner.ownerId, source: "jwt" }, owner, chat.id, "cturn_permission",
+        { clientRequestId: "req_receipt_retry", baseRevision: record!.chat.revision })).rejects.toMatchObject({ status: 409 });
+      expect(fresh.start).not.toHaveBeenCalled();
+      expect((await repository.exportChat(owner, chat.id))?.runs).toHaveLength(1);
+    } finally {
+      if (lateConfirmation) { release(); await lateConfirmation; }
+      await fresh.orchestrator.close(); control.close();
+    }
+    if (failure === "timeout") await expect(setCanonicalPermissionMode({ repository }, owner, chat.id, "run_permission", input,
+      { permissionModeProof: "signed" })).resolves.toMatchObject({ submission: "already_applied" });
+  }, 15_000);
 
   it("retains a confirmed Full access change when an unrelated later failure is retried", async () => {
     const { chat } = await admit();

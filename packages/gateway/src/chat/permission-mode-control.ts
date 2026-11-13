@@ -56,7 +56,7 @@ provenance?: { permissionModeProof?: string }): Promise<CanonicalSetChatPermissi
   }
   // Native authority and pending-tool release have fully succeeded. Only this
   // receipt promotes durable/public authority. A lost DB ACK is ambiguous success;
-  // never convert it into a failed native grant or start a second transition.
+  // keep any confirmed receipt recoverable, but close uncertain live authority.
   let receiptTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([appendPhase("confirmed"), new Promise<never>((_resolve, reject) => {
@@ -64,7 +64,10 @@ provenance?: { permissionModeProof?: string }): Promise<CanonicalSetChatPermissi
     })]);
   } catch (error: unknown) {
     console.warn("[chat/permission] Confirmation unavailable", error instanceof Error ? error.name : "UnknownError");
-    throw new CanonicalChatOrchestrationError(canonicalChatSafeError("run_unavailable", "Could not confirm permission mode. Refresh this Chat.", true, ["retry"]), 503);
+    // A rejected write will never produce a late receipt. Abort this exact run
+    // before returning so neither tools nor steering can retain uncertain grants.
+    active.controller.abort();
+    throw new CanonicalChatOrchestrationError(canonicalChatSafeError("run_unavailable", "Permission change was not confirmed. Start a new message.", false, []), 503);
   } finally { if (receiptTimer) clearTimeout(receiptTimer); }
   return { chatId, runId, permissionMode: input.permissionMode, submission: "accepted" };
 }
