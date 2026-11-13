@@ -9,7 +9,7 @@ import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } from "../integrations/custom-mcp/gateway-routes.js";
 import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
-import { createBrowserSetupClient, registerBrowserSetupRoutes, resolveBrowserSetupOwner } from "../browser-lab/setup.js";
+import { createBrowserSetupClient, isBrowserRuntimeEnabled, registerBrowserSetupRoutes, resolveBrowserSetupOwner } from "../browser-lab/setup.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -125,7 +125,7 @@ export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRout
     appSessionMasterSecret,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     browserLab: {
-      enabled: process.env.MATRIX_BROWSER_LAB === "true",
+      enabled: isBrowserRuntimeEnabled(process.env),
       setupOwnerId,
       viewerAuthorization: process.env.MATRIX_BROWSER_LAB_VIEWER_AUTH,
       upgradeWebSocket: options.upgradeWebSocket,

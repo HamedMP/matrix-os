@@ -151,6 +151,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$S
 chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
+bash "$ROOT_DIR/scripts/stage-host-pnpm.sh" "$STAGE_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
