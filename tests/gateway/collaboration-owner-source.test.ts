@@ -660,7 +660,7 @@ describe("S08 owner-selected AI source", () => {
       });
     });
 
-    async function signed(actorId: string, ownerId: string, method: "GET" | "PUT", body?: unknown, scopeId = PROJECT_SCOPE, suffix = "") {
+    async function signed(actorId: string, ownerId: string, method: "GET" | "PUT", body?: unknown, scopeId = STANDALONE_CHAT_SCOPE, suffix = "") {
       const path = `/api/collaboration/scopes/${scopeId}/execution-policy${suffix}`;
       const bytes = body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body));
       const proof = signer.signHttp({ actorId, ownerId, runtimeId: collaborationIds.runtime, scopeId, method, path, query: "", body: bytes });
@@ -671,43 +671,54 @@ describe("S08 owner-selected AI source", () => {
       });
     }
 
-    it("the owner sets and reads the policy; a member reads it but cannot change it", async () => {
-      const put = await signed(collaborationActors.owner, collaborationActors.owner, "PUT", putRequest());
+    it("rejects legacy project execution-policy reads, options, and mutations", async () => {
+      const get = await signed(collaborationActors.owner, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE);
+      expect(get.status).toBe(409);
+      expect(await get.json()).toEqual({ error: "Collaboration state changed", code: "conflict" });
+      const options = await signed(collaborationActors.owner, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE, "/options");
+      expect(options.status).toBe(409);
+      const put = await signed(collaborationActors.owner, collaborationActors.owner, "PUT", putRequest(), PROJECT_SCOPE);
+      expect(put.status).toBe(409);
+      expect(await policies.resolve(PROJECT_SCOPE)).toBeNull();
+    });
+
+    it("preserves standalone policy management for compatibility", async () => {
+      const put = await signed(STANDALONE_OWNER, STANDALONE_OWNER, "PUT", putRequest());
       expect(put.status).toBe(200);
       const policy = CollaborationExecutionPolicySchema.parse(await put.json());
       expect(policy.source.harness).toBe("claude_code");
-      const get = await signed(collaborationActors.editor, collaborationActors.owner, "GET");
+      const get = await signed(collaborationActors.editor, STANDALONE_OWNER, "GET");
       expect(get.status).toBe(200);
       expect(await get.json()).toEqual(policy);
-      const memberPut = await signed(collaborationActors.editor, collaborationActors.owner, "PUT", putRequest(CLAUDE, { expectedRevision: policy.revision }));
+      const memberPut = await signed(collaborationActors.editor, STANDALONE_OWNER, "PUT", putRequest(CLAUDE, { expectedRevision: policy.revision }));
       expect(memberPut.status).toBe(403);
       expect(await memberPut.json()).toEqual({ error: "Collaboration unavailable", code: "forbidden" });
     });
 
     it("exposes bounded source options only to the scope owner", async () => {
-      const owner = await signed(collaborationActors.owner, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE, "/options");
+      const owner = await signed(STANDALONE_OWNER, STANDALONE_OWNER, "GET", undefined, STANDALONE_CHAT_SCOPE, "/options");
       expect(owner.status).toBe(200);
       expect(await owner.json()).toMatchObject({
         organizationAiSubmission: "members",
         policy: null,
         options: expect.arrayContaining([expect.objectContaining({ sourceLabel: "Claude Code (profile)" })]),
       });
-      const member = await signed(collaborationActors.editor, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE, "/options");
+      const member = await signed(collaborationActors.editor, STANDALONE_OWNER, "GET", undefined, STANDALONE_CHAT_SCOPE, "/options");
       expect(member.status).toBe(403);
     });
 
     it("an outsider with a valid proof is denied by the organization precondition and a bad body is rejected", async () => {
-      const outsider = await signed(collaborationActors.outsider, collaborationActors.owner, "GET");
+      const outsider = await signed(collaborationActors.outsider, STANDALONE_OWNER, "GET");
       expect(outsider.status).toBe(404);
-      const invalid = await signed(collaborationActors.owner, collaborationActors.owner, "PUT", { ...putRequest(), accessSourceId: "" });
+      const invalid = await signed(STANDALONE_OWNER, STANDALONE_OWNER, "PUT", { ...putRequest(), accessSourceId: "" });
       expect(invalid.status).toBe(400);
-      const unknownSource = await signed(collaborationActors.owner, collaborationActors.owner, "PUT", putRequest({ accessSourceId: "src_missing", providerInstanceId: "inst_claude" }));
+      const unknownSource = await signed(STANDALONE_OWNER, STANDALONE_OWNER, "PUT", putRequest({ accessSourceId: "src_missing", providerInstanceId: "inst_claude" }));
       expect(unknownSource.status).toBe(409);
       expect(await unknownSource.json()).toEqual({ error: "Collaboration state changed", code: "invalid_source" });
     });
 
     it("no policy reads as not found without leaking provider details", async () => {
-      const get = await signed(collaborationActors.owner, collaborationActors.owner, "GET");
+      const get = await signed(STANDALONE_OWNER, STANDALONE_OWNER, "GET");
       expect(get.status).toBe(404);
       expect(await get.json()).toEqual({ error: "Collaboration state changed", code: "not_found" });
     });

@@ -130,6 +130,49 @@ describe("CollaborationDirectoryOutbox", () => {
     await worker.shutdown();
   });
 
+  it("does not publish a private project to the organization from a historical grant", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({
+      kind: "project",
+      lifecycle: "private",
+    }).where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: "70000000-0000-4000-8000-000000000004",
+      scope_id: collaborationIds.scope,
+      organization_id: "org_matrix_team",
+      audience_kind: "organization",
+      audience_actor_id: null,
+      preset: "contributor",
+      state: "active",
+      policy_version: "v1",
+      source_id: null,
+      legacy_ceiling: null,
+      expires_at: null,
+      created_by: collaborationActors.owner,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      revoked_at: null,
+    }).execute();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "https://platform.internal",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      now: () => now,
+      startTimer: false,
+    });
+
+    expect(await worker.runOnce()).toBe(1);
+    const payload = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      audience?: string;
+      organizationGrantId?: string;
+    };
+    expect(payload.audience).toBeUndefined();
+    expect(payload.organizationGrantId).toBeUndefined();
+    await worker.shutdown();
+  });
+
   it("omits expired and revoked organization grants at claim time", async () => {
     for (const [id, state, expiry] of [
       ["70000000-0000-4000-8000-000000000002", "active", "2026-09-07T11:59:59.000Z"],

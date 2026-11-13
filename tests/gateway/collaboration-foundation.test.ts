@@ -89,6 +89,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["GET", "/api/collaboration/scopes/:scopeId/project/git"],
   ["POST", "/api/collaboration/scopes/:scopeId/project/git/actions"],
   ["POST", "/api/collaboration/scopes/:scopeId/project/confirm"],
+  ["POST", "/api/collaboration/scopes/:scopeId/project/unshare"],
   ["POST", "/api/collaboration/scopes/:scopeId/lifecycle"],
   ["GET", "/api/collaboration/scopes/:scopeId/operations/:operationId"],
   ["GET", "/api/collaboration/scopes/:scopeId/exports/:exportId"],

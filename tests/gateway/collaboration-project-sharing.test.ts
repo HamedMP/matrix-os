@@ -1,9 +1,11 @@
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { createProjectSharingService } from "../../packages/gateway/src/collaboration/project-sharing.js";
 import {
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -154,6 +156,75 @@ describe("whole-project sharing coordinator", () => {
     })).rejects.toMatchObject({ code: "conflict" });
     expect(prepare).not.toHaveBeenCalled();
   });
+
+  it("returns the durable result when an unshare request is retried", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare);
+    const request = {
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000703",
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    };
+
+    await expect(service.unshare(request)).resolves.toEqual({
+      scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5,
+    });
+    await expect(service.unshare(request)).resolves.toEqual({
+      scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5,
+    });
+  });
+
+  it.runIf(Boolean(process.env.MATRIX_TEST_POSTGRES_URL))(
+    "returns one durable result to concurrent retries of the same unshare request on PostgreSQL",
+    async () => {
+      const raceFixture = await createRealCollaborationTestDatabase();
+      try {
+        await bootstrapChatDatabase(raceFixture.db);
+        await bootstrapCollaborationDatabase(raceFixture.db);
+        await seed(raceFixture);
+        await raceFixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+          .where("id", "=", PROJECT_SCOPE).execute();
+        await sql`
+          CREATE FUNCTION delay_project_unshare() RETURNS trigger AS $$
+          BEGIN
+            PERFORM pg_sleep(0.25);
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql
+        `.execute(raceFixture.db);
+        await sql`
+          CREATE TRIGGER delay_project_unshare
+          BEFORE UPDATE ON collaboration_scopes
+          FOR EACH ROW
+          WHEN (OLD.lifecycle = 'shared' AND NEW.lifecycle = 'private')
+          EXECUTE FUNCTION delay_project_unshare()
+        `.execute(raceFixture.db);
+        const service = serviceFixture(raceFixture, preview, verifyConfirmation, replayPreparation, prepare);
+        const request = {
+          scopeId: PROJECT_SCOPE,
+          actorId: OWNER,
+          clientRequestId: "50000000-0000-4000-8000-000000000703",
+          expectedRevision: 4,
+          payloadHash: "f".repeat(64),
+        };
+
+        const results = await Promise.all([service.unshare(request), service.unshare(request)]);
+
+        expect(results).toEqual([
+          { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+          { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+        ]);
+        expect(await raceFixture.db.selectFrom("collaboration_operations").select("client_request_id")
+          .where("scope_id", "=", PROJECT_SCOPE).where("operation_kind", "=", "project.unshare").execute())
+          .toEqual([{ client_request_id: request.clientRequestId }]);
+      } finally {
+        await raceFixture.destroy();
+      }
+    },
+  );
 });
 
 function serviceFixture(

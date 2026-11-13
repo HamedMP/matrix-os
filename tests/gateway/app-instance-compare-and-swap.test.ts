@@ -19,7 +19,7 @@ it("keeps standalone app compareAndSwap behind editor authorization and an exact
     const root = await catalog.register({ ownerId, projectId: null, kind: "app", path: appId, incarnation });
     const now = new Date("2026-10-06T12:00:00Z");
     await fixture.db.insertInto("collaboration_scopes").values({
-      id: scopeId, owner_type: "personal", owner_id: ownerId, kind: "app", organization_id: "org-cas",
+      id: scopeId, owner_type: "personal", owner_id: ownerId, kind: "app", organization_id: "org_cas",
       resource_id: root.id, parent_scope_id: null, membership_mode: "direct", lifecycle: "shared", revision: 1,
       auth_epoch: 1, authority_runtime_id: "runtime-cas", authority_generation: 1, execution_generation: null,
       execution_eligibility: null, created_at: now, updated_at: now, deleted_at: null,
