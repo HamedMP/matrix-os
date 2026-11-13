@@ -146,6 +146,27 @@ describe("shared app publishing", () => {
     expect(screen.getByLabelText("Invite by email")).toHaveProperty("value","viewer@example.com");
     expect(screen.getByRole("button",{name:"Refresh publication"})).toBeTruthy();
   });
+  it("refreshes invitation revisions after an acceptance conflict without a site revision change", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const stale={id:"44444444-4444-4444-8444-444444444444",emailAddress:"viewer@example.com",state:"pending" as const,
+      deliveryState:"queued" as const,generation:1,revision:1,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-12-01T00:00:00.000Z",updatedAt:"2026-11-01T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const accepted={...stale,state:"accepted" as const,revision:2,acceptedAt:"2026-11-13T00:00:00.000Z"};
+    let refreshed=false, getCalls=0;
+    const get=vi.fn(async()=>{getCalls++;if(getCalls>1)refreshed=true;return emailSite;});
+    const emailInvitations=vi.fn(async()=>({invitations:[refreshed?accepted:stale],nextCursor:null,siteRevision:1}));
+    const revokeEmailInvitation=vi.fn().mockRejectedValueOnce(new SiteClientError(409))
+      .mockResolvedValueOnce({invitation:{...accepted,state:"revoked",revision:3},siteRevision:1});
+    const api=client({get,emailInvitations,revokeEmailInvitation});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Revoke invitation"}));
+    expect(await screen.findByRole("button",{name:"Refresh publication"})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Refresh publication"}));
+    await waitFor(()=>expect(within(screen.getByRole("list",{name:"Email invitations"})).getByText(/accepted/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button",{name:"Revoke invitation"}));
+    await waitFor(()=>expect(revokeEmailInvitation).toHaveBeenNthCalledWith(2,"launch",stale.id,
+      {baseRevision:1,invitationRevision:2},expect.any(AbortSignal)));
+  });
   it("pages email inventory and resends an expired invitation with its revisions", async () => {
     const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
     const expired={id:"44444444-4444-4444-8444-444444444444",emailAddress:"older@example.com",state:"expired" as const,
