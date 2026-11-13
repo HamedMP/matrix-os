@@ -45,7 +45,7 @@ describe("owned native acceptance boundaries", () => {
     await expect(readOwnerMarker(`${f.root}-link/.native-acceptance-owner.json`, f.expected)).rejects.toThrow(/symlink/);
   });
 
-  it("preflight never creates directories, marker, units or receipt", async () => {
+  it.each(["", 's "255.4"'])("preflight never creates directories, marker, units or receipt (manager Version: %j)", async version => {
     const { preflight } = await subject(); const f = await fixture(true);
     const before = await readdir(f.root);
     const commands: string[][] = [];
@@ -56,10 +56,17 @@ describe("owned native acceptance boundaries", () => {
     })).rejects.toThrow("owned_node_unprotected_or_unavailable");
     expect(commands).toEqual([]);
     const harnessNode = { inode: "123", device: "4", sha256: "5".repeat(64) };
-    const result = await preflight(config, async (path: string) => { expect(path).toBe("/var/lib/matrix-devstack/proof/runtime/node"); return harnessNode; }, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
+    const result = await preflight(config, async (path: string) => { expect(path).toBe("/var/lib/matrix-devstack/proof/runtime/node"); return harnessNode; }, async (bin: string, argv: string[]) => {
+      commands.push(argv);
+      if (bin === "/usr/bin/busctl") return { code: 0, stdout: version };
+      return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" };
+    });
     expect(result.harnessNode).toEqual(harnessNode); expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
-    expect(commands).toHaveLength(3);
-    expect(commands.every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
+    // An installed but unusable system bus must block before run mode can reserve the namespace.
+    expect(result.blockers.includes("system_bus_unavailable")).toBe(version === "");
+    expect(commands).toHaveLength(4);
+    expect(commands.slice(0, 3).every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
+    expect(commands[3]).toEqual(["--system", "get-property", "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Version"]);
     expect(await readFile(f.path, "utf8")).toContain('"namespace":"proof"');
   });
 

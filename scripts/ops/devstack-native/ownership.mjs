@@ -2,19 +2,47 @@ import { lstat } from "node:fs/promises";
 import { assert, command, hash, waitFor } from "./control.mjs";
 import { safeCode } from "./receipt.mjs";
 export const CASCADE_KEYS = ["BoundBy", "ConsistsOf", "RequiredBy", "RequisiteOf", "PropagatesStopTo", "PartOf", "BindsTo", "OnFailure", "OnSuccess", "ExecStop", "ExecStopPost"];
-export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus", "StandardError", "LimitFSIZE", "LimitFSIZESoft", ...CASCADE_KEYS];
-export async function observeUnit(name, run = command) {
+export const IDENTITY_KEYS = ["Id", "LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus", "StandardError", "LimitFSIZE", "LimitFSIZESoft", ...CASCADE_KEYS];
+async function definitionIdentity(path) {
+  const entry = await lstat(path, { bigint: true });
+  assert(entry.isFile() && !entry.isSymbolicLink() && entry.uid === 0n && (entry.mode & 0o022n) === 0n && entry.size <= 65536n, "unit_definition_identity_unproven");
+  return `${await hash(path)}:${entry.dev}:${entry.ino}:${entry.ctimeNs}`;
+}
+async function snapshot(name, run, readDefinition) {
   const result = await run("/usr/bin/systemctl", ["show", name, ...IDENTITY_KEYS.map(key => `--property=${key}`)]);
-  assert(result.code === 0, "unit_identity_unavailable"); const values = {};
+  assert(result.code === 0 && !result.stderrPresent, "unit_identity_unavailable"); const values = {};
   for (const line of result.stdout.split("\n")) { const i = line.indexOf("="); const key = line.slice(0, i);
-    assert(IDENTITY_KEYS.includes(key) && line.length <= 4096, "unit_identity_invalid"); values[key] = line.slice(i + 1); }
+    assert(i > 0 && IDENTITY_KEYS.includes(key) && !Object.hasOwn(values, key) && line.length <= 4096, "unit_identity_invalid"); values[key] = line.slice(i + 1); }
+  assert(values.Id === name, "unit_name_mismatch");
   if (values.LoadState !== "not-found") {
     assert(values.FragmentPath === `/run/systemd/transient/${name}`, "unit_definition_identity_unproven");
-    const entry = await lstat(values.FragmentPath, { bigint: true });
-    assert(entry.isFile() && !entry.isSymbolicLink() && entry.uid === 0n && (entry.mode & 0o022n) === 0n && entry.size <= 65536n, "unit_definition_identity_unproven");
-    values.DefinitionIdentity = `${await hash(values.FragmentPath)}:${entry.dev}:${entry.ino}:${entry.ctimeNs}`;
+    values.DefinitionIdentity = await readDefinition(values.FragmentPath);
   }
   return values;
+}
+const stopHooks = ["ExecStop", "ExecStopPost"];
+export async function observeUnit(name, run = command, readDefinition = definitionIdentity) {
+  assert(typeof name === "string" && name.length <= 255 && /^[a-z][a-z0-9-]*\.service$/.test(name), "unit_name_invalid");
+  const before = await snapshot(name, run, readDefinition);
+  if (before.LoadState === "not-found") return before;
+  const missing = stopHooks.filter(key => !Object.hasOwn(before, key));
+  if (!missing.length) return before;
+  // systemd's object path encodes punctuation as '_' and its hex byte. The
+  // unit allowlist above permits exactly two such characters (dash and dot).
+  const object = "/org/freedesktop/systemd1/unit/" + name.replaceAll("-", "_2d").replace(".", "_2e");
+  for (const key of missing) {
+    const reply = await run("/usr/bin/busctl", ["--system", "get-property", "org.freedesktop.systemd1", object,
+      "org.freedesktop.systemd1.Service", key], 3000);
+    assert(reply.code === 0 && !reply.stderrPresent, "unit_hook_unavailable");
+    assert(reply.stdout === "a(sasbttttuii) 0", "unit_dependency_or_stop_hook_quarantined");
+  }
+  // Only attach the typed proof to the definition, invocation, PID and
+  // dependency snapshot it was requested for. Never cache it across actions.
+  const after = await snapshot(name, run, readDefinition);
+  assert(IDENTITY_KEYS.every(key => before[key] === after[key])
+    && before.DefinitionIdentity === after.DefinitionIdentity, "unit_changed_during_hook_observation");
+  for (const key of missing) after[key] = "";
+  return after;
 }
 export function createUnitLedger(config, token, io = {}) {
   const check = io.check ?? (() => {});
