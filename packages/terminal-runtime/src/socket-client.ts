@@ -1,3 +1,4 @@
+import type { NativeTabAdmission, NativeTabCompletion, NativeTabReservation } from "./native-host-lifecycle.js";
 import { randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import {
@@ -56,10 +57,19 @@ export class TerminalRuntimeSocketClient {
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab> {
     return TerminalTabSchema.parse(await this.call("CreateTab", { workspaceId, ...input }));
+  }
+
+  async prepareNativeTab(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation> {
+    return z.object({ tab: TerminalTabSchema, settlementToken: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await this.call("PrepareNativeTab", { workspaceId, ...input }));
+  }
+
+  async completeNativeTab(ref: { workspaceId: string; tabId: string }, input: NativeTabCompletion): Promise<TerminalTab> {
+    return TerminalTabSchema.parse(await this.call("CompleteNativeTab", { ...ref, ...input }));
   }
 
   async getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<unknown> {

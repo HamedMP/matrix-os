@@ -42,6 +42,9 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@matrix-os/terminal-runtime/generation-closure": path.resolve(__dirname, "packages/terminal-runtime/src/generation-closure.mjs"),
+      "@matrix-os/terminal-runtime/native-host-descriptor": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-descriptor.ts"),
+      "@matrix-os/terminal-runtime/native-host-unit": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-unit.ts"),
+      "@matrix-os/terminal-runtime/native-host-lifecycle": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-lifecycle.ts"),
       "@matrix-os/terminal-runtime/generation-lock": path.resolve(__dirname, "packages/terminal-runtime/src/generation-lock.ts"),
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),

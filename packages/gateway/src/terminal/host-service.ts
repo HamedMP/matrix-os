@@ -4,12 +4,13 @@ import type { Dir } from "node:fs";
 import { mkdir, lstat, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { TerminalWorkspaceStore } from "@matrix-os/terminal-runtime";
 import { validateTerminalClosure } from "@matrix-os/terminal-runtime/generation-closure";
 import { withTerminalGenerationLock } from "@matrix-os/terminal-runtime/generation-lock";
 import { openTerminalLaunchChannel, type PrivateLaunchSpawn } from "../background-launch-channel.js";
 import { TerminalHostDescriptorSchema, TerminalHostLaunchSchema, readTerminalHostDescriptor, terminalHostUnit, type TerminalHostDescriptor } from "./host-descriptor.js";
 import { createRetainedTerminalBinding } from "./retained-binding.js";
-import { inspectTerminalHostUnit, inspectTerminalHostUnits, verifyTerminalHostBinding, type TerminalManagerCommand } from "./host-supervision.js";
+import { inspectTerminalHostUnit, inspectTerminalHostUnits, stopTerminalHostUnit, verifyTerminalHostBinding, type TerminalManagerCommand } from "./host-supervision.js";
 import { terminalIoLocation, type TerminalIoReference } from "./io-attach.js";
 import type { readLinuxProcess } from "./process-identity.js";
 const exec = promisify(execFile), RETENTION_MS = 24 * 60 * 60000;
@@ -17,6 +18,12 @@ const exec = promisify(execFile), RETENTION_MS = 24 * 60 * 60000;
 // never inferred as zero from a successful service/attach process. 7c must derive
 // native root liveness/exit state independently of this coarse supervisor state.
 type Status = "running" | "stopped" | "unknown";
+/** Lifecycle-owned phase evidence; a missing descriptor is never absence proof. */
+export class TerminalHostStartError extends Error {
+  constructor(readonly phase: "never-dispatched" | "uncertain", cause: unknown) {
+    super("Native terminal start unavailable", { cause }); this.name = "TerminalHostStartError";
+  }
+}
 /** Trusted server-only service. No route/UDS createTab may provide onBound/principal.
  * Restored descriptors recover I/O and explicit stop ONLY; they cannot recover source authority. */
 export function createTerminalHostService(options: {
@@ -27,6 +34,7 @@ export function createTerminalHostService(options: {
   if (uid === undefined || !/^gen_[a-f0-9]{64}$/.test(options.generation)) throw new Error("Terminal host unavailable");
   const namespaceRoot = resolve(options.namespaceRoot ?? `/run/user/${uid}`), descriptors = join(home, "system", "terminal-runtimes");
   const helperPath = resolve(options.generationLockHelperPath ?? "/opt/matrix/bin/matrix-terminal-generation-gc.py");
+  const canonicalStore = new TerminalWorkspaceStore({ homePath: home });
   const env = { PATH: process.env.PATH, HOME: home, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` };
   const run: TerminalManagerCommand = options.runCommand ?? ((command, args) => exec(command, args, { env, timeout: 15000, maxBuffer: 512 * 1024, encoding: "utf8" }));
   const bindings = new Map<string, ReturnType<typeof createRetainedTerminalBinding>>(); // <=32 retained proof channels; excess launches keep I/O without new proof.
@@ -90,15 +98,29 @@ export function createTerminalHostService(options: {
       } catch (error) { console.warn("[terminal-host] Retention record unavailable", error instanceof Error ? error.name : "UnknownError"); }
     }
     const states = await inspectTerminalHostUnits(inventory.map(record => terminalHostUnit(record.launchId)), run);
-    for (const record of inventory) {
-      if (!states.get(terminalHostUnit(record.launchId))!.running && Date.now() - Date.parse(record.createdAt) > RETENTION_MS && !bindings.has(record.launchId)) await removeStopped(record);
+    const expired = inventory.filter(record => !states.get(terminalHostUnit(record.launchId))!.running
+      && Date.now() - Date.parse(record.createdAt) > RETENTION_MS && !bindings.has(record.launchId));
+    if (!expired.length) return;
+    // Canonical reservations precede descriptor creation. Read the atomic file under the generation lock,
+    // without a workspace RPC, and keep stop evidence until its referencing tab is removed.
+    const removable = new Set(expired.map(record => join(record.directory, "io.sock"))); // <=64, sweep-local.
+    for (const workspace of await canonicalStore.listWorkspaces()) {
+      for (const tab of workspace.tabs) if (tab.nativeHost) removable.delete(tab.nativeHost.path);
     }
+    for (const record of expired) if (removable.has(join(record.directory, "io.sock"))) await removeStopped(record);
   }
   const sweep = () => serial(sweepBatch);
   const timer = setInterval(() => { void sweep().catch(error => console.warn("[terminal-host] Retention deferred", error instanceof Error ? error.name : "UnknownError")); }, 60000); timer.unref();
   return {
-    start(input: { launch: TerminalHostDescriptor["launch"]; cols: number; rows: number; onBound?: Parameters<typeof createRetainedTerminalBinding>[0]["onBound"] }) {
-      return serial(async () => {
+    async start(input: { launch: TerminalHostDescriptor["launch"]; cols: number; rows: number; onPrepared?: (reference: TerminalIoReference) => Promise<void>; onDispatchSettled?: () => void; onBound?: Parameters<typeof createRetainedTerminalBinding>[0]["onBound"] }) {
+      let dispatchAttempted = false, verifiedDispatch = false;
+      try {
+      const launchId = randomUUID().replaceAll("-", ""), directory = join(namespaceRoot, "matrix-terminal-" + launchId);
+      const reference = Object.freeze({ path: join(directory, "io.sock") });
+      // Canonical admission may ensure the workspace's Zellij unit, which uses the
+      // same generation lock. Never hold that lock while awaiting this callback.
+      await input.onPrepared?.(reference);
+      return await serial(async () => {
         // Canonical route creation rate-limits remain in their owner. Never impose a live workload ceiling here.
         const generationDirectory = join(runtimeRoot, "generations", options.generation);
         for (const path of [runtimeRoot, join(runtimeRoot, "generations"), generationDirectory]) {
@@ -106,7 +128,6 @@ export function createTerminalHostService(options: {
           if (!info.isDirectory() || info.isSymbolicLink() || info.mode & 0o022) throw new Error("Terminal generation unavailable");
         }
         await validateTerminalClosure(generationDirectory, options.generation);
-        const launchId = randomUUID().replaceAll("-", ""), directory = join(namespaceRoot, "matrix-terminal-" + launchId);
         const descriptor = TerminalHostDescriptorSchema.parse({ version: 1, kind: "terminal-native", launchId, generation: options.generation, createdAt: new Date().toISOString(),
           directory, launch: TerminalHostLaunchSchema.parse(input.launch), cols: input.cols, rows: input.rows });
         const payload = JSON.stringify(descriptor);
@@ -119,11 +140,13 @@ export function createTerminalHostService(options: {
           "--property=TimeoutStopSec=10s", "--property=MemoryHigh=1G", "--property=MemoryMax=1536M", "--property=TasksMax=1024", "--property=Restart=no",
           "--property=UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH", "--pipe", "--", join(generationDirectory, "node"), join(generationDirectory, "terminal-service.mjs"), descriptorPath(launchId), digest];
         try {
+          dispatchAttempted = true; // From this point even a launch-channel failure is uncertain.
           const channel = await openTerminalLaunchChannel({ args, digest, env, spawn: options.spawnPrivate });
           if (closed || bindings.size >= 32) channel.close();
           else {
             const binding = createRetainedTerminalBinding({ channel, onBound: input.onBound,
-              verify: bound => verifyTerminalHostBinding({ unit, generation: options.generation, bound, uid, run, read: options.readProcess }) });
+              verify: async bound => { const valid = await verifyTerminalHostBinding({ unit, generation: options.generation, bound, uid, run, read: options.readProcess });
+                if (valid) verifiedDispatch = true; return valid; } });
             bindings.set(launchId, binding);
             const retire = () => { queueMicrotask(() => { void binding.close().finally(() => bindings.delete(launchId)); }); };
             binding.signal.addEventListener("abort", retire, { once: true }); if (binding.signal.aborted) retire();
@@ -131,19 +154,20 @@ export function createTerminalHostService(options: {
           }
         } catch (error) { console.warn("[terminal-host] Private launch unavailable", error instanceof Error ? error.name : "UnknownError"); }
         // Uncertain private startup never kills a possibly live workload. Keep ownership for recovery.
-        return { reference: Object.freeze({ path: join(directory, "io.sock") }), status: await status(descriptor) };
+        const observed = await status(descriptor);
+        // A controlled started unit / verified bound root settles launch admission,
+        // not native exit, liveness at later calls, or downstream effect completion.
+        if (verifiedDispatch || observed === "running") input.onDispatchSettled?.();
+        return { reference, status: observed };
       });
+      } catch (error) { throw new TerminalHostStartError(dispatchAttempted ? "uncertain" : "never-dispatched", error); }
     },
     inspect(reference: TerminalIoReference) { return serial(async () => { const descriptor = await descriptorFor(reference); return { reference: { path: join(descriptor.directory, "io.sock") }, status: await status(descriptor) }; }); },
     stop(reference: TerminalIoReference) {
       return serial(async () => {
         const descriptor = await descriptorFor(reference), binding = bindings.get(descriptor.launchId);
         if (binding) void binding.close(); // Synchronous authority fence happens before any manager await.
-        try {
-          if (await status(descriptor) === "stopped") return { status: "stopped" as const };
-          await run("/usr/bin/systemctl", ["--user", "stop", terminalHostUnit(descriptor.launchId)]);
-          return { status: await status(descriptor) === "stopped" ? "stopped" as const : "unknown" as const };
-        } catch (error) { console.warn("[terminal-host] Stop unconfirmed", error instanceof Error ? error.name : "UnknownError"); return { status: "unknown" as const }; }
+        return stopTerminalHostUnit(terminalHostUnit(descriptor.launchId), run);
       });
     },
     sweep,

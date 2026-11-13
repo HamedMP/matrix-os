@@ -1,4 +1,5 @@
-import { sql, type Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
+import type { TerminalRef } from "@matrix-os/contracts";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
 export interface CollaborationTerminalBindingsTable {
@@ -14,6 +15,12 @@ export interface CollaborationTerminalBindingsTable {
   /** S07 owner opt-in: Contributors may control this host shell only when true. */
   contributor_control: boolean;
   created_at: Date | string;
+}
+
+/** Match the current incarnation. A retained row for a replaced tab has no control of its successor. */
+export async function hasTerminalCollaborationBinding(db: Kysely<OwnerCollaborationDatabase>, ref: TerminalRef, incarnation: string): Promise<boolean> {
+  return !!await db.selectFrom("collaboration_terminal_bindings").select("scope_id")
+    .where("terminal_id", "=", `${ref.workspaceId}:${ref.tabId}`).where("tab_incarnation", "=", incarnation).executeTakeFirst();
 }
 
 export async function migrateTerminalBindingsV15(trx: Transaction<OwnerCollaborationDatabase>): Promise<void> {

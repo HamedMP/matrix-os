@@ -1,0 +1,195 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { TerminalRuntime, type ZellijObserverEvent, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
+import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
+const nativeHost = { path: "/run/user/501/matrix-terminal-" + "a".repeat(32) + "/io.sock", generation: "gen_" + "b".repeat(64) };
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+async function fixture(stopStatus: "stopped" | "unknown" = "stopped") {
+  const homePath = await mkdtemp(join(tmpdir(), "terminal-native-lifecycle-"));
+  const store = new TerminalWorkspaceStore({ homePath });
+  const ids = { tabId: 1, paneId: "terminal_1" }; let found = true;
+  let observe: ((event: ZellijObserverEvent) => void) | undefined;
+  const zellij: ZellijRuntimeAdapter = { ensureSession: vi.fn(async () => {}), createTab: vi.fn(async () => ids),
+    findTabByInternalName: vi.fn(async () => found ? ids : undefined),
+    openAttachment: vi.fn(), subscribeWorkspace: vi.fn(async (_session, input) => {
+      observe = input.onEvent;
+      return { close: async () => {} };
+    }),
+    closeTab: vi.fn(async () => { found = false; }), deleteSession: vi.fn(async () => { found = false; }),
+    getCommandState: vi.fn(async () => "exited" as const), getCommandResult: vi.fn(async () => ({ state: "exited" as const, exitCode: 0 })),
+  };
+  const host = { inspect: vi.fn(async () => ({ status: "running" })), stop: vi.fn(async () => ({ status: stopStatus })),
+    attachCommand: vi.fn(async () => ["/pinned/node", "/pinned/terminal-io-attach.mjs", nativeHost.path]) };
+  const runtime = new TerminalRuntime({ store, zellij, nativeHosts: host } as never);
+  cleanup.push(async () => { await runtime.shutdown(); await rm(homePath, { recursive: true, force: true }); });
+  const workspace = await runtime.ensureWorkspace();
+  const tab = await runtime.createTab(workspace.id, { name: "Hermes", cwd: "", nativeHost } as never);
+  const ref = { workspaceId: workspace.id, tabId: tab.id };
+  return { runtime, store, host, zellij, workspace, tab, ref, losePane: () => { found = false; },
+    notifyPaneClosed: () => observe!({ type: "pane-closed", paneId: ids.paneId }) };
+}
+it("persists public native I/O metadata and launches the fixed pinned attach helper", async () => {
+  const f = await fixture();
+  expect((await f.store.getTab(f.ref))?.nativeHost).toEqual(nativeHost);
+  expect(f.zellij.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ command: ["/pinned/node", "/pinned/terminal-io-attach.mjs", nativeHost.path] }));
+});
+it.each(["terminateTab", "deleteTab", "deleteWorkspace"] as const)("runtime-owned %s fences before stop and retains unknown native outcome/history", async method => {
+  const f = await fixture("unknown");
+  f.host.stop.mockImplementation(async () => {
+    expect((await f.store.getTab(f.ref))?.nativeHost?.stopRequested).toBe(true);
+    return { status: "unknown" };
+  });
+  const operation = method === "deleteWorkspace" ? f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true }) : f.runtime[method](f.ref);
+  await expect(operation).rejects.toMatchObject({ code: "unavailable" });
+  expect(f.host.stop).toHaveBeenCalledOnce(); expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null });
+  expect(f.zellij.closeTab).not.toHaveBeenCalled(); expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+});
+it.each(["terminateTab", "deleteTab", "closePane", "deleteWorkspace"] as const)("%s fences immediately and drains accepted input before stopping native work", async method => {
+  const f = await fixture();
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const delivered: string[] = [];
+  let stopping = false;
+  f.host.stop.mockImplementation(async () => { stopping = true; return { status: "stopped" }; });
+  const write = vi.fn(async (data: Uint8Array) => {
+    const text = Buffer.from(data).toString();
+    if (text === "first") { entered.resolve(); await release.promise; }
+    if (stopping) throw new Error("Native host stopped before accepted input");
+    delivered.push(text);
+  });
+  vi.mocked(f.zellij.openAttachment).mockResolvedValue({ write, resize: async () => undefined, close: async () => undefined });
+  f.zellij.paneAction = vi.fn(async () => undefined);
+  f.zellij.writeToPane = async (_session, _pane, data) => write(data);
+  const viewer = await f.runtime.attach(f.ref, { viewerId: "writer", send: () => undefined });
+  const first = viewer.write("first");
+  await entered.promise;
+  const second = viewer.write("second");
+  const direct = f.runtime.writeInput(f.ref, "direct", f.tab.incarnation);
+  const operation = method === "deleteWorkspace" ? f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true })
+    : method === "closePane" ? f.runtime.paneAction(f.ref, { type: "close" }) : f.runtime[method](f.ref);
+  const observed = Promise.allSettled([first, second, direct, operation]);
+  try {
+    await vi.waitFor(async () => expect((await f.store.getTab(f.ref))?.nativeHost?.stopRequested).toBe(true));
+    expect(f.host.stop).not.toHaveBeenCalled();
+    await expect(viewer.write("late")).rejects.toMatchObject({ code: "conflict" });
+    release.resolve();
+    await Promise.all([first, second, direct, operation]);
+    expect(delivered).toEqual(["first", "second", "direct"]);
+    expect(f.host.stop).toHaveBeenCalledOnce();
+  } finally { release.resolve(); await observed; }
+});
+
+it("keeps a fenced viewer closed to new input after an unknown stop and retries only the native stop", async () => {
+  const f = await fixture();
+  const write = vi.fn(async () => undefined);
+  vi.mocked(f.zellij.openAttachment).mockResolvedValue({ write, resize: async () => undefined, close: async () => undefined });
+  const viewer = await f.runtime.attach(f.ref, { viewerId: "writer", send: () => undefined });
+  await viewer.write("accepted");
+  f.host.stop.mockResolvedValueOnce({ status: "unknown" });
+  await expect(f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true })).rejects.toMatchObject({ code: "unavailable" });
+  expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", nativeHost: { stopRequested: true } });
+  expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+  await expect(viewer.write("too late")).rejects.toMatchObject({ code: "unavailable" });
+  await expect(f.runtime.attach(f.ref, { viewerId: "another", send: () => undefined })).rejects.toMatchObject({ code: "unavailable" });
+  await f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true });
+  expect(f.host.stop).toHaveBeenCalledTimes(2);
+  expect(f.zellij.deleteSession).toHaveBeenCalledOnce();
+  expect(write).toHaveBeenCalledOnce();
+});
+
+it("successful manager stop is not a native exit code, while explicit deletion can remove the stopped record", async () => {
+  const f = await fixture(); await f.runtime.terminateTab(f.ref);
+  expect(f.host.stop).toHaveBeenCalledOnce(); expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null, nativeHost: { managerStopped: true } });
+  await f.runtime.deleteTab(f.ref); expect(await f.store.getTab(f.ref)).toBeUndefined();
+});
+it.each(["running", "stopped"] as const)("workspace deletion respects the %s native workload after losing its I/O pane", async state => {
+  const f = await fixture();
+  const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], { stdio: ["pipe", "ignore", "ignore"] });
+  const exit = once(child, "exit");
+  cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exit; });
+  await once(child, "spawn");
+  const running = () => child.exitCode === null && child.signalCode === null;
+  f.host.inspect.mockImplementation(async () => ({ status: running() ? "running" : "stopped" }));
+  f.host.stop.mockImplementation(async () => {
+    if (running()) child.kill();
+    await exit;
+    return { status: "stopped" };
+  });
+  if (state === "stopped") { child.stdin.end(); await exit; }
+  f.losePane();
+  f.notifyPaneClosed();
+  await vi.waitFor(async () => expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null, nativeHost }));
+  const before = await f.store.getRuntimeWorkspace(f.workspace.id);
+  const impact = await f.runtime.deletionImpact(f.workspace.id);
+  const deletion = f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: false });
+  if (state === "running") {
+    await expect(deletion).rejects.toMatchObject({ code: "confirmation_required" });
+    expect(impact).toMatchObject({ runningTabs: 1, tabs: [{ id: f.tab.id }] });
+    expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toEqual(before);
+    expect(f.host.stop).not.toHaveBeenCalled();
+    expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+    expect(running()).toBe(true);
+
+    await f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true });
+    expect(f.host.stop).toHaveBeenCalledOnce();
+    expect(running()).toBe(false);
+  } else {
+    await expect(deletion).resolves.toBeUndefined();
+    expect(impact).toEqual({ runningTabs: 0, tabs: [] });
+    expect(f.host.stop).not.toHaveBeenCalled();
+  }
+  expect(f.zellij.deleteSession).toHaveBeenCalledOnce();
+  expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toBeUndefined();
+});
+it.each(["unknown supervisor", "pending dispatch"] as const)("unconfirmed deletion preserves native state for %s", async state => {
+  const f = await fixture();
+  f.losePane();
+  f.notifyPaneClosed();
+  await vi.waitFor(async () => expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable" }));
+  f.host.inspect.mockResolvedValue({ status: state === "unknown supervisor" ? "unknown" : "stopped" });
+  let expectedTabId = f.tab.id;
+  if (state === "pending dispatch") {
+    const pending = await f.runtime.prepareNativeTab(f.workspace.id, {
+      tabId: "tt_" + "c".repeat(32), name: "Pending", cwd: "",
+      nativeHost: { ...nativeHost, path: nativeHost.path.replace("a".repeat(32), "c".repeat(32)) },
+    });
+    expectedTabId = pending.tab.id;
+  }
+  const before = await f.store.getRuntimeWorkspace(f.workspace.id);
+  await expect(f.runtime.deletionImpact(f.workspace.id)).resolves.toMatchObject({ runningTabs: 1, tabs: [{ id: expectedTabId }] });
+  await expect(f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: false })).rejects.toMatchObject({ code: "confirmation_required" });
+  expect(f.host.stop).not.toHaveBeenCalled();
+  expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+  expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toEqual(before);
+});
+it("restore recreates only an I/O pane for the retained running host and never starts a native child", async () => {
+  const f = await fixture(); f.losePane(); await f.runtime.restoreAll();
+  expect(f.host.inspect).toHaveBeenCalled(); expect(f.zellij.createTab).toHaveBeenCalledTimes(2); expect(f.host.stop).not.toHaveBeenCalled();
+});
+it("a helper result cannot establish native success or liveness", async () => {
+  const f = await fixture();
+  expect(await f.runtime.getCommandResult(f.ref, f.tab.incarnation!)).toEqual({ state: "unknown" });
+  expect(await f.runtime.getCommandState(f.ref, f.tab.incarnation)).toBe("unknown");
+});
+it("runtime shutdown only drains viewers and leaves the native workload alive", async () => {
+  const f = await fixture(); await f.runtime.shutdown(); expect(f.host.stop).not.toHaveBeenCalled();
+});
+it.each(["stopped", "unknown"] as const)("restore keeps a %s host unavailable even when its old helper pane still exists", async status => {
+  const f = await fixture(); f.host.inspect.mockResolvedValue({ status });
+  await f.runtime.restoreAll();
+  expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null });
+  expect(f.zellij.createTab).toHaveBeenCalledOnce(); expect(f.host.stop).not.toHaveBeenCalled();
+});
+it("ended-tab archival cannot turn an exited helper into proven native completion", async () => {
+  const f = await fixture();
+  await f.store.removeTab(f.ref);
+  const tab = await f.runtime.createTab(f.workspace.id, { name: "Claude", cwd: "", nativeHost, agent: { providerId: "claude" } });
+  const ref = { workspaceId: f.workspace.id, tabId: tab.id };
+  f.zellij.findTabByInternalNameReadOnly = vi.fn(async () => ({ tabId: 1, paneId: "terminal_1" }));
+  await expect(f.runtime.archiveEndedTab(ref, { name: "Archived Claude", expectedName: tab.name, providerId: "claude", expectedIncarnation: tab.incarnation!, baseRevision: tab.revision })).rejects.toMatchObject({ code: "unavailable" });
+  expect(await f.store.getTab(ref)).toEqual(tab);
+});

@@ -1,3 +1,4 @@
+import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
@@ -575,6 +576,8 @@ export async function createGateway(config: GatewayConfig) {
   const backgroundChatProjection = createBackgroundChatProjection();
   // Public workspace sessions and coding-agent threads share native admission,
   // runtime ownership and the single shutdown path, even without installed agents.
+  let retireTerminalRoutineSource: import("./terminal/canonical-launch.js").CanonicalTerminalLaunch["fence"] | undefined;
+  let preparedTerminalLaunch: import("./terminal/workspace-launch.js").WorkspaceTerminalLaunch | undefined = undefined;
   const codingAgentSessionManager = createAgentSessionManager({
     homePath,
     worktreeManager: codingAgentWorktreeManager,
@@ -582,6 +585,7 @@ export async function createGateway(config: GatewayConfig) {
     resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
     beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     terminalRuntime: terminalWorkspaceRuntime,
+    terminalLaunch: input => preparedTerminalLaunch ? preparedTerminalLaunch(input) : Promise.resolve(undefined),
     backgroundRuntime: backgroundAgentRuntime,
   });
   codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
@@ -864,6 +868,7 @@ export async function createGateway(config: GatewayConfig) {
     codingAgentProjectManager,
     codingAgentWorktreeManager,
     terminalWorkspaceRuntime,
+    retireTerminalRoutineSource: (ref, incarnation) => retireTerminalRoutineSource?.(ref, incarnation),
     terminalRuntimeOwnerIds,
     projectOwnerToolOutput,
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
@@ -1322,12 +1327,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
-  const { shellRouteDeps, terminalWorkspaceProjectAdmission,
-    chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
-    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds,
-    terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
-    canonicalChatExecutionRoots, gatewayCollaboration,
-  });
+
 
   const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
     app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
@@ -1357,13 +1357,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
-  registerTerminalWebSocketRoutes({
-    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
-    workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, captureTerminalEvent,
-    getPrincipal: requireRequestPrincipal,
-    logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
-  });
+
 
   registerCodingAgentThreadWebSocketRoutes({
     app, upgradeWebSocket, codingAgentThreadStream,
@@ -1734,6 +1728,29 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  const terminalLaunchRuntime = await createTerminalLaunchRuntime({ homePath, runtime: terminalWorkspaceRuntime,
+    ownerIds: terminalRuntimeOwnerIds, computerId: internalHandle ?? "",
+    ...(botServices?.routineCli && chatRepository ? { routines: { runtime: botServices.routineCli, ownerDb: chatRepository.kysely,
+      binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
+      endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` } } : {}),
+  });
+  retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
+  preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
+  const { shellRouteDeps, terminalWorkspaceProjectAdmission,
+    chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
+    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
+    terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
+    canonicalChatExecutionRoots, gatewayCollaboration,
+  });
+
+  registerTerminalWebSocketRoutes({
+    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
+    workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
+    terminalWorkspaceProjectAdmission, captureTerminalEvent,
+    getPrincipal: requireRequestPrincipal,
+    logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
+  });
+
   slackRuntime = await startOwnerSlack({
     app, ownerId: process.env.MATRIX_USER_ID?.trim(), token: internalPlatformToken,
     platformUrl: internalPlatformUrl, handle: internalHandle, repository: chatRepository,
@@ -1750,7 +1767,7 @@ export async function createGateway(config: GatewayConfig) {
       startSession: nativeCodexRuntime.startSession,
       beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
       homePath, backgroundRuntime: backgroundAgentRuntime, terminalRuntime: terminalWorkspaceRuntime,
-      agentLauncher: agentCredentialLauncher, sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      agentLauncher: agentCredentialLauncher, terminalHermesStatus: terminalLaunchRuntime.hermesStatus, sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventStore: workspaceEventStore, eventPublisher: workspaceEventPublisher,
       reviewStore, codingAgentThreadStore,
       getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
@@ -1957,6 +1974,7 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await terminalLaunchRuntime.close();
       await botServices?.close();
       botServices = undefined;
       await sharedBrowserRuntime?.close();
