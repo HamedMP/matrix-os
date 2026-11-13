@@ -37,7 +37,7 @@ jobs:
       build: ${{ steps.prepare.outputs.build }}
       version: ${{ steps.prepare.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
           path: controller
@@ -48,7 +48,7 @@ jobs:
       - name: Record non-authorizing request receipt
         working-directory: controller
         run: bun scripts/preview-pair/controller.ts receipt
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-pair-controller-request
           path: ${{ runner.temp }}/pair-request/request.json
@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 45
     permissions: { contents: read }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
           path: candidate
@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           docker build --file Dockerfile.platform --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY --tag "matrix-preview-pair:$PAIR_SOURCE_SHA" .
           docker save --output "$RUNNER_TEMP/image.tar" "matrix-preview-pair:$PAIR_SOURCE_SHA"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-pair-image-${{ github.run_id }}
           path: ${{ runner.temp }}/image.tar
@@ -100,7 +100,7 @@ jobs:
     timeout-minutes: 45
     permissions: { contents: read }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
           path: candidate
@@ -108,7 +108,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: candidate/package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - uses: oven-sh/setup-bun@v2
@@ -122,7 +122,7 @@ jobs:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ fromJSON(needs.admission.outputs.prepared).buildContext.clerkPublishableKey }}
           NODE_OPTIONS: --max-old-space-size=6144
         run: bash scripts/build-host-bundle.sh
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-pair-host-${{ github.run_id }}
           path: |
@@ -146,7 +146,7 @@ jobs:
     outputs:
       artifacts: ${{ steps.desktop.outputs.artifacts }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
           path: controller
@@ -169,7 +169,7 @@ jobs:
     timeout-minutes: 45
     permissions: { contents: read, actions: read, id-token: write }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
           path: controller
@@ -210,7 +210,7 @@ jobs:
     timeout-minutes: 10
     permissions: { contents: read, actions: read }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
           path: controller
