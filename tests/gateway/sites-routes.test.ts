@@ -13,6 +13,24 @@ const siteId=randomUUID(), versionId=randomUUID();
 const config={data:{event:'Launch'},forms:[{id:'rsvp',title:'RSVP',fields:{email:{type:'email',required:true}}}]};
 function ownerApp(user='owner',platform:any={request:vi.fn().mockResolvedValue(null)}) { const app=new Hono(); app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,user);await next();}); app.route('/',createSiteRoutes({homePath:'/unused',ownerIds:['owner'],platform,submissions:null})); return app; }
 describe('owner publishing authentication',()=>{
+ it('never treats a signed-in email viewer as the publication owner across owner routes',async()=>{
+  const platform={request:vi.fn(),listEmailInvitations:vi.fn(),emailInvitationAudit:vi.fn()};
+  const app=ownerApp('invited-viewer',platform);
+  const operations:[string,string,RequestInit?][]=[
+   ['GET','/api/apps/event/site'],['POST','/api/apps/event/site',{body:'{}'}],
+   ['PATCH','/api/apps/event/site',{body:'{}'}],['DELETE','/api/apps/event/site',{body:'{}'}],
+   ['POST','/api/apps/event/site/rollback',{body:'{}'}],
+   ['GET','/api/apps/event/site/access-links'],['POST','/api/apps/event/site/access-links',{body:'{}'}],
+   ['GET','/api/apps/event/site/invitations'],['POST','/api/apps/event/site/invitations',{body:'{}'}],
+   ['GET','/api/apps/event/site/invitations/audit'],
+   ['GET','/api/apps/event/site/submissions'],['GET','/api/apps/event/site/submissions/export'],
+  ];
+  for(const [method,path,init] of operations)
+   expect((await app.request(path,{method,...init})).status,`${method} ${path}`).toBe(403);
+  expect(platform.request).not.toHaveBeenCalled();
+  expect(platform.listEmailInvitations).not.toHaveBeenCalled();
+  expect(platform.emailInvitationAudit).not.toHaveBeenCalled();
+ });
  it('rejects a collaborator before machine delegation',async()=>{const platform={request:vi.fn()};const response=await ownerApp('collaborator',platform).request('/api/apps/event/site');expect(response.status).toBe(403);expect(platform.request).not.toHaveBeenCalled();});
  it('returns no publication and validates app paths',async()=>{expect((await ownerApp().request('/api/apps/event/site')).status).toBe(404);expect((await ownerApp().request('/api/apps/%24evil/site')).status).toBe(400);});
  it('fails safely when publication services are missing',async()=>{const response=await ownerApp('owner',null).request('/api/apps/event/site');expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Site unavailable'});});
