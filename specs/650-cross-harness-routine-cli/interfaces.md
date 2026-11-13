@@ -10,7 +10,9 @@ Task6a adds the [partial OpenCode source port](./opencode-sources.md). Its actua
 
 The source/target/request/control/proposal domain ports, capability HTTP route factory and actual published CLI transport below are implemented. Owner destination routes/startup and the shared web/native details flow are also implemented below. The bounded exact action controller and capability/request/canonical composition are implemented in Task4b. Task5a implements the actual ordinary and delegated Claude source producers described in [claude-sources.md](./claude-sources.md). Task5b implements ordinary Codex Chat and the shared private managed-launch bridge described in [codex-sources.md](./codex-sources.md), with actual systemd/native acceptance still pending. Other harness producers remain separate required work; the actual Terminal launch proof producer remains Task7 and must reuse this bridge. An injected source/runtime fixture is not an integrated harness.
 
-Integrated ENG-93 dependency remains #3041 `e43ca79412df8562b9e12fb3a5fac3134c522170`. Future #3054 `d9e783116108d3789973cbd16fbf6795850f21a7` is not integrated. Current PR descriptions pin each B increment separately.
+The previously published B stack pins ENG-93 #3041 `e43ca79412df8562b9e12fb3a5fac3134c522170`; its PR descriptions retain their increment-specific dependency pins. The formerly referenced #3054 `d9e783116108d3789973cbd16fbf6795850f21a7` is a historical snapshot, not the current composition input. This composition combines B `cda1dd49e8ea4977b213ddff838ba1b677bb93c8` with A `8637d40db013fe6d9bf4992780381742c11382bc`; the resulting commit and validation are pinned in the PR/C acceptance handoff. Source publication does not establish a fully qualified product integration or retroactively change the prior stack's evidence.
+
+In this candidate, A's internal `routine` source resolver and negotiated approved-routine native-peer protocol require exact durable owner-approved occurrence authority. The Gateway constructs the `approvedRoutine` proof from the current routine/fire/task/run/approval lineage. General background access remains a separate grant: neither a CLI proposal nor its selection/effects turns it on. Matching native-peer protocol support and current occurrence authorization are still required.
 
 ## Intent and identity
 
@@ -75,11 +77,14 @@ The CLI uses the existing v1 envelope: success `{v:1,ok:true,data}`; failure `{v
 
 - receipt is immutable admission history. queued is neither pending human approval nor active.
 - proposal combines the last durable handoff stage with actual current approval state and an actual standing routine, when present. The handoff may remain pending_approval after a later human decision; inspect approval and routine for that later state. Its revision belongs to the dispatch record, not independently changing approval/routine data.
+- The candidate adds optional `proposal.routineLink: "unavailable"` to both strict proposal response branches, only when the original approval is `approved` and `proposal.routine` is `null` because no authoritative direct current association is observed. An owner-approved content edit can replace the standing routine's `approval_id` while the original receipt still observes its original approved history. The marker does not mean the routine was deleted, archived or stopped. Receipts and original approval history remain immutable; inspect `list` and `show` for current routine state rather than guessing a replacement association.
 - pending_approval requires a real persisted human interaction; approved alone is not a fabricated active routine.
 - control applied means desired state committed. execution.stop remains unconfirmed; read current fire/review state separately.
 - unknown requires reconciliation with the same UUID; not_observed means mayStillArrive, not definitely unapplied.
 - Duplicate/reconciliation calls never re-admit, reroute, reactivate or redrive cancellation. No automatic mutation retry.
 - Public data excludes internal source/target/runtime/task/run/interaction/account/grant references and proposal prompts.
+
+The v1 envelope version is unchanged by `routineLink`. An older CLI's strict proposal schema rejects this new key when emitted, so this edge requires matching packaged CLI, Gateway and contracts builds. Making the field optional lets a new reader accept older responses; it does not make an older strict reader accept the extended response.
 
 The authority boundaries remain independent: remembered destination is routing only; current source action authority, ENG-93 human activation, background model consent and integration permissions are checked separately. The approved exact action adapter is detailed in routine-action-policy-design.md. No implementation test grants a real user operation or validates a real native account.
 
@@ -88,6 +93,8 @@ The authority boundaries remain independent: remembered destination is routing o
 Nima's capability discovery and skill work consumes the existing CLI command registration/help and the authoritative operation/result schemas exported by contracts. This task supplies routine execution and trusted source adapters, not a second discovery registry, skill implementation or documentation MCP service. The source/capability registry above authorizes actual invocations; it is not a model-facing capability catalog. Existing aliases/output stay authoritative.
 
 C's end-to-end handoff must name exact dependency/head commits and distinguish core PostgreSQL/compiled-process, actual packaged CLI, native harness API, Terminal process proof and real-account/live lanes. Native Pi, managed Matrix Pi and offered delegated Claude are separate rows. An unqualified lane remains pending; a mock or negative-only lane does not establish a positive harness journey.
+
+The A8637/Bcda composition's recorded bounded combined fixture passes, with scoped independent re-review marked addressed: actual published CLI/private transport, owner-Postgres approval and scheduled canonical occurrence reach the Gateway native-peer inference boundary in one case. The native Claude protocol, scheduled worker/model result and peer reply remain synthetic. Published Draft source and bounded fixture evidence do not qualify a real native account/provider, Electron native service or whole branch. Final availability decisions and site Task8 delivery remain pending.
 
 
 ## Fixed Node CLI transport (Task3)

@@ -23,29 +23,35 @@ it("actual published citty routines command requires host source despite a saved
   expect(JSON.parse(result.stdout)).toEqual({ v: 1, error: { code: "source_context_required", message: "An authorized Matrix source context is required." } });
   expect(result.stderr).not.toContain("fixture-owner");
 });
-it("actual published bin relays normalized operation privately and child alone performs the scoped HTTP request", async () => {
+it.each([
+  { name: "list", argv: ["list"], operation: { operation: "list" }, result: { kind: "list", routines: [], truncated: false } },
+  { name: "approved receipt with unavailable current routine link", argv: ["request", "de000000-0000-4000-8000-000000000100"],
+    operation: { operation: "request", requestId: "de000000-0000-4000-8000-000000000100" },
+    result: { kind: "receipt", receipt: { requestId: "de000000-0000-4000-8000-000000000100", operation: "propose", disposition: "queued", revision: 1, createdAt: "2026-09-27T12:00:00.000Z" },
+      current: null, approval: null, proposal: { handoff: "pending_approval", revision: 5, approval: "approved", routine: null, routineLink: "unavailable" } } },
+])("actual published bin relays $name privately and child alone performs the scoped HTTP request", async ({ argv, operation, result }) => {
   const { createServer } = await import("node:http"), { fork } = await import("node:child_process");
   const received: unknown[] = [];
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
     received.push({ authorization: request.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString()) });
-    response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ v: 1, ok: true, data: { kind: "list", routines: [], truncated: false } }));
+    response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ v: 1, ok: true, data: result }));
   });
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   const endpoint = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute`;
   const home = await mkdtemp(join(tmpdir(), "routine-cli-ipc-")); homes.push(home);
-  const child = fork(resolve("packages/sync-client/bin/matrix.mjs"), ["routines", "list", "--json"], { cwd: home, execArgv: [], silent: true,
+  const child = fork(resolve("packages/sync-client/bin/matrix.mjs"), ["routines", ...argv, "--json"], { cwd: home, execArgv: [], silent: true,
     env: { PATH: process.env.PATH, HOME: home, MATRIX_NO_TELEMETRY: "1" } });
   let stdout = "", stderr = "", requests = 0;
   child.stdout!.on("data", chunk => { stdout += chunk; }); child.stderr!.on("data", chunk => { stderr += chunk; }); child.stdin!.end();
-  child.on("message", frame => { expect(frame).toEqual({ v: 1, type: "routine.request", operation: { operation: "list" } }); requests++;
+  child.on("message", frame => { expect(frame).toEqual({ v: 1, type: "routine.request", operation }); requests++;
     child.send({ v: 1, type: "routine.capability", endpoint, token: "rcli_" + "A".repeat(43) }); });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
   try {
     const code = await new Promise<number | null>((done, reject) => { child.once("error", reject); child.once("exit", code => done(code)); });
     expect(requests).toBe(1); expect(code).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({ v: 1, ok: true, data: { kind: "list", routines: [], truncated: false } });
-    expect(received).toEqual([{ authorization: "RoutineCapability rcli_" + "A".repeat(43), body: { operation: { operation: "list" } } }]);
+    expect(JSON.parse(stdout)).toEqual({ v: 1, ok: true, data: result });
+    expect(received).toEqual([{ authorization: "RoutineCapability rcli_" + "A".repeat(43), body: { operation } }]);
     expect(stdout + stderr).not.toContain("rcli_");
   } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); await new Promise<void>(done => server.close(() => done())); }
 });
