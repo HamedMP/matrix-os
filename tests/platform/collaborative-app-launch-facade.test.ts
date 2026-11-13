@@ -141,6 +141,29 @@ describe("collaborative app authenticated launch facade", () => {
     } finally { await secondSessions.close(); }
   });
 
+  it.each(["expired", "revoked"])("does not register a replacement when a recovered launch is %s while the owner opens", async (reason) => {
+    const identity = { actorId, scopeId, organizationId, runtimeId: "runtime_owner", authorityGeneration: 1,
+      appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 };
+    const launch = await sessions.create({ ...identity, clientRequestId: requestId });
+    let finishOpen!: (value: CollaborativeAppLaunchUpstream) => void;
+    const opening = vi.fn(() => new Promise<CollaborativeAppLaunchUpstream>((resolve) => { finishOpen = resolve; }));
+    const recoveredClose = vi.fn();
+    const second = new CollaborativeAppLaunchSessions({ db: fixture.collaborationDb, open: opening,
+      now: () => currentTime, startTimer: false });
+    try {
+      const requested = second.request({ ...launch, actorId, scopeId, assetPath: "index.html" });
+      await vi.waitFor(() => expect(opening).toHaveBeenCalledOnce());
+      if (reason === "expired") currentTime += 60_001;
+      else await sessions.revokeScope(scopeId);
+      finishOpen({ request, close: recoveredClose });
+      await expect(requested).rejects.toMatchObject({ code: "not_found" });
+      await second.sweep();
+      expect(await fixture.collaborationDb.selectFrom("collaboration_app_launches").selectAll().execute()).toEqual([]);
+      expect(recoveredClose).toHaveBeenCalledOnce();
+      expect(second.size).toBe(0);
+    } finally { await second.close(); }
+  });
+
   it("creates an idempotent path-bound launch and serves safe immutable bytes without a browser credential", async () => {
     const create = () => routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
       method: "POST",

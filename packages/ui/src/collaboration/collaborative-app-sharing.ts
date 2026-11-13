@@ -22,3 +22,4 @@ export type {
   SharedAppTransport,
 } from "./shared-app-transport.js";
 export type { CollaborativeAppShareApi } from "./CollaborativeAppShareButton.js";
+export type { SharedAppDirectoryControls } from "./useSharedAppDirectory.js";

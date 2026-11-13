@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { afterEach, expect, it, vi } from "vitest";
 import { useSharedAppDirectory } from "../../packages/ui/src/collaboration/useSharedAppDirectory.js";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events.js";
+import { SharedAppDirectoryNotice } from "../../packages/ui/src/collaboration/SharedAppDirectoryNotice.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
 
 const target = {
@@ -59,4 +60,48 @@ it("marks and opens a shared app in the Web Mobile launcher", () => {
   expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
   fireEvent.click(tile);
   expect(open).toHaveBeenCalledWith(app);
+});
+
+it("keeps a large directory usable and loads additional pages on demand", async () => {
+  const api = { get: vi.fn(async (path: string) => {
+    const page = Number(new URL(path, "https://platform.test").searchParams.get("cursor") ?? 0);
+    return { items: [{ ...target, scopeId: `10000000-0000-4000-8000-${String(page + 1).padStart(12, "0")}` }],
+      ...(page < 20 ? { nextCursor: String(page + 1) } : {}) };
+  }) };
+  const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
+  await waitFor(() => expect(result.current.items).toHaveLength(20));
+  expect(result.current.unavailable).toBe(false);
+  expect(result.current.hasMore).toBe(true);
+  act(() => result.current.loadMore());
+  await waitFor(() => expect(result.current.items).toHaveLength(21));
+  expect(result.current.hasMore).toBe(false);
+});
+
+it("bounds loaded entries, preserves them on pagination failure and offers restart", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  let failNext = true;
+  const api = { get: vi.fn(async (path: string) => {
+    const page = Number(new URL(path, "https://platform.test").searchParams.get("cursor") ?? 0);
+    if (page === 20 && failNext) { failNext = false; throw new Error("network unavailable"); }
+    return { items: Array.from({ length: 100 }, (_, index) => ({ ...target,
+      scopeId: `10000000-0000-4000-8000-${String(page * 100 + index + 1).padStart(12, "0")}` })),
+      ...(page < 20 ? { nextCursor: String(page + 1) } : {}) };
+  }) };
+  let count = 0;
+  let first = "";
+  function Directory() {
+    const directory = useSharedAppDirectory(api, "user_member");
+    count = directory.items.length;first = directory.items[0]?.scopeId ?? "";
+    return <SharedAppDirectoryNotice directory={directory} />;
+  }
+  render(<Directory />);
+  fireEvent.click(await screen.findByRole("button", { name: "Load more shared apps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Show first shared apps" })).toBeTruthy());
+  expect(count).toBe(2_000);
+  expect(first).toBe("10000000-0000-4000-8000-000000000101");
+  fireEvent.click(screen.getByRole("button", { name: "Show first shared apps" }));
+  await screen.findByRole("button", { name: "Load more shared apps" });
+  expect(count).toBe(2_000);
+  expect(first).toBe(target.scopeId);
 });

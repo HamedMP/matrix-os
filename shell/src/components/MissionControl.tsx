@@ -193,7 +193,7 @@ export function MissionControl({
           </div>
         )}
 
-        <SharedAppDirectoryNotice unavailable={shared.unavailable} onRetry={shared.retry} />
+        <SharedAppDirectoryNotice directory={shared} />
         <LauncherGrid
           apps={launcherApps}
           openWindows={openWindows}

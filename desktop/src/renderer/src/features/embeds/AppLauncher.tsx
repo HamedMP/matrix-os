@@ -242,8 +242,7 @@ export default function AppLauncher({
     }
   };
 
-  if (presentation !== "launchpad" && error) {
-    return (
+  const installedNotice = presentation === "launchpad" ? null : error ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Apps unavailable"
@@ -256,28 +255,19 @@ export default function AppLauncher({
           ) : null
         }
       />
-    );
-  }
-
-  if (presentation !== "launchpad" && !isPending && !isFetching && apps.length === 0 && shared.items.length === 0) {
-    return (
+    ) : !isPending && !isFetching && apps.length === 0 ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="No apps installed"
         description="Web apps in your Matrix workspace appear here. Ask Chat to create an app to get started."
       />
-    );
-  }
-
-  if (presentation !== "launchpad" && isPending && apps.length === 0) {
-    return (
+    ) : isPending && apps.length === 0 ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Loading apps"
         description="Your installed apps will appear here once your computer responds."
       />
-    );
-  }
+    ) : null;
 
   return (
     <div
@@ -324,8 +314,9 @@ export default function AppLauncher({
         ) : null}
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
-        <SharedAppDirectoryNotice unavailable={shared.unavailable} onRetry={shared.retry} />
-        {filtered.length === 0 ? (
+        <SharedAppDirectoryNotice directory={shared} />
+        {installedNotice}
+        {filtered.length === 0 && !installedNotice && !shared.loading ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
           <div data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>

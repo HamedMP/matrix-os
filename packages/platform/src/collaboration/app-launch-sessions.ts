@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { CollaborationPlatformDatabase } from "./database.js";
-import { CollaborativeAppLaunchRepository } from "./app-launch-repository.js";
+import { CollaborativeAppLaunchRepository, type PersistedAppLaunch } from "./app-launch-repository.js";
 
 const DEFAULT_TTL_MS = 4 * 60_000;
 const DEFAULT_SWEEP_MS = 30_000;
@@ -103,6 +103,12 @@ export class CollaborativeAppLaunchSessions {
     launchId: string;
     expiresAt: string;
   }> {
+    return this.reserve(input);
+  }
+
+  private async reserve(input: CollaborativeAppLaunchIdentity & { clientRequestId: string }, recovery?: PersistedAppLaunch): Promise<{
+    launchId: string; expiresAt: string;
+  }> {
     if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
     await this.sweep();
     if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
@@ -139,7 +145,7 @@ export class CollaborativeAppLaunchSessions {
       if (!oldest) throw new CollaborativeAppLaunchError("limit");
       draining.push(this.evict(oldest));
     }
-    const result = this.openReserved(input, requestKey, draining);
+    const result = this.openReserved(input, requestKey, draining, recovery);
     this.pending.set(requestKey, { identity: input, result });
     try {
       return await result;
@@ -152,6 +158,7 @@ export class CollaborativeAppLaunchSessions {
     input: CollaborativeAppLaunchIdentity & { clientRequestId: string },
     requestKey: string,
     draining: Promise<void>[],
+    recovery?: PersistedAppLaunch,
   ): Promise<{ launchId: string; expiresAt: string }> {
     await Promise.all(draining);
     if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
@@ -170,23 +177,32 @@ export class CollaborativeAppLaunchSessions {
     const timestamp = this.now();
     let record: LaunchRecord = {
       ...input,
-      launchId: this.createId(),
-      createdAt: timestamp,
-      expiresAt: timestamp + this.ttlMs,
+      launchId: recovery?.launchId ?? this.createId(),
+      createdAt: recovery?.createdAt ?? timestamp,
+      expiresAt: recovery?.expiresAt ?? timestamp + this.ttlMs,
       lastTouched: timestamp,
       upstream,
     };
     if (this.persistence) {
       try {
-        const persisted = await this.persistence.save({
+        // Recovery may only adopt the requested row. Never recreate a revoked,
+        // evicted or expired launch after an owner connection finishes opening.
+        const persisted = recovery
+          ? await this.persistence.get(recovery.launchId, input.scopeId, input.actorId, this.now())
+          : await this.persistence.save({
           launchId: record.launchId, clientRequestId: record.clientRequestId, identity: {
             actorId: input.actorId, scopeId: input.scopeId, organizationId: input.organizationId,
             runtimeId: input.runtimeId, authorityGeneration: input.authorityGeneration,
             appId: input.appId, catalogId: input.catalogId, buildId: input.buildId, shareRevision: input.shareRevision,
           }, createdAt: record.createdAt, expiresAt: record.expiresAt,
         }, { maxSessions: this.maxSessions, maxPerActor: this.maxPerActor }, this.now());
+        if (!persisted) throw new CollaborativeAppLaunchError("not_found");
         record = { ...record, launchId: persisted.launchId, createdAt: persisted.createdAt, expiresAt: persisted.expiresAt };
       } catch (error: unknown) { await this.closeUpstream(upstream); throw error; }
+    }
+    if (this.closed) {
+      await this.closeUpstream(upstream);
+      throw new CollaborativeAppLaunchError("unavailable");
     }
     this.sessions.set(record.launchId, record);
     this.requests.set(requestKey, record.launchId);
@@ -235,7 +251,7 @@ export class CollaborativeAppLaunchSessions {
       const persisted = await this.persistence.get(input.launchId, input.scopeId, input.actorId, this.now());
       if (!persisted) throw new CollaborativeAppLaunchError("not_found");
       if (!this.sessions.has(input.launchId)) {
-        await this.create({ ...persisted.identity, clientRequestId: persisted.clientRequestId });
+        await this.reserve({ ...persisted.identity, clientRequestId: persisted.clientRequestId }, persisted);
       }
     }
     const record = this.sessions.get(input.launchId);

@@ -78,7 +78,7 @@ export function Launchpad({
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
-  sharedDirectory?: { unavailable: boolean; retry(): void };
+  sharedDirectory?: import("@matrix-os/ui/collaborative-app-sharing").SharedAppDirectoryControls;
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
@@ -181,7 +181,7 @@ export function Launchpad({
           if (e.target === e.currentTarget) onClose();
         }}
       >
-        {sharedDirectory ? <SharedAppDirectoryNotice unavailable={sharedDirectory.unavailable} onRetry={sharedDirectory.retry} /> : null}
+        {sharedDirectory ? <SharedAppDirectoryNotice directory={sharedDirectory} /> : null}
         <div className="launchpad-search-row">
           <div className="launchpad-search">
             <SearchIcon className="launchpad-search-icon" aria-hidden />

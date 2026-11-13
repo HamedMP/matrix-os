@@ -40,7 +40,7 @@ interface LauncherProps {
   openStackCount: number;
   onShowSwitcher: () => void;
   onCloseAll: () => void;
-  sharedDirectory?: { unavailable: boolean; retry(): void };
+  sharedDirectory?: import("@matrix-os/ui/collaborative-app-sharing").SharedAppDirectoryControls;
 }
 
 export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher, onCloseAll, sharedDirectory }: LauncherProps) {
@@ -63,7 +63,7 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
       <p className="px-5 pb-3 text-xs text-muted-foreground">
         Open the apps in your Matrix workspace.
       </p>
-      {sharedDirectory ? <SharedAppDirectoryNotice unavailable={sharedDirectory.unavailable} onRetry={sharedDirectory.retry} /> : null}
+      {sharedDirectory ? <SharedAppDirectoryNotice directory={sharedDirectory} /> : null}
       <motion.div
         className="flex-1 overflow-y-auto"
         variants={staggerContainer()}

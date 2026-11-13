@@ -23,6 +23,10 @@ supported for compatibility.
   window/tab navigation only. Extract launcher discovery into focused hooks rather
   than adding behavior to the large Desktop/MobileShell composition files.
 - Discovery errors are explicit and retryable; installed apps remain usable.
+  Electron renders shared apps independently of installed-catalog loading/errors.
+- Initial discovery reads at most 20 pages. More results remain available through
+  Load more; retain at most 2,000 visible shared entries and explain when earlier
+  entries leave that window, with Show first shared apps to return to them.
 
 ## Acceptance
 
@@ -48,7 +52,10 @@ state lived in process memory while the production deployment allows up to 30
 instances. A regression reproduced a successful launch followed by a 404 when HTML
 reached another instance. Retain bounded, expiring launch identity metadata in
 platform Postgres so another process can open a fresh proof-bound owner session.
-Proof keys and owner sessions remain local and are never persisted. Recheck live
+Recovery adopts the original launch ID and expiry only after re-reading the
+still-active metadata row. If it expired or was revoked during owner connection,
+close the connection without creating a replacement launch. Proof keys and owner
+sessions remain local and are never persisted. Recheck live
 organization membership and the exact build before every asset request. Revoke
 durable routing entries together with local sessions; a process shutdown releases
 local sessions while allowing another process to recover unexpired launches.
@@ -74,5 +81,6 @@ Rolling back code leaves the additive metadata table unused until expiry cleanup
 resumes. No owner app records or source files are migrated.
 
 Recommend product/engineering review of this launcher placement and the platform
-launch recovery behavior. Public user documentation should be updated in the
-separate site repository once the final behavior is verified.
+launch recovery behavior. Companion public documentation is prepared in
+[site PR #357](https://github.com/FinnaAI/matrix-os-site/pull/357); coordinate
+publication with the final verified behavior.
