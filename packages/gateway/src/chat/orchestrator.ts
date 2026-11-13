@@ -22,6 +22,7 @@ import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
 import { createMatrixAssistantOutput } from "./matrix-assistant-output.js";
 import {
   CanonicalChatRunActivitySchema,
+  canonicalUnexpectedRunFailure,
   CanonicalChatRunSteeringResponseSchema,
   CanonicalQueueChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
@@ -721,12 +722,10 @@ export class CanonicalChatOrchestrator {
       }
       const outcome = wasAborted ? "aborted" as const : "failed" as const;
       const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
-      const canonicalError = safeError(
-        outcome === "aborted" ? "run_unavailable" : "run_failed",
-        outcome === "aborted" ? "The Run was cancelled." : "The Run failed.",
-        outcome !== "aborted",
-        outcome === "aborted" ? undefined : ["retry"],
-      );
+      const diagnostic = diagnoseChatRunFailure(error, failureStage);
+      const canonicalError = outcome === "aborted"
+        ? safeError("run_unavailable", "The Run was cancelled.")
+        : canonicalUnexpectedRunFailure(diagnostic);
       try {
         try {
           await this.persistActivities(owner, run, [{ type: "run.error", error: canonicalError }], completedAt);
@@ -744,7 +743,7 @@ export class CanonicalChatOrchestrator {
             ? { sharedRequestState: "interrupted" as const }
             : {}),
           completedAt,
-          ...(outcome === "failed" ? { diagnostic: diagnoseChatRunFailure(error, failureStage) } : {}),
+          ...(outcome === "failed" ? { diagnostic } : {}),
         });
         await this.sharedExecution.notify(sharedScopeId);
       } catch (finishError: unknown) {
