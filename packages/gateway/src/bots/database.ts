@@ -232,6 +232,10 @@ export interface BotDatabase {
     source_id: string; owner_id: string; computer_id: string; invocation_id: string;
     token_hash: string | null; operation_digest: string; issued_at: Timestamp; expires_at: Timestamp; consumed_at: NullableTimestamp;
   };
+  routine_direct_chat_contexts: {
+    owner_id: string; computer_id: string; source_chat_id: string; bot_id: string; chat_id: string;
+    activated_at: NullableTimestamp;
+  };
   routine_cli_preferences: {
     owner_id: string; computer_id: string; bot_id: string | null; chat_id: string | null;
     binding_created_at: NullableTimestamp; revision: Revision; updated_at: Timestamp;

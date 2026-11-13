@@ -17,7 +17,7 @@ export function registerRoutineOriginHttp(options: {
   if (service && proofs && machine && repository && orchestrator) {
     app.route("/", createRoutineOriginRoutes({ service, verifyApproval: proofs.verifyApproval,
       ...machine, getPrincipal: requireRequestPrincipal,
-      admitContinuation: createBotContinuationAdmitter({ repository, orchestrator }) }));
+      admitContinuation: createBotContinuationAdmitter({ repository, orchestrator }, "approval") }));
     return;
   }
   const unavailable = (context: Context) => {

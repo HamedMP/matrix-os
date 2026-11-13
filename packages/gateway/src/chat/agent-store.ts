@@ -1,3 +1,5 @@
+import { ROUTINE_DIRECT_CHAT_RECIPE } from "../bots/recipe-catalog.js";
+import { isRoutineDirectBotId, ROUTINE_DIRECT_CHAT_RECIPE_REF } from "../bots/routine-direct-chat-identity.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Dir } from "node:fs";
 import { link, lstat, mkdir, open, opendir, rename, unlink, writeFile } from "node:fs/promises";
@@ -6,7 +8,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
   CanonicalOwnerScopeSchema, ChatAgentIdSchema, ChatAgentSchema,
-  MANAGED_CUSTOM_BOT_RECIPE_REF, isManagedCustomBot,
+  MANAGED_CUSTOM_BOT_RECIPE_REF, isAutomaticBotSelection, isManagedCustomBot,
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type BotRecipeRef, type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
@@ -16,6 +18,8 @@ import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 
 const MAX_AGENTS = 100;
+const MAX_ROUTINE_BOTS = 64;
+const MAX_DEFINITION_DIRECTORY_ENTRIES = MAX_AGENTS + MAX_ROUTINE_BOTS + 128;
 const MAX_FILE_BYTES = 40 * 1024;
 const TEMP_TTL_MS = 15 * 60_000;
 const AgentMetadataSchema = ChatAgentSchema.omit({ instructions: true }).extend({
@@ -32,6 +36,17 @@ export class ChatAgentStoreError extends Error {
     super(code);
     this.name = "ChatAgentStoreError";
   }
+}
+
+/** Reserved definitions must match the shipped procedure even after out-of-band file edits. */
+function assertRoutineDefinition(agent: ChatAgent): void {
+  const reserved = isRoutineDirectBotId(agent.id);
+  const recipe = ROUTINE_DIRECT_CHAT_RECIPE;
+  if (reserved !== (agent.recipeRef?.recipeId === recipe.recipeId) || reserved && (
+    agent.recipeRef?.version !== recipe.version || agent.recipe || agent.archived || agent.revision !== 1
+    || !isAutomaticBotSelection(agent.selection) || agent.name !== recipe.name
+    || agent.description !== recipe.description || agent.instructions !== recipe.instructions
+  )) throw new ChatAgentStoreError("agent_unavailable");
 }
 
 /** Files own role definitions; Postgres only serializes writes across gateway processes. */
@@ -112,7 +127,9 @@ export class ChatAgentStore {
       const metadata = AgentMetadataSchema.parse(JSON.parse(match[1]!));
       const { createHash, ...fields } = metadata;
       const instructions = match[2]!.endsWith("\n") ? match[2]!.slice(0, -1) : match[2]!;
-      return { agent: ChatAgentSchema.parse({ ...fields, instructions }), createHash };
+      const agent = ChatAgentSchema.parse({ ...fields, instructions });
+      assertRoutineDefinition(agent);
+      return { agent, createHash };
     } catch (error: unknown) {
       if (error instanceof SyntaxError || error instanceof z.ZodError) throw new ChatAgentStoreError("agent_unavailable");
       throw error;
@@ -181,15 +198,21 @@ export class ChatAgentStore {
     return agent;
   }
 
+  private async *definitionIds(directory: string): AsyncGenerator<string> {
+    let scanned = 0;
+    for await (const entry of await opendir(directory)) {
+      if (++scanned > MAX_DEFINITION_DIRECTORY_ENTRIES) throw new ChatAgentStoreError("agent_capacity");
+      if (/^bot_[a-z0-9]{8,64}\.md$/.test(entry.name)) yield entry.name.slice(0, -3);
+    }
+  }
+
   async list(owner: ChatOwner, includeArchived = false): Promise<ChatAgent[]> {
     const directory = await this.directory([this.ownerKey(owner)]);
     if (!directory) return [];
     const agents: ChatAgent[] = [];
-    let scanned = 0;
-    for await (const entry of await opendir(directory)) {
-      if (++scanned > MAX_AGENTS + 128) throw new ChatAgentStoreError("agent_capacity");
-      if (!/^bot_[a-z0-9]{8,64}\.md$/.test(entry.name)) continue;
-      const agent = await this.get(owner, entry.name.slice(0, -3));
+    for await (const id of this.definitionIds(directory)) {
+      if (isRoutineDirectBotId(id)) continue;
+      const agent = await this.get(owner, id);
       if (agent && (includeArchived || !agent.archived)) agents.push(agent);
       if (agents.length > MAX_AGENTS) throw new ChatAgentStoreError("agent_capacity");
     }
@@ -248,6 +271,11 @@ export class ChatAgentStore {
     recipeRef: BotRecipeRef;
   }): Promise<ChatAgent> {
     const id = ChatAgentIdSchema.parse(input.id);
+    const routine = isRoutineDirectBotId(id);
+    if (routine !== (input.recipeRef.recipeId === ROUTINE_DIRECT_CHAT_RECIPE_REF.recipeId)
+      || routine && (input.recipeRef.version !== ROUTINE_DIRECT_CHAT_RECIPE_REF.version || input.recipe)) {
+      throw new ChatAgentStoreError("agent_conflict");
+    }
     const createHash = z.string().regex(/^[a-f0-9]{64}$/).parse(input.createHash);
     const ownerKey = this.ownerKey(owner);
     return this.withOwnerLock(owner, async () => {
@@ -258,10 +286,20 @@ export class ChatAgentStore {
         if (existing.createHash !== createHash) throw new ChatAgentStoreError("agent_conflict");
         return existing.agent;
       }
-      if ((await this.list(owner, true)).length >= MAX_AGENTS) throw new ChatAgentStoreError("agent_capacity");
+      if (routine) {
+        let routineBots = 0;
+        for await (const existingId of this.definitionIds(directory)) {
+          if (isRoutineDirectBotId(existingId) && ++routineBots >= MAX_ROUTINE_BOTS) {
+            throw new ChatAgentStoreError("agent_capacity");
+          }
+        }
+      } else if ((await this.list(owner, true)).length >= MAX_AGENTS) {
+        throw new ChatAgentStoreError("agent_capacity");
+      }
       const now = (this.options.now?.() ?? new Date()).toISOString();
       const agent = ChatAgentSchema.parse({ ...input.fields, ...(input.recipe ? { recipe: input.recipe } : {}), recipeRef: input.recipeRef,
         id, revision: 1, archived: false, createdAt: now, updatedAt: now });
+      assertRoutineDefinition(agent);
       await this.write(directory, { agent, createHash }, true);
       return agent;
     });
@@ -275,6 +313,7 @@ export class ChatAgentStore {
   async update(owner: ChatOwner, agentId: string, inputValue: UpdateChatAgentRequest,
     resolvedRecipe?: StoredChatAgentRecipe): Promise<ChatAgent> {
     const id = ChatAgentIdSchema.parse(agentId);
+    if (isRoutineDirectBotId(id)) throw new ChatAgentStoreError("agent_not_found");
     const { baseRevision, recipe, ...patch } = UpdateChatAgentRequestSchema.parse(inputValue);
     return this.withOwnerLock(owner, async () => {
       const directory = await this.directory([this.ownerKey(owner)]);

@@ -1,3 +1,4 @@
+import { isRoutineDirectBotId } from "./routine-direct-chat-identity.js";
 import { createHash } from "node:crypto";
 import { CanonicalOwnerScopeSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
@@ -32,7 +33,7 @@ export function createCustomBotChats(options: {
   };
   return {
     async directChat(owner, agentId) {
-      if (owner.type !== "personal") return null;
+      if (owner.type !== "personal" || isRoutineDirectBotId(agentId)) return null;
       const agent = await options.agents.get(owner, ChatAgentIdSchema.parse(agentId));
       if (!agent || agent.archived) return null;
       const chatId = await bindings.directChatId({ ownerId: owner.ownerId, botId: agentId });
@@ -54,6 +55,7 @@ export function createCustomBotChats(options: {
     },
     async ensureDirectChat(ownerInput, agentIdInput) {
       const owner = personal(ownerInput), agentId = ChatAgentIdSchema.parse(agentIdInput);
+      if (isRoutineDirectBotId(agentId)) throw new BotEntryError("not_found");
       return options.chats.withTransaction(async chats => {
         await lockChatAgentOwner(chats.kysely, owner);
         const agent = await options.agents.get(owner, agentId);

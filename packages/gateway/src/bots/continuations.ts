@@ -1,3 +1,5 @@
+import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "../chat/routine-direct-admission.js";
+import { isRoutineDirectChatId } from "./routine-direct-chat-identity.js";
 /**
  * Continues a bot's waiting task after the owner answers (spec 536). The
  * answer is admitted as the owner's next message in the bot's chat under a
@@ -20,10 +22,14 @@ class ContinuationStoppedBeforeAdmission extends Error {}
 export function createBotContinuationAdmitter(deps: {
   repository: Pick<ChatRepository, "get" | "findQueuedAdmission">;
   orchestrator: Pick<CanonicalChatOrchestrator, "admitTurn" | "enqueueQueuedTurn">;
-}): BotContinuationAdmitter {
+}, routineDispatch?: RoutineDirectDispatch): BotContinuationAdmitter {
   return async (principal, continuation, signal) => {
     const checkStopped = () => { if (signal?.aborted) throw new ContinuationStoppedBeforeAdmission(); };
     const owner = { type: "personal" as const, ownerId: principal.userId };
+    const provenance = routineDispatch && isRoutineDirectChatId(continuation.chatId)
+      ? { [ROUTINE_DIRECT_DISPATCH]: routineDispatch } : undefined;
+    if (isRoutineDirectChatId(continuation.chatId) && !provenance) throw new BotInteractionError("not_found");
+    const optionalProvenance = provenance ? [provenance] as const : [] as const;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       checkStopped();
       const record = await deps.repository.get(owner, continuation.chatId);
@@ -44,7 +50,7 @@ export function createBotContinuationAdmitter(deps: {
         chatContextRequestHash(input))) return;
       checkStopped();
       try {
-        await deps.orchestrator.admitTurn(principal, owner, continuation.chatId, input);
+        await deps.orchestrator.admitTurn(principal, owner, continuation.chatId, input, ...optionalProvenance);
         return;
       } catch (error: unknown) {
         if (!(error instanceof CanonicalChatOrchestrationError)) throw error;
@@ -52,7 +58,7 @@ export function createBotContinuationAdmitter(deps: {
           checkStopped();
           try {
             // This is an automatic next turn, never a steer into the asking turn.
-            await deps.orchestrator.enqueueQueuedTurn(principal, owner, continuation.chatId, input);
+            await deps.orchestrator.enqueueQueuedTurn(principal, owner, continuation.chatId, input, ...optionalProvenance);
             return;
           } catch (enqueueError: unknown) {
             if (!(enqueueError instanceof CanonicalChatOrchestrationError)
@@ -74,7 +80,7 @@ export function botRoutineRequestId(fire:{fireId:string;attempts?:number}):strin
 
 /** A fire is admitted once through the ordinary one-run-per-Chat path, including its durable queue. */
 export function createBotRoutineCanonicalRunner(deps: Omit<Parameters<typeof createBotContinuationAdmitter>[0], "repository"> & {repository:Pick<ChatRepository,"get"|"findQueuedAdmission">}) {
-  const admit=createBotContinuationAdmitter(deps);
+  const admit=createBotContinuationAdmitter(deps, "occurrence");
   return async (routine:{ownerId:string;chatId:string;proposal:{prompt:string}},fire:{fireId:string;attempts?:number},signal:AbortSignal):Promise<{status:"accepted"|"cancelled"}> => {
     if (signal.aborted) return {status:"cancelled"};
     const clientRequestId=botRoutineRequestId(fire);

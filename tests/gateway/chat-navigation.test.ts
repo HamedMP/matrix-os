@@ -44,6 +44,26 @@ for (const [label, real] of [["PostgreSQL-compatible", false], ["real PostgreSQL
       expect(snapshot.items.every(item => item.classification.kind === "ordinary")).toBe(true);
       CanonicalChatNavigationResponseSchema.parse(snapshot);
     });
+    it("excludes scheduler backing Chats before pagination and public replay", async () => {
+      const { repository, navigation, db } = await setup(real);
+      const chatId = "chat_navigation_public";
+      const hiddenId = "chat_routine_0123456789abcdef0123456789abcdef";
+      await repository.create(owner, { id: chatId, clientRequestId: "req_public_chat", title: "Visible Chat" });
+      await repository.create(owner, { id: hiddenId, clientRequestId: "req_backing_chat", title: "Scheduler" });
+      expect((await repository.get(owner, hiddenId))?.chat.id).toBe(hiddenId);
+      expect((await repository.list(owner, { limit: 1 })).items.map(item => item.chat.id)).toEqual([chatId]);
+      const snapshot = await navigation.list(owner, { version: 1, limit: 1 });
+      expect(snapshot.items.map(item => item.chat.id)).toEqual([chatId]);
+      expect(snapshot.truncated).toBe(false);
+      await sql`INSERT INTO chat_messages (id,chat_id,seq,role,state,parts,byte_count,search_text,created_at)
+        VALUES ('msg_search_public',${chatId},1,'user','committed','[]'::jsonb,0,'visible marker',now()),
+               ('msg_search_backing',${hiddenId},1,'user','committed','[]'::jsonb,0,'backing marker',now())`.execute(db);
+      expect((await repository.search(owner, "visible")).map(item => item.chat.id)).toEqual([chatId]);
+      expect(await repository.search(owner, "backing")).toEqual([]);
+      const window = await repository.replayOutboxWindow(owner, { limit: 1 });
+      expect(window.gap).toBe(false);
+      expect(window.events.map(event => event.chatId)).toEqual([chatId]);
+    });
     it("preserves read/pin/attention and classifies archived/removed/group bindings safely", async () => {
       const { db, navigation, repository } = await setup(real);
       await seed(db, 4);

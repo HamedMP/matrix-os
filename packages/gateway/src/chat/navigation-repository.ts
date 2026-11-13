@@ -1,3 +1,4 @@
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { incomingChatMessagePredicate } from "./records.js";
 import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatNavigationItemSchema, CanonicalChatNavigationQuerySchema,
@@ -34,6 +35,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         SELECT id,title,title_version,activity_at,lifecycle,attention,revision,message_count,user_state,project_id,
           bound_driver_kind,bound_instance_id,bound_at_turn_id,collaboration,created_at,updated_at
         FROM chats WHERE owner_type = ${owner.type} AND owner_id = ${owner.ownerId} ${lifecycle}
+          AND ${publicChatIdPredicate(sql.ref("chats.id"))}
         ORDER BY activity_at DESC,id ASC LIMIT ${input.limit + 1}
       ), page AS MATERIALIZED (
         SELECT * FROM selected ORDER BY activity_at DESC,id ASC LIMIT ${input.limit}

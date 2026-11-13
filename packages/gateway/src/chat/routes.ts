@@ -1,3 +1,5 @@
+import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { ROUTINE_CREATION_PROOF_HEADER } from "@matrix-os/contracts";
 import type { ApprovalProvenance } from "./approval-submission.js";
 import { ROUTINE_FULL_ACCESS_SCOPE_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
@@ -322,6 +324,7 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
+    if (isRoutineDirectResourcePath(context.req.path)) return notFound(context);
     if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
       || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
       || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
@@ -377,6 +380,8 @@ export function createCanonicalChatRoutes(options: {
     try {
       const parsed = CanonicalCreateChatRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
+      // The schema guarantees req_. Keep scheduler backing Chat keys private across retries.
+      if (isRoutineDirectChatId(parsed.data.clientRequestId.slice("req_".length))) return validationError(context);
       const result = await options.service.create(
         ownerFromPrincipal(options.getPrincipal(context)),
         parsed.data,

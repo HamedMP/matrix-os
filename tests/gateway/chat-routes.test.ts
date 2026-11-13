@@ -119,6 +119,22 @@ function acknowledge(
 }
 
 describe("canonical Chat routes", () => {
+  it("treats a scheduler's backing Chat as absent before invoking public reads or mutations", async () => {
+    const backingChatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    const service = routeService();
+    const app = appFor(service);
+    for (const [method, suffix] of [["GET", ""], ["POST", "/turns"], ["PATCH", "/title"], ["DELETE", ""]] as const) {
+      const response = await app.request(`/api/chats/${backingChatId}${suffix}`, { method });
+      expect(response.status).toBe(404);
+    }
+    const encoded = await app.request(`/api/chats/%63${backingChatId.slice(1)}`);
+    expect(encoded.status).toBe(404);
+    expect(service.getDetail).not.toHaveBeenCalled();
+    expect(service.admitTurn).not.toHaveBeenCalled();
+    expect(service.updateTitle).not.toHaveBeenCalled();
+    expect(service.delete).not.toHaveBeenCalled();
+  });
+
   it("derives personal ownership and creates a Chat through the shared service", async () => {
     const create = vi.fn(async (_owner: ChatOwner, _input: CanonicalCreateChatRequest) => record);
     const service = routeService({ create });
@@ -626,6 +642,45 @@ describe("canonical Chat routes", () => {
       expect(CanonicalChatDetailResponseSchema.parse(await detailResponse.json()).record).toEqual(created);
 
       expect((await otherOwnerApp.request(`/api/chats/${created.chat.id}`)).status).toBe(404);
+    } finally {
+      await repository.kysely.destroy();
+    }
+  });
+
+  it.each(["existing", "unclaimed"])("keeps an %s scheduler Chat create key private", async (state) => {
+    const pglite = await KyselyPGlite.create();
+    const repository = new ChatRepository(pglite.dialect);
+    const backingChatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    const requestId = `req_${backingChatId}`;
+    const service = createCanonicalChatService(repository);
+    const publicCreate = vi.spyOn(service, "create");
+    const app = appFor(service);
+    const postChat = (clientRequestId: string, title: string) => app.request("/api/chats", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId, title }),
+    });
+
+    try {
+      await repository.bootstrap();
+      if (state === "existing") {
+        const internal = await repository.create({ type: "personal", ownerId: "owner_1" }, {
+          id: backingChatId, clientRequestId: requestId, title: "Private schedule worker",
+        });
+        expect(internal.chat.id).toBe(backingChatId);
+      }
+
+      const rejected = await postChat(requestId, "Public retry");
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toEqual({ error: "Invalid request" });
+      expect(publicCreate).not.toHaveBeenCalled();
+
+      const ordinaryKey = `${requestId}_ordinary`;
+      const created = await postChat(ordinaryKey, "Ordinary Chat");
+      const retried = await postChat(ordinaryKey, "Retried");
+      expect(created.status).toBe(201);
+      expect(retried.status).toBe(201);
+      expect(await retried.json()).toEqual(await created.json());
     } finally {
       await repository.kysely.destroy();
     }

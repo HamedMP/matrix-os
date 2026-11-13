@@ -1,3 +1,4 @@
+import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "./routine-direct-admission.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
 import { prepareChatSessionContext } from "./session-history.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
@@ -51,6 +52,7 @@ export interface RoutineFullAccessTurnAdmission {
   scopeId?: string; proof?: string;
 }
 export interface CanonicalTurnProvenance {
+  [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
   previewTurnProof?: string; routineFullAccessScope?: string; routineFullAccessProof?: string;
 }
