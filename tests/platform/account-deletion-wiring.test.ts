@@ -88,6 +88,15 @@ describe('production deletion composition',()=>{
      expect(scheduled.status).toBe(202);
      expect(await scheduled.json()).toMatchObject({status:'scheduled',billingStopped:true});
      expect(await db.executor.selectFrom('account_deletion_jobs').selectAll().execute()).toHaveLength(1);
+     const recipientKey=siteRecipientKey('user_wiring',env.ACCOUNT_DELETION_SECRET);
+     expect((await db.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+       .where('recipient_key','=',recipientKey).executeTakeFirstOrThrow()).state).toBe('inactive');
+     expect((await app.request('/api/account/delete/cancel',{method:'POST',headers:{authorization:'Bearer valid','content-type':'application/json'},body:JSON.stringify({confirm:true})})).status).toBe(200);
+     expect((await db.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+       .where('recipient_key','=',recipientKey).executeTakeFirstOrThrow()).state).toBe('active');
+     expect((await app.request('/api/account/delete',{method:'POST',headers:{authorization:'Bearer valid','content-type':'application/json'},body:JSON.stringify({confirm:true})})).status).toBe(202);
+     expect((await db.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+       .where('recipient_key','=',recipientKey).executeTakeFirstOrThrow()).state).toBe('inactive');
      const body=JSON.stringify({type:'user.deleted',data:{id:'user_wiring',deleted:true}});
      const time=String(Math.floor(Date.now()/1000));
      const signature=createHmac('sha256',key).update('evt_wiring.'+time+'.'+body).digest('base64');

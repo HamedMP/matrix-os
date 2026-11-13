@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { sql, type Transaction } from 'kysely';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createPlatformDb, insertUserMachine, type PlatformDB, type PlatformDatabase } from '../../packages/platform/src/db.js';
 import { acceptSiteEmailInvitation, createSiteEmailInvitations, listSiteEmailInvitations,
   resendSiteEmailInvitation, revokeSiteEmailInvitation, siteClerkSessionKey, siteRecipientKey } from '../../packages/platform/src/sites/email-invitations.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { authorizeEmailViewerSession, terminateEmailClerkSessionForMatrixSignOut } from '../../packages/platform/src/sites/email-viewer-sessions.js';
 import { recordSiteRecipientLifecycle } from '../../packages/platform/src/sites/account-lifecycle.js';
+import { wrapPlatformDb } from '../../packages/platform/src/database/transaction-scope.js';
 
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
@@ -285,4 +286,62 @@ postgres('site email invitations across independent PostgreSQL connections', () 
     await dbA.executor.updateTable('public_site_viewer_grants').set({ revoked_at: new Date(), revocation_reason: 'owner' }).where('id', '=', issued.grantId).execute();
     expect(await authorizeEmailViewerSession(dbB, siteId, issued.cookie, secret)).toBe(false);
   });
+
+  it('keeps deletion job and recipient state aligned in both schedule/cancel lock orderings', async () => {
+    let sequence = 0;
+    const project = (db: PlatformDB, userId: string, state: 'active' | 'inactive') =>
+      (transaction: Transaction<PlatformDatabase>) => recordSiteRecipientLifecycle(
+        wrapPlatformDb(db.kysely, transaction, Promise.resolve(), async () => undefined, true),
+        { userId, state, eventId: `matrix_deletion_race_${++sequence}`,
+          eventAt: new Date(Date.now() + sequence * 1000), secret });
+    const waitBlocked = async (name: string) => vi.waitFor(async () => {
+      const result = await admin.query(`SELECT count(*)::int AS waiting FROM pg_stat_activity
+        WHERE application_name = $1 AND wait_event_type = 'Lock'`, [name]);
+      expect(result.rows[0]?.waiting).toBeGreaterThan(0);
+    }, { timeout: 5000, interval: 25 });
+    const makeJob = async (owner: string, first: PlatformDB, hold?: () => Promise<void>) => {
+      const repository = new AccountDeletionRepository(first.kysely, { secret });
+      await repository.acceptPrepared(owner, false, async () => ({ clerkUserId: owner, appleTokens: [] }),
+        async transaction => {
+          await transaction.updateTable('account_deletion_jobs').set({ billing_stopped: true })
+            .where('owner_hash', '=', repository.ownerHash(owner)).execute();
+          await project(first, owner, 'inactive')(transaction);
+          await hold?.();
+        });
+      return repository;
+    };
+    const firstOwner = `user_deletion_race_${randomUUID().replaceAll('-', '')}`;
+    const scheduled = Promise.withResolvers<void>(), releaseSchedule = Promise.withResolvers<void>();
+    const firstSchedule = makeJob(firstOwner, dbA, async () => {
+      scheduled.resolve(); await releaseSchedule.promise;
+    });
+    await scheduled.promise;
+    const firstCancel = new AccountDeletionRepository(dbB.kysely, { secret }).cancel(firstOwner,
+      project(dbB, firstOwner, 'active'));
+    await waitBlocked('email-accept-b');
+    releaseSchedule.resolve();
+    await firstSchedule;
+    await firstCancel;
+    expect((await new AccountDeletionRepository(dbA.kysely, { secret }).get(firstOwner))?.status).toBe('cancelled');
+    expect((await dbA.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+      .where('recipient_key', '=', siteRecipientKey(firstOwner, secret)).executeTakeFirst())?.state).toBe('active');
+
+    const secondOwner = `user_deletion_race_${randomUUID().replaceAll('-', '')}`;
+    await makeJob(secondOwner, dbA);
+    const cancelling = Promise.withResolvers<void>(), releaseCancel = Promise.withResolvers<void>();
+    const secondCancel = new AccountDeletionRepository(dbB.kysely, { secret }).cancel(secondOwner,
+      async transaction => {
+        await project(dbB, secondOwner, 'active')(transaction);
+        cancelling.resolve(); await releaseCancel.promise;
+      });
+    await cancelling.promise;
+    const secondSchedule = makeJob(secondOwner, dbA);
+    await waitBlocked('email-accept-a');
+    releaseCancel.resolve();
+    await secondCancel;
+    await secondSchedule;
+    expect((await new AccountDeletionRepository(dbA.kysely, { secret }).get(secondOwner))?.status).toBe('scheduled');
+    expect((await dbB.executor.selectFrom('public_site_recipient_lifecycle').select('state')
+      .where('recipient_key', '=', siteRecipientKey(secondOwner, secret)).executeTakeFirst())?.state).toBe('inactive');
+  }, 20_000);
 });

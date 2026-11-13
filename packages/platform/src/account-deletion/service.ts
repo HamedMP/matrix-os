@@ -1,4 +1,5 @@
-import type { Kysely } from 'kysely';
+import { randomUUID } from 'node:crypto';
+import type { Kysely, Transaction } from 'kysely';
 import type { PlatformDatabase } from '../db.js';
 import { AccountDeletionRepository, type DeletionJob } from './repository.js';
 import { ACCOUNT_DELETION_STEPS, type AccountDeletionAdapters, type AccountDeletionService, type AccountDeletionStatus } from './types.js';
@@ -21,6 +22,9 @@ export function createAccountDeletionService(options: {
   batchSize?: number;
   leaseMs?: number;
   logError?: (error: unknown) => void;
+  recipientLifecycle?: (transaction: Transaction<PlatformDatabase>, event: {
+    userId: string; state: 'active' | 'inactive' | 'deleted'; eventId: string; eventAt: Date;
+  }) => Promise<void>;
 }): AccountDeletionService {
   const now = options.now ?? (() => new Date());
   const repository = new AccountDeletionRepository(options.db, { secret: options.secret, now });
@@ -73,7 +77,11 @@ export function createAccountDeletionService(options: {
     async schedule(clerkUserId, identityDeleted = false) {
       // Preflight and encrypted acceptance run under the same owner lock as native credential capture.
       await repository.acceptPrepared(clerkUserId, identityDeleted, (transaction) =>
-        options.adapters.prepare(clerkUserId, identityDeleted, transaction));
+        options.adapters.prepare(clerkUserId, identityDeleted, transaction),
+      options.recipientLifecycle ? transaction => options.recipientLifecycle!(transaction, {
+        userId: clerkUserId, state: identityDeleted ? 'deleted' : 'inactive',
+        eventId: `matrix_deletion_${randomUUID()}`, eventAt: now(),
+      }) : undefined);
       // Signed identity-deleted webhooks acknowledge only durable acceptance.
       // The worker performs potentially long remote cleanup outside the response.
       if (!identityDeleted && (await repository.get(clerkUserId))?.next_step === 0) {
@@ -83,7 +91,10 @@ export function createAccountDeletionService(options: {
       return publicStatus(await repository.get(clerkUserId), repository);
     },
     async get(clerkUserId) { return publicStatus(await repository.get(clerkUserId), repository); },
-    async cancel(clerkUserId) { return publicStatus(await repository.cancel(clerkUserId), repository); },
+    async cancel(clerkUserId) { return publicStatus(await repository.cancel(clerkUserId,
+      options.recipientLifecycle ? transaction => options.recipientLifecycle!(transaction, {
+        userId: clerkUserId, state: 'active', eventId: `matrix_deletion_${randomUUID()}`, eventAt: now(),
+      }) : undefined), repository); },
     async isBlocked(clerkUserId) {
       const job = await repository.get(clerkUserId);
       return !!job && job.status !== 'cancelled';
