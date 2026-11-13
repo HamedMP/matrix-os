@@ -56,32 +56,33 @@ const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
 ];
 
 /**
- * Applies pending versions in order, each in its own transaction under a
- * schema advisory lock, so gateways that overlap during a restart apply each
+ * Applies pending versions in order in one transaction that first takes a
+ * schema advisory lock, before any DDL (the version table included), so
+ * gateways that start together never race on `CREATE TABLE` and apply each
  * version once. Versions are additive only: after a host-bundle rollback, an
  * older build ignores newer versions and keeps using the tables it knows.
  */
 export async function bootstrapNotificationDatabase(db: Kysely<NotificationDatabase>): Promise<{ applied: number[] }> {
-  await sql`
-    CREATE TABLE IF NOT EXISTS notification_schema_migrations (
-      version INTEGER PRIMARY KEY CHECK (version > 0),
-      name TEXT NOT NULL CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `.execute(db);
-  const applied: number[] = [];
-  for (const migration of NOTIFICATION_MIGRATIONS) {
-    const ran = await db.transaction().execute(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-notification-schema', 0))`.execute(trx);
-      const existing = await trx.selectFrom("notification_schema_migrations")
-        .select("version").where("version", "=", migration.version).executeTakeFirst();
-      if (existing) return false;
+  return db.transaction().execute(async (trx) => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-notification-schema', 0))`.execute(trx);
+    await sql`
+      CREATE TABLE IF NOT EXISTS notification_schema_migrations (
+        version INTEGER PRIMARY KEY CHECK (version > 0),
+        name TEXT NOT NULL CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `.execute(trx);
+    const done = new Set(
+      (await trx.selectFrom("notification_schema_migrations").select("version").execute()).map((row) => row.version),
+    );
+    const applied: number[] = [];
+    for (const migration of NOTIFICATION_MIGRATIONS) {
+      if (done.has(migration.version)) continue;
       await migration.up(trx);
       await trx.insertInto("notification_schema_migrations")
         .values({ version: migration.version, name: migration.name }).execute();
-      return true;
-    });
-    if (ran) applied.push(migration.version);
-  }
-  return { applied };
+      applied.push(migration.version);
+    }
+    return { applied };
+  });
 }

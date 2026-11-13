@@ -57,6 +57,24 @@ describe("push adapter with owner Postgres tokens", () => {
     expect(versions).toEqual([{ version: 1, name: "push_tokens" }]);
   });
 
+  it("creates the version table under the schema lock, so gateways starting together cannot race on it", async () => {
+    const fresh = await createTestPGlite();
+    const statements: string[] = [];
+    const logged = new Kysely<NotificationDatabase>({
+      dialect: fresh.dialect,
+      log: (event) => { statements.push(event.query.sql.replace(/\s+/g, " ").trim()); },
+    });
+    try {
+      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1] });
+    } finally {
+      await logged.destroy();
+    }
+    const lock = statements.findIndex((statement) => statement.includes("pg_advisory_xact_lock"));
+    const versionTable = statements.findIndex((statement) => statement.includes("CREATE TABLE IF NOT EXISTS notification_schema_migrations"));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(versionTable).toBeGreaterThan(lock);
+  });
+
   it("delivers to a token registered before a gateway restart", async () => {
     const beforeRestart = adapter({ handle: "alice" });
     await beforeRestart.registerToken("ExponentPushToken[before-restart]", "ios", "owner_a");
