@@ -105,9 +105,9 @@
 **Goal**: After US1 delivers the complete protected app, qualify that declared visitor capabilities work and every owner/runtime capability remains denied.
 **Independent test**: Use one declared visitor form and action as an accepted viewer, then attempt source, clone, publishing/version controls, owner submissions, private DB/AI/bridge/credentials, and direct private assets before and after revoke (SC-003, SC-006).
 
-- [ ] T049 [P] [US5] Write failing owner-boundary and full-path tests in `tests/platform/sites-fullpath.test.ts` and `tests/gateway/sites-routes.test.ts` for no viewer source/clone/publish/version/owner submissions/private runtime, DB, AI tools, bridges, or credentials, and no leaked owner authority through frame messages (FR-022–024, SC-003).
-- [ ] T050 [US5] Deny owner-only Gateway/Platform management, source, cloning, publishing/version, submissions, and private bridge/runtime routes to viewer authority in `packages/gateway/src/sites/routes.ts` and `packages/platform/src/sites/management-routes.ts` until T049 passes (FR-022–023).
-- [ ] T051 [US5] Run one real first-party full-path publication and declared visitor action in `tests/platform/sites-fullpath.test.ts`, verifying the current version, canonical renamed path, owner PostgreSQL visitor-data boundary, no viewer copy/ownership transfer, and denial after owner revocation (FR-022–025, FR-030, SC-003, SC-006).
+- [X] T049 [P] [US5] Write failing owner-boundary and full-path tests in `tests/platform/sites-fullpath.test.ts` and `tests/gateway/sites-routes.test.ts` for no viewer source/clone/publish/version/owner submissions/private runtime, DB, AI tools, bridges, or credentials, and no leaked owner authority through frame messages (FR-022–024, SC-003).
+- [X] T050 [US5] Deny owner-only Gateway/Platform management, source, cloning, publishing/version, submissions, and private bridge/runtime routes to viewer authority in `packages/gateway/src/sites/routes.ts` and `packages/platform/src/sites/management-routes.ts` until T049 passes (FR-022–023).
+- [X] T051 [US5] Run one real first-party full-path publication and declared visitor action in `tests/platform/sites-fullpath.test.ts`, verifying the current version, canonical renamed path, owner PostgreSQL visitor-data boundary, no viewer copy/ownership transfer, and denial after owner revocation (FR-022–025, FR-030, SC-003, SC-006).
 
 **Checkpoint**: The protected app works for declared visitors, while all owner and private-runtime actions fail closed.
 
