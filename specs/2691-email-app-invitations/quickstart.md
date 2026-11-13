@@ -334,7 +334,8 @@ production-domain Clerk result or a live release qualification.
   assertions also passed individually. The proxy-only Platform regression was
   reproduced red in `tests/platform/proxy-routing.test.ts` and passed green
   after optional Sites registration was moved into the focused registration
-  module; its paired Sites dependency test also passed (2 focused tests).
+  module; the complete proxy-routing and Sites-management suites then passed
+  (149 tests).
 - Platform TypeScript and Edge Worker typechecks passed. The production shell
   build passed with a synthetic build-only Clerk publishable key. The first
   build reached prerender and failed because this worktree had no Clerk key;
