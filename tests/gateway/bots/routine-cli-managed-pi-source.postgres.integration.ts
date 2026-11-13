@@ -2,8 +2,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BOT_INPUT_MAX_ATTACHMENTS, type CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { BotBrokerError } from "../../../packages/bot-runtime/src/broker-client.js";
-import { createConnection } from "node:net";
+import { createConnection, Socket } from "node:net";
 import { sql } from "kysely";
+import { ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { ChatSteerDeliveryUnknownError } from "../../../packages/gateway/src/chat/steering-delivery.js";
 import { RoutineCliError } from "../../../packages/gateway/src/bots/routine-cli-errors.js";
 import { afterEach, expect, it, vi } from "vitest";
@@ -32,6 +33,39 @@ it("actual registered managed Pi worker/broker invokes published CLI and real ca
   expect(source.revoked_at).toBeNull(); expect(f.httpCalls()).toBe(1);
   f.finish(); await f.f.canonical.drain();
   expect((await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").executeTakeFirstOrThrow()).revoked_at).not.toBeNull();
+}, 15000);
+
+it("keeps an exact managed mutation pending beyond the old broker deadline without changing read transport bounds", async () => {
+  const oldDeadline = new AbortController(), nativeTimeout = AbortSignal.timeout;
+  const deadlines = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 120_000 ? oldDeadline.signal : nativeTimeout(ms));
+  const socketDeadlines = vi.spyOn(Socket.prototype, "setTimeout");
+  try {
+    const chatId = "chat_managed_owner_wait", requestId = "de000000-0000-4000-8000-000000000c01";
+    f = await managedPiFixture({ operation: "propose", requestId, proposal }, { hold: true });
+    const admitted = await f.start(chatId, { permission: "supervised", interaction: "default" });
+    await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
+    const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
+    if (decision.type !== "approval.requested") throw new Error("Missing exact decision");
+    oldDeadline.abort(new DOMException("Synthetic 120 second boundary", "TimeoutError"));
+    await expect(f.approve(decision, chatId, admitted.run.id)).resolves.toBeDefined();
+    await expect.poll(() => f!.result(), { timeout: 5000 }).toMatchObject({ ok: true, content: [{ text: expect.stringContaining(requestId) }] });
+    await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute()).toEqual([{ chat_id: TARGET_A.chatId }]);
+    expect(deadlines).toHaveBeenCalledWith(ROUTINE_CLI_NATIVE_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS);
+    const replyBound = ROUTINE_CLI_NATIVE_TIMEOUT_MS + 2 * ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+    expect(socketDeadlines.mock.calls.filter(([ms]) => ms === replyBound)).toHaveLength(2);
+    deadlines.mockRestore();
+    socketDeadlines.mockClear();
+    await expect(f.broker(f.bindings[0]!).tool({ capability: "routine.cli", toolCallId: "call_read_after_wait", args: { operation: "list" } })).resolves.toMatchObject({ ok: true });
+    expect(socketDeadlines).toHaveBeenCalledWith(125_000, expect.any(Function));
+    expect(socketDeadlines.mock.calls.some(([ms]) => ms === replyBound)).toBe(false);
+    socketDeadlines.mockClear();
+    const stale = { ...f.bindings[0]!, executionGeneration: "99" };
+    await expect(f.broker(stale).tool({ capability: "routine.cli", toolCallId: "call_stale_wait",
+      args: { operation: "propose", requestId, proposal } })).rejects.toMatchObject({ code: "stale_generation" });
+    // A client may wait longer, but the host does not extend a stale route.
+    expect(socketDeadlines.mock.calls.filter(([ms]) => ms === replyBound)).toHaveLength(1);
+    f.finish(); await f.f.canonical.drain();
+  } finally { deadlines.mockRestore(); socketDeadlines.mockRestore(); }
 }, 15000);
 
 it("managed metadata request creates no target task and retains read checkpoint semantics", async () => {

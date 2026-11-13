@@ -32,8 +32,14 @@ export function createCodexRoutineChannel(options) {
     try { options.sendNative({ id, result: { contentItems: [{ type: "inputText", text }], success } }); }
     catch (error) { console.warn("[codex-routines] Delivery unavailable", error instanceof Error ? error.name : "UnknownError"); }
   }
+  function ownerWait(entry, waiting) {
+    if (waiting ? entry.ownerWaiting !== undefined : entry.ownerWaiting !== true) return;
+    entry.ownerWaiting = waiting;
+    options.ownerWaitChanged?.(entry.callId, entry.binding.turnId, waiting);
+  }
   function complete(entry, text) {
     if (entry.done) return; entry.done = true; clearTimeout(entry.timer); entry.text = text;
+    ownerWait(entry, false);
     if (binding === entry.binding && options.current(entry.binding)) for (const id of entry.ids) result(id, text);
     entry.ids.length = 0;
   }
@@ -43,6 +49,7 @@ export function createCodexRoutineChannel(options) {
     for (const entry of calls.values()) {
       // Release the original native request without retaining authority or borrowing a later turn.
       if (!entry.done && prior === entry.binding && options.current(entry.binding)) for (const id of entry.ids) result(id, routineUnknownResult(entry.intent));
+      ownerWait(entry, false);
       clearTimeout(entry.timer); entry.done = true; entry.ids.length = 0;
     }
     calls.clear();
@@ -71,10 +78,11 @@ export function createCodexRoutineChannel(options) {
     } else if (frame.type === "host.cancel") {
       if (binding?.admissionId === frame.admissionId) end();
       const turn = turns.get(frame.admissionId); if (turn) { turns.delete(frame.admissionId); turnSources.delete(turn); send({ type: "shim.end", admissionId: frame.admissionId }); }
-    } else if (frame.type === "host.result") {
+    } else if (frame.type === "host.result" || frame.type === "host.owner_wait") {
       const entry = calls.get(frame.actionId);
-      if (!entry || entry.binding.admissionId !== frame.admissionId || binding !== entry.binding || !options.current(entry.binding)) return;
-      complete(entry, frame.result);
+      if (!entry || entry.done || entry.binding.admissionId !== frame.admissionId || binding !== entry.binding || !options.current(entry.binding)) return;
+      if (frame.type === "host.result") complete(entry, frame.result);
+      else if (entry.mutation) ownerWait(entry, frame.waiting);
     }
   }
   if (enabled) { parent.on("message", message); parent.on("disconnect", disconnect); send({ type: "shim.ready", shim }); }
@@ -87,6 +95,7 @@ export function createCodexRoutineChannel(options) {
       finally { clearTimeout(timer); signal.removeEventListener("abort", abort); }
     },
     canRegister: () => enabled && ready && initialSettled && turns.size > 0,
+    isWaitingForOwner: (callId, turnId) => binding?.turnId === turnId && [...calls.values()].some(entry => entry.callId === callId && entry.ownerWaiting === true),
     bind(turn, nativeGeneration, threadId, turnId, featureThread) {
       end(); const admissionId = turnSources.get(turn); turnSources.delete(turn);
       if (admissionId) turns.delete(admissionId);
@@ -108,8 +117,9 @@ export function createCodexRoutineChannel(options) {
         return true;
       }
       if (calls.size >= 128 || [...calls.values()].filter(entry => !entry.done).length >= 8) { result(raw.id, unavailable); return true; }
-      const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], done: false };
-      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, 120_000); entry.timer.unref();
+      const mutation = ["propose", "pause", "resume", "archive"].includes(params.arguments.args[0]);
+      const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], mutation, done: false };
+      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, mutation ? 1_830_000 : 10_000); entry.timer.unref();
       if (!send({ type: "shim.call", ...binding, callId: params.callId, actionId, intent: params.arguments })) complete(entry, routineUnknownResult(entry.intent));
       return true;
     },

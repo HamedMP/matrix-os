@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { randomUUID } from "node:crypto";
 import { RoutineCliOperationSchema, RoutineCliEnvelopeSchema, type RoutineCliOperation, type RoutineCliEnvelope } from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
@@ -90,7 +91,7 @@ export function createTerminalRoutineSource(options: {
       if (activeCalls >= 8) return unavailable(operation);
       activeCalls++;
       try {
-      const actionSignal = AbortSignal.any([signal, callSignal, AbortSignal.timeout(120000)]);
+      const actionSignal = AbortSignal.any([signal, callSignal, AbortSignal.timeout(ROUTINE_CLI_NATIVE_TIMEOUT_MS)]);
       if (!live() || actionSignal.aborted || invokers.size >= 8 || invocations.size >= 256
         || options.preflightCurrent && !await options.preflightCurrent() || !await actualRoot()) return unavailable(operation);
       const observed = await verifyTerminalDescendant(admission.root, writer, read);
@@ -103,7 +104,7 @@ export function createTerminalRoutineSource(options: {
           validateWithin: async (_source, trx, _action, invocation) => current(invocation, trx) });
         const port = await boundedOperation(() => registration!, 10000, actionSignal); sourceId = port.reference.sourceId;
         if (!live() || actionSignal.aborted) return unavailable(operation);
-        invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: 120000,
+        invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS,
           async authorize(input) {
             // Recheck synchronously at insertion: concurrent process/registration awaits must not overbook.
             if (!live() || actionSignal.aborted || invocations.size >= 256) return false;

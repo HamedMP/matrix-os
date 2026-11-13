@@ -146,7 +146,7 @@ class Exchange:
             if not self.live or not self.enabled or len(self.pending) >= 8 or interrupted():
                 return unknown(value)
             self.pending[call_id] = slot
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + (1830 if (value.get("args") or [None])[0] in ("propose", "pause", "resume", "archive") else 10)
         try:
             if not self.send({"type": "call", "id": call_id, "context": context, "intent": value}):
                 return unknown(value)

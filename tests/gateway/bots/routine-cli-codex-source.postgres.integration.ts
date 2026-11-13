@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import { codexFixture } from "./routine-cli-codex-support.js";
 import { proposal, TARGET_A } from "./routine-cli-request-support.js";
@@ -31,6 +32,29 @@ it("actual admitted Codex Chat executes the published fixed CLI through private 
   expect(source.revoked_at).not.toBeNull();
   const serialized = JSON.stringify(frames) + await readFile(f.launched[0].descriptor, "utf8");
   expect(serialized).not.toMatch(/RoutineCapability|rcli_|fixture-owner-credential|platform-claude-consent|admissionId|shim\.bound|host\.turn/);
+}, 25_000);
+
+it("keeps the admitted native tool alive past its execution deadline while an owner decision is pending", async () => {
+  const deadlineMs = 3500;
+  vi.stubEnv("MATRIX_CODEX_TOOL_DEADLINE_MS", String(deadlineMs));
+  try {
+    const requestId = "de000000-0000-4000-8000-000000000607", chatId = "chat_codex_owner_wait";
+    f = await codexFixture({ dynamicToolLifecycle: true,
+      intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+    const admitted = await f.start(chatId);
+    await expect.poll(() => f!.sourceEvents.some(event => event.type === "approval.requested"), { timeout: 8000 }).toBe(true);
+    const approval = f.sourceEvents.find(event => event.type === "approval.requested")!;
+    if (approval.type !== "approval.requested") throw new Error("Missing exact owner decision");
+    await delay(deadlineMs + 500);
+    expect((await f.frames()).find(frame => frame.id === 107 && !frame.method)).toBeUndefined();
+    expect(f.sourceEvents.filter(event => event.type === "approval.resolved")).toEqual([]);
+    await f.approve(approval, chatId, admitted.run.id);
+    await expect.poll(async () => (await f!.frames()).find(frame => frame.id === 107 && !frame.method), { timeout: 8000 })
+      .toMatchObject({ result: { success: true } });
+    await f.f.canonical.drain();
+    expect(f.httpCalls()).toBe(1);
+    expect(await f.data.db.selectFrom("routine_cli_requests").select("client_request_id").execute()).toEqual([{ client_request_id: requestId }]);
+  } finally { vi.unstubAllEnvs(); }
 }, 25_000);
 
 it.each([false, true])("a second canonical turn keeps native history and requires its own source; fresh adapter=%s", async freshAdapter => {

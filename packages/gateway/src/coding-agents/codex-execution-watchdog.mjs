@@ -35,6 +35,7 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
     // progress; exclude that time instead of silently refreshing tool budgets.
     if (waitingForHuman()) return false;
     for (const tool of tools.values()) {
+      if (tool.ownerWaiting) continue;
       tool.elapsed += delta;
       tool.idle += delta;
     }
@@ -65,12 +66,19 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
       timer.unref?.();
     },
     stop,
-    toolStarted(id, kind) {
+    /** @param {boolean} [ownerWaiting] Set only for the managed routine tool. */
+    toolStarted(id, kind, ownerWaiting) {
       if (!active || tools.has(id)) return;
       advance();
       if (tools.size >= 500) throw new Error("Execution tracking capacity exceeded");
-      tools.set(id, { elapsed: 0, idle: 0,
+      tools.set(id, { elapsed: 0, idle: 0, ownerWaiting: kind === "dynamicToolCall" ? ownerWaiting : undefined,
         deadline: kind === "commandExecution" || kind === "collabAgentToolCall" ? commandDeadline : toolDeadline });
+    },
+    setToolOwnerWait(id, waiting) {
+      const tool = tools.get(id);
+      if (tool?.ownerWaiting === undefined || tool.ownerWaiting === waiting) return;
+      advance(); // Charge time before the transition using the prior state.
+      tool.ownerWaiting = waiting;
     },
     toolCompleted(id) {
       advance();
