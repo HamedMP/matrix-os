@@ -512,9 +512,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # The remaining PostgreSQL runner has a 240s aggregate cap plus setup and cleanup.
-    # Keep job-level headroom for the earlier funded and routine PostgreSQL suites.
-    timeout-minutes: 20
+    # The remaining PostgreSQL runner has a 240s aggregate cap. The dedicated
+    # routine CLI suite took 445s, so allow 25m for the combined job and cleanup.
+    timeout-minutes: 25
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -590,6 +590,13 @@ jobs:
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Routine CLI PostgreSQL qualification
+        env:
+          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: ${{ env.MATRIX_TEST_POSTGRES_URL }}
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Routine acceptance capture and preflight contracts
         run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
