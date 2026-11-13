@@ -1,8 +1,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHmac, randomBytes as nodeRandomBytes } from 'node:crypto';
 import { sql, type ColumnType, type Generated, type Selectable } from 'kysely';
+import { z } from 'zod/v4';
 import type { PlatformDB } from '../db.js';
-import { writeBlockStatements, writeRestoreStatements, type WriteBlockNames } from './container-owner-write-block.js';
+import {
+  enabledTriggersAndRules,
+  writeBlockStatements,
+  writeRestoreStatements,
+  type DisabledByBlock,
+  type WriteBlockNames,
+} from './container-owner-write-block.js';
 
 /**
  * Per-owner database and role on the shared owner cluster for container
@@ -25,6 +32,8 @@ export interface ContainerOwnerDatabasesTable {
   state: 'active' | 'fenced' | 'deleting';
   password_epoch: number;
   writes_blocked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** Triggers and rules the block disabled, so the restore re-enables exactly those. */
+  block_disabled: ColumnType<unknown, string | null | undefined, string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
@@ -44,7 +53,8 @@ export class ContainerOwnerDatabaseError extends Error {
 /** Executes admin SQL on the owner cluster. Statements come only from this module. */
 export interface OwnerClusterAdmin {
   query(statement: string, params: readonly unknown[], signal: AbortSignal): Promise<Record<string, unknown>[]>;
-  executeInDatabase(database: string, statements: readonly string[], signal: AbortSignal): Promise<void>;
+  /** Runs the statements in one session in that database; resolves with the last statement's rows. */
+  executeInDatabase(database: string, statements: readonly string[], signal: AbortSignal): Promise<Record<string, unknown>[] | void>;
 }
 
 export interface OwnerDatabaseCredentials {
@@ -92,6 +102,19 @@ const OWNER_LOCK_WAIT_MS = 30_000;
 const OWNER_LOCK_POLL_MS = 50;
 /** Owners with operations queued in this process; beyond it new operations answer busy. */
 const MAX_LOCAL_OWNER_QUEUES = 10_000;
+const MAX_RECORDED = 10_000;
+const DisabledSchema = z.array(z.object({
+  kind: z.enum(['trigger', 'rule']),
+  oid: z.coerce.number().int().min(1).max(4_294_967_295),
+  mode: z.enum(['O', 'R', 'A']),
+})).max(MAX_RECORDED);
+
+function recordedDisabled(value: unknown): DisabledByBlock[] {
+  if (value === null || value === undefined) return [];
+  const parsed = DisabledSchema.safeParse(value);
+  if (!parsed.success) throw new Error('Recorded block triggers were invalid');
+  return parsed.data;
+}
 
 type IdentifierPrefix = 'mxo_' | 'mxr_' | 'mxh_';
 
@@ -238,6 +261,24 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     }
   }
 
+  /**
+   * Adds the enabled triggers and rules to the row's record in one statement
+   * and returns the whole record. Written before the block disables anything,
+   * so whatever the block disabled is always recorded.
+   */
+  async function recordEnabled(row: Row, names: WriteBlockNames, signal: AbortSignal): Promise<DisabledByBlock[]> {
+    const enabled = recordedDisabled(await admin.executeInDatabase(row.database_name, [enabledTriggersAndRules(names)], signal) ?? []);
+    const merged = await sql<{ block_disabled: unknown }>`UPDATE container_owner_databases SET block_disabled = (
+        SELECT jsonb_agg(e ORDER BY e->>'kind', (e->>'oid')::bigint) FROM (
+          SELECT DISTINCT ON (e->>'kind', e->>'oid') e FROM (
+            SELECT e, 0 AS source FROM jsonb_array_elements(COALESCE(block_disabled, '[]'::jsonb)) e
+            UNION ALL SELECT e, 1 FROM jsonb_array_elements(${JSON.stringify(enabled)}::jsonb) e
+          ) candidates ORDER BY e->>'kind', e->>'oid', source
+        ) deduplicated)
+      WHERE clerk_user_id = ${row.clerk_user_id} RETURNING block_disabled`.execute(db.executor);
+    return recordedDisabled(merged.rows[0]?.block_disabled);
+  }
+
   /** Recorded first, so a crash mid-block leaves a row the next sweep re-blocks or lifts. */
   async function blockWrites(row: Row, signal: AbortSignal): Promise<void> {
     const names = writeBlockNames(row);
@@ -249,15 +290,18 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     await admin.query(`ALTER ROLE ${names.ownerSql} SET default_transaction_read_only = on`, [], signal);
     if (changed) await terminateSessions(row.role_name, signal);
     await ensureHolder(names, signal);
-    await admin.executeInDatabase(row.database_name, writeBlockStatements(names), signal);
+    const recorded = await recordEnabled(row, names, signal);
+    await admin.executeInDatabase(row.database_name, writeBlockStatements(names, recorded), signal);
   }
 
+  /** The record is cleared with the block flag, after the triggers are back on. */
   async function restoreWrites(row: Row, signal: AbortSignal): Promise<void> {
     const names = writeBlockNames(row);
     await ensureHolder(names, signal);
-    await admin.executeInDatabase(row.database_name, writeRestoreStatements(names), signal);
+    await admin.executeInDatabase(row.database_name,
+      writeRestoreStatements(names, recordedDisabled(row.block_disabled)), signal);
     await admin.query(`ALTER ROLE ${names.ownerSql} RESET default_transaction_read_only`, [], signal);
-    await db.executor.updateTable('container_owner_databases').set({ writes_blocked_at: null })
+    await db.executor.updateTable('container_owner_databases').set({ writes_blocked_at: null, block_disabled: null })
       .where('clerk_user_id', '=', row.clerk_user_id).execute();
     await terminateSessions(row.role_name, signal);
   }
@@ -385,6 +429,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
         password_epoch: generation,
         size_bytes: null,
         size_measured_at: null,
+        block_disabled: null,
         created_at: sql<Date>`now()`,
         deleted_at: null,
       }).where('container_owner_databases.deleted_at', 'is not', null))

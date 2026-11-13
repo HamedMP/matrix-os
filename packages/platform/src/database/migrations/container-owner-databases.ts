@@ -24,4 +24,6 @@ export async function migrateContainerOwnerDatabases(db: PlatformMigrationExecut
   `.execute(db);
   // T055a: set while the size sweep holds the owner's writes revoked.
   await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS writes_blocked_at TIMESTAMPTZ`.execute(db);
+  // Triggers and rules the size block disabled, re-enabled exactly on restore.
+  await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS block_disabled JSONB`.execute(db);
 }

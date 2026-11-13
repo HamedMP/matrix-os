@@ -64,8 +64,10 @@ export function createPgOwnerClusterAdmin(options: { connectionString: string })
       return result.rows as Record<string, unknown>[];
     },
     async executeInDatabase(database, statements, signal) {
-      await session(database, signal, QUERY_TIMEOUT_MS, async (query) => {
-        for (const statement of statements) await query(statement);
+      return session(database, signal, QUERY_TIMEOUT_MS, async (query) => {
+        let rows: Record<string, unknown>[] = [];
+        for (const statement of statements) rows = await query(statement);
+        return rows;
       });
     },
     withDatabaseSession(database, signal, work) {

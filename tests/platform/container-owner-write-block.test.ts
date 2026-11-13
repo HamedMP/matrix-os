@@ -163,4 +163,51 @@ describe.skipIf(!realUrl)('owner database write block on a real PostgreSQL serve
       expect((await client.query('SELECT app.definer() AS n')).rows).toEqual([{ n: 2 }]);
     });
   });
+
+  async function states(databaseName: string): Promise<Record<string, string>> {
+    return inDatabase({ databaseName }, async (client) => Object.fromEntries((await client.query(`
+      SELECT tgname AS name, tgenabled::text AS state FROM pg_trigger WHERE tgrelid = 'notes'::regclass AND NOT tgisinternal
+      UNION ALL SELECT rulename, ev_enabled::text FROM pg_rewrite WHERE ev_class = 'notes'::regclass`)).rows
+      .map((row: { name: string; state: string }) => [row.name, row.state])));
+  }
+
+  it('disables user triggers and rules while blocked and restores only the ones the block disabled', async () => {
+    const { id, credentials, service } = await owner([
+      'CREATE TABLE notes (id int, body text)',
+      'CREATE TABLE audit (body text)',
+      `CREATE FUNCTION grow() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+        BEGIN INSERT INTO audit VALUES (repeat('x', 1000)); RETURN OLD; END $$`,
+      'CREATE TRIGGER on_delete AFTER DELETE ON notes FOR EACH ROW EXECUTE FUNCTION grow()',
+      'CREATE TRIGGER always_on AFTER DELETE ON notes FOR EACH ROW EXECUTE FUNCTION grow()',
+      'ALTER TABLE notes ENABLE ALWAYS TRIGGER always_on',
+      'CREATE TRIGGER owner_off AFTER DELETE ON notes FOR EACH ROW EXECUTE FUNCTION grow()',
+      'ALTER TABLE notes DISABLE TRIGGER owner_off',
+      `CREATE RULE copy_delete AS ON DELETE TO notes DO ALSO INSERT INTO audit VALUES ('rule')`,
+      `CREATE RULE owner_rule AS ON DELETE TO notes DO ALSO INSERT INTO audit VALUES ('owner')`,
+      'ALTER TABLE notes DISABLE RULE owner_rule',
+      `INSERT INTO notes VALUES (1, 'a'), (2, 'b')`,
+    ]);
+    const before = await states(credentials.databaseName);
+    expect(before).toEqual({ on_delete: 'O', always_on: 'A', owner_off: 'D', copy_delete: 'O', owner_rule: 'D' });
+
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: true });
+    expect(await states(credentials.databaseName)).toEqual({
+      on_delete: 'D', always_on: 'D', owner_off: 'D', copy_delete: 'D', owner_rule: 'D',
+    });
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: true });
+    await inDatabase({ ...credentials }, async (client) => {
+      await client.query('SET default_transaction_read_only = off');
+      expect((await client.query('DELETE FROM notes WHERE id = 1')).rowCount).toBe(1);
+    });
+    await inDatabase({ databaseName: credentials.databaseName }, async (client) => {
+      expect((await client.query('SELECT count(*)::int AS n FROM audit')).rows).toEqual([{ n: 0 }]);
+    });
+
+    await raiseLimit(id);
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: false });
+    expect(await states(credentials.databaseName)).toEqual(before);
+    const row = await db.executor.selectFrom('container_owner_databases').select('block_disabled')
+      .where('clerk_user_id', '=', id).executeTakeFirstOrThrow();
+    expect(row.block_disabled).toBeNull();
+  });
 });
