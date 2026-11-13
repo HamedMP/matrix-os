@@ -25,6 +25,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
 import { toast } from "sonner";
 import { MobileLauncher } from "./MobileLauncher";
+import { useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
 import { MobileDock } from "./MobileDock";
 import { MobileAppIcon } from "./MobileAppIcon";
 import type { MobileApp } from "./mobile-app";
@@ -157,6 +158,7 @@ interface MobileShellProps {
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
 export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
+  const sharedLauncher = useSharedLauncherApps(true);
 
   const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
     BUILT_IN_APPS,
@@ -525,8 +527,9 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
               exit="exit"
             >
               <MobileLauncher
-                apps={displayApps}
-                onOpen={openApp}
+                sharedDirectory={sharedLauncher}
+                apps={[...displayApps, ...sharedLauncher.apps.map((app) => ({ ...app, id: app.path, iconSlug: "apps" }))]}
+                onOpen={(app) => app.sharedAppTarget ? openSharedApp(app.sharedAppTarget) : openApp(app)}
                 onOpenSettings={() => {
                   setSettingsDefaultSection("agents-providers");
                   setSettingsOpen(true);

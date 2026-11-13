@@ -44,6 +44,7 @@
   "tests/platform/collaboration-test-support.test.ts",
   "tests/platform/collaboration-tickets.test.ts",
   "tests/platform/collaboration-two-home-relay-postgres.test.ts",
+  "tests/platform/collaborative-app-launch-postgres.test.ts",
   "tests/platform/organization-authority-postgres.test.ts",
   "tests/platform/platform-migration-revision-db.test.ts",
   "tests/platform/preview-pair-access-retirement-postgres.test.ts",

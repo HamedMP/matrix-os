@@ -273,14 +273,14 @@ export function createPlatformCollaborationRoutes(options: {
     if (!scopeId.success || !launchId.success || !assetPath.success) return safeJson(c, "Invalid request", 422);
     const opaqueAssetRequest = c.req.header("origin") === "null" && assetPath.data !== "index.html";
     const authenticatedActorId = await resolveValidatedActor(c, options.resolveActor);
-    const capability = !authenticatedActorId && opaqueAssetRequest
-      ? options.launchSessions.describeAssetCapability(launchId.data, scopeId.data)
-      : null;
-    const actorId = authenticatedActorId ?? capability?.actorId ?? null;
-    if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
+      const capability = !authenticatedActorId && opaqueAssetRequest
+        ? await options.launchSessions.resolveAssetCapability(launchId.data, scopeId.data)
+        : null;
+      const actorId = authenticatedActorId ?? capability?.actorId ?? null;
+      if (!actorId) return safeJson(c, "Unauthorized", 401);
       const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
-      const launch = capability ?? options.launchSessions.describe(launchId.data, actorId, scopeId.data);
+      const launch = capability ?? await options.launchSessions.resolve(launchId.data, actorId, scopeId.data);
       if (!admitted) {
         await options.launchSessions.revokeActor(scopeId.data, actorId);
         return safeJson(c, "Collaboration resource not found", 404);
