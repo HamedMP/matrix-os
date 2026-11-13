@@ -36,7 +36,8 @@
     "./layering": "./src/layering.ts",
     "./ai-usage-select": "./src/ai-usage/UsageSelect.tsx",
     "./ai-usage-load": "./src/ai-usage/load-matrix-usage.ts",
-    "./routine-destination": "./src/routine-destination/index.ts"
+    "./routine-destination": "./src/routine-destination/index.ts",
+    "./routine-action": "./src/routine-action/index.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",
