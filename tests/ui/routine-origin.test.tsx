@@ -13,13 +13,16 @@ afterEach(cleanup);
 const interaction: BotInteraction = {interactionId:"in_abcdefgh",chatId:"chat_executor",agentId:"bot_existing",taskId:"task_real_execution",kind:"approval",blocking:true,status:"pending",expiresAt:"2099-01-01T00:00:00.000Z",revision:7,payload:{kind:"approval",tool:"routine.activate",audience:"direct",policyRevision:3,argsDigest:"a".repeat(64),preview:JSON.stringify({proposal:{name:"Morning brief",prompt:"Write a private brief.",schedule:{kind:"once",at:"2099-01-01T00:00:00.000Z"},selection:{instanceId:"matrix_chatgpt_plan",model:"gpt-6-luna"},authorizedEffects:["read"]},source:{accountId:"account_private",computerId:"computer_fixture",grantRevision:3,definitionRevision:2}})}};
 const view = (): RoutineChatOriginView => ({sourceChatId:"chat_source",pending:[{sourceChatId:"chat_source",anchorMessageId:"msg_source",interaction}],deliveries:[],deliveryPending:false,hasMore:false});
 it("uses the source alias and unchanged canonical interaction revision, without a Bot binding context", async () => {
- const request=vi.fn(async (_p:string, method:string)=>method==="GET"?view():{interaction:{...interaction,status:"resolved",revision:8}});
+ let decided=false;const request=vi.fn(async (_p:string, method:string)=>{if(method==="GET")return {...view(),pending:decided?[]:view().pending};decided=true;return {interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}};});
  const client=createRoutineOriginClient(request);
  function Fixture(){const state=useRoutineOrigin({client,chatId:"chat_source",eligible:true});return <RoutineOriginApprovals state={state}/>;}
  render(<Fixture/>);
  fireEvent.click(await screen.findByRole("button",{name:"Approve schedule"}));
  await waitFor(()=>expect(request).toHaveBeenCalledWith("/api/chats/chat_source/routine-origin/in_abcdefgh/resolve","POST",{kind:"approval",baseRevision:7,decision:"approve"},expect.anything()));
  expect(request.mock.calls.some(([p])=>p.includes("chat_executor/interactions"))).toBe(false);
+ await waitFor(()=>expect(screen.queryByRole("button",{name:"Approve schedule"})).toBeNull());
+ expect(screen.queryByText(/Your decision could not be confirmed/)).toBeNull();expect(screen.queryByRole("alert")).toBeNull();
+ expect(request.mock.calls.filter(([,method])=>method==="POST")).toHaveLength(1);
 });
 it("reconciles a lost acknowledgment before enabling another explicit decision; never retries mutation",async()=>{
  let reads=0;const get=vi.fn(async()=>++reads===1?view():{...view(),pending:[]});const resolve=vi.fn(async()=>{throw new TypeError("connection lost secret");});
