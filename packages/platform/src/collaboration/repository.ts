@@ -208,6 +208,11 @@ export class PlatformCollaborationRepository {
         .executeTakeFirst();
       // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
       if (!applied) return false;
+      // Launcher presentation describes one active share of one app: a stop, recheck, or rebind
+      // retires it with the event, so revoked members can never fetch the old artwork.
+      let retiredPresentation = trx.deleteFrom("collaboration_app_presentations").where("scope_id", "=", input.scopeId);
+      if (input.app?.state === "active") retiredPresentation = retiredPresentation.where("app_id", "!=", input.app.appId);
+      await retiredPresentation.execute();
       // A project Chat has no recipients of its own; any left from a direct share no longer apply.
       if (input.parentScopeId) {
         await trx.deleteFrom("collaboration_user_index").where("scope_id", "=", input.scopeId).execute();

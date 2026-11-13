@@ -57,6 +57,43 @@ describe("AppLauncher", () => {
     ]));
   });
 
+  it.each(["surface", "launchpad"] as const)("shows the owner's shared app name and platform artwork in the %s launcher", async (presentation) => {
+    const iconPath = `/api/collaboration/shared-apps/10000000-0000-4000-8000-000000000001/artwork/${"c".repeat(64)}`;
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+      presentation: { name: "Sprint Board", iconUrl: iconPath },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppLauncher presentation={presentation} />);
+    const tile = await screen.findByRole("button", { name: "Sprint Board" });
+    expect(fetchMock.mock.calls.map(([input]) => String(input)))
+      .toContainEqual("https://platform.test/api/collaboration/shared-apps?limit=100&presentation=1");
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    // The renderer is cross-origin: artwork is requested from the platform, where the trusted core adds auth.
+    const artwork = tile.querySelector("img");
+    expect(artwork?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
+
+    fireEvent.error(artwork!);
+    const fallback = screen.getByRole("button", { name: "Sprint Board" });
+    expect(fallback.querySelector("img")).toBeNull();
+    expect(fallback.textContent).toContain("S");
+    expect(fallback.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+
+    fireEvent.click(fallback);
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "app", title: "Sprint Board", sharedAppTarget: target }),
+    ]));
+  });
+
   it.each(["loading", "offline"])("opens shared apps while the installed catalog is %s", async (status) => {
     clearDesktopApps();
     useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member",

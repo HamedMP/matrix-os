@@ -1,12 +1,12 @@
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppPresentation } from "@matrix-os/ui/collaborative-app-sharing";
 
 export function sharedAppWindowPath(target: Pick<CollaborativeAppDirectoryItem, "scopeId">): string {
   return `__shared-app__:${target.scopeId}`;
 }
 
-export function sharedAppWindowTitle(target: Pick<CollaborativeAppDirectoryItem, "appId" | "owner">): string {
-  const app = target.appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
-  return `${app} shared by ${target.owner.displayName}`;
+export function sharedAppWindowTitle(target: Pick<CollaborativeAppDirectoryItem, "appId" | "owner" | "presentation">): string {
+  return `${sharedAppPresentation(target).name} shared by ${target.owner.displayName}`;
 }
 
 export function sharedAppDeepLink(target: Pick<CollaborativeAppDirectoryItem, "scopeId" | "buildId" | "shareRevision">): string {

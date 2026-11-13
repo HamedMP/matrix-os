@@ -105,7 +105,21 @@ export interface CollaborationCutoverDispositionTable {
   decided_at: Timestamp;
 }
 
+/** Owner-published launcher presentation for one shared app; removed when the share stops. */
+export interface CollaborationAppPresentationsTable {
+  scope_id: string;
+  app_id: string;
+  name: string;
+  artwork_sha256: string | null;
+  artwork_content_type: "image/png" | "image/webp" | "image/jpeg" | null;
+  artwork_byte_length: number | null;
+  /** Null until the owner uploads bytes matching the declared digest, type, and length. */
+  artwork_bytes: Uint8Array | null;
+  updated_at: Timestamp;
+}
+
 export interface CollaborationPlatformDatabase {
+  collaboration_app_presentations: CollaborationAppPresentationsTable;
   collaboration_app_launches: {
     launch_id: string; client_request_id: string; actor_id: string; scope_id: string;
     identity: CollaborativeAppLaunchIdentity; created_at: Timestamp; expires_at: Timestamp;
@@ -278,6 +292,22 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
       interrupted_runs BIGINT CHECK (interrupted_runs IS NULL OR interrupted_runs >= 0),
       rollback_mode TEXT CHECK (rollback_mode IS NULL OR rollback_mode = 'compatible_direct'),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.execute(trx);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_app_presentations (
+      scope_id UUID PRIMARY KEY REFERENCES collaboration_directory(scope_id) ON DELETE CASCADE,
+      app_id TEXT NOT NULL CHECK (char_length(app_id) BETWEEN 1 AND 256 AND app_id ~ '^[A-Za-z0-9_-]+$'),
+      name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120 AND octet_length(name) <= 512),
+      artwork_sha256 TEXT CHECK (artwork_sha256 IS NULL OR artwork_sha256 ~ '^[a-f0-9]{64}$'),
+      artwork_content_type TEXT CHECK (artwork_content_type IS NULL
+        OR artwork_content_type IN ('image/png', 'image/webp', 'image/jpeg')),
+      artwork_byte_length INTEGER CHECK (artwork_byte_length IS NULL OR artwork_byte_length BETWEEN 1 AND 4194304),
+      artwork_bytes BYTEA,
+      updated_at TIMESTAMPTZ NOT NULL,
+      CHECK ((artwork_sha256 IS NULL) = (artwork_content_type IS NULL)
+        AND (artwork_sha256 IS NULL) = (artwork_byte_length IS NULL)),
+      CHECK (artwork_bytes IS NULL OR octet_length(artwork_bytes) = artwork_byte_length)
     )
   `.execute(trx);
   await sql`

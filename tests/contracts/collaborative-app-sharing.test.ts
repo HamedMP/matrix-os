@@ -1,5 +1,10 @@
 import {
+  COLLABORATIVE_APP_ARTWORK_MAX_BYTES,
   CollaborativeAppBuildRefSchema,
+  CollaborativeAppDirectoryItemSchema,
+  CollaborativeAppPresentationPublishSchema,
+  collaborativeAppArtworkPath,
+  sniffCollaborativeAppArtworkContentType,
   CollaborativeAppCapabilityDeclarationSchema,
   CollaborativeAppChangeSignalSchema,
   CollaborativeAppCompatibilityDeclarationSchema,
@@ -276,5 +281,78 @@ describe("collaborative app sharing contracts", () => {
     expect(CollaborativeAppCapabilityDeclarationSchema.safeParse({ ...capability, appRoles: ["editor"] }).success).toBe(false);
     expect(CollaborativeAppCompatibilityDeclarationSchema.safeParse({ ...compatibility, runtimeAbi: "" }).success).toBe(false);
     expect(CollaborativeAppManifestDeclarationSchema.safeParse({ capability, compatibility, readiness: "ready" }).success).toBe(false);
+  });
+});
+
+describe("shared app presentation contract", () => {
+  const item = {
+    scopeId,
+    runtimeId: "runtime_owner",
+    organizationId,
+    authorityGeneration: 1,
+    appId: "team-tracker",
+    catalogId,
+    readinessId,
+    registrationIncarnation: "b".repeat(64),
+    buildId: digest,
+    shareRevision: "1",
+    owner: { actorId: "user_owner", displayName: "Owner" },
+  };
+
+  it("carries the owner's display name and a digest-bound artwork path without breaking legacy items", () => {
+    const iconUrl = collaborativeAppArtworkPath(scopeId, "f".repeat(64));
+    expect(iconUrl).toBe(`/api/collaboration/shared-apps/${scopeId}/artwork/${"f".repeat(64)}`);
+    const withPresentation = { ...item, presentation: { name: "Sprint Board", iconUrl } };
+    expect(CollaborativeAppDirectoryItemSchema.parse(withPresentation)).toEqual(withPresentation);
+    expect(CollaborativeAppDirectoryItemSchema.parse(item)).toEqual(item);
+    expect(CollaborativeAppDirectoryItemSchema.parse({ ...item, presentation: { name: "Sprint Board" } }))
+      .toEqual({ ...item, presentation: { name: "Sprint Board" } });
+    for (const presentation of [
+      { name: "" },
+      { name: "x".repeat(121) },
+      { name: "Board", iconUrl: "https://evil.example/icon.png" },
+      { name: "Board", iconUrl: "//evil.example/icon.png" },
+      { name: "Board", iconUrl: "/api/../../home/owner/system/icons/a.png" },
+      { name: "Board", path: "/home/owner/system/icons/a.png" },
+    ]) {
+      expect(CollaborativeAppDirectoryItemSchema.safeParse({ ...item, presentation }).success).toBe(false);
+    }
+    expect(() => collaborativeAppArtworkPath("not-a-uuid", "f".repeat(64))).toThrow();
+    expect(() => collaborativeAppArtworkPath(scopeId, "../icon")).toThrow();
+  });
+
+  it("bounds owner publications to a name and verified raster artwork metadata", () => {
+    const publication = {
+      appId: "team-tracker",
+      name: "Sprint Board",
+      artwork: { sha256: "f".repeat(64), contentType: "image/png", byteLength: 2_151_599 },
+    };
+    expect(CollaborativeAppPresentationPublishSchema.parse(publication)).toEqual(publication);
+    expect(CollaborativeAppPresentationPublishSchema.parse({ ...publication, artwork: null }))
+      .toEqual({ ...publication, artwork: null });
+    for (const invalid of [
+      { ...publication, artwork: { ...publication.artwork, contentType: "image/svg+xml" } },
+      { ...publication, artwork: { ...publication.artwork, byteLength: COLLABORATIVE_APP_ARTWORK_MAX_BYTES + 1 } },
+      { ...publication, artwork: { ...publication.artwork, byteLength: 0 } },
+      { ...publication, artwork: { ...publication.artwork, sha256: "F".repeat(64) } },
+      { ...publication, artwork: { ...publication.artwork, path: "/home/owner/system/icons/a.png" } },
+      { ...publication, appId: "../team" },
+      { ...publication, name: "/home/owner/apps/team-tracker" },
+      { ...publication, name: "Bearer abcdefghijklmnop" },
+    ]) {
+      expect(CollaborativeAppPresentationPublishSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it("recognizes only PNG, WebP, and JPEG artwork by its bytes", () => {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+    const webp = new TextEncoder().encode("RIFF\u0000\u0000\u0000\u0000WEBPVP8 ");
+    expect(sniffCollaborativeAppArtworkContentType(png)).toBe("image/png");
+    expect(sniffCollaborativeAppArtworkContentType(jpeg)).toBe("image/jpeg");
+    expect(sniffCollaborativeAppArtworkContentType(webp)).toBe("image/webp");
+    expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"/>"))).toBeNull();
+    expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode("<html><script>alert(1)</script>"))).toBeNull();
+    expect(sniffCollaborativeAppArtworkContentType(png.slice(0, 4))).toBeNull();
   });
 });
