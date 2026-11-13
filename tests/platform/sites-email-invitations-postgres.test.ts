@@ -1,0 +1,135 @@
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
+import { sql } from 'kysely';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { acceptSiteEmailInvitation, siteClerkSessionKey } from '../../packages/platform/src/sites/email-invitations.js';
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
+import { authorizeEmailViewerSession } from '../../packages/platform/src/sites/email-viewer-sessions.js';
+
+const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
+const postgres = postgresUrl ? describe : describe.skip;
+postgres('site email invitations across independent PostgreSQL connections', () => {
+  const schema = `site_email_${randomUUID().replaceAll('-', '')}`;
+  const secret = 'site-email-test-secret-that-is-long-enough';
+  let admin: pg.Pool;
+  let dbA: PlatformDB;
+  let dbB: PlatformDB;
+  function url(name: string) {
+    const parsed = new URL(postgresUrl!);
+    if (!parsed.pathname.includes('test')) throw Error('Test database required');
+    parsed.searchParams.set('options', `-c search_path=${schema},public -c statement_timeout=10000`);
+    parsed.searchParams.set('application_name', name);
+    return parsed.toString();
+  }
+  async function seed(address = 'recipient@example.com', expiresAt = new Date(Date.now() + 7 * 86400_000)) {
+    const siteId = randomUUID(), invitationId = randomUUID();
+    await dbA.executor.insertInto('public_sites').values({ id: siteId, owner_id: 'user_site_owner', machine_id: 'owner-machine',
+      app_slug: `app-${siteId}`, title: 'Shared app', description: '', slug: null, revision: 1,
+      status: 'published', access_mode: 'private_email', active_version: null, created_at: new Date().toISOString() }).execute();
+    const now = new Date();
+    const issuedAt = new Date(expiresAt.getTime() - 7 * 86400_000);
+    await dbA.executor.insertInto('public_site_email_invitations').values({ id: invitationId, site_id: siteId,
+      normalized_email: address, display_email: address, generation: '1', state: 'pending', delivery_state: 'queued',
+      invited_by_clerk_user_id: 'user_site_owner', accepted_clerk_user_id: null, created_at: issuedAt,
+      issued_at: issuedAt, expires_at: expiresAt, accepted_at: null, revoked_at: null, state_reason: null,
+      updated_at: now, revision: '0' }).execute();
+    return { siteId, invitationId };
+  }
+  const recipient = { clerkUserId: 'user_invited', clerkSessionId: 'sess_invited_browser', verifiedEmails: ['recipient@example.com'] };
+  beforeAll(async () => {
+    admin = new pg.Pool({ connectionString: postgresUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    dbA = createPlatformDb(url('email-accept-a')); await dbA.ready;
+    dbB = createPlatformDb(url('email-accept-b')); await dbB.ready;
+    await insertUserMachine(dbA, { machineId: 'owner-machine', clerkUserId: 'user_site_owner', handle: 'site-email-owner', status: 'running', provisionedAt: new Date().toISOString() });
+  });
+  afterAll(async () => {
+    await Promise.all([dbA?.destroy(), dbB?.destroy()]);
+    if (admin) { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end(); }
+  });
+
+  it('converges 100 concurrent exchanges on one grant without partial invitation or audit writes', async () => {
+    const { siteId, invitationId } = await seed();
+    const results = await Promise.allSettled(Array.from({ length: 100 }, (_, index) =>
+      acceptSiteEmailInvitation({ db: index % 2 ? dbA : dbB, siteId, identity: recipient, secret })));
+    expect(results.some(result => result.status === 'fulfilled')).toBe(true);
+    const grants = await dbA.executor.selectFrom('public_site_viewer_grants').selectAll().where('site_id', '=', siteId).execute();
+    const sessions = await dbA.executor.selectFrom('public_site_viewer_sessions').selectAll().where('site_id', '=', siteId).where('revoked_at', 'is', null).execute();
+    const invitation = await dbA.executor.selectFrom('public_site_email_invitations').selectAll().where('id', '=', invitationId).executeTakeFirstOrThrow();
+    const events = await dbA.executor.selectFrom('public_site_access_audit_events').selectAll().where('site_id', '=', siteId).execute();
+    expect(grants).toHaveLength(1);
+    expect(sessions.length).toBeLessThanOrEqual(20);
+    expect(invitation).toMatchObject({ state: 'accepted', accepted_clerk_user_id: recipient.clerkUserId });
+    expect(events.filter(event => event.event_type === 'invitation_accepted')).toHaveLength(1);
+  });
+
+  it('admits only one of two matching identities and rejects expiry or a terminated Clerk session', async () => {
+    const { siteId } = await seed('shared@example.com');
+    const attempts = await Promise.allSettled([
+      acceptSiteEmailInvitation({ db: dbA, siteId, identity: { ...recipient, verifiedEmails: ['shared@example.com'] }, secret }),
+      acceptSiteEmailInvitation({ db: dbB, siteId, identity: { clerkUserId: 'user_other', clerkSessionId: 'sess_other', verifiedEmails: ['shared@example.com'] }, secret }),
+    ]);
+    expect(attempts.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect(await dbA.executor.selectFrom('public_site_viewer_grants').select('id').where('site_id', '=', siteId).execute()).toHaveLength(1);
+
+    const expired = await seed('expired@example.com', new Date(Date.now() - 1000));
+    await expect(acceptSiteEmailInvitation({ db: dbA, siteId: expired.siteId,
+      identity: { ...recipient, verifiedEmails: ['expired@example.com'] }, secret })).rejects.toMatchObject({ code: 'not_found' });
+    const terminated = await seed('terminated@example.com');
+    await sql`INSERT INTO public_site_clerk_session_terminations (clerk_session_key, terminated_at, expires_at)
+      VALUES (${siteClerkSessionKey(recipient.clerkSessionId, secret)}, now(), now() + interval '31 days')`.execute(dbA.executor);
+    await expect(acceptSiteEmailInvitation({ db: dbB, siteId: terminated.siteId,
+      identity: { ...recipient, verifiedEmails: ['terminated@example.com'] }, secret })).rejects.toMatchObject({ code: 'not_found' });
+    expect(await dbA.executor.selectFrom('public_site_viewer_grants').select('id').where('site_id', '=', terminated.siteId).execute()).toEqual([]);
+  });
+
+  it('evicts the oldest browser session when a grant receives its 21st exchange', async () => {
+    const { siteId } = await seed('cap@example.com');
+    const identity = { ...recipient, clerkSessionId: 'sess_cap', verifiedEmails: ['cap@example.com'] };
+    const first = await acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret });
+    for (let index = 1; index < 21; index++) await acceptSiteEmailInvitation({ db: index % 2 ? dbA : dbB, siteId, identity, secret });
+    const active = await dbA.executor.selectFrom('public_site_viewer_sessions').selectAll().where('site_id', '=', siteId).where('revoked_at', 'is', null).execute();
+    expect(active).toHaveLength(20);
+    expect(active.some(session => session.id === first.sessionId)).toBe(false);
+  });
+
+  it('waits behind recipient deletion admission and refuses a grant after deletion is accepted', async () => {
+    const { siteId } = await seed('deleting@example.com');
+    const recipientId = 'user_deleting';
+    const began = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const repository = new AccountDeletionRepository(dbB.kysely, { secret });
+    const deletion = repository.acceptPrepared(recipientId, false, async () => {
+      began.resolve();
+      await release.promise;
+      return { clerkUserId: recipientId, appleTokens: [] };
+    });
+    await began.promise;
+    const acceptance = acceptSiteEmailInvitation({ db: dbA, siteId,
+      identity: { clerkUserId: recipientId, clerkSessionId: 'sess_deleting', verifiedEmails: ['deleting@example.com'] }, secret });
+    try {
+      let blocked = false;
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        const waiters = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name='email-accept-a' AND wait_event_type='Lock'");
+        if (waiters.rows[0].count > 0) { blocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+    } finally { release.resolve(); await deletion; }
+    await expect(acceptance).rejects.toMatchObject({ code: 'not_found' });
+    expect(await dbA.executor.selectFrom('public_site_viewer_grants').select('id').where('site_id', '=', siteId).execute()).toEqual([]);
+  });
+
+  it('authorizes only an active site-scoped viewer session and denies the next request after grant revocation', async () => {
+    const { siteId } = await seed('viewer@example.com');
+    const identity = { ...recipient, clerkSessionId: 'sess_viewer', verifiedEmails: ['viewer@example.com'] };
+    const issued = await acceptSiteEmailInvitation({ db: dbA, siteId, identity, secret });
+    expect(await authorizeEmailViewerSession(dbB, siteId, issued.cookie, secret)).toBe(true);
+    expect(await authorizeEmailViewerSession(dbB, randomUUID(), issued.cookie, secret)).toBe(false);
+    await dbA.executor.updateTable('public_site_viewer_grants').set({ revoked_at: new Date(), revocation_reason: 'owner' }).where('id', '=', issued.grantId).execute();
+    expect(await authorizeEmailViewerSession(dbB, siteId, issued.cookie, secret)).toBe(false);
+  });
+});

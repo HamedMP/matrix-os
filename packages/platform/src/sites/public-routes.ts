@@ -1,17 +1,23 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SiteAccessClaimSchema, SiteReferenceSchema, SiteAssetPathSchema, SiteFormSubmissionSchema, validateSiteForm, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessClaimSchema, SiteReferenceSchema, SiteAssetPathSchema, SiteFormSubmissionSchema, SiteIdSchema, SiteEmailViewerExchangeSchema, validateSiteForm, type SiteRecord } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import { timingSafeTokenEquals } from '../platform-token.js';
 import { createBoundedRateLimiter } from '../request-admission.js';
 import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
-import { APP_CSP, PAGE_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
+import { APP_CSP, PAGE_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
 import { clearSiteViewerCookie } from './access-links.js';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
+import { resolveSiteClerkIdentity } from './clerk-identity.js';
+import { acceptSiteEmailInvitation } from './email-invitations.js';
+import { authorizeEmailViewerSession, terminateEmailClerkSession } from './email-viewer-sessions.js';
+import { siteClerkSessionKey } from './email-keys.js';
+import { hasVerifiedClerkBrowserSession } from '../clerk-auth.js';
+import type { VerifyResult } from '../clerk-auth.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -27,6 +33,15 @@ export function createSitePublicRoutes(options: {
         accepted: true;
     }>;
     captureEvent?: SiteTelemetryCapture;
+    email?: {
+        db: PlatformDB;
+        enabled: () => Promise<boolean>;
+        secret: string;
+        clerkSecretKey: string;
+        publishableKey?: string;
+        verify: (token: string) => Promise<VerifyResult>;
+        fetchImpl?: typeof fetch;
+    };
 }): Hono {
     const app = new Hono();
     app.onError((error, c) => unavailable(c, error));
@@ -45,6 +60,12 @@ export function createSitePublicRoutes(options: {
         const reference = parsed.data;
         const site = await options.service.resolve(reference);
         if (!site || site.accessMode === 'public') return site;
+        if (site.accessMode === 'private_email') {
+            const email = options.email;
+            return email && reference === site.id && await email.enabled()
+                && await authorizeEmailViewerSession(email.db, site.id, c.req.header('cookie'), email.secret)
+                ? site : null;
+        }
         return options.service.authorize(reference, c.req.header('cookie'));
     }
     app.use('*', async (c, next) => {
@@ -88,9 +109,25 @@ export function createSitePublicRoutes(options: {
     app.get('/:reference', async (c) => {
         const site = await options.service.resolve(c.req.param('reference'));
         if (!site) throw new SiteError('not_found');
-        if (site.accessMode === 'private_link' && c.req.param('reference') !== site.id)
+        if (site.accessMode !== 'public' && c.req.param('reference') !== site.id)
             return c.redirect(`/${site.id}`, 307);
         c.header('Content-Security-Policy', PAGE_CSP);
+        if (site.accessMode === 'private_email') {
+            if (!await authorizedSite(c)) {
+                clearSiteCookies(c, site.id);
+                const key = options.email?.publishableKey;
+                if (!options.email || !await options.email.enabled() || !key)
+                    throw new SiteError('not_found');
+                const gate = siteEmailGate(site.id, key);
+                c.header('Content-Security-Policy', gate.csp);
+                emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+                    { access_mode: 'private_email', access_state: 'sign_in_required' });
+                return c.html(gate.html);
+            }
+            emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+                { access_mode: 'private_email', access_state: 'authorized' });
+            return c.html(sitePage(site));
+        }
         if (site.accessMode === 'private_link') {
             if (!await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
                 emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
@@ -111,7 +148,7 @@ export function createSitePublicRoutes(options: {
     });
     app.get('/:reference/frame', async (c) => { const reference = c.req.param('reference'); const site = await authorizedSite(c); if (!site?.activeVersion)
         throw new SiteError('not_found');
-        if (site.accessMode === 'private_link') {
+        if (site.accessMode !== 'public') {
             const html = await options.service.privateFrame(reference, site.activeVersion, 'index.html');
             c.header('Content-Security-Policy', PRIVATE_APP_CSP);
             return c.html(siteFrame(html, site, 'index.html', true));
@@ -123,7 +160,7 @@ export function createSitePublicRoutes(options: {
         if (!version.success || !path.success)
             throw new SiteError('not_found');
         const authorized = await options.service.resolve(c.req.param('reference'));
-        if (!authorized || authorized.accessMode === 'private_link') throw new SiteError('not_found');
+        if (!authorized || authorized.accessMode !== 'public') throw new SiteError('not_found');
         const asset = await options.service.asset(c.req.param('reference'), version.data, path.data);
         c.header('Content-Type', asset.contentType);
         c.header('Access-Control-Allow-Origin', 'null');
@@ -151,6 +188,59 @@ export function createSitePublicRoutes(options: {
             return c.json({ accepted: true });
         } finally { flights--; }
     });
+    app.post('/:reference/access/email', bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) }), async c => {
+        const siteId = SiteIdSchema.safeParse(c.req.param('reference'));
+        if (!siteId.success || c.req.header('x-matrix-sites-origin') !== 'same-origin') throw new SiteError('not_found');
+        const input = SiteEmailViewerExchangeSchema.safeParse(await c.req.json().catch((error: unknown) => {
+            if (error instanceof SyntaxError) return null; throw error;
+        }));
+        if (!input.success) throw new SiteError('invalid_request');
+        const email = options.email;
+        if (!email || !await email.enabled()) throw new SiteError('unavailable');
+        const source = c.req.header('x-matrix-sites-source') ?? 'unknown';
+        if (!perSource.check(source.slice(0, 128)) || !global.check('all') || flights >= 4)
+            return c.json({ error: 'Try again later' }, 429);
+        flights++;
+        try {
+            const identity = await resolveSiteClerkIdentity(c.req.header('authorization'), {
+                secretKey: email.clerkSecretKey, verify: email.verify, fetchImpl: email.fetchImpl,
+            });
+            const issued = await acceptSiteEmailInvitation({ db: email.db, siteId: siteId.data, identity, secret: email.secret });
+            c.header('Set-Cookie', issued.cookie);
+            return c.json({ granted: true });
+        } finally { flights--; }
+    });
+    app.post('/:reference/access/email/sign-out', bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) }), async c => {
+        const siteId = SiteIdSchema.safeParse(c.req.param('reference'));
+        if (!siteId.success || c.req.header('x-matrix-sites-origin') !== 'same-origin') throw new SiteError('not_found');
+        const input = SiteEmailViewerExchangeSchema.safeParse(await c.req.json().catch((error: unknown) => {
+            if (error instanceof SyntaxError) return null; throw error;
+        }));
+        if (!input.success) throw new SiteError('invalid_request');
+        const email = options.email;
+        if (!email || !await email.enabled()) throw new SiteError('unavailable');
+        const source = c.req.header('x-matrix-sites-source') ?? 'unknown';
+        if (!perSource.check(source.slice(0, 128)) || !global.check('all') || flights >= 4)
+            return c.json({ error: 'Try again later' }, 429);
+        flights++;
+        try {
+            const bearer = c.req.header('authorization');
+            if (bearer) {
+                if (bearer.length > 8192 || !/^Bearer [A-Za-z0-9._-]{1,8185}$/.test(bearer))
+                    throw new SiteError('not_found');
+                const verified = await email.verify(bearer.slice(7));
+                if (!verified.userId || !hasVerifiedClerkBrowserSession(verified, verified.userId)
+                    || !/^sess_[A-Za-z0-9_-]{1,200}$/.test(verified.sessionId))
+                    throw new SiteError('not_found');
+                await terminateEmailClerkSession(email.db, siteId.data,
+                    siteClerkSessionKey(verified.sessionId, email.secret), c.req.header('cookie'));
+            } else if (c.req.header('cookie')) {
+                throw new SiteError('not_found');
+            }
+            clearSiteCookies(c, siteId.data);
+            return c.json({ signedOut: true });
+        } finally { flights--; }
+    });
     app.post('/:reference/forms/:formId', bodyLimit({ maxSize: 17 * 1024, onError: c => c.json({ error: 'Invalid submission' }, 413) }), async (c) => {
         const formId = z.string().min(1).max(64).regex(/^[a-z][a-z0-9_-]*$/).safeParse(c.req.param('formId'));
         if (!formId.success)
@@ -164,7 +254,8 @@ export function createSitePublicRoutes(options: {
             return c.json({ error: 'Try again later' }, 429);
         flights++;
         try {
-            if (!await authorizedSite(c)) throw new SiteError('not_found');
+            const authorized = await authorizedSite(c);
+            if (!authorized) throw new SiteError('not_found');
             const accessMode = await options.service.admitted(c.req.param('reference'), async (site, trx) => {
                 const form = site.config.forms.find(f => f.id === formId.data);
                 if (!form)
