@@ -24,7 +24,8 @@ function runWithFakeXcrun(failuresBeforeSuccess: number) {
   writeFileSync(
     xcrun,
     `#!/usr/bin/env bash
-echo "$*" >> "${calls}"
+# One line per call: the argument count, then each argument as received.
+{ printf '%s' "$#"; printf '|%s' "$@"; echo; } >> "${calls}"
 count=$(wc -l < "${calls}")
 if [ "$count" -le ${failuresBeforeSuccess} ]; then
   echo "The network connection was lost." >&2
@@ -47,7 +48,7 @@ describe("stapler validate retry", () => {
     const { result, invocations } = runWithFakeXcrun(2);
     expect(result.status).toBe(0);
     expect(invocations).toHaveLength(3);
-    expect(invocations[0]).toBe("stapler validate /tmp/Matrix OS.app");
+    expect(invocations).toEqual(Array(3).fill("3|stapler|validate|/tmp/Matrix OS.app"));
   });
 
   it("fails the build when validation never succeeds", () => {
