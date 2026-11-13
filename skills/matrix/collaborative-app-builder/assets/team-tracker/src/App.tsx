@@ -8,6 +8,7 @@ type Bridge = {
   participant: { actorId: string; displayName: string } | null;
   query(action: Action): Promise<Reply>;
   mutate(action: Action, expectedRevision: string): Promise<Reply>;
+  retryMutation?(): Promise<Reply>;
   onChange(listener: () => void): () => void;
 };
 
@@ -69,7 +70,8 @@ export default function App() {
   async function save(action: Action) {
     if (!shared || !loaded || writing.current || pending.current) return;
     writing.current = true;
-    pending.current = { action, draft };
+    const attempt = { action, draft };
+    pending.current = attempt;
     setBusy(true);
     try {
       if (action.action === "insert") {
@@ -85,7 +87,23 @@ export default function App() {
       await refresh();
     } catch (failure: unknown) {
       console.warn("[team-tracker] write not confirmed", failure instanceof Error ? failure.name : "UnknownError");
-      if (mounted.current) setError("Save not confirmed. Your input is retained. Use Matrix’s Retry when offered, then review saved records. Do not submit the change again. Discarding a local draft does not cancel an earlier write.");
+      if (mounted.current && pending.current === attempt) setError("Save not confirmed. Your input is retained. Retry the original save here when offered, or use Matrix’s Retry, then review saved records. Do not submit the change again. Discarding a local draft does not cancel an earlier write.");
+    } finally {
+      writing.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+
+  async function retryOriginal() {
+    if (!shared?.retryMutation || writing.current || !pending.current) return;
+    const attempt = pending.current;
+    writing.current = true; setBusy(true);
+    try {
+      await shared.retryMutation();
+      if (mounted.current) await refresh();
+    } catch (failure: unknown) {
+      console.warn("[team-tracker] retry not confirmed", failure instanceof Error ? failure.name : "UnknownError");
+      if (mounted.current && pending.current === attempt) setError("Save still not confirmed. Your input is retained. Review saved records before making another change.");
     } finally {
       writing.current = false;
       if (mounted.current) setBusy(false);
@@ -111,6 +129,7 @@ export default function App() {
     </form>
     {error ? <section role="alert"><p>{error}</p>
       <button onClick={() => { void refresh(); }}>Review saved records</button>
+      {pending.current && shared?.retryMutation ? <button disabled={busy} onClick={() => { void retryOriginal(); }}>Retry original save</button> : null}
       {pending.current && !busy ? <button onClick={() => {
         pending.current = null; setDraft(""); setError(""); void refresh();
       }}>Discard local draft</button> : null}

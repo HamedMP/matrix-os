@@ -71,8 +71,10 @@ Serialize writes within the app. Never replace a read failure with an empty save
 dataset, never clear input on an unconfirmed write, and do not automatically replay
 `mutate` after failure. Matrix handles operation IDs; submitting a new call creates
 a new operation. Use Matrix's Retry overlay when offered. The owner bridge also
-supports `retryMutation()`, but the member bridge does not expose it: check actual
-availability rather than assuming parity. After recovery reread and show what saved;
+supports `retryMutation()` with no owner Retry overlay: offer an explicit action
+when that method exists, as the tracker does. It replays the transport's original
+operation; never replace it with a fresh `mutate` call. The member bridge does not
+expose it and uses Matrix's overlay instead. After recovery reread and show what saved;
 keep drafts until confirmed or deliberately discarded. Conflicts require review.
 
 The tracker demonstrates bounded reads, CRUD, rereads, a stable inserted row ID,
