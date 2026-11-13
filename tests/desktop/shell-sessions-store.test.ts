@@ -254,3 +254,14 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(useShellSessions.getState().sessions[0]?.placement).toBe("active");
   });
 });
+
+it.each(["claude", "codex", "hermes", "opencode", "pi"] as const)("Electron explicit %s selection sends only the shared managed selector", async agent => {
+  const nativeTab = { ...tab(TAB_TWO, agent), agent: { providerId: agent } };
+  const post = vi.fn(async (path: string) => path.endsWith("/ensure") ? { workspace: { id: WORKSPACE_ID, revision: 7 } } : { tab: nativeTab });
+  const get = vi.fn().mockResolvedValue(workspaces([nativeTab]));
+  const created = await useShellSessions.getState().create(makeApi({ post, get }), { agent, managedAgent: agent });
+  expect(post).toHaveBeenNthCalledWith(2, `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, expect.objectContaining({ managedLaunch: { harness: agent } }));
+  const payload = (post.mock.calls[1] as unknown as [string, object])[1];
+  expect(payload).not.toHaveProperty("command"); expect(payload).not.toHaveProperty("agent");
+  expect(created).toMatchObject({ agent, tabId: TAB_TWO });
+});
