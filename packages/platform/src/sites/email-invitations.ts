@@ -50,6 +50,7 @@ async function assertOwnerDeliveryCapacity(db: PlatformDB, ownerId: string, addi
     .select(sql<number>`count(*)::int`.as('outstanding'))
     .where('s.owner_id', '=', ownerId)
     .where('i.state', '=', 'pending').where('i.expires_at', '>', new Date())
+    .where(eb => eb.or([eb('d.failure_code', 'is', null), eb('d.failure_code', '!=', 'rejected')]))
     .where(eb => eb.or([eb('d.state', 'in', ['queued', 'leased']),
       eb.and([eb('d.state', 'in', ['failed', 'ambiguous']), eb('d.attempts', '<', 5)])]));
   if (exceptInvitationId) query = query.where('d.invitation_id', '!=', exceptInvitationId);

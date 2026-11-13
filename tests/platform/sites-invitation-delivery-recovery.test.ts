@@ -53,7 +53,10 @@ it('caps one owner\'s outstanding mail across repeated invitation requests',asyn
    identity:{clerkUserId:'user_mail_guest',clerkSessionId:'sess_mail_guest',verifiedEmails:['guest0@example.com']}});
   expect((await db.executor.selectFrom('public_site_invitation_deliveries').select('state')
    .where('invitation_id','=',invitations[0]!.id).executeTakeFirst())?.state).toBe('cancelled');
-  const result=await createSiteEmailInvitations(db,owner,{baseRevision:1,emailAddresses:['new@example.com']});
-  expect(result.results[0]?.outcome).toBe('queued');
+  await db.executor.updateTable('public_site_invitation_deliveries').set({state:'failed',failure_code:'rejected',attempts:1})
+   .where('invitation_id','=',invitations[1]!.id).execute();
+  const result=await createSiteEmailInvitations(db,owner,{baseRevision:1,
+   emailAddresses:['new@example.com','another@example.com']});
+  expect(result.results.map(item=>item.outcome)).toEqual(['queued','queued']);
  }finally{await destroyTestPlatformDb(db);}
 });
