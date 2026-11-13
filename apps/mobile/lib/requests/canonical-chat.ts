@@ -264,6 +264,7 @@ export function fetchChatDetail(
   clerkToken: string,
   computerGatewayUrl: string,
   chatId: string,
+  { timeoutMs }: { timeoutMs?: number } = {},
 ): Promise<CanonicalChatDetailResponse> {
   let url: string;
   try {
@@ -280,6 +281,7 @@ export function fetchChatDetail(
     token: clerkToken,
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
+    timeoutMs,
   });
 }
 

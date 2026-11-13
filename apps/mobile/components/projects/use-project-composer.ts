@@ -12,6 +12,7 @@ import {
 } from "@/lib/chat-attachments";
 import { chatAttachmentSubmissionError } from "@/lib/chat-attachment-policy";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
+import { NewChatDeliveryUnconfirmedError } from "@/lib/queries/new-chat-admission-recovery";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 
 // A failed send's request ids are kept until a send goes through; beyond this
@@ -61,7 +62,7 @@ export function useProjectComposer({
 }: ProjectComposerOptions) {
   const sendMessage = useSendChatMessage();
   const isSending = sendMessage.isPending;
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftValue] = useState("");
   const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>([]);
   const failedSends = useRef<FailedSend[]>([]);
 
@@ -73,10 +74,21 @@ export function useProjectComposer({
     && attachmentNotice === null
     && selection !== null && turnModes !== null && !isSending;
 
+  const clearSendError = () => {
+    // Reset only a settled error. Resetting a pending mutation would detach its
+    // observer and lose its retry bookkeeping while the person edits the draft.
+    if (sendMessage.isError) sendMessage.reset();
+  };
+  const setDraft = (value: string) => {
+    clearSendError();
+    setDraftValue(value);
+  };
   const addAttachments = (added: readonly ComposerAttachment[]) => {
+    clearSendError();
     setAttachments((current) => appendAttachments(current, added));
   };
   const removeAttachment = (id: string) => {
+    clearSendError();
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
   };
 
@@ -104,7 +116,7 @@ export function useProjectComposer({
         failedSends.current = [];
         // The box stays editable while the server answers, so it may hold
         // newer text and attachments by now. Only what was sent is cleared.
-        setDraft((current) => (current.trim() === text ? "" : current));
+        setDraftValue((current) => (current.trim() === text ? "" : current));
         setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
         onChatStarted(chatId, selection);
       },
@@ -135,7 +147,11 @@ export function useProjectComposer({
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     attachmentNotice,
-    sendError: sendMessage.isError ? "Could not send message. Try again." : null,
+    sendError: sendMessage.isError
+      ? sendMessage.error instanceof NewChatDeliveryUnconfirmedError
+        ? "Could not confirm delivery. Retry to check again."
+        : "Could not send message. Try again."
+      : null,
     canSend,
     send,
     isSending,

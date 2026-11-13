@@ -9,12 +9,12 @@ import {
   canonicalChatTitle,
   createChat,
   fetchActiveComputer,
-  fetchChatDetail,
   mobileQueryKeys,
   removeChatAttachment,
   uploadChatAttachment,
 } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { recoverNewChatAdmission } from "./new-chat-admission-recovery";
 
 interface SendChatMessageInput {
   chatId: string | null;
@@ -170,23 +170,10 @@ export function useSendChatMessage() {
           throw error;
         }
 
-        // A new chat has no screen yet. If the answer was lost after the
-        // computer stored its first turn, read that turn before deciding the
-        // send failed. Otherwise the project composer keeps the full prompt
-        // and never opens the chat that was created for it.
-        let detail;
-        try {
-          detail = await fetchChatDetail(sendToken, gatewayUrl, targetChatId);
-        } catch (lookupError: unknown) {
-          console.warn("[mobile] new chat admission check failed", lookupError instanceof Error ? lookupError.name : "unknown");
-          throw error;
-        }
-        const turn = detail.turns.find((candidate) => candidate.clientRequestId === turnRequestId);
-        const message = detail.messages.find((candidate) => candidate.id === turn?.inputMessageId);
-        const run = detail.runs.find((candidate) => candidate.turnId === turn?.id);
-        if (!turn || !message || !run) throw error;
+        const recovered = await recoverNewChatAdmission({ gatewayUrl, chatId: targetChatId, turnRequestId, getToken });
+        const { detail } = recovered;
         queryClient.setQueryData(mobileQueryKeys.canonicalChatDetail(uid, computerKey, targetChatId), detail);
-        admission = { record: detail.record, message, turn, run, admission: "already_accepted" };
+        admission = recovered.admission;
       }
 
       if (!chatId) {

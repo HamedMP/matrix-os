@@ -165,6 +165,7 @@ export default function ProjectRoute() {
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          sendError: composer.sendError,
           speech,
           ...composerAddProps({
             catalog,
@@ -173,7 +174,7 @@ export default function ProjectRoute() {
             attachments: composer.attachments,
             room: composer.attachmentRoom,
             unreadable: composer.unreadableAttachments,
-            attachmentNotice: composer.attachmentNotice ?? composer.sendError,
+            attachmentNotice: composer.attachmentNotice,
             onAdd: composer.addAttachments,
             onRemove: composer.removeAttachment,
             draft: composer.draft,

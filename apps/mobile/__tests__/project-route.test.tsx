@@ -52,6 +52,7 @@ const sendButton = () => screen.getByRole("button", { name: "Send message" });
 
 describe("project route", () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     mockRoutes.resetProjectRoute();
     jest.spyOn(console, "warn").mockImplementation(() => {});
   });
@@ -59,6 +60,7 @@ describe("project route", () => {
   afterEach(async () => {
     await mockRoutes.cleanupProjectRoute();
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   describe("project", () => {
@@ -378,6 +380,46 @@ describe("project route", () => {
       expect(input().props.value).toBe("");
     });
 
+    it("waits for a slow admission after a dropped response, including a transient lookup failure", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockRejectedValue(new Error("connection dropped"));
+      requests.fetchChatDetail
+        .mockRejectedValueOnce(new Error("still reconnecting"))
+        .mockResolvedValueOnce({ record: created, turns: [], messages: [], runs: [] })
+        .mockImplementation(async () => ({
+          record: created,
+          turns: [{ id: "turn_1", clientRequestId: requests.admitChatTurn.mock.calls[0][3].clientRequestId, inputMessageId: "msg_1" }],
+          messages: [{ id: "msg_1" }],
+          runs: [{ id: "run_1", turnId: "turn_1" }],
+        }));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(input().props.value).toBe("Draft the case study");
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_000); });
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(requests.admitChatTurn).toHaveBeenCalledTimes(1);
+      expect(requests.createChat).toHaveBeenCalledTimes(1);
+      expect(input().props.value).toBe("");
+    });
+
+    it.each(["Reworded prompt", ""])("clears the previous send error when the draft becomes %j", async (draft) => {
+      requests.createChat.mockRejectedValue(new Error("upstream said no"));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+
+      fireEvent.changeText(input(), draft);
+
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(input().props.value).toBe(draft);
+    });
+
     it("takes nothing more while the message is on its way, and again once it could not be sent", async () => {
       const creating = pendingRequest<typeof created>();
       requests.createChat.mockReturnValue(creating.promise);
@@ -423,8 +465,9 @@ describe("project route", () => {
       fireEvent.changeText(input(), "Draft the case study");
       fireEvent.press(sendButton());
 
-      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new"));
-      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again."));
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not confirm delivery. Retry to check again."), { timeout: 8_000 });
+      expect(requests.fetchChatDetail).toHaveBeenCalledTimes(5);
       expect(input().props.value).toBe("Draft the case study");
       expect(router.push).not.toHaveBeenCalled();
     });
@@ -439,7 +482,7 @@ describe("project route", () => {
 
       fireEvent.press(sendButton());
       await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false }));
+      await waitFor(() => expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false }), { timeout: 8_000 });
       fireEvent.press(sendButton());
       await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
 
