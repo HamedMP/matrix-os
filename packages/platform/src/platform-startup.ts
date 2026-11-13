@@ -816,6 +816,7 @@ async function startPlatformServerWithCleanup(
 
   let internalSyncRoutes: Hono | undefined;
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
+  let syncObjectStore: GatewayR2Client | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let sitesObjectStore: GatewayR2Client | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
@@ -837,6 +838,7 @@ async function startPlatformServerWithCleanup(
       storageLimits: loadContainerStorageLimits(process.env),
     });
     customerVpsObjectStore = r2;
+    syncObjectStore = r2;
     hostBundleObjectStore = r2;
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
@@ -1129,7 +1131,9 @@ async function startPlatformServerWithCleanup(
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   // Created before account deletion, which drops free owners' databases; cleanups run in reverse, so deletion drains first.
-  const containerSubstrate = createConfiguredContainerSubstrate({ db, env: appEnv, microvmsApi: opts.containerProviderClient });
+  const containerSubstrate = createConfiguredContainerSubstrate({
+    db, env: appEnv, microvmsApi: opts.containerProviderClient, ...(syncObjectStore ? { objectStore: syncObjectStore } : {}),
+  });
   registerCustomMcpStartupCleanup(async () => { await containerSubstrate?.shutdown(); });
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
     db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
