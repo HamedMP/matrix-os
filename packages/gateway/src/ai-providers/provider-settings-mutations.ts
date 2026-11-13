@@ -21,6 +21,14 @@ export type ProviderConfigurationMutation = Exclude<ProviderSettingsMutation,
   | { type: "remove_account" }
   | { type: "reassign_account" }>;
 
+/** Mutations that can invalidate the exact Provider Settings route bound to shared project work. */
+export function providerSettingsMutationChangesExecutionAuthority(
+  mutation: ProviderSettingsMutation,
+): boolean {
+  return mutation.type !== "update_harness"
+    && mutation.type !== "start_login";
+}
+
 function genericHarnessRouteIsSupported(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | undefined,
