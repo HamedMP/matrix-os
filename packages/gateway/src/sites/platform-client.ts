@@ -22,7 +22,9 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
   const target=new URL('/internal/containers/'+encodeURIComponent(options.handle)+'/sites/'+encodeURIComponent(slug)+child,base);if(options.runtimeSlot)target.searchParams.set('runtimeSlot',options.runtimeSlot);
   try{
    if(signal?.aborted)throw new SitePlatformError(503);
-   let timeoutMs=method==='POST'&&child===''?30000:10000;
+   // Existing publication/rollback paths retain their reviewed 30s budget;
+   // invitation mutations use the ordinary 10s management deadline.
+   let timeoutMs=method==='POST'&&(child===''||child==='/rollback')?30000:10000;
    if(deadlineAt!==undefined){
     const remaining=deadlineAt-Date.now();
     if(method!=='POST'||child!==''||!Number.isSafeInteger(deadlineAt)||remaining<=0||remaining>SITE_PUBLISH_TIMEOUT_MS)throw new SitePlatformError(503);
