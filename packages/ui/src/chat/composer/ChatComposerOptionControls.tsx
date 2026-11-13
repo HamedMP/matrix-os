@@ -102,7 +102,7 @@ export function ChatComposerAttachButton({ disabled = false, title = "Attach fil
       aria-label="Attach files"
       title={title}
       disabled={disabled}
-      className="flex h-7 w-8 items-center justify-center rounded-[8px] border outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
+      className="flex h-7 w-8 shrink-0 items-center justify-center rounded-[8px] border outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
       style={{ color: "var(--text-secondary)", borderColor: "var(--border-subtle)" }}
       onClick={onClick}
     >

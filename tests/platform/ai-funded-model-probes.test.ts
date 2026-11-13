@@ -123,6 +123,105 @@ describe("fleet funded model probe budget", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it("skips eight expired models before reserving capacity on either replica", async () => {
+    const healthy = new Set<string>([sonnet, FUNDED_PROBE_MODELS[0]]);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(pricedReady));
+    const readPricingReview = async (modelId: string) => ({
+      version: "reviewed-rate",
+      validThrough: healthy.has(modelId) ? pricedReady.priceValidThrough : now.toISOString(),
+    });
+    const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
+      dailyLimit: 20, minuteLimit: 20, fetchFn, now: () => now, readPricingReview };
+    const replicas = [createFundedModelProbeService(input), createFundedModelProbeService(input)];
+    for (const results of await Promise.all(replicas.map(service => Promise.all(
+      FUNDED_PROBE_MODELS.map(async model => (await service.probe(model)).ready),
+    )))) {
+      expect(results).toEqual(FUNDED_PROBE_MODELS.map(model => healthy.has(model)));
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const budget = await sql<{ day_used: number }>`select day_used from ai_funded_model_probe_budget`.execute(db.executor);
+    expect(budget.rows).toEqual([{ day_used: 2 }]);
+  });
+
+  it("shares fifteen minutes of health only while the exact price review remains eligible", async () => {
+    let clock = now;
+    let validThrough: string | null = pricedReady.priceValidThrough;
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(pricedReady));
+    const readPricingReview = async () => validThrough ? { version: "reviewed-rate", validThrough } : null;
+    const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
+      dailyLimit: 20, minuteLimit: 20, fetchFn, now: () => clock, readPricingReview };
+    const first = createFundedModelProbeService(input);
+    const second = createFundedModelProbeService(input);
+    expect((await first.probe(sonnet)).staleAfter).toBe("2026-09-25T12:15:00.000Z");
+    clock = new Date(now.getTime() + 14 * 60_000);
+    expect((await second.readCached!(sonnet)).ready).toBe(true);
+    expect((await second.probe(sonnet)).ready).toBe(true);
+    validThrough = null;
+    expect((await first.readCached!(sonnet)).ready).toBe(false);
+    expect((await second.probe(sonnet)).ready).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates only the exact reviewed receipt that predates a real upstream failure", async () => {
+    let clock = now;
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(pricedReady));
+    const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
+      dailyLimit: 20, minuteLimit: 20, fetchFn, now: () => clock,
+      readPricingReview: async () => ({ version: "reviewed-rate", validThrough: pricedReady.priceValidThrough }) };
+    const first = createFundedModelProbeService(input);
+    const second = createFundedModelProbeService(input);
+    expect((await first.probe(sonnet)).ready).toBe(true);
+    const failedAt = new Date(now.getTime() + 30_000);
+    clock = failedAt;
+    await second.invalidateAfterUpstreamFailure!(sonnet, "different-rate", failedAt);
+    expect((await first.readCached!(sonnet)).ready).toBe(true);
+    await second.invalidateAfterUpstreamFailure!(sonnet, "reviewed-rate", failedAt);
+    expect((await first.readCached!(sonnet)).ready).toBe(false);
+    expect((await second.probe(sonnet)).ready).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    clock = new Date(now.getTime() + 90_000);
+    expect((await second.probe(sonnet)).ready).toBe(true);
+    await first.invalidateAfterUpstreamFailure!(sonnet, "reviewed-rate", failedAt);
+    expect((await second.readCached!(sonnet)).ready).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares retry backoff and preserves a normal refresh after expedited retries are exhausted", async () => {
+    let clock = now;
+    const [firstBad, secondBad, healthy] = FUNDED_PROBE_MODELS;
+    const fetchFn = vi.fn<typeof fetch>(async (request) => {
+      const model = new URL(String(request)).searchParams.get("model");
+      return model === healthy || clock.getTime() === now.getTime() + 15 * 60_000
+        ? Response.json(pricedReady)
+        : new Response(null, { status: 503 });
+    });
+    const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
+      dailyLimit: 12, minuteLimit: FUNDED_PROBE_MODELS.length + 2, fetchFn, now: () => clock,
+      readPricingReview: async () => ({ version: "reviewed-rate", validThrough: pricedReady.priceValidThrough }),
+      reserveProbe: (request: Parameters<typeof reserveFundedModelProbe>[0]) => reserveFundedModelProbe({ ...request, now: clock }) };
+    const first = createFundedModelProbeService(input);
+    const second = createFundedModelProbeService(input);
+    await Promise.all([first.probe(firstBad), second.probe(secondBad)]);
+    clock = new Date(now.getTime() + 10_000);
+    await Promise.all([second.probe(firstBad), first.probe(secondBad)]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    clock = new Date(now.getTime() + 60_000);
+    await Promise.all([first.probe(firstBad), second.probe(secondBad)]);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    clock = new Date(now.getTime() + 6 * 60_000);
+    await Promise.all([second.probe(firstBad), first.probe(secondBad)]);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    expect((await first.probe(healthy)).ready).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
+    clock = new Date(now.getTime() + 15 * 60_000);
+    expect((await second.probe(firstBad)).ready).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(6);
+    const counters = await sql<{ day_used: number; retry_day_used: number }>`
+      select day_used, retry_day_used from ai_funded_model_probe_budget
+    `.execute(db.executor);
+    expect(counters.rows).toEqual([{ day_used: 6, retry_day_used: 2 }]);
+  });
+
   it("caps cached model readiness at relay-supplied pricing expiry and rejects missing expiry", async () => {
     let observedNow = new Date("2026-09-30T23:59:59.900Z");
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({

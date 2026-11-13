@@ -2,8 +2,8 @@ import {chatAgentComposerDraft} from "../../desktop/src/renderer/src/features/ch
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
   SharedChatComposer,
@@ -14,9 +14,10 @@ import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
-import { insertSharedComposerTextAtSelection } from "./shared-chat-composer-test-utils";
+import { insertSharedComposerTextAtSelection, mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 function catalogFixture(): CanonicalProviderCatalog {
   const support = {
@@ -182,6 +183,7 @@ function Harness({
   initialReferenceTokens = [],
   onNewChat,
   disabled = false,
+  speech = false,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -196,6 +198,7 @@ function Harness({
   initialReferenceTokens?: ComposerReferenceToken[];
   onNewChat?: () => void;
   disabled?: boolean;
+  speech?: boolean;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -227,12 +230,76 @@ function Harness({
       onAttach={onAttach ?? undefined}
       onProviderSetup={(instance, action) => onProviderSetup(instance.id, action.id)}
       menuSide={menuSide}
+      speech={speech ? { scopeKey: "project-draft", onDraft: setValue } : undefined}
     />
   );
 }
 
 describe("SharedChatComposer", () => {
-  afterEach(cleanup);
+  let restorePopoverLayout: () => void;
+  beforeEach(() => { restorePopoverLayout = mockSharedComposerPopoverLayout(); });
+  afterEach(() => { cleanup(); restorePopoverLayout(); });
+
+  it("keeps the connected Preview dictation allowance outside the toolbar", async () => {
+    const connection = useConnection.getState();
+    const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn() } });
+    vi.stubGlobal("AudioContext", class {});
+    vi.stubGlobal("AudioWorkletNode", class {});
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: 1_024,
+          maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+      previewQuota: {
+        mode: "preview",
+        requestLimit: 25,
+        maxConcurrency: 1,
+        requestsUsed: 0,
+        requestsRemaining: 25,
+        expiresAt: "2026-11-11T02:46:00.000Z",
+      },
+    })));
+    useConnection.setState({ status: "signed-in", userId: "owner", platformHost: "https://matrix.example", runtimeSlot: "pr-3244" });
+
+    try {
+      const { container } = render(<Harness speech initialValue="Keep this project draft" />);
+      const status = await screen.findByText(/^Preview dictation: 25 of 25 requests remaining until /);
+      const toolbar = container.querySelector('[data-slot="prompt-input-toolbar"]');
+      expect(toolbar).not.toBeNull();
+      expect(toolbar?.contains(status)).toBe(false);
+      expect(toolbar?.closest(".prompt-card")?.contains(status)).toBe(true);
+      for (const name of ["Attach files", "Start voice input", "Choose model and provider", "Reasoning", "Permission mode", "Send"]) {
+        expect(toolbar?.contains(screen.getByRole("button", { name, exact: true }))).toBe(true);
+      }
+
+      const editor = screen.getByRole("textbox");
+      editor.focus();
+      act(() => useConnection.setState({ status: "signed-out" }));
+      expect(screen.queryByText(/^Preview dictation:/)).toBeNull();
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(document.activeElement).toBe(editor);
+      act(() => useConnection.setState({ status: "signed-in" }));
+      expect(await screen.findByText(/^Preview dictation:/)).toBeTruthy();
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(document.activeElement).toBe(editor);
+    } finally {
+      cleanup();
+      useConnection.setState(connection);
+      vi.unstubAllGlobals();
+      if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  });
 
   it("keeps Markdown source editable and submits it without a Preview or Edit toggle", () => {
     const onSubmit = vi.fn();
@@ -390,8 +457,7 @@ describe("SharedChatComposer", () => {
     render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
 
     const mentionPalette = await screen.findByRole("listbox", { name: "Add" });
-    expect(mentionPalette.className).toContain("left-0");
-    expect(mentionPalette.className).toContain("right-0");
+    expect(mentionPalette.closest('[data-slot="shared-chat-composer"]')).toBeNull();
     expect(screen.getByRole("option", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
@@ -439,6 +505,9 @@ describe("SharedChatComposer", () => {
   it("opens all Project Chat composer menus below the top composer", () => {
     render(<Harness menuSide="bottom" initialValue="/" />);
 
+    expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
+      .toBe("bottom");
+
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.getByRole("listbox", { name: "Models and connections" })
       .closest('[data-slot="provider-model-picker"]')?.getAttribute("data-preferred-side"))
@@ -452,9 +521,6 @@ describe("SharedChatComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
     expect(screen.getByRole("menu", { name: "Permission mode options" }).getAttribute("data-preferred-side"))
-      .toBe("bottom");
-
-    expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
       .toBe("bottom");
   });
 

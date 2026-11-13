@@ -9,6 +9,7 @@ import {
   FundedAiPromotionalGrantResponseSchema,
   FundedAiFinalizationRequestSchema,
   FundedAiPolicyCheckRequestSchema,
+  FundedAiPricingReviewSnapshotSchema, FundedAiPricingRouteFailureSchema, type FundedAiPricingReview,
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
@@ -613,6 +614,8 @@ export function createAiFundedOperatorRoutes(options: {
 export function createAiFundedRelayRoutes(options: {
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
+  listPricingReviews?: () => Promise<FundedAiPricingReview[]>;
+  invalidatePricingRoute?: (modelId: string, version: string, observedAt: Date) => Promise<void>;
 }) {
   if (!options.repository) throw new Error("Funded AI relay dependencies are missing");
   if (options.relayControlToken.length < 32) throw new Error("Funded AI relay authentication is misconfigured");
@@ -626,6 +629,33 @@ export function createAiFundedRelayRoutes(options: {
     }
     return next();
   });
+  const listPricingReviews = options.listPricingReviews;
+  if (listPricingReviews) {
+    app.get("/pricing-reviews", async (c) => {
+      try {
+        const reviews = await listPricingReviews();
+        return c.json(FundedAiPricingReviewSnapshotSchema.parse({ contractVersion: 1, reviews }), 200);
+      } catch (error) {
+        return policyErrorResponse(c, error);
+      }
+    });
+  }
+  const invalidatePricingRoute = options.invalidatePricingRoute;
+  if (invalidatePricingRoute) {
+    app.post("/pricing-route-failure", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+      const failure = FundedAiPricingRouteFailureSchema.safeParse(await readStrictJson(c));
+      if (!failure.success) return c.json(safeError("invalid_request"), 400);
+      const observedAt = new Date(failure.data.observedAt);
+      const ageMs = Date.now() - observedAt.getTime();
+      if (ageMs < -5_000 || ageMs > 5 * 60_000) return c.json(safeError("invalid_request"), 400);
+      try {
+        await invalidatePricingRoute(failure.data.modelId, failure.data.version, observedAt);
+        return c.body(null, 204);
+      } catch (error) {
+        return policyErrorResponse(c, error);
+      }
+    });
+  }
   app.post("/authorize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const request = FundedAiAuthorizationRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);

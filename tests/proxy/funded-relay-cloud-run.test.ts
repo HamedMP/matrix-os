@@ -78,7 +78,7 @@ describe("funded relay Cloud Run service", () => {
       for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
         const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
         expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
-        expect(workflow).toContain(`${name}=\${${name}}`);
+        expect(workflow).toContain(`              ${name} \\`);
       }
     }
     expect(workflow).not.toContain('date -u +');
@@ -378,5 +378,21 @@ it("validates individual DeepSeek and GLM price reviews before Cloud Run authent
   }).status).toBe(1);
   expect(runDeploymentValidation(start, end, {
     MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: individual.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION,
+  }).status).toBe(1);
+});
+
+it("accepts registry mode without requiring legacy managed review dates", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const result = runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "true",
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION: "stale",
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: "stale",
+  });
+  expect(result.status).toBe(0);
+  expect(runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "yes",
   }).status).toBe(1);
 });

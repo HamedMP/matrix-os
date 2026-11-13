@@ -119,19 +119,21 @@ def reconcile(root=Path('/'), uid=0):
         environment = identity_anchor.read('host.env').decode()
         values = {}
         for line in environment.splitlines():
-            if line.startswith(('MATRIX_BROWSER_LAB=', 'MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=', 'MATRIX_USER_ID=')):
+            if line.startswith(('MATRIX_BROWSER_LAB=', 'MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=',
+                                'MATRIX_CLERK_USER_ID=', 'MATRIX_USER_ID=', 'MATRIX_BROWSER_DEV_SETUP=')):
                 key, value = line.split('=', 1)
                 require(key not in values)
-                values[key] = value.strip('"')
-        if values.get('MATRIX_BROWSER_LAB') == 'false':
+                values[key] = value if key == 'MATRIX_BROWSER_DEV_SETUP' else value.strip('"')
+        slot = values.get('MATRIX_RUNTIME_SLOT')
+        if values.get('MATRIX_BROWSER_LAB') == 'false' or (slot == 'dev' and values.get('MATRIX_BROWSER_DEV_SETUP') != 'true'):
             return
-        require(values.get('MATRIX_RUNTIME_SLOT') == 'primary'
+        require(slot in ('primary', 'dev')
                 and re.fullmatch(r'[a-z][a-z0-9-]{0,62}', values.get('MATRIX_HANDLE', ''))
                 and not values['MATRIX_HANDLE'].startswith(('pv-', 'pr-'))
                 and re.fullmatch(r'user_[A-Za-z0-9]{1,128}', values.get('MATRIX_CLERK_USER_ID', ''))
                 and values.get('MATRIX_USER_ID', values.get('MATRIX_CLERK_USER_ID')) == values.get('MATRIX_CLERK_USER_ID')
                 and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', values.get('MATRIX_MACHINE_ID', '')))
-        binding = hashlib.sha256(json.dumps({key: values[key] for key in ('MATRIX_MACHINE_ID', 'MATRIX_HANDLE', 'MATRIX_CLERK_USER_ID')}, sort_keys=True).encode()).hexdigest()
+        binding = hashlib.sha256(json.dumps({key: values[key] for key in ('MATRIX_MACHINE_ID', 'MATRIX_HANDLE', 'MATRIX_RUNTIME_SLOT', 'MATRIX_CLERK_USER_ID')}, sort_keys=True).encode()).hexdigest()
         # Recovery/rollback must settle before optional native mutation.
         if any(os.path.lexists(root / relative) for relative in ('opt/matrix/staging/update-phase', 'opt/matrix/app/.rollback-now')):
             return

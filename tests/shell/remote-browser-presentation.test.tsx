@@ -36,6 +36,18 @@ it("renders compiled product surfaces and canonical cross-app actions without ow
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["__browser__", "browser"],
+  ["__cloud-desktop__", "desktop"],
+  ["apps/browser/index.html", "browser"],
+  ["apps/browser/dist/index.html", "browser"],
+])("keeps %s out of owner-app publishing",(path,surface)=>{
+  render(<AppViewer path={path} active/>);
+  expect(screen.getByTestId("browser-surface").getAttribute("data-surface")).toBe(surface);
+  expect(screen.queryByRole("button",{name:"Publish app"})).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 for(const mode of ["desktop","canvas"] as const)describe(`Web ${mode} Browser focus/minimize lifecycle`,()=>{
   it("suspends input/resize when unfocused or minimized and restores the same window",()=>{
     useDesktopMode.setState({mode,_hydrated:true});

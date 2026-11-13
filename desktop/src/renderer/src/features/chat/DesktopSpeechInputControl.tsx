@@ -5,12 +5,18 @@ import {
   PlatformSpeechRecorderError,
   resolveSpeechWorkletUrl,
   ChatSpeechInputButton,
+  ChatSpeechQuotaStatus,
   usePlatformSpeechDraft,
   type BrowserSpeechClient,
   type PlatformSpeechCaptureAdapter,
 } from "@matrix-os/ui";
 import { useEffect, useMemo } from "react";
 import { useConnection } from "../../stores/connection";
+
+function speechErrorMessage(error: unknown) {
+  if (error instanceof BrowserSpeechClientError || error instanceof PlatformSpeechRecorderError) return error.safeMessage;
+  return undefined;
+}
 
 export function DesktopSpeechInputControl({
   scopeKey,
@@ -27,54 +33,40 @@ export function DesktopSpeechInputControl({
   disabled: boolean;
   onActiveChange?: (active: boolean) => void;
 }) {
-  const speech = usePlatformSpeechDraft({
-    scopeKey,
-    client,
-    captureAdapter,
-    onDraft,
-    safeErrorMessage: (caught) => caught instanceof BrowserSpeechClientError
-      ? caught.safeMessage
-      : caught instanceof PlatformSpeechRecorderError ? caught.safeMessage : undefined,
-  });
+  const speech = usePlatformSpeechDraft({ scopeKey, client, captureAdapter, onDraft, safeErrorMessage: speechErrorMessage });
   const active = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
   useEffect(() => {
     onActiveChange?.(active);
     return () => onActiveChange?.(false);
   }, [active, onActiveChange]);
-  return <ChatSpeechInputButton speech={speech} disabled={disabled} />;
+  return <>
+    <ChatSpeechQuotaStatus speech={speech} />
+    <ChatSpeechInputButton speech={speech} disabled={disabled} />
+  </>;
 }
 
-export function ConnectedDesktopSpeechInput({
-  scopeKey,
-  onDraft,
-  disabled,
-  onActiveChange,
-}: {
+export function useConnectedDesktopSpeechInput(input: {
   scopeKey: string;
   onDraft: (text: string) => void;
-  disabled: boolean;
-  onActiveChange?: (active: boolean) => void;
-}) {
+} | undefined) {
   const connectionStatus = useConnection((state) => state.status);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const userId = useConnection((state) => state.userId);
   const authGeneration = useConnection((state) => state.authGeneration);
-  const client = useMemo(() => connectionStatus === "signed-in" && platformHost
+  const available = Boolean(input && connectionStatus === "signed-in" && platformHost && userId);
+  const client = useMemo(() => available && platformHost
     ? createBrowserSpeechClient({ baseUrl: platformHost, runtimeSlot })
-    : null, [connectionStatus, platformHost, runtimeSlot]);
+    : null, [available, platformHost, runtimeSlot]);
   const captureAdapter = useMemo(() => createWebPcmSpeechCaptureAdapter({
     workletUrl: resolveSpeechWorkletUrl(),
   }), []);
-  if (!client || !userId) return null;
-  return (
-    <DesktopSpeechInputControl
-      scopeKey={`${userId}:${authGeneration}:${runtimeSlot}:${scopeKey}`}
-      client={client}
-      captureAdapter={captureAdapter}
-      onDraft={onDraft}
-      disabled={disabled}
-      onActiveChange={onActiveChange}
-    />
-  );
+  const speech = usePlatformSpeechDraft({
+    scopeKey: JSON.stringify([input?.scopeKey, platformHost, userId, authGeneration, runtimeSlot]),
+    client,
+    captureAdapter,
+    onDraft: text => input?.onDraft(text),
+    safeErrorMessage: speechErrorMessage,
+  });
+  return client ? speech : undefined;
 }

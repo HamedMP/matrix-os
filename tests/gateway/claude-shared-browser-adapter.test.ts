@@ -52,7 +52,8 @@ const baseInput = {
 describe("Claude same Chrome execution", () => {
   it("injects policy-scoped Chrome leases for supported personal default Runs and revokes on terminal exit", async () => {
     const { createSharedBrowserBroker } = await import("../../packages/gateway/src/shared-browser/broker.js");
-    const broker = createSharedBrowserBroker({ ownerId: "owner_claude", driver: { execute: async () => ({ success: true }), detach: async () => {}, invalidateObservation() {} }, setHumanControl: async () => {} });
+    const authorizeAction = vi.fn(async () => {});
+    const broker = createSharedBrowserBroker({ ownerId: "owner_claude", authorizeAction, driver: { execute: async () => ({ success: true }), detach: async () => {}, invalidateObservation() {} }, setHumanControl: async () => {} });
     const open = vi.spyOn(broker, "openRun");
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "native_session" })]));
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", sharedBrowser: broker, sharedBrowserGatewayPort: 4321, spawnFn });
@@ -75,7 +76,7 @@ describe("Claude same Chrome execution", () => {
       for await (const _ of adapter.start({ ...full, permissionMode: "supervised" })) {}
       const supervisedToken = spawnFn.mock.calls.at(-1)![2].env!.MATRIX_SHARED_BROWSER_TOKEN!;
       expect(supervisedToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(open.mock.calls.at(-1)?.[2]).toMatchObject({ mode: "supervised", authorizeAction: expect.any(Function) });
+      expect(open.mock.calls.at(-1)?.[2]).toMatchObject({ mode: "supervised", authorizeAction });
       expect(broker.resolveCapability(supervisedToken)).toBeNull();
     } finally { await broker.close(); }
   });

@@ -11,9 +11,10 @@ export interface SharedBrowserDriver {
   detach(): Promise<void>;
 }
 export class SharedBrowserError extends Error {
-  constructor(readonly code: "run_unavailable" | "browser_busy" | "browser_changed" | "observe_again" | "browser_unavailable" | "invalid_action" | "tab_limit", readonly dispatched = false) {
+  constructor(readonly code: "run_unavailable" | "browser_busy" | "browser_changed" | "observe_again" | "browser_unavailable" | "approval_unavailable" | "invalid_action" | "tab_limit", readonly dispatched = false) {
     super(code === "observe_again" ? "Observe Chrome again before continuing." : code === "browser_busy" ? "Chrome is controlled by another Chat."
       : code === "browser_changed" ? "Browser control changed. Observe again after the owner resumes."
+      : code === "approval_unavailable" ? "Browser approvals are unavailable for this Chat."
       : code === "tab_limit" ? "The Browser has reached its agent tab limit. Switch to an existing tab, or ask the owner to close an unneeded tab before opening another."
       : "The browser action is unavailable.");
     this.name = "SharedBrowserError";
@@ -24,7 +25,8 @@ class SharedBrowserInterruptedError extends SharedBrowserError {
     readonly receipt?:Pick<SharedBrowserActionResult,"artifact"|"collectionManifest">,
     readonly relatedTarget?: { targetId: string | undefined; exhausted: boolean }) { super("browser_changed"); }
 }
-interface Registered { policy?:SharedBrowserSupervisedPolicy; publicDriver?:SharedBrowserDriver; binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[]; relatedTargetHandoffs: Set<string | undefined> }
+type BrowserRunPolicy = SharedBrowserSupervisedPolicy | { mode: "supervised"; authorizeAction: null };
+interface Registered { policy?:BrowserRunPolicy; publicDriver?:SharedBrowserDriver; binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; expiryTimer?: ReturnType<typeof setTimeout>; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[]; relatedTargetHandoffs: Set<string | undefined> }
 const digest = (value: string) => createHash("sha256").update(value).digest();
 const same = (a:SharedBrowserBinding,b:SharedBrowserBinding) => a.ownerId===b.ownerId && a.chatId===b.chatId && a.runId===b.runId && a.harness===b.harness;
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -33,6 +35,7 @@ export function createSharedBrowserBroker(options: {
   ownerId: string; driver: SharedBrowserDriver; publicDriver?:SharedBrowserDriver; setHumanControl(enabled:boolean):Promise<void>;
   runTtlMs?: number; drainTimeoutMs?: number; now?:()=>number;
   authorizeAction?: SharedBrowserSupervisedPolicy["authorizeAction"];
+  supervisedRunExpiresAt?: (identity: Pick<SharedBrowserBinding, "ownerId" | "chatId">) => number;
   exportArtifacts?(collectionId:string,artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[]):Promise<string>;
 }) {
   const runs = new Map<string,Registered>(); // <=64, signal/TTL/close eviction; no persisted authority.
@@ -68,7 +71,7 @@ export function createSharedBrowserBroker(options: {
     changed("pausing");
     if(runningControl){runningControl.action=action;runningControl.controller.abort();}
   }
-  function erase(row:Registered) { row.signal.removeEventListener("abort",row.onAbort);row.controller.abort();if(waitingResume?.row===row)waitingResume.finish(new SharedBrowserError("run_unavailable")); }
+  function erase(row:Registered) { clearTimeout(row.expiryTimer);row.signal.removeEventListener("abort",row.onAbort);row.controller.abort();if(waitingResume?.row===row)waitingResume.finish(new SharedBrowserError("run_unavailable")); }
   function enqueueControl<T>(operation:()=>Promise<T>,cleanup=false):Promise<T> {
     if(!cleanup && controls>=4)throw new SharedBrowserError("browser_busy");
     controls++;
@@ -105,15 +108,23 @@ export function createSharedBrowserBroker(options: {
   }
   const sweep=()=>{for(const row of runs.values())if(row.signal.aborted || row.expiresAt<=now())void closeRun(row.binding.runId).catch(report);};
   const timer=setInterval(sweep,15_000);timer.unref();
-  function openRun(binding:SharedBrowserBinding,signal:AbortSignal,policy?:SharedBrowserSupervisedPolicy) {
+  const allowsSupervisedRun = (identity: Pick<SharedBrowserBinding, "ownerId" | "chatId">) =>
+    (options.supervisedRunExpiresAt?.(identity) ?? Infinity) > now();
+  function openRun(binding:SharedBrowserBinding,signal:AbortSignal,policy?:BrowserRunPolicy) {
     sweep();
     if(closed || signal.aborted || binding.ownerId!==options.ownerId || ![binding.chatId,binding.runId].every(x=>SAFE_ID.test(x))
       || !["pi","openclaw","hermes","codex","claude_code"].includes(binding.harness) || runs.has(binding.runId) || runs.size>=64)throw new SharedBrowserError("run_unavailable");
-    if(policy && (policy.mode!=="supervised" || typeof policy.authorizeAction!=="function"))throw new SharedBrowserError("run_unavailable");
+    if(policy && (policy.mode!=="supervised" || (policy.authorizeAction !== null && typeof policy.authorizeAction!=="function")))throw new SharedBrowserError("run_unavailable");
+    const expiresAt = Math.min(now() + ttl, (policy ? options.supervisedRunExpiresAt?.(binding) : undefined) ?? Infinity);
+    if (policy && options.supervisedRunExpiresAt && expiresAt <= now()) throw new SharedBrowserError("run_unavailable");
     const token=randomBytes(32).toString("base64url");
-    const row:Registered={...(policy?{policy:Object.freeze({mode:"supervised" as const,authorizeAction:policy.authorizeAction})}:{}),binding:{...binding},signal,controller:new AbortController(),expiresAt:now()+ttl,hash:digest(token),collectionId:randomUUID(),artifacts:[],relatedTargetHandoffs:new Set(),
+    const row:Registered={...(policy?{policy:Object.freeze({mode:"supervised" as const,authorizeAction:policy.authorizeAction})}:{}),binding:{...binding},signal,controller:new AbortController(),expiresAt,hash:digest(token),collectionId:randomUUID(),artifacts:[],relatedTargetHandoffs:new Set(),
       onAbort:()=>{void closeRun(binding.runId).catch(report);}};
     runs.set(binding.runId,row);signal.addEventListener("abort",row.onAbort,{once:true});
+    if (policy && options.supervisedRunExpiresAt) {
+      row.expiryTimer = setTimeout(row.onAbort, Math.max(0, expiresAt - now()));
+      row.expiryTimer.unref?.();
+    }
     return{token,expiresAt:row.expiresAt,close:()=>row.closing ?? (runs.get(binding.runId)===row ? closeRun(binding.runId) : Promise.resolve())};
   }
   function resolveCapability(token:string):SharedBrowserBinding|null {
@@ -141,6 +152,8 @@ export function createSharedBrowserBroker(options: {
     const parsed=SharedBrowserActionSchema.safeParse(raw);if(!parsed.success)throw new SharedBrowserError("invalid_action");
     const row=registered(binding,signal);
     if(parsed.data.action==="status")return{success:true,automation:status()};
+    const policy = row.policy;
+    if (policy?.authorizeAction === null) throw new SharedBrowserError("approval_unavailable");
     if(controls>0)throw new SharedBrowserError("browser_changed");
     if(queued>=16)throw new SharedBrowserError("browser_busy");
     let admittedRevision=revision;
@@ -172,9 +185,9 @@ export function createSharedBrowserBroker(options: {
         if(parsed.data.action==="download" && row.artifacts.length>=64)throw new SharedBrowserError("browser_busy");
         let value:SharedBrowserDriverResult;
         try {
-          if(row.policy){
+          if(policy){
             const approvalRevision=revision;
-            await authorizeSharedBrowserAction(row.policy,{binding:row.binding,action:parsed.data,
+            await authorizeSharedBrowserAction(policy,{binding:row.binding,action:parsed.data,
               signal:AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(5*60_000)])});
             if(registered(binding,signal)!==row || revision!==approvalRevision || phase!=="agent")throw new SharedBrowserError("browser_changed");
           }
@@ -307,6 +320,6 @@ export function createSharedBrowserBroker(options: {
     pauseRunning("stop");
     try{await enqueueControl(async()=>{await drain();await detach();await gate(true);active=undefined;runs.clear();changed("idle");},true);}catch(error){report(error);}
   }
-  return{openRun,execute,closeRun,resolveCapability,status,control,ownerOperation,close,authorizeAction:options.authorizeAction};
+  return{openRun,execute,closeRun,resolveCapability,status,control,ownerOperation,close,allowsSupervisedRun,authorizeAction:options.authorizeAction};
 }
 export type SharedBrowserBroker=ReturnType<typeof createSharedBrowserBroker>;

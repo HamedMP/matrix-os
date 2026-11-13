@@ -640,6 +640,10 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
 - It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
 
+### Daily update
+
+- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.

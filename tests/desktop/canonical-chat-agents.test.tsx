@@ -6,7 +6,7 @@ import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/Cano
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { setSharedComposerText, appendSharedComposerText } from "./shared-chat-composer-test-utils";
+import { setSharedComposerText, appendSharedComposerText, mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
 import { createCanonicalChatWorkspaceClient, canonicalChatRecord, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
 import type { CanonicalChatInvalidation, CanonicalChatEventSource } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
@@ -26,6 +26,7 @@ beforeEach(() => {
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 });
 afterEach(cleanup);
+beforeEach(mockSharedComposerPopoverLayout);
 it("keeps a rail Agent's identity on a new draft and clears it for a later ordinary draft", async () => {
   const client = createCanonicalChatWorkspaceClient();
   vi.mocked(client.list).mockResolvedValue({ items: [] });

@@ -209,6 +209,14 @@ run SHA; previous-head receipts cannot be carried forward. Sonnet/GLM price
 reviews must be current, at most 31 days; Jev at most 90 days. Versions remain
 immutable and timestamps are not renewed relative to startup.
 
+For registry-mode Relay releases, set `configuration.pricingRegistryEnabled`
+to JSON `true` and set the GitHub environment variable
+`MATRIX_FUNDED_AI_RELAY_PRICING_REGISTRY_ENABLED=true`. The receipt's `pricing` map then contains only the three
+Jev fields. The candidate must have the registry flag and no legacy managed
+text review environment values. The exact check set also includes
+`pricing_registry`. See [Funded AI pricing operations](./funded-pricing-operations.md)
+for the required evidence and activation order.
+
 ## Canonical Platform control-plane staging
 
 Before production candidate acceptance, deploy the reviewed Platform control

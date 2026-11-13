@@ -1,8 +1,9 @@
+import { FUNDED_PRICING_REVIEW_MAX_MS, FUNDED_SONNET_5_PRICE } from "@matrix-os/contracts";
 import { WORKERS_AI_PRICE_SNAPSHOTS, WORKERS_AI_PRICING_VERSIONS } from "./funded-workers-pricing.js";
 /** Numeric rates are immutable code snapshots; operator configuration only
  * re-attests their validity after checking the official provider price pages. */
 export const FUNDED_PRICING_VERSIONS = Object.freeze({
-  "anthropic/claude-sonnet-5": "anthropic-2026-08-31-standard",
+  "anthropic/claude-sonnet-5": FUNDED_SONNET_5_PRICE.version,
   ...WORKERS_AI_PRICING_VERSIONS,
 });
 export interface FundedPricingReview {
@@ -12,7 +13,6 @@ export interface FundedPricingReview {
   validThrough: string;
 }
 export type FundedPricingReviews = readonly Readonly<FundedPricingReview>[];
-const MAX_REVIEW_WINDOW_MS = 31 * 24 * 60 * 60_000;
 // Keep the historical attestation bound to the eight explicitly reviewed routes.
 const BUNDLED_WORKERS_PRICING_MODEL_IDS = [
   "@cf/deepseek-ai/deepseek-v4-flash-0731",
@@ -40,7 +40,7 @@ export function validateFundedPricingReview(review: FundedPricingReview): void {
     throw new Error("Invalid funded AI pricing review version");
   }
   const duration = canonicalTime(review.validThrough) - canonicalTime(review.reviewedAt);
-  if (duration <= 0 || duration > MAX_REVIEW_WINDOW_MS) {
+  if (duration <= 0 || duration > FUNDED_PRICING_REVIEW_MAX_MS) {
     throw new Error("Invalid funded AI pricing review window");
   }
 }

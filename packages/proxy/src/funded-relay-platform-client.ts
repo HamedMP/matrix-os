@@ -3,6 +3,8 @@ import {
   FundedAiTerminalOutcomeResponseSchema, type FundedAiTerminalOutcomeRequest, type FundedAiTerminalOutcomeResponse,
   FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
+  FundedAiPricingReviewSnapshotSchema,
+  FundedAiPricingRouteFailureSchema,
   FundedAiReleaseResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiStartResponseSchema,
@@ -104,32 +106,39 @@ export interface FundedPlatformClient {
   finalize(input: FundedAiFinalizationRequest, signal: AbortSignal): Promise<FundedAiFinalizationResponse>;
 }
 
+type ControlAction = "authorize" | "check" | "finalize" | "release" | "start" | "terminal"
+  | "pricing-reviews" | "pricing-route-failure";
+
 export function createFundedPlatformClient(options: Pick<
   FundedRelayConfig,
   "platformBaseUrl" | "relayControlToken" | "platformTimeoutMs" | "maxControlResponseBytes"
-> & { fetch: typeof fetch }): FundedPlatformClient {
+> & { fetch: typeof fetch }): FundedPlatformClient & {
+  readPricingReviews(signal: AbortSignal): Promise<z.output<typeof FundedAiPricingReviewSnapshotSchema>>;
+  reportPricingRouteFailure(input: z.input<typeof FundedAiPricingRouteFailureSchema>, signal: AbortSignal): Promise<void>;
+} {
   const platformBaseUrl = normalizeFundedPlatformOrigin(options.platformBaseUrl);
   const relayControlToken = options.relayControlToken;
   const platformTimeoutMs = options.platformTimeoutMs;
   const maxControlResponseBytes = options.maxControlResponseBytes;
   const fetchImpl = options.fetch;
 
-  async function call<T>(
-    action: "authorize" | "check" | "finalize" | "release" | "start" | "terminal",
-    body: unknown,
-    schema: z.ZodType<T>,
-    lifetimeSignal: AbortSignal,
-  ): Promise<T> {
-    const response = await fetchImpl(`${platformBaseUrl}/internal/ai/funded/${action}`, {
-      method: "POST",
+  function request(action: ControlAction, body: unknown, lifetimeSignal: AbortSignal) {
+    const isPricingRead = action === "pricing-reviews";
+    return fetchImpl(`${platformBaseUrl}/internal/ai/funded/${action}`, {
+      method: isPricingRead ? "GET" : "POST",
       headers: {
         authorization: `Bearer ${relayControlToken}`,
-        "content-type": "application/json",
+        ...(isPricingRead ? {} : { "content-type": "application/json" }),
       },
-      body: JSON.stringify(body),
+      ...(isPricingRead ? {} : { body: JSON.stringify(body) }),
       redirect: "error",
       signal: AbortSignal.any([lifetimeSignal, AbortSignal.timeout(platformTimeoutMs)]),
     });
+  }
+
+  async function call<T>(action: Exclude<ControlAction, "pricing-route-failure">, body: unknown, schema: z.ZodType<T>,
+    lifetimeSignal: AbortSignal): Promise<T> {
+    const response = await request(action, body, lifetimeSignal);
     const text = await readBoundedText(response, maxControlResponseBytes);
     if (!response.ok) {
       throw new FundedControlPlaneError(response.status, response.status === 429 ? priorityReasonFrom(text) : undefined,
@@ -146,6 +155,14 @@ export function createFundedPlatformClient(options: Pick<
   }
 
   return {
+    readPricingReviews: (signal) => call("pricing-reviews", undefined, FundedAiPricingReviewSnapshotSchema, signal),
+    async reportPricingRouteFailure(input, signal) {
+      const response = await request("pricing-route-failure", FundedAiPricingRouteFailureSchema.parse(input), signal);
+      if (response.status !== 204) {
+        await response.body?.cancel("unexpected route-failure acknowledgement");
+        throw new FundedControlPlaneError(response.status);
+      }
+    },
     check: (input, signal) => call("check", input, FundedAiPolicyCheckResponseSchema, signal),
     authorize: (input, signal) => call("authorize", input, FundedAiAuthorizationResponseSchema, signal),
     start: (input, signal) => call("start", input, FundedAiStartResponseSchema, signal),

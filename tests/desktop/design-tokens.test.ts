@@ -25,6 +25,10 @@ const FRAMEWORK_VARS = new Set([
   // Radix DropdownMenu.Content defines this from its collision-aware Popper height.
   // The built account-picker E2E verifies the dependency supplies a positive value.
   "--radix-dropdown-menu-content-available-height",
+  // Radix Popover.Content supplies the composer's collision bounds and anchor width.
+  "--radix-popover-content-available-height",
+  "--radix-popover-content-available-width",
+  "--radix-popover-trigger-width",
 ]);
 
 function buildDefinitions(files: string[]): Set<string> {

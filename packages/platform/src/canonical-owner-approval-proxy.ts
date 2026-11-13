@@ -1,7 +1,10 @@
 import { routineActionPathId, routineOwnerSession, mintRoutineActionProof } from "./routine-action-proof.js";
 import type { ClerkAuth } from "./clerk-auth.js";
 import { isCustomMcpApprovalSubmitPath, mintCustomMcpApprovalProof } from "./custom-mcp-approval-proof.js";
-import { isBrowserGrantRevokePath, mintBrowserApprovalProof } from "./browser-chat-approval-proof.js";
+import type { SupervisedBrowserDevScope } from "@matrix-os/contracts";
+import { isBrowserGrantRevokePath, mintBrowserApprovalProof, mintDevBrowserDecisionProof, readDevBrowserDecision } from "./browser-chat-approval-proof.js";
+import { matchesDevBrowserDecision } from "./browser-dev-approval-policy.js";
+import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
 import { hasVerifiedPreviewUserSession } from "./preview-drive-turn-proof.js";
 import { isPreviewMachine } from "./customer-vps-preview.js";
 import type { UserMachineRecord } from "./db.js";
@@ -15,9 +18,31 @@ import { routineFullAccessPath } from "./routine-full-access-proof.js";
 export interface OwnerApprovalProxyInput {
   request: Request; method: string; path: string; handle: string;
   identity: AppDomainIdentity; platformSecret: string; timeoutMs?: number; browserApprovalsEnabled?: boolean;
-  machine?: Pick<UserMachineRecord, "handle" | "runtimeSlot" | "provisioningClass"> & { clerkUserId?: string; machineId?: string };
+  browserApprovalDevScope?: SupervisedBrowserDevScope;
+  browserApprovalMachineLookup?: BrowserApprovalMachineLookup;
+  machine?: Pick<UserMachineRecord, "handle" | "runtimeSlot" | "provisioningClass">
+    & Partial<Pick<UserMachineRecord, "clerkUserId" | "machineId" | "status" | "activationState" | "deletedAt">>;
   clerkAuth?: ClerkAuth;
 }
+
+async function scopedDevProof(input: OwnerApprovalProxyInput, scope: SupervisedBrowserDevScope, body: string): Promise<string | null> {
+  const { machine, identity } = input;
+  if (!machine || input.handle !== scope.handle || machine.handle !== scope.handle || machine.machineId !== scope.machineId
+    || machine.clerkUserId !== scope.ownerId || machine.runtimeSlot !== scope.runtimeSlot
+    || machine.provisioningClass !== "customer" || machine.status !== "running" || machine.activationState !== "authorized"
+    || machine.deletedAt !== null || identity.handle !== scope.handle || identity.runtimeSlot !== scope.runtimeSlot) return null;
+  const tuple = readDevBrowserDecision(input.method, input.path, body, {
+    handle: machine.handle, actorId: identity.userId, runtimeSlot: machine.runtimeSlot,
+  });
+  if (!tuple || !matchesDevBrowserDecision(scope, tuple) || !input.browserApprovalMachineLookup) return null;
+  const humanSessionExpiresAt = await routineOwnerSession(input);
+  if (!humanSessionExpiresAt) return null;
+  const live = await input.browserApprovalMachineLookup.resolveMachine(scope.handle, scope.runtimeSlot);
+  if (live?.machineId !== scope.machineId || live.clerkUserId !== scope.ownerId || live.runtimeSlot !== scope.runtimeSlot
+    || live.status !== "running" || live.provisioningClass !== "customer") return null;
+  return mintDevBrowserDecisionProof({ tuple, scope, secret: input.platformSecret, humanSessionExpiresAt });
+}
+
 export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyInput): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
   if (routineFullAccessPath(input.method, input.path)) return authenticatedRoutineFullAccessProxyProof(input);
   const routine = routineActionPathId(input.method, input.path);
@@ -54,7 +79,10 @@ export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyI
     if (routine && input.machine && sessionExpiresAt) return mintRoutineActionProof({ method: input.method, path: input.path, body, secret: input.platformSecret,
       handle: input.handle, ownerId: input.identity.userId, runtimeSlot: input.machine.runtimeSlot, machineId: input.machine.machineId!, sessionExpiresAt });
     if (input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity)) return null;
-    if (input.browserApprovalsEnabled === true && input.machine && input.identity.handle === input.handle
+    if (input.browserApprovalDevScope) {
+      const browser = await scopedDevProof(input, input.browserApprovalDevScope, body);
+      if (browser) return browser;
+    } else if (input.browserApprovalsEnabled === true && input.machine && input.identity.handle === input.handle
       && input.machine.handle === input.handle && (!input.identity.runtimeSlot || input.identity.runtimeSlot === input.machine.runtimeSlot)) {
       const browser = mintBrowserApprovalProof({ method: input.method, path: input.path, body, secret: input.platformSecret,
         identity: { ...input.identity, handle: input.handle, runtimeSlot: input.machine.runtimeSlot } });
