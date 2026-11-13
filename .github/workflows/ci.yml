@@ -1073,10 +1073,30 @@ jobs:
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
             "$image" node /work/tests/deploy/customer-vps/funded-config-linux.mjs
 
+  native-stdout-linux:
+    name: Native Stdout Linux
+    needs: changes
+    if: always() && !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build real addons and exercise Linux native stdout
+        run: timeout --kill-after=5s 120s bash scripts/ci/run-native-stdout-linux.sh
+
   ci-results:
     # The only required check. Drafts rename it so GitHub never treats a draft suite as passing.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, native-stdout-linux, docs-contract, os-view-parity, e2e]
     if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1096,6 +1116,7 @@ jobs:
           FUNDED_POSTGRES_RESULT: ${{ needs.funded-postgres.result }}
           COLLABORATION_POSTGRES_RESULT: ${{ needs.collaboration-postgres.result }}
           FUNDED_HOST_ROOT_RESULT: ${{ needs.funded-host-root.result }}
+          NATIVE_STDOUT_LINUX_RESULT: ${{ needs.native-stdout-linux.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -1123,6 +1144,7 @@ jobs:
             echo "| Funded Settlement PostgreSQL | $FUNDED_POSTGRES_RESULT |"
             echo "| Collaboration PostgreSQL | $COLLABORATION_POSTGRES_RESULT |"
             echo "| Protected Funded Host Root Contracts | $FUNDED_HOST_ROOT_RESULT |"
+            echo "| Native Stdout Linux | $NATIVE_STDOUT_LINUX_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
@@ -1134,7 +1156,7 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) failed=true ;;
@@ -1143,7 +1165,7 @@ jobs:
 
           # These lanes never skip for a source change, so a skip means it did not run.
           if [ "${SHOULD_RUN:-false}" = "true" ]; then
-            for result in "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$UNIT_RESULT"; do
+            for result in "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$UNIT_RESULT"; do
               [ "$result" = "success" ] || failed=true
             done
           fi
