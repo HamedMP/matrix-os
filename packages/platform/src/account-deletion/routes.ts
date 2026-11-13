@@ -10,6 +10,11 @@ import { AccountDeletionOwnershipError, type AccountDeletionService } from './ty
 const Owner = z.string().regex(/^user_[A-Za-z0-9_-]{1,150}$/);
 const Confirm = z.object({ confirm: z.literal(true) }).strict();
 const DeletedEvent = z.object({type:z.literal('user.deleted'),data:z.object({id:Owner,deleted:z.literal(true)})});
+const UpdatedEvent = z.object({type:z.literal('user.updated'),data:z.object({
+  id:Owner,banned:z.boolean().optional(),locked:z.boolean().optional(),
+})});
+const SessionEvent = z.object({ type:z.enum(['session.ended','session.revoked']),
+  data:z.object({id:z.string().regex(/^sess_[A-Za-z0-9_-]{1,200}$/),user_id:Owner}) });
 export interface AccountDeletionExport {
   downloads: Array<{ name: string; url: string }>;
   migrationUrl: string;
@@ -24,6 +29,8 @@ export function createAccountDeletionRoutes(options: {
   exportData?(owner: string, cursor?: string): Promise<AccountDeletionExport>;
   exportPlatformData?(owner:string): Promise<unknown>;
   registerAppleAuthorization?(owner:string,code:string):Promise<void>;
+  recordRecipientLifecycle?(event:{userId:string;state:'active'|'inactive'|'deleted';eventId:string;eventAt:Date}):Promise<void>;
+  recordSessionTermination?(sessionId:string):Promise<void>;
   newRequestsEnabled:boolean;
 }): Hono {
   const app = new Hono();
@@ -74,6 +81,10 @@ export function createAccountDeletionRoutes(options: {
       if (!path.endsWith('/cancel') && options.newRequestsEnabled === false) return c.json(unavailable(),503);
       try {
         const status=path.endsWith('/cancel') ? await options.service.cancel(owner) : await options.service.schedule(owner);
+        if (options.recordRecipientLifecycle)
+          await options.recordRecipientLifecycle({ userId: owner,
+            state: path.endsWith('/cancel') ? 'active' : 'inactive',
+            eventId: `matrix_deletion_${randomBytes(16).toString('hex')}`, eventAt: new Date() });
         return c.json(status,path.endsWith('/cancel')||status.status==='completed'?200:202);
       } catch(error:unknown) {
         if (error instanceof AccountDeletionOwnershipError) return c.json({error:'Transfer organization and shared project ownership before deleting your account.',code:'ownership_transfer_required'},409);
@@ -104,10 +115,32 @@ export function createAccountDeletionRoutes(options: {
     catch(error:unknown) { if (!(error instanceof SyntaxError)) throw error; return c.json({error:'Invalid webhook'},400); }
     const kind=z.object({type:z.string().max(128)}).safeParse(payload);
     if (!kind.success) return c.json({error:'Invalid webhook'},422);
-    if (kind.data.type!=='user.deleted') return c.json({received:true});
-    const event=DeletedEvent.safeParse(payload);
+    if (kind.data.type==='session.ended' || kind.data.type==='session.revoked') {
+      const session=SessionEvent.safeParse(payload);
+      if (!session.success) return c.json({error:'Invalid webhook'},422);
+      try { await options.recordSessionTermination?.(session.data.data.id); return c.json({received:true}); }
+      catch(error:unknown) { console.error('[account-deletion] session webhook failed',
+        error instanceof Error ? error.name:'UnknownError'); return c.json(unavailable(),503); }
+    }
+    if (kind.data.type!=='user.deleted' && kind.data.type!=='user.updated') return c.json({received:true});
+    const event=kind.data.type==='user.deleted' ? DeletedEvent.safeParse(payload) : UpdatedEvent.safeParse(payload);
     if (!event.success) return c.json({error:'Invalid webhook'},422);
-    try { await options.service.schedule(event.data.data.id,true); return c.json({received:true}); }
+    const eventId=z.string().min(1).max(255).safeParse(c.req.header('svix-id'));
+    const timestamp=z.coerce.number().int().positive().safeParse(c.req.header('svix-timestamp'));
+    if (!eventId.success || !timestamp.success) return c.json({error:'Invalid webhook'},422);
+    const occurred=z.object({timestamp:z.number().int().positive().max(8.64e15)}).safeParse(payload);
+    const inactive=kind.data.type==='user.updated'
+      && (('banned' in event.data.data && event.data.data.banned === true)
+        || ('locked' in event.data.data && event.data.data.locked === true));
+    const state=kind.data.type==='user.deleted' ? 'deleted' : inactive ? 'inactive' : 'active';
+    try {
+      if (options.recordRecipientLifecycle) await options.recordRecipientLifecycle({
+        userId:event.data.data.id,state,eventId:eventId.data,
+        eventAt:new Date(occurred.success ? occurred.data.timestamp : timestamp.data*1000),
+      });
+      if (kind.data.type==='user.deleted') await options.service.schedule(event.data.data.id,true);
+      return c.json({received:true});
+    }
     catch(error:unknown) { console.error('[account-deletion] webhook schedule failed',error instanceof Error ? error.name:'UnknownError'); return c.json(unavailable(),503); }
   });
   return app;

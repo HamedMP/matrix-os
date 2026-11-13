@@ -40,6 +40,7 @@ import {
 } from './session-cookies.js';
 import type { AppDomainIdentity } from './session-routing-identity.js';
 import { issueSyncJwt } from './sync-jwt.js';
+import { terminateEmailClerkSessionForMatrixSignOut } from './sites/email-viewer-sessions.js';
 
 const APP_SESSION_BODY_LIMIT = 1024;
 
@@ -120,12 +121,24 @@ export function createAppSessionRoutes(opts: {
 }) {
   const routes = new Hono();
 
-  routes.delete('/api/auth/app-session', bodyLimit({ maxSize: APP_SESSION_BODY_LIMIT }), async (c) => {
+  routes.delete('/api/auth/app-session', bodyLimit({ maxSize: APP_SESSION_BODY_LIMIT,
+    onError: c => c.json({ error: 'Invalid request' }, 413) }), async (c) => {
     let clerkSessionRevoked = false;
     const clerkToken = opts.clerkAuth?.extractToken(undefined, c.req.header('cookie'));
     if (opts.clerkAuth && clerkToken) {
       const result = await opts.clerkAuth.verify(clerkToken);
       if (result.authenticated && result.sessionId) {
+        if (opts.appEnv.ACCOUNT_DELETION_SECRET) {
+          try {
+            await terminateEmailClerkSessionForMatrixSignOut(opts.db, result.sessionId,
+              opts.appEnv.ACCOUNT_DELETION_SECRET);
+          } catch (error: unknown) {
+            console.warn('[auth/app-session] viewer session termination failed',
+              error instanceof Error ? error.name : 'UnknownError');
+            opts.applyNoStoreHeaders(c);
+            return c.json({ error: 'Sign-out is temporarily unavailable. Try again.' }, 503);
+          }
+        }
         try {
           clerkSessionRevoked = await opts.clerkAuth.revokeSession(result.sessionId);
         } catch (err: unknown) {

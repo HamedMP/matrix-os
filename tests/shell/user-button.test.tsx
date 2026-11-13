@@ -400,7 +400,8 @@ describe("UserButton", () => {
     });
   });
 
-  it("logs non-OK Matrix app-session cleanup responses before Clerk sign-out", async () => {
+  it("keeps the Clerk session active when shared viewer revocation cannot complete", async () => {
+    clerkState.signOut.mockClear();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "Session unavailable" }), {
@@ -415,12 +416,11 @@ describe("UserButton", () => {
     fireEvent.click(await openAccountMenu());
 
     await waitFor(() => {
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[auth] Matrix app session clear returned non-OK status",
-        503,
-      );
-      expect(clerkState.signOut).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalled();
+      expect(screen.getByRole("alert").textContent).toContain("Sign-out is temporarily unavailable");
     });
+    expect(clerkState.signOut).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
   it("redirects after platform cleanup when Clerk sign-out does not settle", async () => {

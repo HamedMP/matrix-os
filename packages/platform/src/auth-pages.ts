@@ -663,6 +663,20 @@ export function getAuthPage(
       console.warn('[matrix] Clerk.signOut did not finish', err instanceof Error ? err.name : String(typeof err));
       window.location.replace(signOutTarget);
     }
+    function clearAppSessionBeforeSignOut(button) {
+      return fetch('/api/auth/app-session', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        signal: AbortSignal.timeout(10000)
+      }).then(function(response) {
+        if (!response.ok) throw new Error('Matrix app session clear failed');
+      }).catch(function(err) {
+        console.warn('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
+        button.disabled = false;
+        button.textContent = 'Sign-out is temporarily unavailable. Try again.';
+        return false;
+      });
+    }
     function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
       setDefaultInstallsCard(false);
@@ -695,21 +709,14 @@ export function getAuthPage(
       signOutButton.addEventListener('click', function() {
         signOutButton.disabled = true;
         signOutButton.textContent = 'Signing out...';
-        fetch('/api/auth/app-session', {
-          method: 'DELETE',
-          credentials: 'same-origin',
-          signal: AbortSignal.timeout(10000)
-        })
-          .catch(function(err) {
-            console.error('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
+        clearAppSessionBeforeSignOut(signOutButton)
+          .then(function(cleared) {
+            if (cleared === false) return;
+            return clerkSignOutWithTimeout()
+              .then(function() { window.location.replace(signOutTarget); })
+              .catch(redirectAfterSignOutIssue);
           })
-          .then(function() {
-            return clerkSignOutWithTimeout();
-          })
-          .then(function() {
-            window.location.replace(signOutTarget);
-          })
-          .catch(redirectAfterSignOutIssue);
+          .catch(function(err) { console.warn('[matrix] Sign-out failed', err instanceof Error ? err.name : String(typeof err)); });
       });
       actions.appendChild(signOutButton);
 
@@ -839,17 +846,14 @@ export function getAuthPage(
       signOutButton.addEventListener('click', function() {
         signOutButton.disabled = true;
         signOutButton.textContent = 'Signing out...';
-        fetch('/api/auth/app-session', {
-          method: 'DELETE',
-          credentials: 'same-origin',
-          signal: AbortSignal.timeout(10000)
-        })
-          .catch(function(err) {
-            console.error('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
+        clearAppSessionBeforeSignOut(signOutButton)
+          .then(function(cleared) {
+            if (cleared === false) return;
+            return clerkSignOutWithTimeout()
+              .then(function() { window.location.replace(signOutTarget); })
+              .catch(redirectAfterSignOutIssue);
           })
-          .then(function() { return clerkSignOutWithTimeout(); })
-          .then(function() { window.location.replace(signOutTarget); })
-          .catch(redirectAfterSignOutIssue);
+          .catch(function(err) { console.warn('[matrix] Sign-out failed', err instanceof Error ? err.name : String(typeof err)); });
       });
       accountFooter.appendChild(signOutButton);
       sidebar.appendChild(accountFooter);
