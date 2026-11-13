@@ -3,6 +3,7 @@
 import React, { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { revealChatApproval } from "../../packages/ui/src/chat/approval-scroll";
 import { SupervisedToolApprovalCard } from "../../packages/ui/src/chat/SupervisedToolApprovalCard";
 import {
   Conversation,
@@ -73,8 +74,9 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
   }
 
   it("exposes a labelled, keyboard-focusable scroll region and a live transcript log", () => {
-    render(
-      <Conversation>
+    const viewportRef = createRef<HTMLDivElement>();
+    const { unmount } = render(
+      <Conversation viewportRef={viewportRef}>
         <ConversationContent>
           <ConversationItem messageId="m1">hello</ConversationItem>
         </ConversationContent>
@@ -84,6 +86,10 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(screen.getByRole("region", { name: "Messages" }).tabIndex).toBe(0);
     expect(screen.getByRole("log")).toBeTruthy();
     expect(document.querySelector("[data-message-id='m1']")?.textContent).toBe("hello");
+    expect(viewportRef.current).toBe(viewport());
+    unmount();
+    expect(viewportRef.current).toBeNull();
+    expect(resizeObservers.every(entry => entry.targets.length === 0)).toBe(true);
   });
 
   it("follows the live edge while pinned and stops when the user scrolls away", () => {
@@ -148,6 +154,41 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     metrics.scrollHeight = 1400;
     fireContentResize();
     expect(el.scrollTop).toBe(1200);
+  });
+
+  it("keeps following when approval content grows before its native scroll event", () => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    render(<Conversation><ConversationContent><ConversationItem messageId="approval">Pending approval</ConversationItem></ConversationContent></Conversation>);
+    const el = viewport();
+    mockMetrics(el, metrics);
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+
+    metrics.scrollHeight = 1400;
+    fireEvent.scroll(el);
+    fireContentResize();
+
+    expect(el.scrollTop).toBe(1100);
+    expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
+  });
+
+  it("keeps a reader's deliberate scroll when viewport geometry changes in the same frame", () => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    render(<Conversation><ConversationContent><ConversationItem messageId="m1">row</ConversationItem></ConversationContent></Conversation>);
+    const el = viewport();
+    mockMetrics(el, metrics);
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+
+    metrics.clientHeight = 200;
+    el.scrollTop = 650;
+    fireEvent.scroll(el);
+    fireObservedResize(el);
+    metrics.scrollHeight = 1400;
+    fireContentResize();
+
+    expect(el.scrollTop).toBe(650);
+    expect(screen.getByRole("button", { name: "Scroll to latest" })).toBeTruthy();
   });
 
   it("lets the browser anchor an unpinned reader when nested content grows", () => {
@@ -249,7 +290,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
   });
 
-  it("does not let a deferred repin override a reader who scrolls away", () => {
+  it.each(["scroll-event", "approval-review"] as const)("does not let a deferred repin override navigation before its native scroll event (%s)", (navigation) => {
     const metrics = { scrollHeight: 1200, clientHeight: 300 };
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -260,7 +301,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     render(
       <Conversation>
         <ConversationContent>
-          <ConversationItem messageId="m1">row</ConversationItem>
+          <ConversationItem messageId="m1"><div id="tool-approval-earlier">Earlier approval</div></ConversationItem>
         </ConversationContent>
       </Conversation>,
     );
@@ -271,13 +312,23 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(el.scrollTop).toBe(900);
     expect(frames.length).toBeGreaterThan(0);
 
-    el.scrollTop = 100;
-    fireEvent.scroll(el);
+    if (navigation === "scroll-event") {
+      el.scrollTop = 100;
+      fireEvent.scroll(el);
+    } else {
+      const anchor = document.getElementById("tool-approval-earlier")!;
+      vi.spyOn(el, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+      vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ top: -700, height: 100 } as DOMRect);
+      Object.defineProperty(el, "scrollTo", { configurable: true, value: ({ top }: ScrollToOptions) => { el.scrollTop = top!; } });
+      revealChatApproval(el, "earlier");
+      // The browser can deliver the resulting scroll event after the pending frame.
+    }
     act(() => {
       for (const frame of frames.splice(0)) frame(0);
     });
 
     expect(el.scrollTop).toBe(100);
+    if (navigation === "approval-review") fireEvent.scroll(el);
     expect(screen.getByRole("button", { name: "Scroll to latest" })).toBeTruthy();
   });
 

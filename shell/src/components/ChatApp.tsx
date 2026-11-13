@@ -11,11 +11,12 @@ import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, ProjectChatSlashScope, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar, revealChatApproval } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import type { StickToBottomContext } from "use-stick-to-bottom";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
@@ -292,6 +293,7 @@ function ChatAppContent({
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const revealSearch = useCallback(() => setSidebarOpen(true), []);
   const agentDraftSequence = useRef(0);
+  const transcriptScroll = useRef<StickToBottomContext>(null);
   const startAgentChat: StartAgentChat = (text, resources) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     agentDraftSequence.current += 1;
@@ -740,7 +742,7 @@ function ChatAppContent({
           <div className="flex flex-1 flex-col min-h-0">
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
-            <Conversation>
+            <Conversation contextRef={transcriptScroll}>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
                   if (group.type === "tool_group") {
@@ -832,7 +834,7 @@ function ChatAppContent({
               {waitingTool ? (
                 <SupervisedToolApprovalBar
                   label={`Waiting for you · ${waitingTool.bar}`}
-                  onReview={() => document.getElementById(`tool-approval-${waitingTool.id}`)?.scrollIntoView({ block: "center" })}
+                  onReview={() => { revealChatApproval(transcriptScroll.current?.scrollRef.current, waitingTool.id); }}
                 />
               ) : null}
               <ChatInput

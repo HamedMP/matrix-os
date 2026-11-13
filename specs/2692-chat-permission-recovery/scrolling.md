@@ -1,6 +1,7 @@
 # Keep approval review inside the transcript
 
-Ticket: [ENG-267](https://linear.app/matrix-os/issue/ENG-267).
+Ticket: [ENG-475](https://linear.app/matrix-os/issue/ENG-475).
+Historical approval work: [ENG-267](https://linear.app/matrix-os/issue/ENG-267).
 Related: [original approval specification](../628-supervised-tool-approval/spec.md).
 
 ## Problem and evidence
@@ -20,6 +21,8 @@ The exact resize-event ordering in the original recording remains unverified.
 - Missing or stale anchors are harmless; another chat's approval cannot be used.
 - A reader at the live edge stays there when the viewport changes size or an
   approval expands/collapses. Deliberate scrolling into history remains respected.
+- Deferred live-edge correction never overrides Review before the browser
+  delivers its native scroll event.
 - Repeated Review, approval resolution, chat switches and narrow layouts do not
   leave space below the composer.
 
