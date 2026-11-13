@@ -1,6 +1,6 @@
 "use client";
 
-import { useGettingStartedBlocker } from "@matrix-os/ui";
+import { SlackInstallPanel, useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
@@ -54,6 +54,7 @@ import OrganizationSection from "./settings/sections/OrganizationSection";
 const sections = [
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "integrations", label: "Connect Apps", icon: CableIcon },
+  { id: "messaging", label: "Messaging", icon: MessageSquareIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "ai-usage", label: "AI usage", icon: SparklesIcon },
@@ -62,6 +63,7 @@ const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "organization", label: "Organization", icon: UsersIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
+
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
@@ -423,6 +425,7 @@ function SettingsFrame({
                 <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
+              {activeSection === "messaging" && <SlackInstallPanel />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && (
                 <IntegrationsSection active={open} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />

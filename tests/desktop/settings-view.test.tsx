@@ -47,7 +47,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Agents & providers", "AI usage", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
+      "Agents & providers", "AI usage", "Messaging", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
       "Appearance", "Account", "Billing", "Organization", "Identity & personality",
       "Computers", "Schedules", "System",
     ]);
@@ -58,6 +58,13 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Identity & personality" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Providers" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Agent (Hermes)" })).toBeNull();
+  });
+
+  it("offers Slack installation in Messaging through the system browser", async () => {
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", {name:"Messaging"}));
+    fireEvent.click(screen.getByRole("link", {name:"Add to Slack"}));
+    await waitFor(() => expect(window.operator!.invoke).toHaveBeenCalledWith("shell:open-external", {url:"https://app.matrix-os.com/slack/install"}));
   });
 
   it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers and consumes it", async (legacySection) => {

@@ -31,6 +31,7 @@
   },
   "imports": {
     "#inference-response-limits": "./src/inference-response-limits.ts",
+    "#messaging-origin": "./src/messaging-origin.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
