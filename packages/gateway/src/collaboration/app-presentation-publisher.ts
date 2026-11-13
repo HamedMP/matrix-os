@@ -10,7 +10,9 @@ import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.j
 const POLL_INTERVAL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const UPLOAD_TIMEOUT_MS = 30_000;
-const MAX_TRACKED_SCOPES = 500;
+const DEFAULT_PAGE_SIZE = 500;
+/** Least recently published scopes are forgotten first; a forgotten scope is simply republished. */
+const MAX_TRACKED_SCOPES = 2_000;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 10 * 60_000;
 /** Re-asserts unchanged presentation so platform-side removal (recheck, restore) heals itself. */
@@ -34,6 +36,9 @@ export class CollaborativeAppPresentationPublisher {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
   private readonly tracked = new Map<string, TrackedScope>();
+  private readonly pageSize: number;
+  /** Last scope of the previous page; cycles rotate through every active share in id order. */
+  private cursor: string | null = null;
   private timer?: ReturnType<typeof setInterval>;
   private active?: Promise<number>;
   private closing = false;
@@ -48,11 +53,13 @@ export class CollaborativeAppPresentationPublisher {
     fetchImpl?: typeof fetch;
     now?: () => Date;
     startTimer?: boolean;
+    pageSize?: number;
   }) {
     this.origin = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl).origin;
     if (Buffer.byteLength(options.serviceToken) < 32) {
       throw new Error("Collaboration presentation service token is unavailable");
     }
+    this.pageSize = Math.max(1, Math.min(DEFAULT_PAGE_SIZE, Math.trunc(options.pageSize ?? DEFAULT_PAGE_SIZE)));
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
     if (options.startTimer !== false) {
@@ -93,16 +100,24 @@ export class CollaborativeAppPresentationPublisher {
   }
 
   private async publishChanged(): Promise<number> {
-    const shares = await this.options.db.selectFrom("collaboration_app_bindings as binding")
+    const after = this.cursor;
+    let query = this.options.db.selectFrom("collaboration_app_bindings as binding")
       .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
       .select(["binding.scope_id", "binding.revision as binding_revision", "readiness.app_id", "readiness.revision as readiness_revision"])
       .where("binding.state", "=", "active")
-      .where("readiness.owner_id", "=", this.options.ownerId)
-      .orderBy("binding.scope_id")
-      .limit(MAX_TRACKED_SCOPES)
-      .execute();
+      .where("readiness.owner_id", "=", this.options.ownerId);
+    if (after) query = query.where("binding.scope_id", ">", after);
+    const shares = await query.orderBy("binding.scope_id").limit(this.pageSize).execute();
+    const wrapped = shares.length < this.pageSize;
+    const upper = wrapped ? null : shares.at(-1)!.scope_id;
+    this.cursor = upper;
+    // Within the page's id range, a tracked scope missing from the page is no longer shared.
     const activeScopes = new Set(shares.map((share) => share.scope_id));
-    for (const scopeId of this.tracked.keys()) if (!activeScopes.has(scopeId)) this.tracked.delete(scopeId);
+    for (const scopeId of this.tracked.keys()) {
+      if ((after === null || scopeId > after) && (upper === null || scopeId <= upper) && !activeScopes.has(scopeId)) {
+        this.tracked.delete(scopeId);
+      }
+    }
     const nowMs = this.now().getTime();
     const due = shares.filter((share) => (this.tracked.get(share.scope_id)?.retryAt ?? 0) <= nowMs);
     if (due.length === 0) return 0;
@@ -120,11 +135,11 @@ export class CollaborativeAppPresentationPublisher {
       const tracked = this.tracked.get(share.scope_id);
       if (tracked?.fingerprint === fingerprint && nowMs - (tracked.publishedAt ?? 0) < REFRESH_MS) continue;
       if (await this.publish(share.scope_id, share.app_id, presentation)) {
-        this.tracked.set(share.scope_id, { fingerprint, publishedAt: nowMs, failures: 0, retryAt: 0 });
+        this.track(share.scope_id, { fingerprint, publishedAt: nowMs, failures: 0, retryAt: 0 });
         published += 1;
       } else {
         const failures = (tracked?.failures ?? 0) + 1;
-        this.tracked.set(share.scope_id, {
+        this.track(share.scope_id, {
           ...(tracked?.fingerprint ? { fingerprint: tracked.fingerprint, publishedAt: tracked.publishedAt } : {}),
           failures,
           retryAt: nowMs + Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5)),
@@ -132,6 +147,12 @@ export class CollaborativeAppPresentationPublisher {
       }
     }
     return published;
+  }
+
+  private track(scopeId: string, state: TrackedScope): void {
+    this.tracked.delete(scopeId);
+    if (this.tracked.size >= MAX_TRACKED_SCOPES) this.tracked.delete(this.tracked.keys().next().value!);
+    this.tracked.set(scopeId, state);
   }
 
   private async publish(scopeId: string, appId: string, presentation: OwnerAppPresentation): Promise<boolean> {

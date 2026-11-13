@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
   COLLABORATIVE_APP_ARTWORK_MAX_BYTES,
@@ -42,7 +42,6 @@ export function createOwnerAppPresentationSource(
   homePath: string,
   options: { listCatalog?: (homePath: string) => Promise<AppEntry[]> } = {},
 ): OwnerAppPresentationSource {
-  const iconsDir = join(homePath, "system", "icons");
   const listCatalog = options.listCatalog ?? listApps;
   // Keyed by basename; re-hashed only when inode, size, or mtime change.
   const described = new Map<string, { key: string; artwork: OwnerAppArtwork | null }>();
@@ -52,7 +51,7 @@ export function createOwnerAppPresentationSource(
     const match = app.iconUrl ? OWNER_ICON_URL.exec(app.iconUrl) : null;
     if (!stem || match?.[1] !== stem) return null;
     const file = `${stem}.png`;
-    const read = await readConfinedIcon(join(iconsDir, file), (key) => described.get(file)?.key === key);
+    const read = await readConfinedIcon(homePath, file, (key) => described.get(file)?.key === key);
     if (read === "unchanged") return described.get(file)!.artwork;
     if (!read) return null;
     const contentType = sniffCollaborativeAppArtworkContentType(read.bytes);
@@ -79,31 +78,38 @@ export function createOwnerAppPresentationSource(
       return presentations;
     },
     async readArtwork(artwork) {
-      const read = await readConfinedIcon(join(iconsDir, artwork.file), () => false);
+      const read = await readConfinedIcon(homePath, artwork.file, () => false);
       if (!read || read === "unchanged") return null;
       return createHash("sha256").update(read.bytes).digest("hex") === artwork.sha256 ? read.bytes : null;
     },
   };
 }
 
-/** Opens without following symlinks and reads at most the artwork limit from a regular file. */
+/**
+ * Reads one icon only from the owner's real `system/icons` directory. `O_NOFOLLOW` guards the
+ * final name, the parents must be real directories, and the opened file must still be the one
+ * at the confined real path. `O_NONBLOCK` keeps a FIFO from blocking before the type check.
+ */
 async function readConfinedIcon(
-  path: string,
+  homePath: string,
+  file: string,
   isUnchanged: (key: string) => boolean,
 ): Promise<{ key: string; bytes: Uint8Array } | "unchanged" | null> {
+  const iconsDir = await confinedIconsDirectory(homePath);
+  if (!iconsDir) return null;
+  const path = join(homePath, "system", "icons", file);
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error: unknown) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ELOOP" && code !== "ENOTDIR") {
-      console.warn("[collaborative-app-presentation] icon unavailable", code ?? (error instanceof Error ? error.name : "UnknownError"));
-    }
+    logUnexpectedIconError(error);
     return null;
   }
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.size === 0 || info.size > COLLABORATIVE_APP_ARTWORK_MAX_BYTES) return null;
+    const confined = await stillConfined(path, join(iconsDir, file), info);
+    if (!confined) return null;
     const key = `${info.ino}:${info.size}:${info.mtimeMs}`;
     if (isUnchanged(key)) return "unchanged";
     const bytes = new Uint8Array(info.size);
@@ -112,4 +118,35 @@ async function readConfinedIcon(
   } finally {
     await handle.close();
   }
+}
+
+/** The real icons directory, or null when `system` or `system/icons` is missing or a symlink. */
+async function confinedIconsDirectory(homePath: string): Promise<string | null> {
+  try {
+    for (const directory of [join(homePath, "system"), join(homePath, "system", "icons")]) {
+      if (!(await lstat(directory)).isDirectory()) return null;
+    }
+    return join(await realpath(homePath), "system", "icons");
+  } catch (error: unknown) {
+    logUnexpectedIconError(error);
+    return null;
+  }
+}
+
+/** The opened file is the same inode that the confined real path names now. */
+async function stillConfined(path: string, expectedRealPath: string, opened: { ino: number; dev: number }): Promise<boolean> {
+  try {
+    if (await realpath(path) !== expectedRealPath) return false;
+    const current = await lstat(expectedRealPath);
+    return current.ino === opened.ino && current.dev === opened.dev;
+  } catch (error: unknown) {
+    logUnexpectedIconError(error);
+    return false;
+  }
+}
+
+function logUnexpectedIconError(error: unknown): void {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT" || code === "ELOOP" || code === "ENOTDIR") return;
+  console.warn("[collaborative-app-presentation] icon unavailable", code ?? (error instanceof Error ? error.name : "UnknownError"));
 }

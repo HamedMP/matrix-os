@@ -23,7 +23,10 @@ serve. Shared launch targets also used `appId` as the `name`.
 1. **Owner source of truth.** The owner home resolves presentation from the same
    app catalog its own launcher uses (`listAppCatalog`): the display name and
    the selected `~/system/icons/<stem>.png`. Only the confined icon filename the
-   catalog resolved is read, with `lstat` (no symlinks), from `system/icons`.
+   catalog resolved is read. `system` and `system/icons` must be real
+   directories. The file is opened with `O_NOFOLLOW | O_NONBLOCK`, must be a
+   regular file, and must still be the inode at the confined real path, so
+   symlinked parents, symlinks, and FIFOs are refused.
    Bundled fallbacks (`game-center.png`, `game.svg`), SVG, and files larger than
    4 MiB are never published. Bytes must sniff as PNG, WebP, or JPEG.
 2. **Separate publication.** A `CollaborativeAppPresentationPublisher` on the
@@ -33,7 +36,10 @@ serve. Shared launch targets also used `appId` as the `name`.
    It sends `PUT .../presentation` with the name and artwork digest. If the
    platform reports `artworkRequired`, the publisher uploads the raw bytes to
    `PUT .../artwork/:sha256`. Fingerprints (app, binding and readiness
-   revisions, name, digest) are cached per scope (capped at 500). The owner
+   revisions, name, digest) are cached per scope. The tracking map is capped at
+   2,000 entries with least-recent eviction. Cycles rotate through active
+   shares in pages of 500 by scope id, so every share is eventually
+   published. The owner
    re-asserts an unchanged snapshot every 15 minutes, so a platform copy
    retired by a recheck or lost in a restore heals itself. File hashes are
    cached by inode, size, and mtime, so unchanged icons are neither re-hashed

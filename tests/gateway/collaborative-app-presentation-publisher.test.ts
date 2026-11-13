@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,11 +67,33 @@ describe("owner app presentation reaches the recipient launcher", () => {
   let currentTime: number;
   const platformFetch = vi.fn<typeof fetch>();
 
-  async function writeApp(name: string, icon = "sprint-board") {
-    await mkdir(join(home, "apps", build.appId), { recursive: true });
-    await writeFile(join(home, "apps", build.appId, "index.html"), "<html></html>");
-    await writeFile(join(home, "apps", build.appId, "matrix.json"), JSON.stringify({
-      name, slug: build.appId, icon, version: "1.0.0", runtimeVersion: "^24.0.0", runtime: "static",
+  /** One owner share of an exact, ready build, created through the production repositories. */
+  async function shareApp(input: { appId: string; catalogId: string; readinessId: string; scopeId: string; sequence: number }) {
+    const digit = String(input.sequence);
+    const appBuild = { ...build, appId: input.appId, catalogId: input.catalogId, buildId: digit.repeat(64), registrationIncarnation: `a${digit}`.repeat(32) };
+    await new CollaborationResourceCatalog(owner.db, { now: () => now, createId: () => input.catalogId }).register({
+      ownerId, projectId: null, kind: "app", path: input.appId, incarnation: appBuild.registrationIncarnation,
+    });
+    const readiness = new CollaborativeAppReadinessRepository(owner.db, { now: () => now, createId: () => input.readinessId });
+    await readiness.createOrGet({ ownerId, build: appBuild, artifactRef: `objects/${appBuild.buildId}`, verifierVersion: "v1" });
+    await readiness.transition({
+      id: input.readinessId, ownerId, expectedRevision: 1, status: "ready",
+      gateResults: [{ code: "cleanup", status: "passed" }], verifiedAt: now,
+    });
+    const repository = new CollaborativeAppShareRepository(owner.db, { now: () => now, createId: () => input.scopeId });
+    await repository.createAtomic({
+      ownerId, organizationId, catalogId: input.catalogId, readinessId: input.readinessId,
+      expectedResourceRevision: 0, expectedReadinessRevision: 2, expectedBuildId: appBuild.buildId, expectedBinding: null,
+      clientRequestId: `80000000-0000-4000-8000-${digit.padStart(12, "0")}`, payloadHash: "f".repeat(64), runtimeId,
+    });
+    return repository;
+  }
+
+  async function writeApp(name: string, icon = "sprint-board", appId = build.appId) {
+    await mkdir(join(home, "apps", appId), { recursive: true });
+    await writeFile(join(home, "apps", appId, "index.html"), "<html></html>");
+    await writeFile(join(home, "apps", appId, "matrix.json"), JSON.stringify({
+      name, slug: appId, icon, version: "1.0.0", runtimeVersion: "^24.0.0", runtime: "static",
     }));
     // Owner manifest writes invalidate the catalog index the same way.
     invalidateAppIndexCache();
@@ -98,21 +121,7 @@ describe("owner app presentation reaches the recipient launcher", () => {
     owner = await createCollaborationTestDatabase();
     await new ChatRepository(owner.db).bootstrap();
     await bootstrapCollaborationDatabase(owner.db);
-    await new CollaborationResourceCatalog(owner.db, { now: () => now, createId: () => catalogId }).register({
-      ownerId, projectId: null, kind: "app", path: build.appId, incarnation: build.registrationIncarnation,
-    });
-    const readiness = new CollaborativeAppReadinessRepository(owner.db, { now: () => now, createId: () => readinessId });
-    await readiness.createOrGet({ ownerId, build, artifactRef: `objects/${build.buildId}`, verifierVersion: "v1" });
-    await readiness.transition({
-      id: readinessId, ownerId, expectedRevision: 1, status: "ready",
-      gateResults: [{ code: "cleanup", status: "passed" }], verifiedAt: now,
-    });
-    shares = new CollaborativeAppShareRepository(owner.db, { now: () => now, createId: () => scopeId });
-    await shares.createAtomic({
-      ownerId, organizationId, catalogId, readinessId, expectedResourceRevision: 0, expectedReadinessRevision: 2,
-      expectedBuildId: build.buildId, expectedBinding: null, clientRequestId: "80000000-0000-4000-8000-000000000001",
-      payloadHash: "f".repeat(64), runtimeId,
-    });
+    shares = await shareApp({ appId: build.appId, catalogId, readinessId, scopeId, sequence: 1 });
 
     platform = await createPlatformCollaborationTestDatabase();
     await bootstrapPlatformCollaborationDatabase(platform.collaborationDb);
@@ -417,6 +426,68 @@ describe("owner app presentation reaches the recipient launcher", () => {
     expect(await pending).toBeLessThanOrEqual(1);
     platformFetch.mockClear();
     expect(await publisher.runOnce()).toBe(0);
+    expect(platformFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not hang when a described icon is replaced by a named pipe before upload", async () => {
+    await writeApp("Sprint Board");
+    await writeIcon(png(21));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    platformFetch.mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/presentation")) {
+        const icon = join(home, "system/icons", "sprint-board.png");
+        await rm(icon, { force: true });
+        execFileSync("mkfifo", [icon]);
+      }
+      return routes.request(`${url.pathname}${url.search}`, init);
+    });
+    const outcome = await Promise.race([
+      publisher.runOnce(),
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 5_000)),
+    ]);
+    expect(outcome).toBe(0);
+    expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board" });
+    await publisher.shutdown();
+  }, 15_000);
+
+  it("never publishes artwork reached through a symlinked icons directory", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "shared-app-presentation-outside-"));
+    try {
+      await writeFile(join(outside, "sprint-board.png"), png(18));
+      await mkdir(join(home, "system"), { recursive: true });
+      await symlink(outside, join(home, "system", "icons"));
+      await writeApp("Sprint Board");
+      expect(await publisher.runOnce()).toBe(1);
+      expect((await launcher())[0]!.presentation).toEqual({ name: "Sprint Board" });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates through every active share when there are more than one page", async () => {
+    await writeApp("Sprint Board");
+    await writeApp("Retro Board", "retro-board", "retro-board");
+    await writeIcon(png(19));
+    await writeIcon(png(20), "retro-board.png");
+    const secondScope = "70000000-0000-4000-8000-000000000002";
+    await shareApp({
+      appId: "retro-board", catalogId: "50000000-0000-4000-8000-000000000002",
+      readinessId: "60000000-0000-4000-8000-000000000002", scopeId: secondScope, sequence: 2,
+    });
+    expect(await outbox.runOnce()).toBe(1);
+    await publisher.shutdown();
+    publisher = new CollaborativeAppPresentationPublisher({
+      db: owner.db, platformBaseUrl: "https://platform.matrix.test", runtimeId, serviceToken, fetchImpl: platformFetch,
+      ownerId, source: createOwnerAppPresentationSource(home), now: () => new Date(currentTime), startTimer: false, pageSize: 1,
+    });
+    expect(await publisher.runOnce()).toBe(1);
+    expect(await publisher.runOnce()).toBe(1);
+    const names = (await launcher()).map((item) => item.presentation?.name).sort();
+    expect(names).toEqual(["Retro Board", "Sprint Board"]);
+    // A later wrap-around keeps both published without re-sending unchanged snapshots.
+    platformFetch.mockClear();
+    for (let cycle = 0; cycle < 3; cycle += 1) await publisher.runOnce();
     expect(platformFetch).not.toHaveBeenCalled();
   });
 });
