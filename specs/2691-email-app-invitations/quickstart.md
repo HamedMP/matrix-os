@@ -120,8 +120,8 @@ states that sign-in and sign-up complete on the primary domain; this is not
 proof of the required inline Matrix.page behavior. Obtain a disposable
 Matrix.page app URL configured with the existing Clerk instance and test
 accounts from the Clerk/domain owner, then run every case above. Until that
-evidence passes, do not start production feature code or substitute another
-authentication path.
+evidence passes, keep the production capability disabled and do not substitute
+another authentication path.
 
 ## 2. Mail adapter qualification
 
