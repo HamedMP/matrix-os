@@ -15,10 +15,12 @@ import { mergeChatReadState } from "@/lib/shared-chat-state";
  * reply, at the read version on screen, unless someone marked the chat unread
  * while it was open.
  */
+type MarkReadRequest = Extract<CanonicalUpdateChatReadStateRequest, { type: "mark_read" }>;
+
 export function chatReadAcknowledgement(
   detail: CanonicalChatDetailResponse,
   initialVersion: number,
-): CanonicalUpdateChatReadStateRequest | null {
+): MarkReadRequest | null {
   const state = detail.record.readState;
   if (!state?.unread) return null;
   if (state.markedUnread && state.version > initialVersion) return null;
@@ -63,7 +65,7 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null) {
     // An attempt is spent only once it can be sent.
     if (!appActive || !ready) return;
     const request = chatReadAcknowledgement(detail, current.initialVersion);
-    if (!request || request.type !== "mark_read") return;
+    if (!request) return;
     const attempt = `${request.baseVersion}:${request.throughSeq}`;
     if (current.attempt === attempt) return;
     current.attempt = attempt;
