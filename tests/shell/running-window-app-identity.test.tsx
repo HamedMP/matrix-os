@@ -10,6 +10,7 @@ import { WindowsTaskbar } from "@/components/taskbar/WindowsTaskbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { openSharedLauncherApp, sharedLauncherAppEntry } from "@/hooks/useSharedLauncherApps";
 import { useWindowManager, type AppEntry } from "@/hooks/useWindowManager";
+import { windowAppEntry } from "@/lib/window-app-entry";
 
 vi.mock("@clerk/nextjs", () => ({
   useUser: () => ({ user: { fullName: "Test User", imageUrl: undefined } }),
@@ -263,5 +264,29 @@ describe("running shared app identity in the Windows taskbars", () => {
     fireEvent.click(screen.getByRole("button", { name: "Shared Tasks Lab shared by Ada" }));
     // Bo's window is focused (opened last), so Ada's icon focuses Ada's window rather than minimizing Bo's.
     expect(onFocusWindow).toHaveBeenCalledWith(windowFor(ADA_TASKS).id);
+  });
+});
+
+describe("window to launcher identity", () => {
+  it.each([
+    ["a shared path whose target was lost", { path: `__shared-app__:${SCOPE_A}`, title: "Shared Tasks Lab shared by Ada" }],
+    ["a target that does not belong to the window path", { path: `__shared-app__:${SCOPE_B}`, title: "Team Tasks shared by Bo", sharedAppTarget: ADA_TASKS }],
+    ["a window with no catalog match", { path: "apps/removed/index.html", title: "Removed" }],
+  ])("keeps only the title and no artwork for %s", (_label, windowRecord) => {
+    expect(windowAppEntry(windowRecord, CATALOG)).toEqual({ name: windowRecord.title, path: windowRecord.path });
+  });
+
+  it("matches catalog sub-windows by their app path", () => {
+    expect(windowAppEntry({ path: "__chat__:conversation-1", title: "Chat" }, CATALOG).iconUrl).toBe("/icons/chat.png");
+  });
+
+  it("focuses the shared window from its Web Canvas dock entry", () => {
+    render(<CanvasDock />);
+    act(() => {
+      openSharedLauncherApp(sharedLauncherAppEntry(ADA_TASKS));
+      openSharedLauncherApp(sharedLauncherAppEntry(BO_TASKS));
+    });
+    fireEvent.click(dockButton("Shared Tasks Lab shared by Ada", "shared"));
+    expect(useWindowManager.getState().focusedWindowId).toBe(windowFor(ADA_TASKS).id);
   });
 });
