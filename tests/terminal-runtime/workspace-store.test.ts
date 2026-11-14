@@ -113,6 +113,24 @@ describe("terminal workspace store", () => {
     expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("startupCommand");
   });
 
+  // Fault detected (#3297 review): status reports can only be told apart from a reused
+  // pane's old program if the store records when the tab got its pane.
+  it("records when a tab gets its pane and forgets it when the pane goes", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspaces-"));
+    homes.push(homePath);
+    let now = new Date("2026-11-11T10:00:00.000Z");
+    const store = new TerminalWorkspaceStore({ homePath, now: () => now });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, { name: "pane", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    now = new Date("2026-11-11T10:05:00.000Z");
+    const activated = await store.activateTab(ref, { tabId: 1, paneId: "terminal_7" });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:05:00.000Z");
+    expect(activated).not.toHaveProperty("zellijPaneAssignedAt");
+    await store.restoreTabStartupIntent(ref, []);
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("zellijPaneAssignedAt");
+  });
+
   it("advances presentation revision only for intentional snapshot replacement", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-presentation-revision-"));
     homes.push(homePath);

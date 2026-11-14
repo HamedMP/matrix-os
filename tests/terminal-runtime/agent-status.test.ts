@@ -26,7 +26,7 @@ async function home() {
   return root;
 }
 
-function storeWith(tabs: Array<{ id: string; zellijPaneId: string | null; status?: string }>) {
+function storeWith(tabs: Array<{ id: string; zellijPaneId: string | null; status?: string; zellijPaneAssignedAt?: string }>) {
   return {
     listWorkspaces: async () => [{ id: workspaceId }],
     getRuntimeWorkspace: async (id: string) => id !== workspaceId ? undefined : {
@@ -101,6 +101,45 @@ describe("terminal agent status", () => {
       store: storeWith(["1", "2", "3", "4"].map((pane, i) => ({ id: `tt_${String(i + 3).repeat(32)}`, zellijPaneId: `terminal_${pane}` }))),
     });
     await expect(index.list()).resolves.toEqual([]);
+  });
+
+  // Fault detected (#3297 review): a program in a reused pane number shows the old
+  // program's blocked/done status, so sends are refused and waits end at once.
+  it("ignores a report written before the tab got its current pane", async () => {
+    const homePath = await home();
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "7", status: "blocked", source: "reporter", now: () => new Date("2026-11-11T10:00:00Z") });
+    const stale = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith([{ id: tabId, zellijPaneId: "terminal_7", zellijPaneAssignedAt: "2026-11-11T10:05:00.000Z" }]),
+    });
+    await expect(stale.list()).resolves.toEqual([]);
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "7", status: "working", source: "reporter", now: () => new Date("2026-11-11T10:06:00Z") });
+    await expect(stale.list()).resolves.toMatchObject([{ ref: { workspaceId, tabId }, status: "working" }]);
+  });
+
+  // matrix-status writes whole seconds: a program reporting in the same second its
+  // pane was assigned must keep its status.
+  it("keeps a whole-second report from the second the pane was assigned", async () => {
+    const homePath = await home();
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "7", status: "working", source: "reporter", now: () => new Date("2026-11-11T10:05:00Z") });
+    const index = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith([{ id: tabId, zellijPaneId: "terminal_7", zellijPaneAssignedAt: "2026-11-11T10:05:00.750Z" }]),
+    });
+    await expect(index.list()).resolves.toMatchObject([{ status: "working" }]);
+  });
+
+  // Fault detected (#3297 review): past 1,024 tabs, later tabs lost their status.
+  it("keeps status for every live tab the runtime allows", async () => {
+    const homePath = await home();
+    const tabs = Array.from({ length: 1_100 }, (_, i) => ({ id: `tt_${i.toString(16).padStart(32, "0")}`, zellijPaneId: `terminal_${i}` }));
+    for (let i = 0; i < tabs.length; i += 1) {
+      await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: String(i), status: i === 1_099 ? "blocked" : "working", source: "reporter" });
+    }
+    const index = createTerminalAgentStatusIndex({ homePath, store: storeWith(tabs) });
+    const entries = await index.list();
+    expect(entries).toHaveLength(1_100);
+    expect(entries.find((entry) => entry.ref.tabId === tabs[1_099]!.id)?.status).toBe("blocked");
   });
 
   it("drops status for tabs that have ended", async () => {

@@ -17,7 +17,7 @@ import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type Termina
 import { TerminalCommandResultRefSchema, TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
 import { TerminalEndedTabArchiveRequestSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
-import { TerminalAgentStatusEntrySchema, type TerminalAgentStatusEntry } from "./agent-status.js";
+import { TERMINAL_AGENT_STATUS_MAX_ENTRIES, TerminalAgentStatusEntrySchema, type TerminalAgentStatusEntry } from "./agent-status.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS,
@@ -51,7 +51,7 @@ export class TerminalRuntimeSocketClient {
   }
 
   async listAgentStatuses(): Promise<TerminalAgentStatusEntry[]> {
-    const parsed = z.array(TerminalAgentStatusEntrySchema).max(1_024).parse(await this.call("ListAgentStatuses", {}));
+    const parsed = z.array(TerminalAgentStatusEntrySchema).max(TERMINAL_AGENT_STATUS_MAX_ENTRIES).parse(await this.call("ListAgentStatuses", {}));
     return parsed.map((entry) => ({
       ...entry,
       ref: TerminalRefSchema.parse(entry.ref),
