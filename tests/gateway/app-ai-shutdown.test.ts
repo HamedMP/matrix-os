@@ -17,8 +17,9 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   );
   const logBestEffortFailure = vi.fn();
   const terminalLaunchRuntime = service("terminal launch");
+  const nativeClaudeChatRuntime = service("native Claude");
   const dependencies = {
-    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime,
+    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime,
     browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
@@ -57,7 +58,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   expect(body).not.toBe("");
   const script = ts.transpileModule(`const close = async () => ${body};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const close = new Function(...Object.keys(dependencies), `${script};return close;`)(...Object.values(dependencies)) as () => Promise<void>;
-  return { close, calls, logBestEffortFailure, terminalLaunchRuntime };
+  return { close, calls, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime };
 }
 
 it("continues the actual gateway shutdown after app AI cleanup rejects", async () => {
@@ -67,14 +68,43 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   await expect(shutdown.close()).resolves.toBeUndefined();
   expect(appAiRuntime.close).toHaveBeenCalledOnce();
   expect(shutdown.terminalLaunchRuntime.close).toHaveBeenCalledOnce();
+  expect(shutdown.nativeClaudeChatRuntime.close).toHaveBeenCalledOnce();
   expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", failure);
   expect(shutdown.calls).toEqual(expect.arrayContaining([
     "anthropic.close", "Slack.close", "chats.close", "bots.close", "company bots.close", "providers.close", "Chat database.release",
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "browser lab.close", "shared browser.close", "browser approvals.close", "HTTP.close",
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
+  expect(shutdown.calls.indexOf("chats.close")).toBeLessThan(shutdown.calls.indexOf("native Claude.close"));
+  expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
   expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
+});
+
+it.each(["rejects", "throws"])("finishes gateway teardown when native Claude cleanup %s without hiding failure", async mode => {
+  const failure = new Error("uncertain native Claude drain");
+  const shutdown = await shutdownFixture({ close: vi.fn(async () => {}) });
+  let release = () => {};
+  shutdown.nativeClaudeChatRuntime.close.mockImplementationOnce(() => {
+    shutdown.calls.push("native Claude.close");
+    if (mode === "throws") throw failure;
+    return new Promise<void>((_resolve, reject) => { release = () => reject(failure); });
+  });
+  const closing = expect(shutdown.close()).rejects.toBe(failure);
+  try {
+    if (mode === "rejects") {
+      await vi.waitFor(() => expect(shutdown.nativeClaudeChatRuntime.close).toHaveBeenCalledOnce());
+      expect(shutdown.terminalLaunchRuntime.close).not.toHaveBeenCalled();
+      release();
+    }
+    await closing;
+    expect(shutdown.calls).toEqual(expect.arrayContaining([
+      "terminal launch.close", "shared browser.close", "collaboration.shutdown", "Chat database.release",
+      "app database.destroy", "platform database.destroy", "telemetry.shutdown", "HTTP.close",
+    ]));
+    expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
+    expect(shutdown.calls.at(-1)).toBe("HTTP.close");
+  } finally { release(); await closing; }
 });
 
 it("continues shutdown while retaining the real Pi writer fence after forced worker termination", async () => {
@@ -109,6 +139,7 @@ export class ModelRuntime {
     await vi.advanceTimersByTimeAsync(20_100);
     expect(await closing).toEqual({ ok: true });
     expect(shutdown.terminalLaunchRuntime.close).toHaveBeenCalledOnce();
+    expect(shutdown.nativeClaudeChatRuntime.close).toHaveBeenCalledOnce();
     expect(await pending).toBeInstanceOf(Error);
     expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", expect.any(Error));
     expect(shutdown.calls).toContain("Slack.close");
