@@ -308,13 +308,15 @@ async function clearPending(ctx: RunContext, orgRoot: string, namespace: string)
 }
 
 /**
- * Unlinks namespaces an interrupted or failed run left pending, except `keep`
- * (this run links it, and clears it only once that link succeeds). Throws on
- * the first failure, so the org is not reported current or removed.
+ * Unlinks namespaces an interrupted or failed run left pending, except those in
+ * `keep`: the namespace this run links (cleared only once that link succeeds)
+ * and the one the current release still uses (a run can stop after recording
+ * it but before switching `current`; it stays pending until the switch).
+ * Throws on the first failure, so the org is not reported current or removed.
  */
-async function settlePending(ctx: RunContext, orgRoot: string, keep?: string): Promise<void> {
+async function settlePending(ctx: RunContext, orgRoot: string, keep: ReadonlyArray<string | undefined>): Promise<void> {
   for (const namespace of await pendingNamespaces(orgRoot)) {
-    if (namespace === keep) continue;
+    if (keep.includes(namespace)) continue;
     await unlinkNamespace(ctx, orgRoot, namespace);
     await clearPending(ctx, orgRoot, namespace);
   }
@@ -378,7 +380,7 @@ async function installPin(ctx: RunContext, pin: CoreRepoPin): Promise<CoreRepoIn
   // The slug is part of what is installed: a renamed org must move namespaces even at the same commit.
   const unchanged = before?.commit === pin.commit && before.slug === pin.slug;
   try {
-    await settlePending(ctx, orgRoot, namespace);
+    await settlePending(ctx, orgRoot, [namespace, before ? coreRepoSkillNamespace(before.slug) : undefined]);
   } catch (error: unknown) {
     rethrowLockLoss(error);
     warnStep("pending namespace unlink", pin.orgId, error);
@@ -462,7 +464,7 @@ async function removeOrg(ctx: RunContext, orgId: string): Promise<CoreRepoInstal
   const meta = await currentMeta(orgRoot);
   const namespace = meta ? coreRepoSkillNamespace(meta.slug) : undefined;
   try {
-    await settlePending(ctx, orgRoot, namespace);
+    await settlePending(ctx, orgRoot, [namespace]);
     if (namespace) await unlinkNamespace(ctx, orgRoot, namespace);
   } catch (error: unknown) {
     rethrowLockLoss(error);

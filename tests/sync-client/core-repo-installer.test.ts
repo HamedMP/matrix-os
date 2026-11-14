@@ -339,6 +339,31 @@ describe("Matrix Core repo installer", () => {
     expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-co-", false]]);
   });
 
+  // Fault: a run that stops after recording the old namespace as pending, before switching `current`, makes the
+  // next sync unlink the skills of the release that is still current; a failed download then leaves them gone.
+  it("never unlinks a pending namespace that the current release still uses", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    // The state a crash between recording the pending namespace and switching `current` leaves behind.
+    writeFileSync(join(orgRoot, ".matrix-core-pending.json"), JSON.stringify(["org-acme-"]));
+    const renamedPin = pinFor(a, bytes.get(a)!, "acme-co");
+    const failingDownload: CoreRepoTransport = { listPins: async () => ({ pins: [renamedPin], membershipVerified: true }),
+      downloadTarball: async () => { throw new Error("network down"); } };
+    const sync = recordingSync();
+    expect(await installCoreRepo({ root, transport: failingDownload, runSkillSync: sync.run })).toEqual([{ orgId: "org_acme1", status: "failed" }]);
+    expect(sync.calls).toEqual([]);
+    expect(readlinkSync(join(orgRoot, "current"))).toBe(`releases/${a}-acme`);
+
+    expect(await installCoreRepo({ root, transport: transportFor([renamedPin], bytes), runSkillSync: sync.run }))
+      .toEqual([{ orgId: "org_acme1", status: "installed", commit: a }]);
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-", true], ["org-acme-co-", false]]);
+    sync.calls.length = 0;
+    await installCoreRepo({ root, transport: transportFor([renamedPin], bytes), runSkillSync: sync.run });
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-co-", false]]);
+  });
+
   // Fault: a failed first install whose unlink also fails drops `current`, so a later org removal never unlinks its skills.
   it("keeps a failed first install's namespace until it is unlinked, and unlinks it when the org is removed", async () => {
     const a = "a".repeat(40);
