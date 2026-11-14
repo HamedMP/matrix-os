@@ -113,6 +113,17 @@ const ACTION_TIMEOUT_SECONDS = 30;
 // Billable executions must not be repeated invisibly, especially writes.
 const executionOptions = (seconds: number) => ({ timeoutInSeconds: seconds, maxRetries: 0, abortSignal: AbortSignal.timeout(seconds * 1000) });
 
+/** Native Gmail account markers must never enter the paid legacy transport, even during rollback. */
+function assertLegacyAccountId(accountId: unknown): void {
+  if (typeof accountId === "string" && accountId.startsWith("gmail_")) throw new Error("Integration unavailable");
+}
+function assertLegacyInput(input: unknown): void {
+  if (typeof input === "object" && input !== null && "accountId" in input) assertLegacyAccountId(input.accountId);
+}
+function assertLegacyAuthProvision(input: unknown): void {
+  if (typeof input === "object" && input !== null && "authProvisionId" in input) assertLegacyAccountId(input.authProvisionId);
+}
+
 type PipedreamProjectEnvironment = "development" | "production";
 
 function normalizePipedreamProjectEnvironment(
@@ -141,21 +152,39 @@ export async function createPipedreamClient(
     projectEnvironment: normalizePipedreamProjectEnvironment(config.environment),
   });
   const coalesceRead = createReadCoalescer();
+  const boundedFinanceAction = createBoundedFinanceAction({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
+  const boundedManagedAction = createBoundedManagedAction({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
+  const readDriveFile = createDriveContentReader({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
+  const boundedGmailLabels = createBoundedPipedreamLabels({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
+  const boundedGmailGet = createBoundedPipedreamGet({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
+
 
   return {
-    boundedFinanceAction: createBoundedFinanceAction({ projectId: config.projectId,
-      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
-    boundedManagedAction: createBoundedManagedAction({ projectId: config.projectId,
-      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
-    readDriveFile: createDriveContentReader({ projectId: config.projectId,
-      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
-    boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,
-      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
-    boundedGmailGet: createBoundedPipedreamGet({
-      projectId: config.projectId,
-      environment: normalizePipedreamProjectEnvironment(config.environment),
-      getAccessToken: () => sdk.rawAccessToken,
-    }),
+    async boundedFinanceAction(input, signal) {
+      assertLegacyInput(input);
+      return boundedFinanceAction(input, signal);
+    },
+    async boundedManagedAction(input, signal) {
+      assertLegacyInput(input);
+      return boundedManagedAction(input, signal);
+    },
+    async readDriveFile(input) {
+      assertLegacyInput(input);
+      return readDriveFile(input);
+    },
+    async boundedGmailLabels(input, signal) {
+      assertLegacyInput(input);
+      return boundedGmailLabels(input, signal);
+    },
+    async boundedGmailGet(input, signal) {
+      assertLegacyInput(input);
+      return boundedGmailGet(input, signal);
+    },
     async createConnectToken(externalUserId: string, redirects) {
       const response = await sdk.tokens.create(
         { externalUserId, ...redirects },
@@ -199,6 +228,7 @@ export async function createPipedreamClient(
     },
 
     async callAction(opts) {
+      assertLegacyAccountId(opts.accountId);
       const result = await sdk.proxy.post(
         {
           url: opts.url,
@@ -226,6 +256,8 @@ export async function createPipedreamClient(
     },
 
     async runAction(opts) {
+      assertLegacyAuthProvision(opts.configuredProps);
+      for (const prop of Object.values(opts.configuredProps)) assertLegacyAuthProvision(prop);
       const response = await sdk.actions.run(
         {
           id: opts.componentKey,
@@ -242,6 +274,7 @@ export async function createPipedreamClient(
     },
 
     async proxyGet(opts) {
+      assertLegacyAccountId(opts.accountId);
       return coalesceRead(proxyReadKey(opts), () => (sdk.proxy as any).get(
         {
           url: opts.url,
@@ -255,6 +288,7 @@ export async function createPipedreamClient(
     },
 
     async proxyPost(opts) {
+      assertLegacyAccountId(opts.accountId);
       const result = await (sdk.proxy as any).post(
         {
           url: opts.url,
@@ -269,6 +303,7 @@ export async function createPipedreamClient(
     },
 
     async proxyPut(opts) {
+      assertLegacyAccountId(opts.accountId);
       const result = await (sdk.proxy as any).put(
         {
           url: opts.url,
@@ -283,6 +318,7 @@ export async function createPipedreamClient(
     },
 
     async proxyPatch(opts) {
+      assertLegacyAccountId(opts.accountId);
       const result = await (sdk.proxy as any).patch(
         {
           url: opts.url,
@@ -297,6 +333,7 @@ export async function createPipedreamClient(
     },
 
     async proxyDelete(opts) {
+      assertLegacyAccountId(opts.accountId);
       // Pipedream's ProxyDeleteRequest accepts URL + query params (no body),
       // matching standard REST DELETE semantics. If a target API needs a
       // DELETE-with-body (rare; e.g. some Elasticsearch endpoints), use
@@ -316,6 +353,7 @@ export async function createPipedreamClient(
     },
 
     async revokeAccount(accountId: string) {
+      assertLegacyAccountId(accountId);
       await sdk.accounts.delete(accountId, {
         timeoutInSeconds: API_TIMEOUT_SECONDS,
       });

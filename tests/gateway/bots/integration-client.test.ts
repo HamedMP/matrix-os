@@ -16,6 +16,12 @@ const OWNER = "user_owner_1";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 describe("bot integration client", () => {
+  it("preserves expired history as recovery required", async () => {
+    const client = createBotIntegrationClient(async () => json({ code: "gmail_history_expired", resync_required: true }, 409));
+    await expect(client.call(OWNER, { service: "gmail", action: "list_history", label: "Work", params: {}, read: true }))
+      .rejects.toEqual(new BotIntegrationError("resync_required"));
+  });
+
   it("parses the actual owner catalog route DTO and preserves its scoped-read action boundary", async () => {
     const pipedream = { getAppInfo: async () => null } as unknown as PipedreamConnectClient;
     const resolveUserId = vi.fn(async (context) => requireRequestPrincipal(context).userId);
