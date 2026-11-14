@@ -33,9 +33,25 @@ describe("GitHub developer access client", () => {
     });
 
     it.each([
+      { ...fullStatus, futureField: "new computer" },
+      { ...fullStatus, commitIdentity: { ...fullStatus.commitIdentity, futureField: true } },
+      { ...fullStatus, futureField: {}, commitIdentity: { ...fullStatus.commitIdentity, futureField: true } },
+    ])("keeps GitHub ready and strips unknown response fields from newer computers", async (payload) => {
+      jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(payload));
+
+      await expect(new GatewayClient("http://localhost:4000").getGithubDeveloperStatus())
+        .resolves.toEqual({ ok: true, status: fullStatus });
+    });
+
+    it.each([
       { installed: true, authenticated: true, user: "legacy" },
       { ...fullStatus, sshStatus: "maybe" },
       { ...fullStatus, commitIdentity: { status: "ready", label: "x".repeat(526) } },
+      { ...fullStatus, futureField: true, ready: "true" },
+      { ...fullStatus, futureField: true, user: "invalid/user" },
+      { ...fullStatus, futureField: true, gitProtocol: "ftp" },
+      { ...fullStatus, commitIdentity: { ...fullStatus.commitIdentity, status: "unknown", futureField: true } },
+      { ...fullStatus, commitIdentity: { status: "ready", label: "x".repeat(526), futureField: true } },
     ])("fails closed for legacy, partial, or malformed status payloads", async (payload) => {
       jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(payload));
       const client = new GatewayClient("http://localhost:4000", "token");
@@ -92,8 +108,30 @@ describe("GitHub developer access client", () => {
     });
 
     it.each([
+      { state: "awaiting_authorization", deviceCode: "ABCD-1234" },
+      { state: "starting" },
+      { state: "succeeded" },
+      { state: "failed" },
+      { state: "expired" },
+      { state: "cancelled" },
+    ])("accepts $state setup responses with unknown fields across start, poll and cancel", async (fields) => {
+      const id = "bda87d44-cbe8-4bc0-b681-1e07ecfa3d47";
+      const operation = { id, ...fields };
+      jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ...operation, futureField: { enabled: true } }));
+      const client = new GatewayClient("http://localhost:4000");
+
+      await expect(client.startGithubDeveloperSetup()).resolves.toEqual(operation);
+      await expect(client.getGithubDeveloperSetup(id)).resolves.toEqual(operation);
+      await expect(client.cancelGithubDeveloperSetup(id)).resolves.toEqual(operation);
+    });
+
+    it.each([
       { id: "invalid", state: "starting" },
       { id: "bda87d44-cbe8-4bc0-b681-1e07ecfa3d47", state: "awaiting_authorization", deviceCode: "unsafe" },
+      { id: "invalid", state: "starting", futureField: true },
+      { id: "bda87d44-cbe8-4bc0-b681-1e07ecfa3d47", state: "unknown", futureField: true },
+      { id: "bda87d44-cbe8-4bc0-b681-1e07ecfa3d47", state: "awaiting_authorization", futureField: true },
+      { id: "bda87d44-cbe8-4bc0-b681-1e07ecfa3d47", state: "awaiting_authorization", deviceCode: "unsafe", futureField: true },
     ])("rejects malformed setup responses", async (body) => {
       jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(body));
       await expect(new GatewayClient("http://localhost:4000").startGithubDeveloperSetup()).rejects.toThrow("GitHub setup unavailable");

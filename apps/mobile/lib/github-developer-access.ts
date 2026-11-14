@@ -14,9 +14,22 @@ type GatewayFetch = (path: string, init?: RequestInit) => Promise<Response>;
 const UNAVAILABLE = { ok: false, error: "GitHub developer access unavailable" } as const;
 const OperationId = z.uuid();
 
+// Computers update independently of App Store builds. Ignore additive response
+// fields while retaining the shared contract's validation for every known value.
+const MobileGithubDeveloperStatusSchema = GithubDeveloperStatusSchema.extend({
+  commitIdentity: GithubDeveloperStatusSchema.shape.commitIdentity.strip(),
+}).strip();
+const MobileGithubDeveloperSetupOperationSchema = z.discriminatedUnion(
+  "state",
+  [
+    GithubDeveloperSetupOperationSchema.options[0].strip(),
+    GithubDeveloperSetupOperationSchema.options[1].strip(),
+  ],
+);
+
 export async function getGithubDeveloperStatus(fetchGateway: GatewayFetch): Promise<GithubDeveloperStatusResult> {
   try {
-    const status = GithubDeveloperStatusSchema.parse(await request(fetchGateway, "status"));
+    const status = MobileGithubDeveloperStatusSchema.parse(await request(fetchGateway, "status"));
     const prerequisitesReady = status.installed && status.authenticated
       && status.gitProtocol === "ssh" && status.sshStatus === "verified"
       && status.commitIdentity.status === "ready";
@@ -36,7 +49,7 @@ export async function githubDeveloperSetup(
   if (action !== "start" && !OperationId.safeParse(id).success) throw new Error("GitHub setup unavailable");
   const path = action === "start" ? "setup" : `setup/${id}${action === "cancel" ? "/cancel" : ""}`;
   try {
-    const result = GithubDeveloperSetupOperationSchema.parse(await request(fetchGateway, path, action !== "get", signal));
+    const result = MobileGithubDeveloperSetupOperationSchema.parse(await request(fetchGateway, path, action !== "get", signal));
     if (action !== "start" && result.id !== id) throw new Error("Operation changed");
     return result;
   } catch (error: unknown) {
