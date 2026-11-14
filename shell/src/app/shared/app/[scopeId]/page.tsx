@@ -21,6 +21,10 @@ export default async function SharedAppPage({ params, searchParams = Promise.res
   if (!result.success) notFound();
   const expected = SharedAppLaunchQuerySchema.safeParse(await searchParams);
   if (!expected.success) notFound();
+  // Self-hosted documents have no Clerk session or platform collaboration API.
+  if (process.env.MATRIX_SELF_HOSTED === "1") {
+    return <p role="alert" className="m-auto p-8 text-center">Shared apps require a Matrix account.</p>;
+  }
   return <NativeCollaborationActorProvider actorId={serverVerifiedNativeActorId(await headers())}>
     <main className="flex h-dvh w-screen flex-col overflow-hidden">
       <ShellChatCollaboration view={{ kind: "app", scopeId: result.data,
