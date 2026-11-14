@@ -1,5 +1,5 @@
 import type { ApprovalProvenance } from "./approval-submission.js";
-import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, CanonicalChatNavigationPageQuerySchema, CanonicalChatNavigationPageResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse, type CanonicalChatNavigationPageQuery, type CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -46,6 +46,7 @@ import {
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatLifecycleRequestSchema,
   CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
@@ -72,6 +73,7 @@ import {
   type CanonicalRetryChatTurnRequest,
   type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatLifecycleRequest,
   type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -111,7 +113,9 @@ const ChatListQuerySchema = z.object({
 const ChatSearchQuerySchema = z.object({
   query: z.string().trim().min(1).max(200),
   limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: CanonicalChatApiCursorSchema.optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
+  lifecycle: z.enum(["active", "archived"]).optional(),
   scope: z.enum(["global"]).optional(),
 }).strict().refine((input) => input.scope === undefined || input.projectId === undefined, {
   message: "Global scope cannot include a Project",
@@ -124,12 +128,18 @@ const ChatDetailQuerySchema = z.object({
 
 export interface CanonicalChatRouteService {
   navigation?(owner: ChatOwner, input: CanonicalChatNavigationQuery): Promise<CanonicalChatNavigationResponse>;
+  navigationPage?(owner: ChatOwner, input: CanonicalChatNavigationPageQuery): Promise<CanonicalChatNavigationPageResponse>;
   create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
   ): Promise<CanonicalChatRecord>;
+  updateLifecycle(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatLifecycleRequest): Promise<CanonicalChatRecord>;
+  archiveProjectChats(owner: ChatOwner, projectId: string): Promise<{
+    archivedIds: string[]; archived: Array<{ chatId: string; revision: number }>;
+    skippedIds: string[]; archivedCount: number; skippedCount: number;
+  }>;
   updateTitle(
     owner: ChatOwner,
     chatId: string,
@@ -158,7 +168,9 @@ export interface CanonicalChatRouteService {
   search(owner: ChatOwner, input: {
     query: string;
     limit: number;
+    cursor?: string;
     projectId?: string | null;
+    lifecycle?: "active" | "archived";
   }): Promise<CanonicalChatListResponse>;
   getDetail(owner: ChatOwner, chatId: string, input: {
     limit: number;
@@ -431,12 +443,29 @@ export function createCanonicalChatRoutes(options: {
     }
   });
 
+  routes.get("/api/chat-navigation/page", async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const parsed = CanonicalChatNavigationPageQuerySchema.safeParse(context.req.query());
+      if (!parsed.success || Object.keys(context.req.query()).some(key => (context.req.queries(key)?.length ?? 0) > 1)) {
+        return validationError(context);
+      }
+      if (!options.service.navigationPage) throw new Error("Navigation is unavailable");
+      const result = await options.service.navigationPage(ownerFromPrincipal(options.getPrincipal(context)), parsed.data);
+      return context.json(CanonicalChatNavigationPageResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
   routes.get("/api/chats/search", async (context) => {
     try {
       const parsed = ChatSearchQuerySchema.safeParse({
         query: context.req.query("query"),
         limit: context.req.query("limit"),
+        cursor: context.req.query("cursor"),
         projectId: context.req.query("projectId"),
+        lifecycle: context.req.query("lifecycle"),
         scope: context.req.query("scope"),
       });
       if (!parsed.success) return validationError(context);
@@ -445,6 +474,8 @@ export function createCanonicalChatRoutes(options: {
         {
           query: parsed.data.query,
           limit: parsed.data.limit,
+          ...(parsed.data.cursor ? { cursor: parsed.data.cursor } : {}),
+          ...(parsed.data.lifecycle ? { lifecycle: parsed.data.lifecycle } : {}),
           ...(parsed.data.scope === "global"
             ? { projectId: null }
             : parsed.data.projectId === undefined ? {} : { projectId: parsed.data.projectId }),
@@ -467,6 +498,36 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       return chatJson(context, CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/lifecycle", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatLifecycleRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      return chatJson(context, CanonicalChatRecordSchema.parse(await options.service.updateLifecycle(
+        ownerFromPrincipal(options.getPrincipal(context)), chatId, parsed.data,
+      )));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/projects/:projectId/chats/archive", updateBodyLimit, async (context) => {
+    try {
+      const projectId = CanonicalCreateChatRequestSchema.shape.projectId.unwrap().parse(context.req.param("projectId"));
+      if (!z.object({}).strict().safeParse(await context.req.json()).success) return validationError(context);
+      const result = await options.service.archiveProjectChats(ownerFromPrincipal(options.getPrincipal(context)), projectId);
+      const parsed = z.object({
+        archivedIds: z.array(CanonicalChatIdSchema).max(10000),
+        archived: z.array(z.object({ chatId: CanonicalChatIdSchema, revision: z.number().int().nonnegative() }).strict()).max(10000),
+        skippedIds: z.array(CanonicalChatIdSchema).max(10000),
+        archivedCount: z.number().int().nonnegative(), skippedCount: z.number().int().nonnegative(),
+      }).strict().parse(result);
+      return chatJson(context, parsed);
     } catch (error: unknown) {
       return handleError(context, error);
     }

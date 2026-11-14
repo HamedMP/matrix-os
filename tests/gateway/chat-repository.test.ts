@@ -229,6 +229,8 @@ describe("ChatRepository", () => {
       "chat_run_steers",
       "chat_runs",
       "chat_schema_migrations",
+      "chat_side_messages",
+      "chat_side_threads",
       "chat_terminal_bindings",
       "chat_turns",
       "chat_user_state",
