@@ -117,7 +117,13 @@ export function createRoutineCliRuntime(options: {
       if (cap.length !== 1 || !cap[0]) throw new RoutineCliError("permission_denied");
       return forOwner(cap[0].owner_id).requests.execute(input); // Actual one-shot consume revalidates stored scope/source/decision.
     },
-    async close() { closed = true; clearInterval(cleanupTimer); for (const entry of scopes) entry.controller.close(); sourceRegistry.close(); await cleaning; },
+    async close() {
+      closed = true;
+      clearInterval(cleanupTimer);
+      for (const entry of scopes) entry.controller.close();
+      sourceRegistry.close();
+      await Promise.all([cleaning, ...scopes.map(entry => entry.requests.close())]);
+    },
   };
 }
 export type RoutineCliRuntime = ReturnType<typeof createRoutineCliRuntime>;

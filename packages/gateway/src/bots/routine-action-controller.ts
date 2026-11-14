@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_OWNER_WAIT_MS } from "@matrix-os/contracts/routine-cli";
 import { CanonicalProviderRunEventSchema } from "../chat/provider-adapter.js";
 import { randomBytes } from "node:crypto";
 import type { Kysely, Transaction } from "kysely";
@@ -18,13 +19,14 @@ import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { freezeIntent, type RoutineCliRequestDependencies } from "./routine-cli-requests.js";
 import { routineActionHash, routineActionPolicy, type RoutineActionSourceRegistry, type RoutineSourceHandle, type RoutineSourceProducer } from "./routine-action-source-registry.js";
 
-type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal };
+type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal; onOwnerWait?: (waiting: boolean) => void };
 type TargetCeiling = Readonly<{ botId: string; chatId: string }>;
 const withinCeiling = (target: { botId: string; chatId: string }, ceiling?: TargetCeiling) => !ceiling || target.botId === ceiling.botId && target.chatId === ceiling.chatId;
 type Entry = { handle: RoutineSourceHandle; reference: RoutineCliSourceReference; invocationId: string; operation: RoutineCliOperation;
   operationDigest: string; target: RoutineCliResolvedTarget; boundTarget?: TargetCeiling; originalReceipt: boolean; fingerprint: string; mode: "allow" | "ask";
   expiresAt: number; challengeId: string; actionDigest: string; status: RoutineActionView["status"]; issued: boolean;
-  decision?: RoutineActionSubmit; settle(value: boolean): void; waiting: Promise<boolean>; detach(): void };
+  decision?: RoutineActionSubmit; settle(value: boolean): void; waiting: Promise<boolean>; detach(): void;
+  resolutionPublished: boolean; publishResolution(): void };
 const actionFor = (operation: RoutineCliOperation): RoutineCliAction => operation.operation === "propose" ? "propose"
   : ["list", "show", "request"].includes(operation.operation) ? "read" : "control";
 /** The host captures one normalized intent/invocation/source/target/policy. No UI/network wait owns a DB transaction.
@@ -34,9 +36,9 @@ export function createRoutineCliActionController(options: {
   platform: { handle: string; machineId: string; runtimeSlot: string; verify(tuple: RoutineActionTuple, proof: string, signal?: AbortSignal): Promise<RoutineActionProof> };
   canAccessTarget: NonNullable<RoutineCliTargetDependencies["canAccessTarget"]>; now?: () => number; ttlMs?: number;
 }) {
-  const scope = RoutineCliScopeSchema.parse(options.scope), now = options.now ?? Date.now, ttl = options.ttlMs ?? 120_000;
+  const scope = RoutineCliScopeSchema.parse(options.scope), now = options.now ?? Date.now, ttl = options.ttlMs ?? ROUTINE_CLI_OWNER_WAIT_MS;
   if (!options.db?.transaction || !options.registry?.validateWithin || !options.platform?.verify || !options.canAccessTarget
-    || !options.agents?.get || !Number.isInteger(ttl) || ttl < 1 || ttl > 120_000) throw new Error("Routine action dependencies unavailable");
+    || !options.agents?.get || !Number.isInteger(ttl) || ttl < 1 || ttl > ROUTINE_CLI_OWNER_WAIT_MS) throw new Error("Routine action dependencies unavailable");
   const entries = new Map<string, Entry>(); // <=128 total, <=16/source; TTL/source-close/shutdown eviction.
   let closed = false;
   const ledger = createRoutineCliRequestsRepository(options.db);
@@ -48,12 +50,15 @@ export function createRoutineCliActionController(options: {
       && routineActionPolicy(entry.handle.source, registered.policy, actionFor(entry.operation)) === entry.mode;
   };
   const emit = (entry: Entry, resolved = false) => {
-    const registered = options.registry.read(entry.handle.source);
     if (entry.handle.source.identity.kind === "terminal_launch") return;
+    if (resolved) {
+      if (entry.resolutionPublished) return;
+      entry.resolutionPublished = true; entry.publishResolution(); return;
+    }
+    const registered = options.registry.read(entry.handle.source);
     if (!registered?.producer.publish) throw new RoutineCliError("unavailable");
-    registered.producer.publish(CanonicalProviderRunEventSchema.parse(resolved
-      ? { type: "approval.resolved", approvalId: entry.challengeId, decision: entry.decision?.decision ?? "cancel" }
-      : { type: "approval.requested", approvalId: entry.challengeId, actionDigest: entry.actionDigest,
+    registered.producer.publish(CanonicalProviderRunEventSchema.parse(
+      { type: "approval.requested", approvalId: entry.challengeId, actionDigest: entry.actionDigest,
         title: `Allow routine ${entry.operation.operation}?`, safeDescription: ROUTINE_ACTION_NOTICE,
         risk: "medium", allowedDecisions: ["approve", "decline", "cancel"] }));
   };
@@ -130,19 +135,37 @@ export function createRoutineCliActionController(options: {
     if (call.signal.aborted || !options.registry.has(handle) || options.registry.read(handle.source)?.fingerprint !== registered.fingerprint
       || entries.has(invocationId) || entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("permission_denied");
     let settle!: (value: boolean) => void; const waiting = new Promise<boolean>(resolve => { settle = resolve; });
-    const expiresAt = Math.min(now() + ttl, Date.parse(handle.source.expiresAt));
+    // Only an actual human wait receives the longer challenge lifetime. Reads
+    // and full-access decisions retain their original accepted-claim fence.
+    const decisionTtl = mode === "ask" ? ttl : Math.min(ttl, 120_000);
+    const expiresAt = Math.min(now() + decisionTtl, Date.parse(handle.source.expiresAt));
     const challengeId = `rcact_${randomBytes(16).toString("hex")}`;
+    // Retain only this prepared producer's resolution channel. Source expiry may
+    // remove its registry entry before the original Chat's idle tracker is drained.
+    // Requests and all authority checks still require the live registry.
+    const publish = registered.producer.publish?.bind(registered.producer);
     const entry: Entry = { handle, reference, invocationId, operation, boundTarget, operationDigest: routineActionHash(operation), ...prepared,
       fingerprint: registered.fingerprint, mode, expiresAt, challengeId, actionDigest: routineActionHash({ purpose: "routine_cli_owner_action:v1",
         source: handle.source, sourceId: reference.sourceId, invocationId, operation, boundTarget, target: prepared.target, policy: registered.fingerprint, expiresAt, challengeId }),
-      status: mode === "ask" ? "pending" : "approved", issued: false, waiting, settle, detach: () => {} };
+      status: mode === "ask" ? "pending" : "approved", issued: false, waiting, settle, detach: () => {}, resolutionPublished: false,
+      publishResolution() {
+        if (!publish) throw new RoutineCliError("unavailable");
+        publish(CanonicalProviderRunEventSchema.parse({ type: "approval.resolved", approvalId: challengeId, decision: entry.decision?.decision ?? "cancel" }));
+      } };
     const abort = () => remove(entry);
     call.signal.addEventListener("abort", abort, { once: true }); handle.signal.addEventListener("abort", abort, { once: true });
     entry.detach = () => { call.signal.removeEventListener("abort", abort); handle.signal.removeEventListener("abort", abort); };
     entries.set(invocationId, entry);
     try { if (mode === "ask") emit(entry); else settle(true); }
     catch (error: unknown) { remove(entry); throw error; }
-    const allowed = await waiting;
+    // Only this host-created pending challenge can suspend its native tool watchdog.
+    const onOwnerWait = mode === "ask" && entry.status === "pending" && live(entry) ? call.onOwnerWait : undefined;
+    const observeWait = (pending: boolean) => {
+      try { onOwnerWait?.(pending); }
+      catch (error: unknown) { console.warn("[routine-action] Owner wait observer unavailable", error instanceof Error ? error.name : "UnknownError"); }
+    };
+    observeWait(true);
+    const allowed = await waiting.finally(() => observeWait(false));
     // Tool callback completion abort is invocation-local; issue/cancel own cleanup after this wait.
     call.signal.removeEventListener("abort", abort);
     if (!allowed) return false;

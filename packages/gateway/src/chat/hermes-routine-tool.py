@@ -13,7 +13,7 @@ PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3"
 TOOL = "matrix_routines"
 LIMIT = 196608
 IDS = ("task_id", "session_id", "turn_id", "tool_call_id", "api_request_id")
-SCHEMA = {"name": TOOL, "description": "Invoke the fixed Matrix routines CLI. Mutations require the original request UUID. Owner approval, activation and background consent remain separate.",
+SCHEMA = {"name": TOOL, "description": "Invoke the fixed Matrix routines CLI. Mutations require a request UUID. For a queued proposal, use request with that UUID while this turn is live to observe pending approval. Owner approval, activation and background consent remain separate.",
           "parameters": {"type": "object", "additionalProperties": False, "required": ["args"], "properties": {
               "args": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
               "stdin": {"type": "string", "maxLength": 32768}}}}
@@ -146,7 +146,8 @@ class Exchange:
             if not self.live or not self.enabled or len(self.pending) >= 8 or interrupted():
                 return unknown(value)
             self.pending[call_id] = slot
-        deadline = time.monotonic() + 120
+        # Match the native mutation and read transport limits in routine-cli-ipc.ts.
+        deadline = time.monotonic() + (1830 if (value.get("args") or [None])[0] in ("propose", "pause", "resume", "archive") else 50)
         try:
             if not self.send({"type": "call", "id": call_id, "context": context, "intent": value}):
                 return unknown(value)

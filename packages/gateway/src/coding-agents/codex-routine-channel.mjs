@@ -5,9 +5,12 @@ const ref = z.string().min(1).max(512), rpcId = z.union([z.string().min(1).max(1
 const callSchema = z.object({ id: rpcId, method: z.literal("item/tool/call"), params: z.object({
   threadId: ref, turnId: ref, callId: ref, tool: z.literal("matrix_routines"), namespace: z.null().optional(), arguments: RoutineArgvSchema,
 }).strict() }).passthrough();
+// Standalone native resource. Match the read transport and native mutation limits in routine-cli-ipc.ts.
+const READ_TRANSPORT_TIMEOUT_MS = 50_000;
+const NATIVE_MUTATION_TIMEOUT_MS = 1_830_000;
 const unavailable = JSON.stringify({ v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } });
 export const CODEX_ROUTINE_TOOL = Object.freeze({ type: "function", name: "matrix_routines", deferLoading: false,
-  description: "Run the fixed Matrix routines CLI. Mutations require an explicit original request UUID. Reconcile unknown outcomes with request and the same UUID; never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
+  description: "Run the fixed Matrix routines CLI. Mutations require a request UUID. For a queued proposal, use request with that UUID while this turn is live to observe pending approval. Reconcile unknown outcomes by the same UUID and never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
   inputSchema: { type: "object", additionalProperties: false, required: ["args"], properties: {
     args: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 2048 } },
     stdin: { type: "string", maxLength: 32768 },
@@ -32,8 +35,14 @@ export function createCodexRoutineChannel(options) {
     try { options.sendNative({ id, result: { contentItems: [{ type: "inputText", text }], success } }); }
     catch (error) { console.warn("[codex-routines] Delivery unavailable", error instanceof Error ? error.name : "UnknownError"); }
   }
+  function ownerWait(entry, waiting) {
+    if (waiting ? entry.ownerWaiting !== undefined : entry.ownerWaiting !== true) return;
+    entry.ownerWaiting = waiting;
+    options.ownerWaitChanged?.(entry.callId, entry.binding.turnId, waiting);
+  }
   function complete(entry, text) {
     if (entry.done) return; entry.done = true; clearTimeout(entry.timer); entry.text = text;
+    ownerWait(entry, false);
     if (binding === entry.binding && options.current(entry.binding)) for (const id of entry.ids) result(id, text);
     entry.ids.length = 0;
   }
@@ -43,6 +52,7 @@ export function createCodexRoutineChannel(options) {
     for (const entry of calls.values()) {
       // Release the original native request without retaining authority or borrowing a later turn.
       if (!entry.done && prior === entry.binding && options.current(entry.binding)) for (const id of entry.ids) result(id, routineUnknownResult(entry.intent));
+      ownerWait(entry, false);
       clearTimeout(entry.timer); entry.done = true; entry.ids.length = 0;
     }
     calls.clear();
@@ -71,10 +81,11 @@ export function createCodexRoutineChannel(options) {
     } else if (frame.type === "host.cancel") {
       if (binding?.admissionId === frame.admissionId) end();
       const turn = turns.get(frame.admissionId); if (turn) { turns.delete(frame.admissionId); turnSources.delete(turn); send({ type: "shim.end", admissionId: frame.admissionId }); }
-    } else if (frame.type === "host.result") {
+    } else if (frame.type === "host.result" || frame.type === "host.owner_wait") {
       const entry = calls.get(frame.actionId);
-      if (!entry || entry.binding.admissionId !== frame.admissionId || binding !== entry.binding || !options.current(entry.binding)) return;
-      complete(entry, frame.result);
+      if (!entry || entry.done || entry.binding.admissionId !== frame.admissionId || binding !== entry.binding || !options.current(entry.binding)) return;
+      if (frame.type === "host.result") complete(entry, frame.result);
+      else if (entry.mutation) ownerWait(entry, frame.waiting);
     }
   }
   if (enabled) { parent.on("message", message); parent.on("disconnect", disconnect); send({ type: "shim.ready", shim }); }
@@ -87,6 +98,7 @@ export function createCodexRoutineChannel(options) {
       finally { clearTimeout(timer); signal.removeEventListener("abort", abort); }
     },
     canRegister: () => enabled && ready && initialSettled && turns.size > 0,
+    isWaitingForOwner: (callId, turnId) => binding?.turnId === turnId && [...calls.values()].some(entry => entry.callId === callId && entry.ownerWaiting === true),
     bind(turn, nativeGeneration, threadId, turnId, featureThread) {
       end(); const admissionId = turnSources.get(turn); turnSources.delete(turn);
       if (admissionId) turns.delete(admissionId);
@@ -108,8 +120,9 @@ export function createCodexRoutineChannel(options) {
         return true;
       }
       if (calls.size >= 128 || [...calls.values()].filter(entry => !entry.done).length >= 8) { result(raw.id, unavailable); return true; }
-      const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], done: false };
-      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, 120_000); entry.timer.unref();
+      const mutation = ["propose", "pause", "resume", "archive"].includes(params.arguments.args[0]);
+      const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], mutation, done: false };
+      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, mutation ? NATIVE_MUTATION_TIMEOUT_MS : READ_TRANSPORT_TIMEOUT_MS); entry.timer.unref();
       if (!send({ type: "shim.call", ...binding, callId: params.callId, actionId, intent: params.arguments })) complete(entry, routineUnknownResult(entry.intent));
       return true;
     },

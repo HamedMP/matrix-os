@@ -1,17 +1,28 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setTimeout as delay } from "node:timers/promises";
 import { sql } from "kysely";
+import { ROUTINE_CLI_AUTH_SCHEME, ROUTINE_CLI_EXECUTION_PATH, type RoutineCliOperation } from "@matrix-os/contracts/routine-cli";
 import { createRealBotStateDatabase, OWNER, at } from "./bot-state-support.js";
 import { canonicalFixture, runningCanonicalFire } from "./routine-cli-canonical-support.js";
 import { context } from "./routine-cli-source-support.js";
 import { TARGET_A } from "./routine-cli-request-support.js";
 import type { BotStateTransaction } from "../../../packages/gateway/src/bots/events.js";
+import { createRoutineCliExecutionRoutes } from "../../../packages/gateway/src/bots/routine-cli-routes.js";
 let f: Awaited<ReturnType<typeof canonicalFixture>>, destroy: (() => Promise<void>) | undefined;
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 async function reached(promise: Promise<void>) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try { await Promise.race([promise, new Promise<never>((_r, reject) => { timer = setTimeout(() => reject(new Error("Canonical control barrier not reached")), 3000); })]); }
   finally { clearTimeout(timer); }
+}
+function executeRoute(requests: ReturnType<typeof f.service>) {
+  const app = createRoutineCliExecutionRoutes({ requests });
+  return async (operation: RoutineCliOperation, signal?: AbortSignal) => app.request(ROUTINE_CLI_EXECUTION_PATH, {
+    method: "POST",
+    headers: { authorization: `${ROUTINE_CLI_AUTH_SCHEME} ${await f.token(operation)}`, "content-type": "application/json" },
+    body: JSON.stringify({ operation }),
+    signal,
+  });
 }
 const pidOf = async (tx: BotStateTransaction) => (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(tx.db)).rows[0]!.pid;
 async function waiting(pid: () => number | undefined) {
@@ -91,8 +102,46 @@ it("source revoke acquires its gate while postcommit cancellation is blocked", a
     await reached(revoked.promise); await revoke;
     await expect(f.service(f.adapter).execute({ token: unused, operation: f.operation("archive", running.revision + 1, 101) })).rejects.toMatchObject({ code: "permission_denied" });
     release.resolve(); expect(await request).toMatchObject({ receipt: { disposition: "applied" }, execution: { stop: "unconfirmed" } });
-    expect(await f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "uncertain" });
+    await expect.poll(() => f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "uncertain" });
   } finally { release.resolve(); await Promise.allSettled([request, ...(revoke ? [revoke] : [])]); }
+});
+it("returns the committed HTTP receipt and reconciles its request ID while worker cancellation is blocked", async () => {
+  const running = await runningCanonicalFire(f), operation = f.operation("pause", running.revision);
+  const release = deferred(), entered = deferred(), acknowledged = deferred(), cancelled = deferred();
+  const cancel = vi.fn(async () => {
+    entered.resolve();
+    await release.promise;
+    throw new Error("Fixture worker stop not confirmed");
+  });
+  f.execution.connect({ repository: f.chats, orchestrator: { cancelRun: cancel } } as never);
+  const service = f.service({ ...f.adapter, afterMutationCommit: async intent => {
+    try { await f.adapter.afterMutationCommit(intent); }
+    finally { cancelled.resolve(); }
+  } });
+  const send = executeRoute(service), client = new AbortController();
+  const response = send(operation, client.signal).then(result => { acknowledged.resolve(); return result; });
+  void response.catch(() => undefined);
+  try {
+    await reached(entered.promise);
+    await reached(acknowledged.promise);
+    expect((await response).status).toBe(200);
+    // Abort before consuming the body, then recover through a fresh capability and the original ID.
+    client.abort();
+    const read = { operation: "request" as const, requestId: operation.requestId };
+    const reconciliation = await send(read);
+    expect(reconciliation.status).toBe(200);
+    const envelope = await reconciliation.json();
+    expect(envelope).toMatchObject({ ok: true, data: { receipt: {
+      requestId: operation.requestId, disposition: "applied", routine: { status: "paused", revision: running.revision + 1 },
+    }, execution: { stop: "unconfirmed" } } });
+    expect(await (await send(operation)).json()).toEqual(envelope);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ type: "personal", ownerId: OWNER }, TARGET_A.chatId, running.runId);
+    expect(await f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "dispatched" });
+  } finally {
+    release.resolve();
+    await Promise.allSettled([response, reached(cancelled.promise), service.close()]);
+  }
+  expect(await f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "uncertain", failureCode: "cancel_unconfirmed" });
 });
 it("fences a claimed occurrence before resume even if pause postcommit cancellation is delayed", async () => {
   await f.db.updateTable("bot_routines").set({ status: "active" }).where("routine_id", "=", f.id).execute();
@@ -140,6 +189,7 @@ it("does not reopen a paused routine before its dispatched occurrence settles", 
     expect(cancel).not.toHaveBeenCalled();
     release.resolve();
     expect(await pause).toMatchObject({ receipt: { disposition: "applied" }, execution: { stop: "unconfirmed" } });
+    await expect.poll(() => f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "cancelled" });
     expect(cancel).toHaveBeenCalledExactlyOnceWith({ type: "personal", ownerId: OWNER }, TARGET_A.chatId, running.runId);
     expect(await f.control("resume", running.revision + 1, 102)).toMatchObject({ receipt: { routine: { status: "active" } } });
   } finally { release.resolve(); await Promise.allSettled([pause]); }

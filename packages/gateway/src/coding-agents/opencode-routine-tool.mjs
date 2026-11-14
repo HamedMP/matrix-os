@@ -7,6 +7,9 @@ import { StringDecoder } from "node:string_decoder";
 const pending = new Map(); // <=8; deadline, abort, pipe EOF and source shutdown settle each waiter.
 const completed = new Set(); // <=512 per finite child; late results cannot cancel other native calls.
 let socket, ended = false, bytes = "";
+// Standalone native resource. Match the read transport and native mutation limits in routine-cli-ipc.ts.
+const READ_TRANSPORT_TIMEOUT_MS = 50_000;
+const NATIVE_MUTATION_TIMEOUT_MS = 1_830_000;
 const unavailable = JSON.stringify({ v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } });
 function unknown(intent) {
   const args = Array.isArray(intent?.args) ? intent.args : [], index = args.indexOf("--request-id"), requestId = args[index + 1];
@@ -39,7 +42,7 @@ function connect() {
   socket.once("end", close); socket.once("close", close); socket.once("error", close);
 }
 export default {
-  description: "Invoke the fixed Matrix routines CLI. Supply only routine arguments and optional proposal JSON stdin. Remote mutations require the exact owner decision; activation and background permission are separate.",
+  description: "Invoke the fixed Matrix routines CLI. Supply only routine arguments and optional proposal JSON stdin. Mutations require the exact owner decision. For a queued proposal, use request with the original UUID while this turn is live to observe pending approval. Activation and background permission are separate.",
   // v1.16 accepts legacy JSON Schema definitions here; the host is the authoritative strict parser.
   args: { intent: { type: "object", additionalProperties: false, properties: {
     args: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 2048 } },
@@ -55,7 +58,7 @@ export default {
     const id = randomUUID();
     return await new Promise(resolve => {
       const abort = () => { send({ type: "cancel", id }); finish(unknown(intent)); };
-      const timer = setTimeout(abort, 120000); timer.unref?.();
+      const timer = setTimeout(abort, ["propose", "pause", "resume", "archive"].includes(intent?.args?.[0]) ? NATIVE_MUTATION_TIMEOUT_MS : READ_TRANSPORT_TIMEOUT_MS); timer.unref?.();
       const finish = result => { clearTimeout(timer); native.abort.removeEventListener("abort", abort); pending.delete(id); completed.add(id); resolve(result); };
       pending.set(id, { context, intent, finish }); native.abort.addEventListener("abort", abort, { once: true });
       if (native.abort.aborted) abort(); else if (!send({ type: "call", id, context, intent })) finish(unknown(intent));

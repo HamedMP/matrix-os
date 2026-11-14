@@ -54,7 +54,8 @@ it("retains known applied state when postcommit cancellation throws", async () =
 });
 it("does not let a delayed pause cancel a fire claimed after a newer canonical resume", async () => {
   let laterFireId: string | undefined;
-  const result = await f.execute(f.operation("pause"), { ...f.adapter, afterMutationCommit: async intent => {
+  const operation = f.operation("pause");
+  const service = f.service({ ...f.adapter, afterMutationCommit: async intent => {
     // The old pause has committed, but its external phase has not selected work yet.
     await f.execution.control(OWNER, BOT, f.id, { status: "active", baseRevision: 2 });
     const later = await f.repo.claim({ ownerId: OWNER, routineId: f.id, scheduledFor: at(60_000),
@@ -62,8 +63,12 @@ it("does not let a delayed pause cancel a fire claimed after a newer canonical r
     expect(later).toBeDefined(); laterFireId = later!.fireId;
     await f.adapter.afterMutationCommit(intent);
   } });
-  expect(result).toMatchObject({ receipt: { disposition: "applied", routine: { status: "paused", revision: 2 } },
-    execution: { stop: "unconfirmed" } });
+  try {
+    expect(await service.execute({ operation, token: await f.token(operation) })).toMatchObject({
+      receipt: { disposition: "applied", routine: { status: "paused", revision: 2 } },
+      execution: { stop: "unconfirmed" },
+    });
+  } finally { await service.close(); }
   expect(await f.repo.get(OWNER, f.id)).toMatchObject({ status: "active" });
   expect(await f.repo.getFire(OWNER, laterFireId!)).toMatchObject({ status: "claimed" });
 });
@@ -76,6 +81,57 @@ it("does not redrive cancellation on a lost durable commit acknowledgement", asy
   expect(after).not.toHaveBeenCalled();
   expect(await f.execute({ operation: "request", requestId: f.operation("pause").requestId }, { ...f.adapter, afterMutationCommit: after })).toMatchObject({ receipt: { disposition: "applied" }, execution: { stop: "unconfirmed" } });
   expect(after).not.toHaveBeenCalled();
+});
+it("does not start postcommit work when a mutation commits past the shutdown deadline", async () => {
+  const operation = f.operation("pause"), token = await f.token(operation);
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const after = vi.fn(async () => undefined);
+  const service = f.service({ ...f.adapter, afterMutationCommit: after,
+    transact: (owner, work) => f.transact(owner, async tx => {
+      const result = await work(tx);
+      entered.resolve();
+      await release.promise;
+      return result;
+    }) });
+  const pending = service.execute({ operation, token });
+  void pending.catch(() => undefined);
+  try {
+    await entered.promise;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const shutdown = service.close();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await shutdown;
+    vi.useRealTimers();
+    release.resolve();
+    expect(await pending).toMatchObject({ receipt: { disposition: "applied", routine: { status: "paused" } }, execution: { stop: "unconfirmed" } });
+    expect(after).not.toHaveBeenCalled();
+    expect(await f.execute({ operation: "request", requestId: operation.requestId })).toMatchObject({ receipt: { disposition: "applied" } });
+  } finally {
+    vi.useRealTimers();
+    release.resolve();
+    await Promise.allSettled([pending]);
+  }
+});
+it("rejects a fresh mutation when postcommit capacity is full, while the same request ID still reconciles", async () => {
+  const release = Promise.withResolvers<void>(), after = vi.fn(() => release.promise);
+  const service = f.service({ ...f.adapter, afterMutationCommit: after });
+  const execute = async (operation: Parameters<typeof service.execute>[0]["operation"]) => service.execute({ operation, token: await f.token(operation) });
+  try {
+    for (let revision = 1; revision <= 16; revision++) {
+      expect(await execute(f.operation("pause", revision, 100 + revision)))
+        .toMatchObject({ receipt: { disposition: "applied", routine: { revision: revision + 1 } } });
+    }
+    const fresh = f.operation("pause", 17, 117);
+    await expect(execute(fresh)).rejects.toMatchObject({ code: "unavailable" });
+    expect(await execute({ operation: "request", requestId: fresh.requestId })).toMatchObject({ kind: "not_observed" });
+    const existing = f.operation("pause", 16, 116);
+    expect(await execute({ operation: "request", requestId: existing.requestId })).toMatchObject({ receipt: { disposition: "applied" } });
+    expect(await execute(existing)).toMatchObject({ receipt: { disposition: "applied" } });
+    expect(after).toHaveBeenCalledTimes(16);
+  } finally {
+    release.resolve();
+    await service.close();
+  }
 });
 it.each(["foreign owner", "foreign Bot", "same Bot different Chat", "target permission"] as const)("rejects %s before canonical control", async kind => {
   if (kind === "target permission") f.state.targetAllowed = false;
@@ -130,14 +186,14 @@ it.each(["worker exit unobserved", "external effect unknown"] as const)("keeps c
   f.execution.connect({ repository: f.chats, orchestrator: { cancelRun } } as never);
   const result = await f.control("pause", running.revision);
   expect(result).toMatchObject({ receipt: { disposition: "applied", routine: { status: "paused" } }, execution: { stop: "unconfirmed" } });
+  await expect.poll(() => f.repo.getFire(OWNER, running.fire.fireId), { timeout: 15_000 }).toMatchObject({ status: "uncertain" });
   expect(cancelRun).toHaveBeenCalledTimes(1);
-  expect(await f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "uncertain" });
   expect(await f.execute({ operation: "show", routineId: f.id })).toMatchObject({ routine: { requiresReview: true, lastFire: { status: "uncertain" } } });
 });
 it("cancels all active fire pages rather than only the newest display or first32", async () => {
   for (let n = 1; n <= 35; n++) await insertFire(f.db, f.id, n, "completed");
   await f.db.updateTable("bot_routine_fires").set({ status: "claimed" }).where("routine_id", "=", f.id).execute();
   expect(await f.control("pause")).toMatchObject({ receipt: { disposition: "applied" }, execution: { stop: "unconfirmed" } });
-  const fires = await f.db.selectFrom("bot_routine_fires").select("status").where("routine_id", "=", f.id).execute();
-  expect(fires).toHaveLength(35); expect(fires.every(fire => fire.status === "cancelled")).toBe(true);
+  await expect.poll(() => f.db.selectFrom("bot_routine_fires").select("status").where("routine_id", "=", f.id).execute(), { timeout: 5000 })
+    .toEqual(Array.from({ length: 35 }, () => ({ status: "cancelled" })));
 });
