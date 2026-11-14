@@ -69,10 +69,15 @@ it.each(["owner-b", "same-owner-new-session", "same-owner-new-computer", "chat_s
 });
 
 it("never offers a device-origin approval, even after browser scope consent exists", async () => {
-  const api = client(), open = vi.fn(async () => {}); api.read.mockResolvedValue(allowed);
+  const api = client(), open = vi.fn(async () => {});
+  let resolveStatus!: (status: RoutineFullAccessStatus) => void;
+  api.read.mockReturnValue(new Promise(resolve => { resolveStatus = resolve; }));
   render(<Harness api={api} browserOrigin={false} openOwnerBrowser={open}/>);
   fireEvent.click(screen.getByRole("button", { name: "Select Full Access" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Continue in owner browser" }));
+  const continueButton = await screen.findByRole<HTMLButtonElement>("button", { name: "Continue in owner browser" });
+  expect(continueButton.disabled).toBe(true);
+  await act(async () => { resolveStatus(allowed); });
+  fireEvent.click(continueButton);
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   expect(screen.getByText(/This device's turns still require per-operation confirmation/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Allow routine CLI in this private Chat" })).toBeNull();
