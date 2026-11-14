@@ -201,14 +201,19 @@ export function modelTrigger(catalog: Catalog, selection: Selection, catalogLoad
   };
 }
 
-function modelNotes(instances: ProviderInstance[], state: string, only: (model: ProviderModel) => boolean): ModelNote[] {
-  return instances.flatMap((instance) => instance.models.filter(only).map((model) => ({
+function modelNotes(instances: ProviderInstance[], state: string): ModelNote[] {
+  return instances.flatMap((instance) => instance.models.map((model) => ({
     key: modelKey(instance.id, model.id),
     text: joined(canonicalProviderModelRouteLabel(instance, model.displayName), state),
   })));
 }
 
-/** The lines under the trigger: what cannot run, and what to do about a saved model that cannot. */
+/**
+ * The lines under the trigger: whose credit is held, and what to do about a
+ * saved model that cannot run. A model that is not chosen and cannot run is
+ * marked in the sheet only, so the composer does not warn about it whatever
+ * is chosen.
+ */
 export function modelNotices(catalog: Catalog, selection: Selection, catalogLoading: boolean) {
   const saved = savedSelection(catalog, selection);
   const instances = offered(catalog);
@@ -221,12 +226,7 @@ export function modelNotices(catalog: Catalog, selection: Selection, catalogLoad
     : `${reason}. Choose another model or check Agents & providers.`;
 
   return {
-    reserved: modelNotes(instances.filter(creditReserved), "Credit reserved", () => true),
-    unavailable: modelNotes(
-      instances.filter((instance) => instance.availability === "available"),
-      "Model unavailable",
-      (model) => model.availability !== "available",
-    ),
+    reserved: modelNotes(instances.filter(creditReserved), "Credit reserved"),
     recovery: selection && !saved.available && !catalogLoading ? remedy : null,
   };
 }

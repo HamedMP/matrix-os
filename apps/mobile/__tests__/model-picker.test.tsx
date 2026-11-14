@@ -7,7 +7,7 @@ import { ModelPicker } from "@/components/ModelPicker";
 import { createCanonicalProviderCatalogFixture } from "../../../tests/contracts/fixtures/canonical-chat";
 
 import { models, openSheet, renderPicker, trigger, triggerValue } from "./model-picker-test-utils";
-import { GLM, SONNET, catalogOf, matrixInstance, unavailableMatrixInstance } from "./model-test-catalog";
+import { GLM, GPT, SONNET, catalogOf, codexInstance, matrixInstance, unavailableMatrixInstance } from "./model-test-catalog";
 import { flat } from "./ui-test-utils";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -158,10 +158,32 @@ describe("the notices under the trigger", () => {
     expect(screen.getByText(/Saved model unavailable/)).toBeTruthy();
   });
 
-  it("lists an unavailable peer of the models that can run", () => {
+  it("says nothing under the trigger about a model that is not chosen and cannot run", () => {
+    const catalog = catalogOf(
+      matrixInstance([[SONNET.model, "Sonnet 5"], [GLM.model, "GLM Flash", "unavailable"]]),
+      codexInstance(),
+    );
+
+    for (const selection of [SONNET, GPT]) {
+      renderPicker(catalog, selection);
+      expect(screen.queryByText(/Model unavailable/)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("still marks that model in the sheet", () => {
     renderPicker(catalogOf(matrixInstance([[SONNET.model, "Sonnet 5"], [GLM.model, "GLM Flash", "unavailable"]])), SONNET);
 
-    expect(screen.getByText("GLM Flash · Matrix AI · Model unavailable").props.accessibilityState).toEqual({ disabled: true });
-    expect(screen.queryByRole("alert")).toBeNull();
+    openSheet();
+    expect(models().getByRole("button", { name: "GLM Flash, Matrix AI · Model unavailable" })).toBeTruthy();
+  });
+
+  it("says so when the chosen model is the one that cannot run", () => {
+    renderPicker(catalogOf(matrixInstance([[SONNET.model, "Sonnet 5"], [GLM.model, "GLM Flash", "unavailable"]])), GLM);
+
+    expect(triggerValue()).toBe("Matrix AI · GLM Flash · unavailable");
+    expect(screen.getByRole("alert").props.children)
+      .toBe("Saved model unavailable. Choose another model or check Agents & providers.");
   });
 });

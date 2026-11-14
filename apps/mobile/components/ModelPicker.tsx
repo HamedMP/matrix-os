@@ -92,11 +92,6 @@ export function ModelPicker({
         </Text>
       ))}
       {notices.reserved.length > 0 ? <Text style={styles.note}>Your credit is reserved while usage is confirmed.</Text> : null}
-      {notices.unavailable.map((note) => (
-        <Text key={note.key} accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
-          {note.text}
-        </Text>
-      ))}
       {notices.recovery ? <Text accessibilityRole="alert" style={styles.note}>{notices.recovery}</Text> : null}
       <Sheet visible={sheet.open} onClose={closeSheet} testID="model-picker-sheet">
         {sheet.openings > 0 ? (
