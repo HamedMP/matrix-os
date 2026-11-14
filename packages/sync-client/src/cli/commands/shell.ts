@@ -8,9 +8,9 @@ import { requireCliAuthToken } from "../auth-state.js";
 const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
 const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
 const PROJECT_ID = /^proj_[0-9a-f]{16,64}$/;
-const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm [--project <project>] [--tab <tab>]";
+const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt [--project <project>] [--tab <tab>]";
 
-const commonArgs = {
+export const commonArgs = {
   profile: { type: "string", required: false },
   dev: { type: "boolean", required: false, default: false },
   gateway: { type: "string", required: false },
@@ -19,25 +19,25 @@ const commonArgs = {
 } as const;
 
 type ProjectRecord = { id: string; label: string };
-type TabRecord = { id: string; name: string; cwd?: string; status?: string };
-type WorkspaceRecord = {
+export type TabRecord = { id: string; name: string; cwd?: string; status?: string };
+export type WorkspaceRecord = {
   id: string;
   scope: "main" | "project";
   projectId?: string;
   tabs: TabRecord[];
 };
 
-async function clientFromArgs(args: Record<string, unknown>): Promise<ShellClient> {
+export async function clientFromArgs(args: Record<string, unknown>): Promise<ShellClient> {
   const profile = await resolveCliProfile(args);
   const token = await requireCliAuthToken(profile);
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
 }
 
-function codedError(message: string, code = "invalid_request"): Error {
+export function codedError(message: string, code = "invalid_request"): Error {
   return Object.assign(new Error(message), { code });
 }
 
-function writeError(err: unknown, json: boolean): void {
+export function writeError(err: unknown, json: boolean): void {
   const code = err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
     ? (err as { code: string }).code
     : "request_failed";
@@ -87,7 +87,7 @@ function projectForInput(projects: ProjectRecord[], requested: unknown): Project
   return projects.find((project) => project.label === localProject);
 }
 
-async function resolveWorkspace(client: ShellClient, requestedProject: unknown): Promise<{ workspace: WorkspaceRecord; project: ProjectRecord | null }> {
+export async function resolveWorkspace(client: ShellClient, requestedProject: unknown): Promise<{ workspace: WorkspaceRecord; project: ProjectRecord | null }> {
   const [rawProjects, rawWorkspaces] = await Promise.all([client.listProjects(), client.listWorkspaces()]);
   const projects = parseProjects(rawProjects);
   const workspaces = parseWorkspaces(rawWorkspaces);
@@ -105,14 +105,14 @@ async function resolveWorkspace(client: ShellClient, requestedProject: unknown):
   return { workspace: parsed, project: project ?? null };
 }
 
-function resolveTab(workspace: WorkspaceRecord, value: unknown): TabRecord {
+export function resolveTab(workspace: WorkspaceRecord, value: unknown): TabRecord {
   if (typeof value !== "string" || !value) throw codedError("--tab is required");
   const matches = workspace.tabs.filter((tab) => tab.id === value || tab.name === value);
   if (matches.length !== 1) throw codedError(matches.length > 1 ? "Tab name is ambiguous; use its tab id" : "Tab not found");
   return matches[0]!;
 }
 
-function refFor(workspace: WorkspaceRecord, tab: TabRecord): TerminalRef {
+export function refFor(workspace: WorkspaceRecord, tab: TabRecord): TerminalRef {
   return { workspaceId: workspace.id, tabId: tab.id };
 }
 
@@ -228,7 +228,15 @@ const removeCommand = defineCommand({
 export const shellCommand = defineCommand({
   meta: { name: "shell", description: "Manage project-scoped terminal tabs" },
   args: commonArgs,
-  subCommands: { ls: listCommand, list: listCommand, new: newCommand, connect: connectCommand, rm: removeCommand },
+  // Loaded lazily: shell-agent imports this module's helpers.
+  subCommands: {
+    ls: listCommand, list: listCommand, new: newCommand, connect: connectCommand, rm: removeCommand,
+    get: () => import("./shell-agent.js").then((module) => module.shellGetCommand),
+    read: () => import("./shell-agent.js").then((module) => module.shellReadCommand),
+    send: () => import("./shell-agent.js").then((module) => module.shellSendCommand),
+    keys: () => import("./shell-agent.js").then((module) => module.shellKeysCommand),
+    interrupt: () => import("./shell-agent.js").then((module) => module.shellInterruptCommand),
+  },
   run: ({ rawArgs }) => {
     if (!rawArgs?.length) console.log(SHELL_USAGE);
   },

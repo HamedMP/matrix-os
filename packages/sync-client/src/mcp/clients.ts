@@ -101,7 +101,22 @@ export interface MatrixMcpGatewayClient {
   listChats(input: { limit: number; lifecycle?: "active" | "archived"; projectId?: string; cursor?: string }): Promise<unknown>;
   searchChats(input: { query: string; limit: number; projectId?: string }): Promise<unknown>;
   getChat(input: { chatId: string; limit: number; cursor?: string }): Promise<unknown>;
+  listTerminalWorkspaces(): Promise<unknown[]>;
+  getTerminalTab(ref: McpTerminalRef): Promise<unknown>;
+  readTerminalTab(ref: McpTerminalRef, lines: number): Promise<unknown>;
+  sendTerminalTab(ref: McpTerminalRef, input: { text: string; force?: boolean }): Promise<unknown>;
+  pressTerminalKeys(ref: McpTerminalRef, keys: string[]): Promise<unknown>;
+  interruptTerminalTab(ref: McpTerminalRef): Promise<unknown>;
 }
+
+export interface McpTerminalRef { workspaceId: string; tabId: string }
+
+// Hosted MCP gives each downstream request 50 s, so a send asks the gateway to hold
+// for a person's draft at most 30 s and waits 45 s for the answer.
+const TERMINAL_SEND_MAX_HOLD_MS = 30_000;
+const TERMINAL_SEND_TIMEOUT_MS = 45_000;
+const terminalTabPath = (ref: McpTerminalRef) =>
+  `/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`;
 
 function errorCodeForStatus(status: number): SafeMcpErrorCode {
   if (status === 400 || status === 422) return "invalid_input";
@@ -269,6 +284,22 @@ export function createMcpGatewayClient(
   }
 
   return {
+    async listTerminalWorkspaces() {
+      const payload = await request("/api/terminal/workspaces");
+      if (!payload || typeof payload !== "object" || !Array.isArray((payload as { workspaces?: unknown }).workspaces)) {
+        throw createMcpError("request_failed");
+      }
+      return (payload as { workspaces: unknown[] }).workspaces.slice(0, MCP_DIRECTORY_MAX_ENTRIES);
+    },
+    getTerminalTab: (ref) => request(terminalTabPath(ref)),
+    readTerminalTab: (ref, lines) => request(`${terminalTabPath(ref)}/read`, {}, { query: { lines: String(lines) } }),
+    sendTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/send`, {
+      method: "POST", body: JSON.stringify({ ...input, maxHoldMs: TERMINAL_SEND_MAX_HOLD_MS }),
+    }, { timeoutMs: TERMINAL_SEND_TIMEOUT_MS }),
+    pressTerminalKeys: (ref, keys) => request(`${terminalTabPath(ref)}/keys`, {
+      method: "POST", body: JSON.stringify({ keys }),
+    }),
+    interruptTerminalTab: (ref) => request(`${terminalTabPath(ref)}/interrupt`, { method: "POST", body: "{}" }),
     async listTerminals() {
       return parseEnvelopeArray(await request("/api/terminal/sessions"), "sessions", TerminalSchema);
     },

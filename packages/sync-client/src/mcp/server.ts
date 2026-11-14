@@ -15,6 +15,10 @@ import {
   SearchChatsInputSchema,
   SelectTerminalTabInputSchema,
   SendTerminalInputSchema,
+  PressTerminalKeysInputSchema,
+  ReadTerminalTabInputSchema,
+  SendTerminalTabInputSchema,
+  TerminalTabRefInputSchema,
   TerminalInputSchema,
   UploadFileInputSchema,
   decodeUploadContent,
@@ -192,6 +196,58 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
       bytes: Buffer.byteLength(input.data, "utf8"),
     };
   })));
+
+  const tabRef = (input: { workspaceId: string; tabId: string }) => ({ workspaceId: input.workspaceId, tabId: input.tabId });
+
+  server.registerTool("list_terminal_workspaces", {
+    description: "List project terminal workspaces and their tabs (ids, names, status, exit codes) on one explicit Matrix computer.",
+    inputSchema: ComputerInputSchema.shape,
+    annotations: readOnlyAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, workspaces: await client.listTerminalWorkspaces(),
+  }))));
+
+  server.registerTool("get_terminal_tab", {
+    description: "Show one terminal tab: live or finished, agent status (idle, working, done, blocked, error) and exit code.",
+    inputSchema: TerminalTabRefInputSchema.shape,
+    annotations: readOnlyAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.getTerminalTab(tabRef(input)) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("read_terminal_tab", {
+    description: "Read a terminal tab's screen plus up to `lines` lines of history as text, without attaching. lines 0 reads only the screen.",
+    inputSchema: ReadTerminalTabInputSchema.shape,
+    annotations: readOnlyAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.readTerminalTab(tabRef(input), input.lines ?? 0) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("send_terminal_tab", {
+    description: "Paste text into a terminal tab and press Enter. Waits for a person's unfinished draft. A conflict error means the agent is blocked on a person (read its screen; do not force past a permission prompt) or the tab finished.",
+    inputSchema: SendTerminalTabInputSchema.shape,
+    annotations: executionAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.sendTerminalTab(tabRef(input), {
+      text: input.text, ...(input.force ? { force: true } : {}),
+    }) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("press_terminal_keys", {
+    description: "Press named keys in a terminal tab: enter, esc, tab, shift+tab, backspace, space, delete, up, down, left, right, home, end, pageup, pagedown, f1-f12, ctrl+<a-z>, alt+<a-z>.",
+    inputSchema: PressTerminalKeysInputSchema.shape,
+    annotations: executionAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.pressTerminalKeys(tabRef(input), input.keys) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("interrupt_terminal_tab", {
+    description: "Press the stop key in a terminal tab: Esc for an agent that reports status (stops its turn), otherwise Ctrl+C. Never escalates; returns `observed`, the status or exit seen within 5 s (null if nothing changed).",
+    inputSchema: TerminalTabRefInputSchema.shape,
+    annotations: executionAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.interruptTerminalTab(tabRef(input)) as Record<string, unknown>),
+  }))));
 
   server.registerTool("list_files", {
     description: "List a bounded Matrix-home directory on one explicit Matrix computer.",
