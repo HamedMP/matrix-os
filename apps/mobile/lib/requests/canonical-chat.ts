@@ -1,5 +1,6 @@
 import {
   chatMessageVersionUrl,
+  chatReadStateVersionUrl,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -254,7 +255,9 @@ export async function updateChatReadState(
   const chat = CanonicalChatIdSchema.safeParse(chatId);
   const body = CanonicalUpdateChatReadStateRequestSchema.safeParse(request);
   const url = chat.success && body.success
-    ? gatewayRequestUrl(computerGatewayUrl, `/api/chats/${encodeURIComponent(chat.data)}/read-state`)
+    ? gatewayRequestUrl(computerGatewayUrl, `/api/chats/${encodeURIComponent(chat.data)}/read-state`, {
+      readStateVersion: READ_STATE_VERSION,
+    })
     : null;
   if (!url || !body.success) throw new Error(READ_STATE_ERROR);
   return fetchAuthenticatedJson({
@@ -298,11 +301,13 @@ export function fetchChatDetail(
 ): Promise<CanonicalChatDetailResponse> {
   let url: string;
   try {
-    url = chatMessageVersionUrl(buildGatewayRequestUrl(
+    // Without readStateVersion the gateway leaves the read state out, and the
+    // chat screen could not mark the chat read.
+    url = chatReadStateVersionUrl(chatMessageVersionUrl(buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
       { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
-    ));
+    )));
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }

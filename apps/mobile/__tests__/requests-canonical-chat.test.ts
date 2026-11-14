@@ -1,4 +1,4 @@
-import { projectChatMessageResponse } from "@matrix-os/contracts";
+import { projectChatMessageResponse, projectChatReadStateResponse } from "@matrix-os/contracts";
 import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 import {
   cancelChatRun,
@@ -431,8 +431,38 @@ describe("complete question detail", () => {
   });
 });
 
+// The gateway leaves a chat's read state out unless the request asks for it.
+function respondAsGateway(body: unknown) {
+  return async (input: string | URL | Request) => {
+    const asked = new URL(String(input)).searchParams.get("readStateVersion") === "1" ? "1" : "0";
+    return respond(projectChatReadStateResponse(body, asked));
+  };
+}
+
+describe("chat detail read state", () => {
+  beforeEach(() => jest.restoreAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("asks for the chat's read state, which the chat screen acknowledges", async () => {
+    const readState = { unread: true, markedUnread: false, version: 2, readThroughSeq: 1, latestIncomingSeq: 4 };
+    const detail = { record: chatRecord("chat_one", { readState }), messages: [], turns: [], runs: [], activities: [] };
+    jest.spyOn(global, "fetch").mockImplementation(respondAsGateway(detail));
+
+    const parsed = await fetchChatDetail(token, gatewayUrl, "chat_one");
+
+    expect(parsed.record.readState).toEqual(readState);
+  });
+});
+
 describe("updateChatReadState", () => {
   const readState = { unread: false, markedUnread: false, version: 3, readThroughSeq: 4, latestIncomingSeq: 4 };
+
+  it("gets back the read state it wrote", async () => {
+    jest.spyOn(global, "fetch").mockImplementation(respondAsGateway(chatRecord("chat_one", { readState })));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .resolves.toMatchObject({ readState });
+  });
 
   beforeEach(() => {
     jest.restoreAllMocks();
@@ -446,7 +476,7 @@ describe("updateChatReadState", () => {
     await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
       .resolves.toMatchObject({ chat: { id: "chat_one" }, readState });
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/vm/alice/api/chats/chat_one/read-state",
+      "https://app.matrix-os.com/vm/alice/api/chats/chat_one/read-state?readStateVersion=1",
       expect.objectContaining({
         method: "PATCH",
         headers: { Authorization: "Bearer clerk-token", "Content-Type": "application/json" },
