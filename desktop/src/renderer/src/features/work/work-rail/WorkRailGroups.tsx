@@ -1,14 +1,17 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
-import { AgentAvatar, type BotConversationSummary } from "@matrix-os/ui";
+import { AgentAvatar, filterChatsByImportSource, type BotConversationSummary, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
+import { useWorkRailPage } from "./useWorkRailPage";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
 import { Plus } from "lucide-react";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
-export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest }: {
+export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest,
+  client = null, scopeKey = "", navigationUpdatedAt = 0, sourceFilter = "all", orderRows, registerVisibleChats }: {
   model: WorkRailModel;
   activeChatId?: string;
   sections: Record<WorkRailSectionKey, boolean>;
@@ -21,18 +24,39 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   organizationDrives: ReactNode;
   sharedProjects: readonly CollaborationProjectOverview[];
   revealSharedProjectRequest?: { scopeId: string; requestId: number };
+  client?: CanonicalChatClient | null;
+  scopeKey?: string;
+  navigationUpdatedAt?: number;
+  sourceFilter?: ChatImportSourceFilterValue;
+  orderRows?: (rows: readonly ChatNavigationRecord[]) => ChatNavigationRecord[];
+  registerVisibleChats?: (ids: readonly string[]) => void;
 }) {
   const pendingBots = bots.filter(bot => bot.pendingApprovalCount > 0);
+  const pinnedPage = useWorkRailPage(client, { group: "pinned" }, scopeKey, navigationUpdatedAt, 10);
+  const needsPage = useWorkRailPage(client, { group: "needsYou" }, scopeKey, navigationUpdatedAt, 10);
+  const workingPage = useWorkRailPage(client, { group: "working" }, scopeKey, navigationUpdatedAt, 10);
+  const donePage = useWorkRailPage(client, { group: "done" }, scopeKey, navigationUpdatedAt, 10);
+  const rows = (page: typeof pinnedPage, fallback: ChatNavigationRecord[]) => client?.navigationPage && (page.rows.length || !page.loading && !page.error)
+    ? (orderRows?.(filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) ?? filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) : fallback.slice(0, 10);
+  const pinned = rows(pinnedPage, model.pinned);
+  const needsYou = rows(needsPage, model.needsYou);
+  const working = rows(workingPage, model.working);
+  const done = rows(donePage, model.doneDisplay);
+  const visibleIds = [...pinned, ...needsYou, ...working, ...done].map(record => record.chat.id).join("\0");
+  useEffect(() => { registerVisibleChats?.(visibleIds.split("\0").filter(Boolean)); }, [registerVisibleChats, visibleIds]);
+  const count = (page: typeof pinnedPage, fallback: number) => client?.navigationPage && !page.error && (!page.loading || page.rows.length) ? page.count : fallback;
+  const more = (page: typeof pinnedPage, label: string) => page.cursor ? <button type="button" aria-label={`Show more ${label} chats`}
+    className="rounded-[8px] px-2.5 py-1 text-left text-xs" disabled={page.loading} onClick={page.loadMore}>Show more</button> : null;
   return <>
 
-        {model.pinned.length + model.pinnedProjects.length > 0 ? <WorkRailSection
+        {pinned.length + model.pinnedProjects.length > 0 || pinnedPage.cursor ? <WorkRailSection
           label="Pinned"
-          count={model.pinned.length + model.pinnedProjects.length}
+          count={count(pinnedPage, model.pinned.length) + model.pinnedProjects.length}
           expanded={sections.pinned}
           onToggle={() => onToggle("pinned")}
         >
           {model.pinnedProjects.map(renderProject)}
-          {model.pinned.map((record) => renderChat(record, "pinned"))}
+          {pinned.map((record) => renderChat(record, "pinned"))}{more(pinnedPage, "Pinned")}
         </WorkRailSection> : null}
 
         <WorkRailSection
@@ -47,8 +71,8 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
           {organizationDrives}
         </WorkRailSection>
 
-        <WorkRailSection label="Needs you" attention count={model.needsYou.length + pendingBots.length} expanded={sections.needsYou} onToggle={() => onToggle("needsYou")}>
-          {model.needsYou.map(record => renderChat(record, "recent"))}
+        <WorkRailSection label="Needs you" attention count={count(needsPage, model.needsYou.length) + pendingBots.length} expanded={sections.needsYou} onToggle={() => onToggle("needsYou")}>
+          {needsYou.map(record => renderChat(record, "recent"))}{more(needsPage, "Needs you")}
           {pendingBots.map(bot => <button
             key={bot.chatId} type="button" aria-label={`Review ${bot.name} approval`} aria-current={activeChatId === bot.chatId ? "page" : undefined}
             disabled={!onOpenBotChat} className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
@@ -58,11 +82,11 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
             <span aria-label={`${bot.pendingApprovalCount} pending approvals`} className="text-xs tabular-nums">{bot.pendingApprovalCount}</span>
           </button>)}
         </WorkRailSection>
-        <WorkRailSection label="Working" count={model.working.length} expanded={sections.working} onToggle={() => onToggle("working")}>
-          {model.working.map(record => renderChat(record, "recent"))}
+        <WorkRailSection label="Working" count={count(workingPage, model.working.length)} expanded={sections.working} onToggle={() => onToggle("working")}>
+          {working.map(record => renderChat(record, "recent"))}{more(workingPage, "Working")}
         </WorkRailSection>
-        <WorkRailSection label="Done" count={model.doneDisplay.length} expanded={sections.done} onToggle={() => onToggle("done")}>
-          {model.doneDisplay.map(record => renderChat(record, "recent"))}
+        <WorkRailSection label="Done" count={count(donePage, model.doneDisplay.length)} expanded={sections.done} onToggle={() => onToggle("done")}>
+          {done.map(record => renderChat(record, "recent"))}{more(donePage, "Done")}
         </WorkRailSection>
   </>;
 }

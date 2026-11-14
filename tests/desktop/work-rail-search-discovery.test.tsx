@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkRailSearchDialog } from "@desktop/renderer/src/features/work/WorkRailSearchDialog";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 const api = vi.hoisted(() => ({ get: vi.fn(), release: vi.fn() }));
@@ -36,6 +37,50 @@ const acceptedProject = (withOverview: boolean) => ({
   },
 });
 describe("Work search discovery", () => {
+  it("loads older archived chats beyond the first result page", async () => {
+    const record = (id: string) => ({ chat: { id, title: id, lifecycle: "archived", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } });
+    const list = vi.fn(async (input: { cursor?: string }) => input.cursor
+      ? { items: [record("chat_older")], nextCursor: null }
+      : { items: [record("chat_recent")], nextCursor: "cursor_next" });
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={{ list } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    expect(await screen.findByRole("option", { name: "chat_recent, Global" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show more results" }));
+    expect(await screen.findByRole("option", { name: "chat_older, Global" })).toBeTruthy();
+    expect(list).toHaveBeenCalledWith({ lifecycle: "archived", limit: 50, cursor: "cursor_next" });
+  });
+  it("keeps project-name chat matches alongside full-history server search", async () => {
+    const record = { chat: { id: "chat_project_match", title: "Untitled", lifecycle: "active", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" }, projectId: project.id };
+    const search = vi.fn(async () => ({ items: [], nextCursor: null }));
+    render(<WorkRailSearchDialog open records={[record] as never} projects={[project]} status="ready" client={{ search } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "Alpha" } });
+    await waitFor(() => expect(search).toHaveBeenCalled());
+    expect(screen.getByRole("option", { name: "Untitled, Alpha" })).toBeTruthy();
+  });
+  it("restores a selected archived chat and confirms permanent deletion", async () => {
+    const archived = { chat: { id: "chat_old", title: "Old chat", lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
+    const list = vi.fn(async () => ({ items: [archived] }));
+    const updateLifecycle = vi.fn(async () => ({ ...archived, chat: { ...archived.chat, lifecycle: "active", revision: 4 } }));
+    const remove = vi.fn(async () => ({ chatId: "chat_old", deletedAt: "2026-11-12T01:00:00.000Z" }));
+    const client = { list, updateLifecycle, delete: remove } as unknown as CanonicalChatClient;
+    const changed = vi.fn();
+    const props = { records: [], projects: [], status: "ready" as const, client, onClose: vi.fn(), onSelect: vi.fn(), onArchiveChanged: changed };
+    const view = render(<WorkRailSearchDialog open {...props}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Old chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore selected" }));
+    await waitFor(() => expect(updateLifecycle).toHaveBeenCalledWith("chat_old", { baseRevision: 3, lifecycle: "active" }));
+    expect(changed).toHaveBeenCalled();
+    view.rerender(<WorkRailSearchDialog open={false} {...props}/>);
+    view.rerender(<WorkRailSearchDialog open {...props}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Old chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(screen.getByText(/permanently deletes/)).toBeTruthy();
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("chat_old", expect.stringMatching(/^req_/)));
+  });
   it("hides shared discovery after a complete listing confirms no organizations", () => {
     useConnection.setState({ organizationId: null, organizationStatus: "none" });
 

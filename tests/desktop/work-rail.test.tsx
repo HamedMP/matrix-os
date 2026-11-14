@@ -66,11 +66,14 @@ const beta: Project = { id: "project_beta_id", slug: "beta", name: "Beta", kind:
 const pinned = record("chat_pinned", "Pinned global", { pinned: true, updatedAt: "2026-08-28T12:00:00.000Z" });
 const projectChat = record("chat_alpha", "Alpha chat", { projectId: "project_alpha_id", updatedAt: "2026-08-28T11:00:00.000Z" });
 const recent = record("chat_recent", "Recent global", { updatedAt: "2026-08-28T10:00:00.000Z" });
+const chatRowIn = (name: string, placement: string) => screen.queryAllByRole("button", { name })
+  .find(button => button.closest("[data-placement]")?.getAttribute("data-placement") === placement);
 
 function setup() {
   const records = [pinned, projectChat, recent];
   const client = {
     list: vi.fn(async () => ({ items: records })),
+    search: vi.fn(async (query: string) => ({ items: records.filter(item => item.chat.title.toLowerCase().includes(query.toLowerCase())) })),
     delete: vi.fn(async (chatId: string) => ({
       chatId,
       deletedAt: "2026-08-28T13:00:00.000Z",
@@ -231,10 +234,12 @@ describe("WorkRail", () => {
   it("keeps Project disclosure independent from selecting the Project", async () => {
     const { actions } = setup();
     fireEvent.click(await screen.findByRole("button", { name: "Expand Alpha chats" }));
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
     expect(actions.onSelectProject).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Collapse Alpha chats" }));
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "project")).toBeUndefined();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
   });
 
   it("focuses the sidebar on a selected Project until the owner goes back", async () => {
@@ -252,7 +257,7 @@ describe("WorkRail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to all chats" }));
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
   });
 
   it("focuses the Project opened from search, and leaves focus for a Chat found elsewhere", async () => {
@@ -450,7 +455,7 @@ describe("WorkRail", () => {
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    const projectChatRow = screen.getByRole("button", { name: "Alpha chat" });
+    const projectChatRow = chatRowIn("Alpha chat", "project")!;
     const recentChat = screen.getByRole("button", { name: "Recent global" });
     const pinnedHeading = screen.getByRole("button", { name: "Pinned" });
     const projectsHeading = screen.getByRole("button", { name: "Projects" });
@@ -743,6 +748,7 @@ describe("WorkRail", () => {
     });
     const client = {
       list: vi.fn(async () => ({ items: [global, inProject] })),
+      search: vi.fn(async () => ({ items: [inProject, global] })),
     } as unknown as CanonicalChatClient;
     const actions = {
       onNewGlobalChat: vi.fn(),
@@ -757,7 +763,7 @@ describe("WorkRail", () => {
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     fireEvent.change(search, { target: { value: "deploy" } });
 
-    const projectResult = screen.getByRole("option", { name: "Deploy release, Alpha" });
+    const projectResult = await screen.findByRole("option", { name: "Deploy release, Alpha" });
     const globalResult = screen.getByRole("option", { name: "Deploy release, Global" });
     expect(projectResult.getAttribute("aria-selected")).toBe("true");
     expect(globalResult.getAttribute("aria-selected")).toBe("false");
@@ -783,7 +789,7 @@ describe("WorkRail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     fireEvent.change(search, { target: { value: "alpha" } });
-    fireEvent.click(screen.getByRole("option", { name: "Alpha chat, Alpha" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Alpha chat, Alpha" }));
 
     await waitFor(()=>expect(actions.onSelectChat).toHaveBeenCalledWith(projectChat, alpha));
     expect(screen.queryByRole("dialog", { name: "Search chats" })).toBeNull();
@@ -995,14 +1001,15 @@ describe("WorkRail", () => {
     setup();
     expect(await screen.findByRole("button", { name: "Pinned global" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeUndefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
     expect(screen.queryByRole("button", { name: "Pinned global" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
@@ -1026,7 +1033,7 @@ describe("WorkRail", () => {
     expect(compose.parentElement?.className).toContain("work-rail-project-actions");
     fireEvent.click(compose);
     fireEvent.click(screen.getByRole("button", { name: "Hide Chat navigation" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
+    fireEvent.click(chatRowIn("Alpha chat", "project")!);
 
     expect(actions.onNewGlobalChat).toHaveBeenCalledOnce();
     expect(actions.onCreateProject).toHaveBeenCalledOnce();
@@ -1332,7 +1339,10 @@ describe("WorkRail", () => {
     fireEvent.contextMenu(screen.getByRole("button",{name:"Recent global"}));
     fireEvent.keyDown(await screen.findByRole("menuitem",{name:"Move to project"}),{key:"ArrowRight"});
     fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("project"));
+    await waitFor(()=>expect(client.updateProject).toHaveBeenCalledTimes(2));
+    expect(await screen.findAllByRole("button", { name: "Recent global" })).toHaveLength(2);
+    expect(chatRowIn("Recent global", "project")).toBeTruthy();
+    expect(chatRowIn("Recent global", "recent")).toBeTruthy();
     expect(client.updateProject).toHaveBeenLastCalledWith("chat_recent",{baseRevision:1,projectId:alpha.id});
   });
 

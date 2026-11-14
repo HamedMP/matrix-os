@@ -1,6 +1,6 @@
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { CanonicalChatNavigationResponseSchema, CanonicalChatNavigationPageQuerySchema, CanonicalChatNavigationPageResponseSchema, CanonicalSideChatSnapshotSchema, CanonicalSideChatTurnRequestSchema, type CanonicalChatNavigationResponse, type CanonicalChatNavigationPageQuery, type CanonicalChatNavigationPageResponse, type CanonicalSideChatSnapshot, type CanonicalSideChatTurnRequest } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
@@ -38,6 +38,7 @@ import {
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatLifecycleRequestSchema,
   CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   type CanonicalChatDetailResponse,
@@ -64,6 +65,7 @@ import {
   type CanonicalSubmitChatApprovalRequest,
   type CanonicalRetryChatTurnRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatLifecycleRequest,
   type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -99,6 +101,8 @@ const CanonicalChatListInputSchema = z.object({
 const CanonicalChatSearchInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.nullable().optional(),
+  lifecycle: z.enum(["active", "archived"]).optional(),
+  cursor: CanonicalChatApiCursorSchema.optional(),
 }).strict();
 
 const CanonicalChatDetailInputSchema = z.object({
@@ -133,6 +137,7 @@ export interface CanonicalChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
   navigation?(): Promise<CanonicalChatNavigationResponse>;
+  navigationPage(input: CanonicalChatNavigationPageQuery): Promise<CanonicalChatNavigationPageResponse>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
     query: string,
@@ -140,6 +145,11 @@ export interface CanonicalChatClient {
   ): Promise<CanonicalChatListResponse>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
+  updateLifecycle(chatId: string, input: CanonicalUpdateChatLifecycleRequest): Promise<CanonicalChatRecord>;
+  archiveProjectChats(projectId: string): Promise<{ archivedIds: string[]; archived: Array<{ chatId: string; revision: number }>; skippedIds: string[]; archivedCount: number; skippedCount: number }>;
+  getSideChat(chatId: string): Promise<CanonicalSideChatSnapshot>;
+  createSideChat(chatId: string): Promise<CanonicalSideChatSnapshot>;
+  askSideChat(chatId: string, input: CanonicalSideChatTurnRequest): Promise<CanonicalSideChatSnapshot>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
@@ -237,7 +247,13 @@ export function createCanonicalChatClient(
           : transport.patch(path, body)),
     async navigation() {
       markChatNavigation("request");
-      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));
+      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=100", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));
+    },
+    async navigationPage(input) {
+      const query = CanonicalChatNavigationPageQuerySchema.parse(input);
+      return CanonicalChatNavigationPageResponseSchema.parse(await transport.get(withQuery("/api/chat-navigation/page", {
+        group: query.group, projectId: query.projectId, limit: query.limit, cursor: query.cursor,
+      })));
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");
@@ -261,6 +277,8 @@ export function createCanonicalChatClient(
         limit: parsed.limit,
         projectId: parsed.projectId ?? undefined,
         scope: parsed.projectId === null ? "global" : undefined,
+        lifecycle: parsed.lifecycle,
+        cursor: parsed.cursor,
       }));
       return CanonicalChatListResponseSchema.parse(response);
     },
@@ -277,6 +295,35 @@ export function createCanonicalChatClient(
         `/api/chats/${encodeURIComponent(parsedChatId)}/project`,
         request,
       ));
+    },
+
+    async updateLifecycle(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatLifecycleRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await api.patch(`/api/chats/${encodeURIComponent(id)}/lifecycle`, body));
+    },
+
+    async archiveProjectChats(projectId) {
+      const id = CanonicalCreateChatRequestSchema.shape.projectId.unwrap().parse(projectId);
+      return z.object({
+        archivedIds: z.array(CanonicalChatIdSchema).max(10000),
+        archived: z.array(z.object({ chatId: CanonicalChatIdSchema, revision: z.number().int().nonnegative() }).strict()).max(10000),
+        skippedIds: z.array(CanonicalChatIdSchema).max(10000),
+        archivedCount: z.number().int().nonnegative(), skippedCount: z.number().int().nonnegative(),
+      }).strict().parse(await api.post(`/api/projects/${encodeURIComponent(id)}/chats/archive`, {}));
+    },
+    async getSideChat(chatId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      return CanonicalSideChatSnapshotSchema.parse(await api.get(`/api/chats/${encodeURIComponent(id)}/side-chat`));
+    },
+    async createSideChat(chatId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      return CanonicalSideChatSnapshotSchema.parse(await api.post(`/api/chats/${encodeURIComponent(id)}/side-chat`, {}));
+    },
+    async askSideChat(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalSideChatTurnRequestSchema.parse(input);
+      return CanonicalSideChatSnapshotSchema.parse(await api.post(`/api/chats/${encodeURIComponent(id)}/side-chat/turns`, body, { timeoutMs: 100_000 }));
     },
 
     async updateTitle(chatId, input) {

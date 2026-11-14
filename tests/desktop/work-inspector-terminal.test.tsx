@@ -10,6 +10,7 @@ import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/rend
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/chat-inspector-layout";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -115,6 +116,56 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("keeps a saved terminal tab while a cached summary is being refreshed", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1 });
+    const sessionId = refKey("terminal_live");
+    const id = `terminal:${sessionId}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_cached");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+    let finishRefresh: (() => void) | undefined;
+    const refresh = vi.fn(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
+    useCodingAgentWorkspace.setState({ refresh });
+
+    render(<WorkFilesInspector detail={detail("chat_cached", "terminal_live")} projects={[]} active />);
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+
+    act(() => {
+      useCodingAgentWorkspace.setState({ summary: summary([terminal("terminal_live")]), summaryRevision: 2 });
+      finishRefresh?.();
+    });
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+  });
+  it("removes saved terminal tabs that are absent after session discovery", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: "terminal:missing", openTabIds: ["files", "terminal:missing"] });
+    render(<WorkFilesInspector detail={detail("chat_stale")} projects={[]} active />);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+  });
+  it("removes a saved chat-bound terminal when discovery finds no live session", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
+    const id = `terminal:${refKey("terminal_missing")}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_bound_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+
+    render(<WorkFilesInspector detail={detail("chat_bound_stale", "terminal_missing")} projects={[]} active />);
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: refKey("terminal_missing") })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+  });
   it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
     const reveal = vi.fn();
     const { chatDetail, project } = projectDetail("chat_message");
@@ -227,7 +278,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
-  it("restores the selected file, folder expansion, filter, scroll and tree width after closing the inspector", async () => {
+  it("restores the selected file, folder expansion, filter, scroll and tree height after closing the inspector", async () => {
     const scope = { kind: "home" as const, chatId: "remember-files" };
     const api = useConnection.getState().api!;
     vi.mocked(api.get).mockImplementation(async (url: string) => url.startsWith("/api/files/list")
@@ -240,7 +291,7 @@ describe("Work Files and Terminal inspector", () => {
     const scroller = view.container.querySelector("[data-file-tree-scroll]") as HTMLElement;
     scroller.scrollTop = 165;
     fireEvent.scroll(scroller);
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowDown" });
     view.unmount();
     const persisted = localStorage.getItem("matrix-inspector-file-views-v1")!;
     useInspectorFileViews.setState({ views: [] });
@@ -250,7 +301,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
     expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
     fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
     view.unmount();
@@ -362,10 +413,53 @@ describe("Work Files and Terminal inspector", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
 
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+
     await waitFor(() => expect(useConnection.getState().api?.delete).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${refKey("terminal_first").split(":")[1]}`,
     ));
     await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+  });
+
+  it("keeps tabs opened while a confirmed terminal stop is pending", async () => {
+    let finishDelete!: () => void;
+    const deletion = new Promise<void>((resolve) => { finishDelete = resolve; });
+    vi.mocked(useConnection.getState().api!.delete).mockImplementation(async () => { await deletion; return {} as never; });
+    render(<WorkFilesInspector detail={detail("chat_pending_stop", "terminal_first")} projects={[]} active />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal terminal_first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Side chat" }));
+    expect(screen.getByRole("tab", { name: "Side chat" })).toBeTruthy();
+
+    await act(async () => finishDelete());
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("asks before stopping a restored terminal while session discovery is pending", () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "loading", summary: null });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_restored");
+    useChatInspectorLayout.getState().update(key, {
+      selectedTabId: `terminal:${refKey("terminal_first")}`,
+      openTabIds: ["files", `terminal:${refKey("terminal_first")}`],
+    });
+    render(<WorkFilesInspector detail={detail("chat_restored", "terminal_first")} projects={[]} active />);
+
+    fireEvent.click(screen.getByRole("button", { name: `Close ${refKey("terminal_first")} tab` }));
+
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("tab", { name: refKey("terminal_first") })).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
   });
 
   it("shows the file list alone until a preview opens and hides it for Terminal", async () => {
@@ -386,7 +480,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(screen.queryByRole("separator", { name: "Resize file list" })).toBeNull();
   });
 
-  it("resizes the file list beside an open preview with an accessible divider", async () => {
+  it("resizes the file tree above a full-width preview with an accessible divider", async () => {
     const { chatDetail, project } = projectDetail("chat_first");
     const { container } = render(<WorkFilesInspector detail={chatDetail} projects={[project]} active />);
 
@@ -394,12 +488,14 @@ describe("Work Files and Terminal inspector", () => {
     await screen.findByText("README");
 
     const panes = container.querySelector('[data-layout="split"]');
+    expect(panes?.classList.contains("flex-col")).toBe(true);
     expect(panes?.children[0]?.getAttribute("aria-label")).toBe("Files");
     expect(panes?.children[2]?.querySelector('[aria-label="File preview"]')).not.toBeNull();
     const divider = screen.getByRole("separator", { name: "Resize file list" });
-    expect(divider.getAttribute("aria-valuenow")).toBe("300");
-    fireEvent.keyDown(divider, { key: "ArrowRight" });
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(divider.getAttribute("aria-valuenow")).toBe("240");
+    fireEvent.keyDown(divider, { key: "ArrowDown" });
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
   });
 
   it("keeps a usable preview when the inspector becomes narrower", async () => {
@@ -412,10 +508,10 @@ describe("Work Files and Terminal inspector", () => {
     const callback = resizeObserverCallbacks.at(-1);
     expect(callback).toBeTypeOf("function");
     act(() => callback?.([{
-      contentRect: { width: 480 },
+      contentRect: { height: 360 },
     } as unknown as ResizeObserverEntry], {} as ResizeObserver));
 
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("232");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("192");
   });
 
   it("keeps one permanent Files tab and reselects it from the add menu", () => {
@@ -541,6 +637,7 @@ describe("Work Files and Terminal inspector", () => {
       useCodingAgentWorkspace.setState({
         status: "ready",
         summary: summary([terminal("terminal_new")]),
+        summaryRevision: useCodingAgentWorkspace.getState().summaryRevision + 1,
       });
     });
     useCodingAgentWorkspace.setState({ status: "ready", summary: summary([terminal("terminal_first")]), refresh });

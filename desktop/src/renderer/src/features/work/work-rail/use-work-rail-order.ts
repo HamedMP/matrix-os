@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
@@ -20,6 +20,12 @@ export function useWorkRailOrder(records: readonly ChatNavigationRecord[], proje
     setStored(current);
   }
   const preference = current.preference;
+  const visibleChatIds = useRef<string[]>([]);
+  const orderRows = (rows: readonly ChatNavigationRecord[]) => orderRailItems(rows.map(record => ({
+    id: record.chat.id, updatedAt: record.chat.activityAt ?? record.chat.createdAt,
+    createdAt: record.chat.createdAt, record,
+  })), preference.mode, preference.chatIds).map(item => item.record);
+  const registerVisibleChats = (ids: readonly string[]) => { visibleChatIds.current = ids.slice(0, 1000); };
   // Run progress changes updatedAt repeatedly; activityAt advances for new user work.
   const chats = useMemo(()=>orderRailItems(records.map(record=>({id:record.chat.id,updatedAt:record.chat.activityAt ?? record.chat.createdAt,createdAt:record.chat.createdAt,record})),preference.mode,preference.chatIds).map(item=>item.record),[records,preference]);
   const orderedProjects = useMemo(()=>orderRailItems(projects.map(project=>({id:project.id ?? project.slug,updatedAt:project.updatedAt,project})),preference.mode,preference.projectIds).map(item=>item.project),[projects,preference]);
@@ -37,7 +43,8 @@ export function useWorkRailOrder(records: readonly ChatNavigationRecord[], proje
     projectIds: preference.projectIds.length ? preference.projectIds : orderedProjects.map(project=>project.id ?? project.slug).slice(0,1000),
   });
   const move = (kind:"chat"|"project", source:string, target:string) => {
-    const chatIds = chats.map(record=>record.chat.id).slice(0,1000);
+    const displayedChatIds = [...new Set([...visibleChatIds.current, ...chats.map(record=>record.chat.id)])].slice(0,1000);
+    const chatIds = [...new Set([...displayedChatIds, ...preference.chatIds])].slice(0,1000);
     const projectIds = orderedProjects.map(project=>project.id ?? project.slug).slice(0,1000);
     const ids = kind === "chat" ? chatIds : projectIds;
     if (source === target || !ids.includes(source) || !ids.includes(target)) return;
@@ -45,11 +52,11 @@ export function useWorkRailOrder(records: readonly ChatNavigationRecord[], proje
     // The other list may still be loading. Never replace its saved manual IDs
     // with a partial/empty snapshot merely because this list was reordered.
     save({mode:"manual",
-      chatIds: preference.mode === "manual" || !chatIds.length ? preference.chatIds : chatIds,
+      chatIds: preference.mode === "manual" || !displayedChatIds.length ? preference.chatIds : chatIds,
       projectIds: preference.mode === "manual" || !projectIds.length ? preference.projectIds : projectIds,
       [kind === "chat" ? "chatIds" : "projectIds"]:moveRailItem(ids,source,target)});
   };
-  return {chats,projects:orderedProjects,mode:preference.mode,setMode,move,scopeKey};
+  return {chats,projects:orderedProjects,mode:preference.mode,setMode,move,scopeKey,orderRows,registerVisibleChats};
 }
 
 function readPreference(scope: string | null): RailOrderPreference {
