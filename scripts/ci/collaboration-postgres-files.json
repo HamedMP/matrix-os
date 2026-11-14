@@ -4,6 +4,7 @@
   "tests/gateway/chat-navigation.test.ts",
   "tests/gateway/chat-provider-binding-postgres.test.ts",
   "tests/gateway/chat-provider-binding-reconciliation.test.ts",
+  "tests/gateway/claude-native-recovery-store.test.ts",
   "tests/gateway/collaboration-capabilities-postgres.test.ts",
   "tests/gateway/collaboration-chat-controls.test.ts",
   "tests/gateway/collaboration-chat-discussion-postgres.test.ts",

@@ -427,6 +427,24 @@ install_host_bin_payload() {
     fi
     sudo chmod 0644 "$BIN_DIR/matrix-browser-runtime.py" || return 1
   fi
+  protected_helper="$source_dir/matrix-claude-native-recovery.py"
+  if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
+    local recovery_dir=/usr/local/libexec/matrix-claude-native-recovery
+    [ ! -L "$recovery_dir" ] || return 1
+    sudo install -d -o root -g root -m 0755 "$recovery_dir" || return 1
+    destination="$recovery_dir/launch.py"
+    incoming="$recovery_dir/.launch.incoming.$$"
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid protected Claude recovery helper destination"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0644 "$protected_helper" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  fi
   protected_helper="$source_dir/matrix-postgres-start"
   if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
     sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
@@ -615,6 +633,7 @@ prepare_update_transaction() {
   record_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
   record_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
   record_update_file /usr/local/libexec/matrix-browser-runtime.py browser-helper || return 1
+  record_update_file /usr/local/libexec/matrix-claude-native-recovery/launch.py claude-native-recovery-helper || return 1
 
   if [ -L "$TERMINAL_RUNTIME_ROOT/current" ]; then
     current_target="$(readlink "$TERMINAL_RUNTIME_ROOT/current")" || return 1
@@ -726,6 +745,9 @@ restore_update_transaction() {
 
   if [ -f "$UPDATE_TRANSACTION_DIR/browser-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/browser-helper.missing" ]; then
     restore_update_file /usr/local/libexec/matrix-browser-runtime.py browser-helper || return 1
+  fi
+  if [ -f "$UPDATE_TRANSACTION_DIR/claude-native-recovery-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/claude-native-recovery-helper.missing" ]; then
+    restore_update_file /usr/local/libexec/matrix-claude-native-recovery/launch.py claude-native-recovery-helper || return 1
   fi
 
   if [ -f "$UPDATE_TRANSACTION_DIR/terminal-current" ]; then
