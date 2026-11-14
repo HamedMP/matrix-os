@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_INSTALLS, PACKAGE_MANAGER_INSTALLS, terminalNpmInstallCommand } from "./agent-install-matrix";
 import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
-import { TERMINAL_AGENT_OPTIONS, terminalAgentCreateOptions, terminalAgentInstallCommand, terminalAgentVisibleInstallCommand }
+import { TERMINAL_AGENT_OPTIONS, terminalAgentCreateOptions, terminalAgentInstallCommand, terminalAgentVisibleInstallCommand, terminalTabLaunchFields }
   from "../../packages/ui/src/terminal/agent-launch.js";
 
 const root = process.cwd();
@@ -30,6 +30,9 @@ describe("agent CLI install matrix", () => {
       for (const segment of terminalNpmInstallCommand(agent).split("; ")) expect(command).toContain(segment);
       const visible = terminalAgentVisibleInstallCommand(option);
       expect(terminalAgentCreateOptions(option, "install")).toEqual({ cmd: visible });
+      expect(visible).toContain('export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+      expect(visible).toMatch(/^sh -lc .*printf /);
+      expect(terminalTabLaunchFields({ cmd: visible })).toEqual({ command: ["sh", "-lc", visible] });
       expect(visible).not.toMatch(/matrix-install-tool-pack|MATRIX_INSTALL_TOOL_PACK/);
     }
 
