@@ -212,7 +212,7 @@
   "devDependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -230,7 +230,7 @@
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tar": "7.5.21",
+    "tar": "7.5.22",
     "tsx": "^4.21.0",
     "typescript": "5.9.3",
     "vite": "^6.4.4",
