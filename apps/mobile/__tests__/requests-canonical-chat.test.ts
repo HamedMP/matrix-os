@@ -9,6 +9,7 @@ import {
   fetchProjectChats,
   isChatUnread,
   searchChats,
+  updateChatReadState,
 } from "@/lib/requests/canonical-chat";
 
 const gatewayUrl = "https://app.matrix-os.com/vm/alice";
@@ -427,5 +428,48 @@ describe("complete question detail", () => {
 
     expect(requestedUrl(fetchMock).searchParams.get("runtime")).toBe("primary");
     expect(parsed.activities).toEqual([activity]);
+  });
+});
+
+describe("updateChatReadState", () => {
+  const readState = { unread: false, markedUnread: false, version: 3, readThroughSeq: 4, latestIncomingSeq: 4 };
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("patches the chat's read state and returns the chat as the server now has it", async () => {
+    const answer = chatRecord("chat_one", { readState });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond(answer));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .resolves.toMatchObject({ chat: { id: "chat_one" }, readState });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/alice/api/chats/chat_one/read-state",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: { Authorization: "Bearer clerk-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "mark_read", throughSeq: 4, baseVersion: 2 }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("does not call the server with an invalid chat id or request", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(updateChatReadState(token, gatewayUrl, "../chat", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: -1, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a refusal with the generic message only", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(respond({ error: { code: "read_state_conflict", safeMessage: "Stale." } }, 409));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
   });
 });

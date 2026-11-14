@@ -1,16 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
-// The shared derivation Desktop and Web use, so the three clients agree on
-// which state a chat is in and which state wins. It is reached by path
-// because `@matrix-os/ui` does not export it on its own: its main entry also
-// brings in the web components. Once the package exports this file (as
-// `@matrix-os/ui/chat-attention-state`), import it from there instead.
 import {
   resolveCanonicalChatAttention,
   resolveCanonicalChatLifecycleGroup,
   type CanonicalChatAttentionState,
-} from "../../../packages/ui/src/chat/attention-state";
-
+} from "@/lib/shared-chat-state";
 import type { StatusTone } from "@/components/ui/StatusDot";
 
 export type ChatStatusState = Exclude<CanonicalChatAttentionState, "idle">;
