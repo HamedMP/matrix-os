@@ -9,6 +9,7 @@ import {
   ConversationItem,
   type ConversationHandle,
 } from "../../desktop/src/renderer/src/features/chat/elements/conversation";
+import { UserMessage } from "../../desktop/src/renderer/src/components/conversation/user-message";
 
 // The MessageScroller contract as far as jsdom allows: scroll metrics are
 // mocked per test because jsdom reports every dimension as 0.
@@ -93,6 +94,39 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     metrics.scrollHeight = 800;
     fireContentResize();
     expect(el.scrollTop).toBe(100);
+  });
+
+  it("keeps a focused clipped link visible when its message expands at the live edge", () => {
+    const markdown = `${"Context before link. ".repeat(40)} [focused link](https://example.com) ${"More context. ".repeat(80)}`;
+    render(
+      <Conversation>
+        <ConversationContent>
+          <UserMessage message={{
+            kind: "message", id: "long-user", role: "user", phase: "commentary",
+            timestamp: 1000, markdown, copyText: markdown, content: [{ kind: "text", text: markdown }],
+          }} callbacks={{ copyText: vi.fn() }} />
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    const metrics = { scrollHeight: 1000, clientHeight: 200 };
+    mockMetrics(el, metrics);
+    fireContentResize();
+    expect(el.scrollTop).toBe(800);
+
+    const preview = document.querySelector('[data-message-preview-content]') as HTMLElement;
+    const link = screen.getByRole("link", { name: "focused link" });
+    vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({ bottom: 100 } as DOMRect);
+    vi.spyOn(link, "getBoundingClientRect").mockReturnValue({ bottom: 150 } as DOMRect);
+    const revealFocusedLink = vi.fn(() => { el.scrollTop = 200; });
+    Object.defineProperty(link, "scrollIntoView", { configurable: true, value: revealFocusedLink });
+
+    fireEvent.focus(link);
+    expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
+    expect(revealFocusedLink).toHaveBeenCalledWith({ block: "nearest" });
+    metrics.scrollHeight = 1600;
+    fireContentResize();
+    expect(el.scrollTop).toBe(200);
   });
 
   it("lets the browser anchor an unpinned reader when nested content grows", () => {
