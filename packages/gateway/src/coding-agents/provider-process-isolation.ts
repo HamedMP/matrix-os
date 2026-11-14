@@ -1,7 +1,9 @@
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { Readable, Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const SYSTEMD_RUN_PATH = "/usr/bin/systemd-run";
@@ -14,6 +16,8 @@ const PROVIDER_MEMORY_MAX = "1536M";
 const PROVIDER_TASKS_MAX = "1024";
 const SYSTEMCTL_TIMEOUT_MS = 5_000;
 const MAX_STALE_PROVIDER_SCOPES = 100;
+const SCOPE_CLOSE_PROBE_TIMEOUT_MS = 1_250;
+const CGROUP_ROOT = "/sys/fs/cgroup";
 
 export interface ProviderProcessLaunchInput {
   command: string;
@@ -149,6 +153,68 @@ export async function cleanupStaleIsolatedProviderProcesses(options: IsolationPr
   }
 }
 
+function populated(events: string): "0" | "1" | undefined {
+  const entries = events.match(/^populated [01]$/gm);
+  if (entries?.length !== 1) return undefined;
+  return entries[0] === "populated 0" ? "0" : "1";
+}
+
+/** Require both the exact manager unit and kernel subtree to be drained before releasing recovery ownership. */
+export async function probeProviderScopeClosed(input: { unitName: string; uid: number }, dependencies: {
+  runCommand?: SystemctlRun;
+  readEvents?: (path: string) => Promise<string>;
+} = {}): Promise<boolean> {
+  const scopeName = `${input.unitName}.scope`;
+  if (!PROVIDER_SCOPE_PATTERN.test(scopeName) || !Number.isSafeInteger(input.uid) || input.uid <= 0) return false;
+  const managerGroup = `/user.slice/user-${input.uid}.slice/user@${input.uid}.service`;
+  const scopeGroup = `${managerGroup}/matrix.slice/matrix-terminal.slice/${scopeName}`;
+  const run = dependencies.runCommand ?? defaultSystemctlRun;
+  const read = dependencies.readEvents ?? (path => readFile(path, {
+    encoding: "utf8", signal: AbortSignal.timeout(SCOPE_CLOSE_PROBE_TIMEOUT_MS),
+  }));
+
+  try {
+    const shown = await run(SYSTEMCTL_PATH, ["--user", "show", "--all",
+      "--property=Id,LoadState,ActiveState,SubState,Slice,ControlGroup", "--", scopeName], {
+      env: userSystemdEnvironment(`/run/user/${input.uid}`, {}),
+      timeout: SCOPE_CLOSE_PROBE_TIMEOUT_MS, encoding: "utf8", maxBuffer: 4_096,
+    });
+    if (shown.stderr.trim()) return false;
+    const properties = new Map<string, string>();
+    for (const line of shown.stdout.trim().split("\n")) {
+      const separator = line.indexOf("=");
+      const name = line.slice(0, separator);
+      if (separator < 1 || properties.has(name)) return false;
+      properties.set(name, line.slice(separator + 1));
+    }
+    if (properties.get("Id") !== scopeName || properties.get("ActiveState") !== "inactive"
+      || properties.get("SubState") !== "dead") return false;
+    const load = properties.get("LoadState"), slice = properties.get("Slice"), group = properties.get("ControlGroup");
+    if (!(load === "loaded" && slice === "matrix-terminal.slice"
+      || load === "not-found" && !slice) || group && group !== scopeGroup) return false;
+    if (populated(await read(`${CGROUP_ROOT}${managerGroup}/cgroup.events`)) === undefined) return false;
+    try {
+      return populated(await read(`${CGROUP_ROOT}${scopeGroup}/cgroup.events`)) === "0";
+    } catch (error: unknown) {
+      // A collected group may disappear after systemctl returns. The readable
+      // owner cgroup above distinguishes that from an unavailable cgroup mount.
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+      throw error;
+    }
+  } catch (error: unknown) {
+    console.warn("[coding-agents] provider scope close proof unavailable", typeof error);
+    return false;
+  }
+}
+
+type ProviderStdio<In extends "ignore" | "pipe"> = [In, "pipe", "pipe"] | readonly [In, "pipe", "pipe", "pipe"];
+type ProviderSpawnOptions<In extends "ignore" | "pipe"> = {
+  cwd: string; env: Record<string, string>; stdio: ProviderStdio<In>; requireIsolation?: boolean;
+};
+type ScopedProviderProcess<In extends Writable | null> = ChildProcessByStdio<In, Readable, Readable> & {
+  confirmScopeClosed?(): Promise<boolean>;
+};
+
 /**
  * Provider CLIs can be substantially larger than the Gateway itself. On a
  * customer VPS, move them into the bounded user workload slice so the
@@ -159,39 +225,54 @@ export async function cleanupStaleIsolatedProviderProcesses(options: IsolationPr
  */
 export function spawnIsolatedProviderProcess(
   command: string, args: string[],
-  options: { cwd: string; env: Record<string, string>; stdio: ["ignore", "pipe", "pipe"] },
-): ChildProcessByStdio<null, Readable, Readable>;
+  options: ProviderSpawnOptions<"ignore">,
+): ScopedProviderProcess<null>;
 export function spawnIsolatedProviderProcess(
   command: string, args: string[],
-  options: { cwd: string; env: Record<string, string>; stdio: ["pipe", "pipe", "pipe"] },
-): ChildProcessByStdio<Writable, Readable, Readable>;
+  options: ProviderSpawnOptions<"pipe">,
+): ScopedProviderProcess<Writable>;
 export function spawnIsolatedProviderProcess(
   command: string, args: string[],
-  options: { cwd: string; env: Record<string, string>; stdio: ["ignore" | "pipe", "pipe", "pipe"] },
-): ChildProcessByStdio<Writable | null, Readable, Readable>;
+  options: ProviderSpawnOptions<"ignore" | "pipe">,
+): ScopedProviderProcess<Writable | null>;
 export function spawnIsolatedProviderProcess(
   command: string,
   args: string[],
-  options: {
-    cwd: string;
-    env: Record<string, string>;
-    stdio: ["ignore" | "pipe", "pipe", "pipe"];
-  },
-): ChildProcessByStdio<Writable | null, Readable, Readable> {
+  options: ProviderSpawnOptions<"ignore" | "pipe">,
+): ScopedProviderProcess<Writable | null> {
   const launch = buildIsolatedProviderLaunch({ command, args, env: options.env });
+  if (options.requireIsolation && !launch.isolated) throw new Error("Provider process isolation unavailable");
   const spawnOptions = { cwd: options.cwd, env: launch.env, detached: launch.isolated };
-  const child = options.stdio[0] === "pipe"
-    ? spawn(launch.command, launch.args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] })
-    : spawn(launch.command, launch.args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] });
+  const child: ScopedProviderProcess<Writable | null> = options.stdio[0] === "pipe"
+    ? spawn(launch.command, launch.args, { ...spawnOptions, stdio: options.stdio.length === 4 ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"] })
+    : spawn(launch.command, launch.args, { ...spawnOptions, stdio: options.stdio.length === 4 ? ["ignore", "pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"] }) as ChildProcessByStdio<null, Readable, Readable>;
   if (!launch.isolated) return child;
+
+  const uid = process.getuid?.();
+  if (uid !== undefined && launch.unitName) {
+    const identity = { unitName: launch.unitName, uid };
+    let closed = false;
+    child.once("close", () => { closed = true; });
+    child.confirmScopeClosed = async () => {
+      if (!closed) return false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (await probeProviderScopeClosed(identity)) return true;
+        if (attempt < 2) await delay(100);
+      }
+      return false;
+    };
+  }
 
   const directKill = child.kill.bind(child);
   child.kill = ((signal?: number | NodeJS.Signals) => {
-    if (launch.unitName) {
+    if (uid !== undefined && launch.unitName) {
       try {
         const stop = spawn(SYSTEMCTL_PATH, ["--user", "stop", `${launch.unitName}.scope`], {
-          env: launch.env,
+          env: userSystemdEnvironment(`/run/user/${uid}`, {}),
           stdio: "ignore",
+        });
+        stop.on("error", (error: unknown) => {
+          console.warn("[coding-agents] provider scope stop failed", typeof error);
         });
         stop.unref();
       } catch (error: unknown) {

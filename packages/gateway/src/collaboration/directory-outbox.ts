@@ -196,6 +196,8 @@ export class CollaborationDirectoryOutbox {
           "scope.organization_id",
           "scope.parent_scope_id",
           "scope.membership_mode",
+          "scope.kind",
+          "scope.lifecycle",
           "event.revision",
           "event.event_type",
           "app_binding.catalog_id as app_catalog_id",
@@ -309,8 +311,14 @@ export class CollaborationDirectoryOutbox {
           organizationId: row.organization_id ?? null,
           audience: currentMembershipApp
             ? "current_membership"
-            : row.organization_grant_id && !parentScopeId ? "organization" : null,
-          organizationGrantId: parentScopeId || currentMembershipApp ? null : row.organization_grant_id ?? null,
+            : !parentScopeId && (row.kind === "project"
+              ? row.lifecycle === "shared" || row.lifecycle === "archived"
+              : Boolean(row.organization_grant_id))
+              ? "organization"
+              : null,
+          organizationGrantId: parentScopeId || currentMembershipApp || row.kind === "project"
+            ? null
+            : row.organization_grant_id ?? null,
           parentScopeId,
           attempt,
           ...(appState && row.app_id && row.app_catalog_id && row.app_readiness_id

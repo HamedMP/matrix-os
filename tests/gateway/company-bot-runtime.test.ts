@@ -7,16 +7,18 @@ const scopeId="8047da35-382b-437c-8047-28bb5f59b52b";
 function setup(getGroupRevocation?: () => GroupBotRevocation | undefined, resolver?: ReturnType<typeof createSharedBotModelRouteResolver>){
   const source={accessSourceId:"owner_anthropic_key",providerInstanceId:"claude_default",harness:"claude_code",modelId:"claude-test"};
   const record={scopeId,chatId:"chat_company",status:"running",binding:{runId:"run_test",requestingActorId:"user_employee",executingOwnerId:"user_host",
-    source,policyRevision:"4",sessionGeneration:"2",executionRoot:{kind:"project",projectId:"project_company"},rootFingerprint:"a".repeat(64)}};
-  const policy={ownerId:"user_host",revision:"4",source,allowedModelIds:["claude-test"]};
-  const decision={policyRevision:"4",harness:"claude_code",providerInstanceId:"claude_default",accessSourceId:"owner_anthropic_key",allowedModelIds:["claude-test"],effectiveSubmitMode:"members"};
+    source,policyRevision:"4",providerSettingsRevision:"4",routeGeneration:"b".repeat(64),sessionGeneration:"2",
+    executionRoot:{kind:"project",projectId:"project_company"},rootFingerprint:"a".repeat(64)}};
+  const decision={authorityKind:"provider_settings_active",policyRevision:"4",settingsRevision:"4",routeGeneration:"b".repeat(64),
+    harness:"claude_code",providerInstanceId:"claude_default",providerAccessSourceId:"owner_anthropic_key",accessSourceId:"owner_anthropic_key",
+    allowedModelIds:["claude-test"],modelId:"claude-test",effectiveSubmitMode:"members"};
   const authorize=vi.fn().mockResolvedValue({scopeId,actorId:"user_employee",ownerId:"user_host",resourceId:"chat_company",resourceKind:"chat",organizationId:"org_company",capability:"request_ai"});
   const resolveModel=vi.fn().mockResolvedValue({route:{modelId:"claude-test"},accessSourceId:"owner_anthropic_key"});
   if(resolver)resolveModel.mockImplementation(resolver);
   const runtime=createCompanyBotRuntime({ownerId:"user_host",modelId:"claude-test",loadRun:vi.fn().mockResolvedValue(record),
-    authority:{authorize},policies:{resolve:vi.fn().mockResolvedValue(policy)},ownerSource:{prepare:vi.fn().mockResolvedValue(decision)},
+    authority:{authorize},ownerSource:{authority:vi.fn().mockImplementation(async()=>decision),prepare:vi.fn().mockImplementation(async()=>decision)},
     resolveModel,getGroupRevocation,getAdapter:()=>({driverKind:"matrix_bot"}) as never});
-  return{runtime,record,policy,decision,authorize,resolveModel};
+  return{runtime,record,decision,authorize,resolveModel};
 }
 describe("company Pi policy wiring",()=>{
   it.each(["excluded_model", "unsupported_harness", "unsupported_source"] as const)("does not advertise a company route that rejects %s before admission", async mismatch => {
@@ -50,11 +52,22 @@ describe("company Pi policy wiring",()=>{
     await runtime.resolveGroupRoute({ownerId:"user_host",chatId:"chat_company",runId:"run_test",group});
     expect(resolveModel).toHaveBeenCalledWith(expect.objectContaining({policyRevision:"4"}),"claude-test");
   });
-  it.each(["revision","source","model","actor","owner","chat","root"])("fails closed after %s changes",async(change)=>{
-    const {runtime,record,policy}=setup();
-    if(change==="revision")policy.revision="5";
-    if(change==="source")policy.source={...policy.source,accessSourceId:"other"};
-    if(change==="model")policy.allowedModelIds=[];
+  it("executes an admitted provider-settings project run without a legacy policy",async()=>{
+    const {runtime}=setup();
+    await expect(runtime.resolveGroupRun({ownerId:"user_host",chatId:"chat_company",runId:"run_test"}))
+      .resolves.toMatchObject({scopeId});
+  });
+  it("resolves the project Matrix bot driver from Provider Settings without a legacy policy",async()=>{
+    const {runtime}=setup();
+    await expect(runtime.matrixBot.resolvePolicyDriver({} as never,{} as never,{scopeId,ownerId:"user_host"} as never))
+      .resolves.toBe("claude_code");
+  });
+  it.each(["revision","route","source","model","actor","owner","chat","root"])("fails closed after %s changes",async(change)=>{
+    const {runtime,record,decision}=setup();
+    if(change==="revision")decision.settingsRevision="5";
+    if(change==="route")decision.routeGeneration="c".repeat(64);
+    if(change==="source")decision.providerAccessSourceId="other";
+    if(change==="model")decision.allowedModelIds=[];
     if(change==="actor")record.binding.requestingActorId="user_other";
     if(change==="owner")record.binding.executingOwnerId="user_other";
     if(change==="chat")record.chatId="chat_other";

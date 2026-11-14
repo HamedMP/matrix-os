@@ -7,6 +7,8 @@ import DesktopSurfaceFrame from "../../desktop/src/renderer/src/features/desktop
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import type { DesktopSurfaceMode } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
+import type { Tab } from "../../desktop/src/renderer/src/stores/tabs";
+import { invoke } from "../../desktop/src/renderer/src/lib/operator";
 
 const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
@@ -31,12 +33,12 @@ vi.mock("../../desktop/src/renderer/src/features/settings/SettingsView", () => (
 vi.mock("../../desktop/src/renderer/src/features/work/HostedWorkSidebar", () => ({ HostedWorkSidebar: () => null, HOSTED_WORK_SIDEBAR_WIDTH: 248 }));
 vi.mock("../../desktop/src/renderer/src/features/terminal/DesktopSharedTerminal", () => ({ DesktopSharedTerminal: () => null }));
 
-function ParentSurface({ presentation, mode, shown = true }: { presentation: "desktop" | "canvas"; mode: DesktopSurfaceMode; shown?: boolean }) {
+function ParentSurface({ presentation, mode, shown = true, tab = { id: "notes", kind: "app", title: "Notes", slug: "notes", closable: true } }: { presentation: "desktop" | "canvas"; mode: DesktopSurfaceMode; shown?: boolean; tab?: Tab }) {
   // MissionControl derives this same input from the real renderer overlay lease.
   const overlayOpen = useUi(state => state.rendererOverlayCount > 0);
   return <DesktopSurfaceFrame
-    tab={{ id: "notes", kind: "app", title: "Notes", slug: "notes" }}
-    surface={{ tabId: "notes", mode: shown ? mode : "minimized", restoreMode: mode === "tab" ? "tab" : "window", bounds: { x: 20, y: 20, width: 640, height: 480 }, zIndex: 1 }}
+    tab={tab}
+    surface={{ tabId: tab.id, mode: shown ? mode : "minimized", restoreMode: mode === "tab" ? "tab" : "window", bounds: { x: 20, y: 20, width: 640, height: 480 }, zIndex: 1 }}
     active={shown} tabWorkspaceActive={mode === "tab"} overlayOpen={overlayOpen} presentation={presentation}
     onFocus={() => undefined} onClose={() => undefined} onMinimize={() => undefined}
     onMaximize={() => undefined} onBoundsChange={() => undefined}
@@ -44,15 +46,30 @@ function ParentSurface({ presentation, mode, shown = true }: { presentation: "de
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   useConnection.setState(useConnection.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
-  useConnection.setState({ runtimeSlot: "primary", api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+  useConnection.setState({ runtimeSlot: "primary", api: { forRuntime: () => ({ get: vi.fn(async () => null) }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 20, y: 20, left: 20, top: 20, right: 660, bottom: 500, width: 640, height: 480, toJSON: () => ({}) } as DOMRect);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("app publishing through the owning desktop surface", () => {
+  for (const [appIdentity, title] of [["matrix-browser", "Browser"], ["matrix-cloud-desktop", "Cloud desktop"]] as const) {
+    it.each([
+      ["desktop", "tab"],
+      ["desktop", "window"],
+      ["canvas", "window"],
+    ] as const)(`does not offer publishing for ${title} in %s %s`, async (presentation, mode) => {
+      render(<ParentSurface presentation={presentation} mode={mode} tab={{ id: appIdentity, kind: "app", title, slug: "browser-lab", appIdentity, closable: true }} />);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", expect.objectContaining({ kind: "app", slug: "browser-lab", appIdentity })));
+      expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
+      expect(publishing.client.get).not.toHaveBeenCalled();
+      expect(publishing.client.getConfig).not.toHaveBeenCalled();
+    });
+  }
+
   it.each([
     ["desktop", "tab"],
     ["desktop", "window"],

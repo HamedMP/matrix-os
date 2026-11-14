@@ -1,5 +1,4 @@
 import {
-  CollaborationGrantSchema,
   CollaborationProjectInventorySchema,
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
@@ -7,12 +6,8 @@ import {
   type CollaborationScope,
 } from "@matrix-os/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
-
-// react-doctor-disable-next-line react-doctor/zod-v4-no-deprecated-schema-apis -- imported from zod/v4; array max is the current bounded-array API and is verified by the package typecheck.
-const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 
 export const PROJECT_SHARING_UNAVAILABLE_MESSAGE = "Project sharing is unavailable. The project remains private and unchanged.";
 const ORGANIZATION_MISMATCH_MESSAGE = "This project is associated with another organization. Select that organization to manage sharing. Access has not changed.";
@@ -79,23 +74,6 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
     return next;
   };
 
-  /** First-time project sharing starts with the Figma baseline: everyone in the organization is an Editor. */
-  const ensureDefaultGrant = async (currentScope: CollaborationScope) => {
-    const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.id)}`;
-    const grants = GrantsSchema.parse(await api.get(`${base}/grants`));
-    // Any grant history means the owner already chose an audience. Revoked or expired
-    // grants must stay Restricted, rather than regain the organization default on reopen.
-    if (grants.length > 0) return currentScope;
-    await api.post(`${base}/grants`, {
-      clientRequestId: crypto.randomUUID(), expectedRevision: currentScope.revision,
-      audience: { kind: "organization" }, preset: "contributor",
-    });
-    // The revision-bound inventory read immediately after this mutation is the
-    // authoritative confirmation revision. Avoid an extra scope read here so
-    // publication polling remains the only post-confirmation scope reader.
-    return currentScope;
-  };
-
   const readInventoryState = async (scopeId: string) => {
     const next = CollaborationProjectInventorySchema.parse(await api.get(
       `/api/collaboration/scopes/${scopeId}/project/inventory`,
@@ -141,8 +119,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
           confirmationToken: preflight.confirmationToken,
         },
       )).id;
-      let refreshed = await refreshScope(scopeId);
-      if (refreshed.lifecycle === "private") refreshed = await ensureDefaultGrant(refreshed);
+      const refreshed = await refreshScope(scopeId);
       if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(scopeId);
       if (alive.current) setSurface("dialog");
     } catch (failure: unknown) {
@@ -225,16 +202,9 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
       api={api}
       scope={scope}
       projectName={projectName}
-      selectedOrganizationId={organizationId}
-      popoverZIndex={layers?.popover}
       {...(organizationName ? { organizationName } : {})}
       {...(inventory ? { inventory } : {})}
       refreshInventory={() => refreshInventory(scope.id)}
-      onAccessChanged={async () => {
-        const current = await refreshScope(scope.id);
-        if (current.lifecycle !== "shared" && current.lifecycle !== "archived") return refreshInventory(scope.id);
-        return current;
-      }}
       onConfirmed={() => { void awaitPublication(scope.id); }}
       publicationDelayed={publication === "delayed"}
       publicationFailure={publication === "inventory_changed" || publication === "unavailable" ? publication : undefined}

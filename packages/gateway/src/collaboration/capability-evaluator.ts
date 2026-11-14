@@ -50,11 +50,13 @@ export interface EffectiveAccessDecision {
   actions: ReadonlySet<CollaborationCapabilityAction>;
   ownerId: string;
   isOwner: boolean;
+  /** Fresh organization evidence for the requesting actor; owners of project scopes intentionally omit it. */
+  membershipEvidenceEpoch?: string;
 }
 
 export interface CollaborationCapabilityEvaluatorOptions {
   db: Kysely<OwnerCollaborationDatabase>;
-  grants: CollaborationCapabilityRepository;
+  grants?: CollaborationCapabilityRepository;
   organizationPrecondition: OrganizationPrecondition;
   now?: () => Date;
   /** Fallback decimal-string epoch recorded on activations when the source reports none (such rows never evaluate as current). */
@@ -68,6 +70,13 @@ export class CollaborationCapabilityEvaluator {
   constructor(private readonly options: CollaborationCapabilityEvaluatorOptions) {
     this.now = options.now ?? (() => new Date());
     this.evidenceEpoch = options.evidenceEpoch ?? (() => "0");
+  }
+
+  private grantRepository(): CollaborationCapabilityRepository {
+    if (!this.options.grants) {
+      throw new CollaborationAuthorizationError("unavailable", "Standalone collaboration policy is unavailable");
+    }
+    return this.options.grants;
   }
 
   async evaluateEffectiveAccess(input: { scopeId: string; actorId: string }): Promise<CollaborationEffectiveAccess> {
@@ -95,13 +104,6 @@ export class CollaborationCapabilityEvaluator {
     // The advertised deadline is never later than the authoritative evidence or the contract's 20-second bound.
     let evidenceExpiresAt = new Date(now.getTime() + ORGANIZATION_EVIDENCE_DEADLINE_MS).toISOString();
     let currentMembershipEpoch: string | undefined;
-    let resolution: ActorGrantResolution | null;
-    try {
-      resolution = await this.options.grants.resolveActorGrants(input.scopeId, input.actorId);
-    } catch (error: unknown) {
-      console.warn("[collaboration-capabilities] policy lookup failed", error instanceof Error ? error.name : "UnknownError");
-      throw new CollaborationAuthorizationError("unavailable", "Collaboration policy is unavailable");
-    }
     const deny = (reason: CollaborationAccessReason, ownerId = "", organizationId = "org_unavailable"): EffectiveAccessDecision => ({
       access: CollaborationEffectiveAccessSchema.parse({
         scopeId: input.scopeId, actorId: input.actorId, organizationId, preset: null, actions: [], reasons: [reason], evidenceExpiresAt,
@@ -110,42 +112,99 @@ export class CollaborationCapabilityEvaluator {
       ownerId,
       isOwner: false,
     });
-    if (!resolution) return deny("scope_unavailable");
-    const { scope } = resolution;
-    if (scope.membership_mode !== "direct") return deny("scope_unavailable", scope.owner_id);
-    if (!scope.organization_id) return deny("organization_required", scope.owner_id);
-    const organizationId = scope.organization_id;
+
+    let requestedScope;
     try {
-      const evidence = await this.options.organizationPrecondition.require({ organizationId, actorId: input.actorId });
-      const authoritative = Date.parse(evidence.expiresAt);
-      if (Number.isFinite(authoritative) && authoritative < Date.parse(evidenceExpiresAt)) {
-        evidenceExpiresAt = new Date(authoritative).toISOString();
-      }
-      currentMembershipEpoch = evidence.membershipEpoch;
+      requestedScope = await this.options.db.selectFrom("collaboration_scopes").selectAll()
+        .where("id", "=", input.scopeId).where("deleted_at", "is", null).where("lifecycle", "!=", "deleted")
+        .executeTakeFirst();
     } catch (error: unknown) {
-      if (!(error instanceof CollaborationAuthorizationError)) throw error;
-      return deny("precondition_denied", scope.owner_id, organizationId);
+      console.warn("[collaboration-capabilities] scope lookup failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CollaborationAuthorizationError("unavailable", "Collaboration access is unavailable");
     }
-    if (scope.lifecycle !== "shared" && scope.lifecycle !== "archived") return deny("scope_unavailable", scope.owner_id, organizationId);
+    if (!requestedScope) return deny("scope_unavailable");
+
+    let scope = requestedScope;
+    if (requestedScope.membership_mode === "inherited") {
+      if (!requestedScope.parent_scope_id) return deny("scope_unavailable", requestedScope.owner_id);
+      const parent = await this.options.db.selectFrom("collaboration_scopes").selectAll()
+        .where("id", "=", requestedScope.parent_scope_id).where("kind", "=", "project")
+        .where("deleted_at", "is", null).where("lifecycle", "!=", "deleted").executeTakeFirst();
+      if (!parent || parent.owner_id !== requestedScope.owner_id || parent.organization_id !== requestedScope.organization_id) {
+        return deny("scope_unavailable", requestedScope.owner_id);
+      }
+      scope = parent;
+    }
+
+    const projectAccess = scope.kind === "project"
+      && (requestedScope.kind === "project" || requestedScope.membership_mode === "inherited");
+    const organizationId = scope.organization_id;
 
     const allow = (preset: CollaborationPreset, actions: ReadonlySet<CollaborationCapabilityAction>, isOwner: boolean): EffectiveAccessDecision => {
-      const narrowed = scope.lifecycle === "archived"
+      const archived = scope.lifecycle === "archived" || requestedScope.lifecycle === "archived";
+      const narrowed = archived
         ? new Set([...actions].filter((action) => expandCollaborationPreset("viewer").includes(action)))
         : actions;
       const wirePreset = presetContainedIn(narrowed);
       return {
         access: CollaborationEffectiveAccessSchema.parse({
-          scopeId: input.scopeId, actorId: input.actorId, organizationId,
+          scopeId: input.scopeId, actorId: input.actorId, organizationId: organizationId ?? "org_unavailable",
           preset: wirePreset, actions: [...expandCollaborationPreset(wirePreset)], reasons: [], evidenceExpiresAt,
         }),
         actions: narrowed,
         ownerId: scope.owner_id,
         isOwner,
+        ...(currentMembershipEpoch ? { membershipEvidenceEpoch: currentMembershipEpoch } : {}),
       };
     };
+
+    if (projectAccess && scope.owner_id === input.actorId) {
+      if (["deleting", "deleted"].includes(scope.lifecycle)) {
+        return deny("scope_unavailable", scope.owner_id, organizationId ?? "org_unavailable");
+      }
+      return allow("contributor", new Set(expandCollaborationPreset("contributor")), true);
+    }
+
+    if (!organizationId) return deny("organization_required", scope.owner_id);
+
+    const captureEvidence = (evidence: { expiresAt: string; membershipEpoch?: string }): void => {
+      const authoritative = Date.parse(evidence.expiresAt);
+      if (Number.isFinite(authoritative) && authoritative < Date.parse(evidenceExpiresAt)) {
+        evidenceExpiresAt = new Date(authoritative).toISOString();
+      }
+      currentMembershipEpoch = evidence.membershipEpoch;
+    };
+
+    try {
+      if (projectAccess) {
+        captureEvidence(await this.options.organizationPrecondition.require({ organizationId, actorId: scope.owner_id }));
+      }
+      captureEvidence(await this.options.organizationPrecondition.require({ organizationId, actorId: input.actorId }));
+    } catch (error: unknown) {
+      if (!(error instanceof CollaborationAuthorizationError)) throw error;
+      return deny("precondition_denied", scope.owner_id, organizationId);
+    }
+
+    if (scope.lifecycle !== "shared" && scope.lifecycle !== "archived") return deny("scope_unavailable", scope.owner_id, organizationId);
+    if (requestedScope.lifecycle !== "shared" && requestedScope.lifecycle !== "archived") {
+      return deny("scope_unavailable", scope.owner_id, organizationId);
+    }
+    if (projectAccess) {
+      return allow("contributor", new Set(expandCollaborationPreset("contributor")), false);
+    }
     if (scope.owner_id === input.actorId) {
       return allow("contributor", new Set(expandCollaborationPreset("contributor")), true);
     }
+
+    let resolution: ActorGrantResolution | null;
+    try {
+      if (!this.options.grants) throw new Error("CapabilityRepositoryUnavailable");
+      resolution = await this.options.grants.resolveActorGrants(input.scopeId, input.actorId);
+    } catch (error: unknown) {
+      console.warn("[collaboration-capabilities] policy lookup failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CollaborationAuthorizationError("unavailable", "Collaboration policy is unavailable");
+    }
+    if (!resolution) return deny("scope_unavailable");
 
     const union = new Set<CollaborationCapabilityAction>();
     let best: CollaborationPreset | null = null;
@@ -183,7 +242,7 @@ export class CollaborationCapabilityEvaluator {
     if (input.audience.kind === "member") {
       await this.options.organizationPrecondition.require({ organizationId: scope.organization_id, actorId: input.audience.actorId });
     }
-    return this.options.grants.createGrant(input);
+    return this.grantRepository().createGrant(input);
   }
 
   /**
@@ -194,7 +253,7 @@ export class CollaborationCapabilityEvaluator {
     const scope = await this.options.db.selectFrom("collaboration_scopes").select("organization_id")
       .where("id", "=", scopeId).where("deleted_at", "is", null).executeTakeFirst();
     if (!scope?.organization_id) return [];
-    const candidates = await this.options.grants.listParticipants(scopeId);
+    const candidates = await this.grantRepository().listParticipants(scopeId);
     const fresh: string[] = [];
     for (const actorId of candidates) {
       try {
@@ -213,17 +272,17 @@ export class CollaborationCapabilityEvaluator {
     if (grant.audience.kind === "member") {
       await this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: grant.audience.actorId });
     }
-    return this.options.grants.patchGrantPreset(input);
+    return this.grantRepository().patchGrantPreset(input);
   }
 
   /** Revocation requires only the owner's fresh membership: ending a departed member's grant must stay possible. */
   async revokeGrant(input: RevokeGrantInput): Promise<GrantMutationResult> {
     await this.requireOwnerAndGrant(input);
-    return this.options.grants.revokeGrant(input);
+    return this.grantRepository().revokeGrant(input);
   }
 
   private async requireOwnerAndGrant(input: { scopeId: string; actorId: string; grantId: string }) {
-    const grant = await this.options.grants.getGrant(input.grantId);
+    const grant = await this.grantRepository().getGrant(input.grantId);
     if (!grant || grant.scopeId !== input.scopeId) throw new CollaborationAuthorizationError("not_found", "Grant not found");
     await this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
     return grant;
@@ -233,7 +292,7 @@ export class CollaborationCapabilityEvaluator {
   async acceptGrant(input: { grantId: string; actorId: string }): Promise<{ state: "active" }> {
     const evidence = await this.requireGrantMembership(input);
     try {
-      return await this.options.grants.acceptGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
+      return await this.grantRepository().acceptGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
     } catch (error: unknown) {
       throw mapRepositoryError(error);
     }
@@ -242,14 +301,14 @@ export class CollaborationCapabilityEvaluator {
   async declineGrant(input: { grantId: string; actorId: string }): Promise<{ state: "declined" }> {
     const evidence = await this.requireGrantMembership(input);
     try {
-      return await this.options.grants.declineGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
+      return await this.grantRepository().declineGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
     } catch (error: unknown) {
       throw mapRepositoryError(error);
     }
   }
 
   private async requireGrantMembership(input: { grantId: string; actorId: string }) {
-    const grant = await this.options.grants.getGrant(input.grantId);
+    const grant = await this.grantRepository().getGrant(input.grantId);
     if (!grant) throw new CollaborationAuthorizationError("not_found", "Grant not found");
     return this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
   }

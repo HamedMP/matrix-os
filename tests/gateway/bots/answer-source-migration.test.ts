@@ -21,11 +21,15 @@ it('upgrades an existing question without inventing its source, and keeps repeat
       VALUES (${interaction.interactionId}, ${OWNER}, ${BOT}, 'chat_source_upgrade', ${task.taskId}, 'question',
       ${JSON.stringify(interaction.payload)}::jsonb, ${OWNER}, true, 'pending', NULL,
       '2026-09-28T12:00:00.000Z', ${NOW}, NULL)`.execute(db);
-    expect((await bootstrapBotDatabase(db)).applied).toEqual([9,10,11]);
+    // Keep the answer-source fixture on its historical schema boundary.
+    const answerSourceMigrations = BOT_MIGRATIONS.slice(0, 11);
+    expect((await bootstrapBotDatabase(db, answerSourceMigrations)).applied).toEqual([9, 10, 11]);
     const stored = await sql<{ source_run_id: string | null; resolution: unknown; status: string }>`SELECT source_run_id, resolution, status FROM bot_interactions WHERE interaction_id=${interaction.interactionId}`.execute(db);
     expect(stored.rows).toEqual([{ source_run_id: null, resolution: null, status: 'pending' }]);
     await expect(sql`UPDATE bot_interactions SET source_run_id='invalid-source' WHERE interaction_id=${interaction.interactionId}`.execute(db)).rejects.toThrow();
     expect((await questions.get({ ownerId: OWNER, interactionId: interaction.interactionId }))?.payload).toEqual(interaction.payload);
+    expect((await bootstrapBotDatabase(db, answerSourceMigrations)).applied).toEqual([]);
+    expect((await bootstrapBotDatabase(db)).applied).toEqual(BOT_MIGRATIONS.slice(11).map(({ version }) => version));
     expect((await bootstrapBotDatabase(db)).applied).toEqual([]);
     await expect(bootstrapBotDatabase(db, BOT_MIGRATIONS.slice(0, 8))).rejects.toEqual(new BotSchemaError('newer_schema'));
   } finally { await destroy(); }

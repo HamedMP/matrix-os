@@ -25,7 +25,7 @@ export interface KernelCredentialSources {
   selectedMode: KernelCredentialMode;
   selectedAccessSourceId: KernelCredentialAccessSourceId;
   matrixIncluded: { state: KernelCredentialObservationState };
-  ownerApiKey: { state: KernelCredentialObservationState };
+  ownerApiKey: { state: KernelCredentialObservationState; credentialGeneration?: string };
   ownerProfile: { state: KernelCredentialObservationState };
 }
 
@@ -113,7 +113,10 @@ async function resolveKernelCredentials(
     selectedMode,
     selectedAccessSourceId,
     matrixIncluded: { state: matrixState },
-    ownerApiKey: { state: apiKeyState },
+    ownerApiKey: {
+      state: apiKeyState,
+      ...(ownerKey.credentialGeneration ? { credentialGeneration: ownerKey.credentialGeneration } : {}),
+    },
     ownerProfile: { state: profileState },
   };
 

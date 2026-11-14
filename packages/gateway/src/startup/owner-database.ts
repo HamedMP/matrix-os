@@ -100,6 +100,7 @@ export interface InitializeOwnerDatabaseOptions {
   codingAgentProjectManager: ReturnType<typeof createProjectManager>;
   codingAgentWorktreeManager: ReturnType<typeof createWorktreeManager>;
   terminalWorkspaceRuntime: TerminalRuntimeSocketClient;
+  retireTerminalRoutineSource?: Parameters<typeof constructOwnerCollaboration>[0]["retireTerminalRoutineSource"];
   terminalRuntimeOwnerIds: readonly string[];
   projectOwnerToolOutput: OwnerToolOutputProjection;
   capture: AiCaptureFn;
@@ -166,6 +167,7 @@ export async function initializeOwnerDatabaseServices(
           providerSnapshotReader: options.providerSnapshotReader,
           codingAgentProjectManager: options.codingAgentProjectManager,
           ownerChatExecutionRoots, terminalWorkspaceRuntime: options.terminalWorkspaceRuntime,
+          retireTerminalRoutineSource: options.retireTerminalRoutineSource,
         });
         if (construction.ok) services.collaboration = construction.runtime;
         else failClosedReason = construction.reason;

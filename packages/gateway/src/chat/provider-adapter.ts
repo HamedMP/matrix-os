@@ -11,6 +11,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalOwnerScopeSchema,
+  CanonicalChatRunIdSchema,
   type CanonicalChatMessagePart,
   type CanonicalChatApprovalDecision,
   type CanonicalChatModelSelection,
@@ -125,6 +126,13 @@ export type RecoveredControlActivity = z.infer<typeof RecoveredControlActivitySc
 
 export type CanonicalProviderRunEvent = z.infer<typeof CanonicalProviderRunEventSchema>;
 
+/** Host-admitted native occurrence; never accepted from public Chat request bodies. */
+export interface NativeScheduledPhaseIdentity {
+  sourceRunId: string;
+  sessionId: string;
+  promptId: string;
+}
+
 export interface CanonicalProviderRunInput<State = unknown> {
   owner: CanonicalOwnerScope;
   chatId: string;
@@ -145,12 +153,26 @@ export interface CanonicalProviderRunInput<State = unknown> {
   resumeState?: State;
   /** Unique native admission identity for a continuation of the same canonical Run. */
   continuationId?: string;
+  /** An already-held native prompt. The adapter must not submit it again. */
+  nativeScheduled?: NativeScheduledPhaseIdentity;
+  /** Lazily read the owner-scoped canonical prefix before closing a protected session for Steer. */
+  prepareSteeringContext?: () => Promise<import("@matrix-os/contracts").ChatRunContext>;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
   /** Clear unresolved cleanup only after this exact owned execution has exited. */
   onCleanupConfirmed?: () => void;
 }
+
+/** An exact persisted Run needs reconciliation before projection can terminalize it. */
+export class CanonicalProviderRunRecoveryPendingError extends Error {
+  constructor(readonly safeError: CanonicalChatSafeError) {
+    super(safeError.safeMessage);
+    this.name = "CanonicalProviderRunRecoveryPendingError";
+  }
+}
+
+export type ChatResumeSettings = Pick<CanonicalProviderRunInput, "selection" | "interactionMode" | "permissionMode" | "context">;
 
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
@@ -159,9 +181,14 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
+  /** Some checkpoints can continue only on a live, owned provider process. */
+  selectResumeCheckpoint?(input: { owner: CanonicalOwnerScope; chatId: string; state: State;
+    settings: ChatResumeSettings; previousSettings: ChatResumeSettings }): State | undefined;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
   isBackingRunActive?(input: { owner: CanonicalOwnerScope; state: State; signal: AbortSignal }): Promise<boolean>;
-  /** Read-only recovery of this exact Run; never starts or resubmits work. */
+  /** A failed or timed-out recovery cannot safely establish this Run's outcome. */
+  readonly recoveryFailureMode?: "pending";
+  /** Recovery of this exact Run never starts or resubmits work. */
   recover?(input: {
     owner: CanonicalOwnerScope;
     runId: string;
@@ -201,6 +228,7 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     decision: CanonicalChatApprovalDecision;
     clientRequestId: string;
     platformApprovalProof?: string;
+    actionDigest?: string;
     state?: State;
   }): Promise<void>;
 }
@@ -208,6 +236,8 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
 export function parseCanonicalProviderRunInput<State>(
   input: CanonicalProviderRunInput<State>,
 ): CanonicalProviderRunInput<State> {
+  if (input.nativeScheduled) z.object({ sourceRunId: CanonicalChatRunIdSchema,
+    sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/), promptId: z.uuid() }).strict().parse(input.nativeScheduled);
   CanonicalOwnerScopeSchema.parse(input.owner);
   CanonicalChatModelSelectionSchema.parse(input.selection);
   z.array(CanonicalChatMessagePartSchema).min(1).max(64).parse(input.parts);

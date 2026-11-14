@@ -1,0 +1,16 @@
+{
+  "name": "Team Tracker",
+  "slug": "team-tracker",
+  "description": "One shared task list on the owner's Matrix",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "scope": "personal",
+  "build": { "command": "pnpm build", "output": "dist" },
+  "storage": { "tables": { "tasks": { "columns": { "title": "text", "done": "boolean" } } } },
+  "collaboration": {
+    "capability": { "version": 1, "storage": "owner_postgres", "audience": "current_organization_members", "participantIdentity": "authenticated_actor", "mutations": "transactional_revisioned", "updates": "content_free_signal", "providerPolicy": "existing_authority" },
+    "compatibility": { "bridgeContractVersion": "matrix-app-bridge-v1", "runtimeAbi": "matrix-runtime-v1", "schemaDigest": "ff24982c8e4c62af6346d995c7595b98b50d94ea9bf89c0965bda788c24b2e09" }
+  }
+}

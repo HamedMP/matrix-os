@@ -1,4 +1,5 @@
 /** Register shell, system activity and terminal workspace routes after auth. */
+import type { CanonicalTerminalLaunch } from "../terminal/canonical-launch.js";
 import type { Context, Hono } from "hono";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { readPreviewTerminalOwner } from "../auth.js";
@@ -22,6 +23,7 @@ import { createSystemActivityRoutes } from "../system-activity/routes.js";
 export interface ShellTerminalRouteOptions {
   app: Hono;
   homePath: string;
+  managedLaunch?: CanonicalTerminalLaunch;
   terminalWorkspaceRuntime: TerminalRuntimeSocketClient;
   terminalRuntimeOwnerIds: string[];
   terminalWindowLayoutStore: TerminalWindowLayoutStore;
@@ -163,6 +165,7 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
   });
   app.route("/api/terminal", createTerminalWorkspaceRoutes({
     runtime: terminalWorkspaceRuntime,
+    managedLaunch: options.managedLaunch,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
     getPreviewTerminalOwner: readPreviewTerminalOwner,

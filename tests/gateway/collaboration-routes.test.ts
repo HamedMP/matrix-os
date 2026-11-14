@@ -652,6 +652,23 @@ describe("collaboration gateway routes", () => {
       status: "active",
       resources: [{ kind: "file", id: "README.md", readiness: "ready" }],
     });
+
+    const unshared = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/project/unshare`,
+      body: {
+        clientRequestId: request(95),
+        expectedRevision: "1",
+      },
+    });
+    expect(unshared.status).toBe(200);
+    await expect(unshared.json()).resolves.toEqual({
+      scopeId: collaborationIds.scope,
+      lifecycle: "private",
+      revision: "2",
+    });
   });
 
   it("detects, reads, and controls an existing standalone terminal through the authority", async () => {

@@ -315,6 +315,17 @@ export const CollaborationProjectConfirmRequestSchema = z.object({
   inventoryToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
 }).strict();
 
+export const CollaborationProjectUnshareRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedRevision: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationProjectUnshareResponseSchema = z.object({
+  scopeId: CollaborationIdSchema,
+  lifecycle: z.literal("private"),
+  revision: CollaborationRevisionSchema,
+}).strict();
+
 export const CollaborationProjectTransitionSchema = z.object({
   id: CollaborationIdSchema,
   scopeId: CollaborationIdSchema,
@@ -938,6 +949,8 @@ export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
 export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
 export type CollaborationParticipant = z.infer<typeof CollaborationParticipantSchema>;
 export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationProjectConfirmRequestSchema>;
+export type CollaborationProjectUnshareRequest = z.infer<typeof CollaborationProjectUnshareRequestSchema>;
+export type CollaborationProjectUnshareResponse = z.infer<typeof CollaborationProjectUnshareResponseSchema>;
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
 export type CollaborationProject = z.infer<typeof CollaborationProjectSchema>;

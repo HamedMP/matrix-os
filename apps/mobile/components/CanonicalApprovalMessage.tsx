@@ -1,3 +1,5 @@
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
+import { NativeRoutineActionConfirmation } from "./RoutineActionConfirmation";
 import { z } from "zod/v4";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -85,6 +87,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       }
     }
   }
+  if (approval.pending && RoutineActionIdSchema.safeParse(approval.approvalId).success) return <NativeRoutineActionConfirmation challengeId={approval.approvalId} gatewayUrl={gatewayUrl}/>;
   return <View style={styles.card}>
     <Text style={styles.text}>{approval.title}</Text>
     <Text style={styles.text}>{approval.description}</Text>

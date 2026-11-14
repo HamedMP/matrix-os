@@ -6,11 +6,12 @@ import { CompanyBrainService } from "../../packages/gateway/src/company-brain/se
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
-import { createCollaborationTestDatabase, createRealCollaborationTestDatabase, type CollaborationTestDatabase, allowAllOrganizationPrecondition, collaborationActors as actors, collaborationIds as ids } from "./collaboration-test-support.js";
+import { createCollaborationTestDatabase, createRealCollaborationTestDatabase, type CollaborationTestDatabase, collaborationActors as actors, collaborationIds as ids } from "./collaboration-test-support.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
+import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { bootstrapSlackCompanyDatabase, type SlackCompanyDatabase } from "../../packages/gateway/src/slack/database.js";
 import { SlackCompanyService, type SlackCompanyOptions } from "../../packages/gateway/src/slack/company-service.js";
 import { slackIdentity, SlackCompanyRepository } from "../../packages/gateway/src/slack/repository.js";
@@ -31,6 +32,8 @@ describe("durable Slack company requests use canonical shared Chat admission", (
   const readThread=vi.fn();
   let completed = false;
   let currentTime=now;
+  let revokedOrganizationMembers: Set<string>;
+  let membershipEpoch: number;
   const submit = vi.fn();
   const sendReply = vi.fn();
   const resolveThread = vi.fn();
@@ -46,7 +49,17 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     await repository.createDirectScope({ scopeId: childId, ownerId: actors.owner, organizationId: "org_team", kind: "chat", resourceId: ids.chat, authorityRuntimeId: ids.runtime });
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", ids.scope).execute();
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", membership_mode: "inherited", parent_scope_id: ids.scope, execution_generation: 1, execution_eligibility: {} }).where("id", "=", childId).execute();
-    authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
+    revokedOrganizationMembers = new Set(); membershipEpoch = 1;
+    const organizationPrecondition = createOrganizationPrecondition({
+      source: { async assertMembership({ organizationId, actorId }) {
+        return organizationId === "org_team" && !revokedOrganizationMembers.has(actorId)
+          ? { member: true, expiresAt: new Date(currentTime.getTime() + 20_000).toISOString(),
+            aiSubmission: "members" as const, membershipEpoch: String(membershipEpoch) }
+          : { member: false };
+      } },
+      now: () => currentTime,
+    });
+    authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition });
     submit.mockResolvedValue({ request: { id: "qturn_slack_test" } });
     sendReply.mockResolvedValue({ status: "sent", messageTs: "1790766001.000001" });
     resolveThread.mockResolvedValue({ scopeId: childId, chatId: ids.chat, projectScopeId: ids.scope, projectId: "company_project" });
@@ -173,12 +186,11 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("accepted");
   });
 
-  it("rechecks a member's actual project grants before final publication",async()=>{
-    await fixture.db.insertInto("collaboration_members").values({scope_id:ids.scope,actor_id:actors.editor,organization_id:"org_team",role:"editor",status:"accepted",invitation_id:null,invited_by:actors.owner,accepted_at:now,expires_at:null,joined_at:now,updated_at:now,dispositioned_at:null}).execute();
+  it("rechecks a member's actual organization membership before final publication",async()=>{
     options={...options,readResult:async()=>completed?{status:"completed",requestingActorId:actors.editor,runId:"run_member",text:"Decision"}:{status:"pending",requestingActorId:actors.editor}};
     service=new SlackCompanyService(options);
     await service.receive({...envelope,actorId:actors.editor});await service.drain();completed=true;
-    await fixture.db.updateTable("collaboration_members").set({status:"revoked"}).where("actor_id","=",actors.editor).execute();
+    revokedOrganizationMembers.add(actors.editor); membershipEpoch += 1;
     await service.drain();
     expect(sendReply).not.toHaveBeenCalled();
     expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
@@ -260,7 +272,6 @@ describe("durable Slack company requests use canonical shared Chat admission", (
 
   it.each([[false,"canonical"],[true,"canonical"],[false,"receipt"],[true,"receipt"]] as const)
   ("denies membership revoked during final %s-proof %s publication reads",async(withSources,stage)=>{
-    await fixture.db.insertInto("collaboration_members").values({scope_id:ids.scope,actor_id:actors.editor,organization_id:"org_team",role:"editor",status:"accepted",invitation_id:null,invited_by:actors.owner,accepted_at:now,expires_at:null,joined_at:now,updated_at:now,dispositioned_at:null}).execute();
     let realBrain:CompanyBrainService|undefined;
     if(withSources){
       const brainDb=fixture.db as unknown as Kysely<CompanyBrainDatabase>;
@@ -271,7 +282,7 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     let publicationCheck=false,canonicalReads=0,receiptReads=0;
     const revoke=async()=>{
       await Promise.resolve();
-      await fixture.db.updateTable("collaboration_members").set({status:"revoked"}).where("scope_id","=",ids.scope).where("actor_id","=",actors.editor).execute();
+      revokedOrganizationMembers.add(actors.editor); membershipEpoch += 1;
     };
     const originalReceipt=SlackCompanyRepository.prototype.publicationReceipt;
     const receiptSpy=vi.spyOn(SlackCompanyRepository.prototype,"publicationReceipt").mockImplementation(async function(this:SlackCompanyRepository,...args){

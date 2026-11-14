@@ -449,6 +449,19 @@ jobs:
         with:
           ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 
+      # Install polling is a privileged control-plane operation. Keep its
+      # implementation on the reviewed workflow revision so older PR heads do
+      # not need to contain the helper and PR code cannot replace it. This must
+      # follow both root checkouts because either one can clean the workspace.
+      - name: Checkout trusted preview runtime reader
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
+          path: .trusted-preview-workflow
+          sparse-checkout: scripts/read-preview-runtime.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Download bundle artifact
         if: needs.gate.outputs.action == 'deploy'
         uses: actions/download-artifact@v8
@@ -761,20 +774,7 @@ jobs:
           deadline=$((SECONDS + PREVIEW_INSTALL_TIMEOUT_SECONDS))
           transition_repair_attempted=false
           while true; do
-            runtime="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
-              -H "authorization: Bearer ${PLATFORM_SECRET}" \
-              "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-              jq -c --arg h "$HANDLE" \
-                '[.machines[]
-                  | select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)
-                  | . + { _preview_rank:
-                      (if .status == "running" then 0
-                       elif .status == "provisioning" then 1
-                       elif .status == "failed" then 2
-                       else 3 end) }]
-                 | sort_by(._preview_rank, .provisionedAt)
-                 | (.[0] // {status: "absent", healthy: false, runtimeVersion: null})
-                 | del(._preview_rank)')"
+            runtime="$(.trusted-preview-workflow/scripts/read-preview-runtime.sh)"
             status="$(jq -r '.status' <<< "$runtime")"
             healthy="$(jq -r '.healthy == true' <<< "$runtime")"
             runtime_version="$(jq -r '.runtimeVersion // "pending"' <<< "$runtime")"
@@ -867,6 +867,11 @@ jobs:
             echo "Preview access activation is temporarily unavailable; retrying (${attempt}/3)." >&2
             sleep 15
           done
+          if [ "$code" = "409" ]; then
+            echo "Preview access was refused for this exact machine generation (HTTP 409, $(jq -r ".code // \"unknown\"" /tmp/preview-access.json 2>/dev/null || echo unknown)); not retrying." >&2
+            echo "Check the preview machine's owner, status, and runtime token epoch, or delete and recreate the preview VPS." >&2
+            exit 1
+          fi
           if [ "$code" != "200" ] || ! jq -e '
             .status == "ready"
             and .fundedAiConfigured == true

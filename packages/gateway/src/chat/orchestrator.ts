@@ -1,3 +1,5 @@
+import { admitNativeScheduledPhase, parseNativeScheduledPhaseRequest, type NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
+import type { RoutineCliActionController } from "../bots/routine-action-controller.js";
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
@@ -5,11 +7,11 @@ import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-sub
 import { QueuedChatRecovery } from "./queue-recovery.js";
 import { BotEntryError } from "../bots/custom-direct-chat.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
-import { contextForChatSession } from "./session-history.js";
+import { contextForChatSession, SESSION_HISTORY_MESSAGE_LIMIT, withChatSessionHistory } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn } from "./turn-admission.js";
-import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
+import { chatContextRequestHash, contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -53,9 +55,11 @@ import {
 } from "./provider-catalog.js";
 import {
   CanonicalProviderRunEventSchema,
+  CanonicalProviderRunRecoveryPendingError,
   type CanonicalChatProviderAdapter,
   type CanonicalProviderRunEvent,
   type CanonicalProviderRunInput,
+  type NativeScheduledPhaseIdentity,
   CanonicalChatProviderRegistry,
 } from "./provider-adapter.js";
 import {
@@ -197,10 +201,11 @@ export class CanonicalChatOrchestrator {
       | "getTurnRunContext"
       | "admitRetry"
       | "listActiveRunContexts"
-    >;
+    > & Partial<Pick<ChatRepository, "getNativeScheduledSource" | "admitNativeScheduledTurn">>;
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;
+    routineActions?: Pick<RoutineCliActionController, "submitChat">;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
     collaborationGuard?: {
@@ -332,6 +337,39 @@ export class CanonicalChatOrchestrator {
     }, principal, owner, chatId, inputValue, provenance);
   }
 
+  /** Host callback for one held native occurrence; not a public Chat admission route. */
+  async admitNativeScheduledPhase(requestValue: NativeScheduledPhaseRequest): Promise<void> {
+    const request = parseNativeScheduledPhaseRequest(requestValue);
+    this.assertOpen();
+    const origin = this.active.get(request.sourceRunId);
+    if (origin && origin.owner.type === request.owner.type && origin.owner.ownerId === request.owner.ownerId
+      && origin.chatId === request.chatId && origin.adapter.driverKind === "claude_code") {
+      // A native result can precede its canonical commit. Await that exact dispatch only;
+      // the due prompt is still held, so no inference or database mutation is replayed.
+      await boundedOperation(() => origin.completion, 5_000, origin.controller.signal);
+      this.assertOpen();
+    }
+    const repository = this.options.repository;
+    if (!repository.getNativeScheduledSource || !repository.admitNativeScheduledTurn) {
+      throw new CanonicalChatOrchestrationError(safeError("provider_unavailable", "Native scheduled execution is unavailable."), 503);
+    }
+    return admitNativeScheduledPhase({ ...this.options, repository: {
+      getNativeScheduledSource: repository.getNativeScheduledSource.bind(repository),
+      admitNativeScheduledTurn: repository.admitNativeScheduledTurn.bind(repository),
+      findTurnAdmission: repository.findTurnAdmission.bind(repository), finishRun: repository.finishRun.bind(repository),
+    }, assertOpen: () => this.assertOpen(),
+      assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
+      atCapacity: owner => this.atCapacity(owner),
+      hasStoppingExecution: (owner, chatId) => hasStoppingChatExecution(this.active.values(), owner, chatId),
+      reservePendingDispatch: runId => this.reservePendingDispatch(runId),
+      releasePendingDispatch: runId => { this.pendingDispatch.delete(runId); },
+      registerDispatch: (owner, message, run, adapter, root, state, identity) => {
+        void this.startDispatch(owner, message, run, adapter, root, state, undefined, undefined, undefined, undefined, identity);
+        return { registered: true };
+      },
+    }, request);
+  }
+
   async enqueueQueuedTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -388,11 +426,12 @@ export class CanonicalChatOrchestrator {
     admissionKey?: string,
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
+    nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
     this.assertOpen();
     const controller = new AbortController();
     const completion = this.dispatch(
-      owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
+      owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId, nativeScheduled,
     )
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
@@ -480,8 +519,8 @@ export class CanonicalChatOrchestrator {
             }
           }
           resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+            ...claimed.run,
             repository: this.options.repository, owner, chatId, adapter,
-            instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
           });
@@ -524,6 +563,7 @@ export class CanonicalChatOrchestrator {
     resumeState?: unknown,
     promptOverride?: string,
     sharedScopeId?: string,
+    nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
@@ -568,6 +608,21 @@ export class CanonicalChatOrchestrator {
         ...(resolvedRoot?.projectSlug ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
+        ...(nativeScheduled ? { nativeScheduled } : {}),
+        ...(run.driverKind === "claude_code" && owner.type === "personal" && !sharedScopeId ? {
+          prepareSteeringContext: async () => {
+            const detail = await this.options.repository.getDetailPage(owner, run.chatId, { limit: SESSION_HISTORY_MESSAGE_LIMIT });
+            if (!detail || detail.record.chat.lifecycle !== "active" || detail.record.chat.collaboration
+              || detail.record.activeRun?.runId !== run.id || detail.record.activeRun.turnId !== run.turnId) throw new Error("Steering context unavailable");
+            // Include the original admitted input and only committed steering from this Turn.
+            const messages = [message, ...detail.messages.filter(item => item.seq < message.seq
+              || (item.seq > message.seq && item.turnId === run.turnId && item.role === "user" && item.state === "committed"))]
+              .sort((left, right) => left.seq - right.seq);
+            return withChatSessionHistory({ chatId: run.chatId, title: detail.record.chat.title,
+              throughSeq: messages.at(-1)!.seq, messages, truncated: detail.nextBeforeSeq !== undefined,
+              requestHash: run.context?.requestHash ?? chatContextRequestHash({ ...run, parts: message.parts }), context: run.context });
+          },
+        } : {}),
         signal: controller.signal,
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
@@ -684,6 +739,10 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
       if (controller.signal.reason instanceof BackgroundProjectionDetached) return;
+      if (error instanceof CanonicalProviderRunRecoveryPendingError) {
+        await this.persistActivities(owner, run, [{ type: "run.error", error: error.safeError }]);
+        return;
+      }
       if (cleanupUnconfirmed) {
         controller.abort();
         console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
@@ -1049,7 +1108,7 @@ export class CanonicalChatOrchestrator {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     return submitCanonicalApproval({ repository: this.options.repository,
       active: this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters }),
-      browserApprovals: this.options.browserApprovals,
+      browserApprovals: this.options.browserApprovals, routineActions: this.options.routineActions,
     }, owner, chatId, runId, approvalId, inputValue, provenance);
   }
 

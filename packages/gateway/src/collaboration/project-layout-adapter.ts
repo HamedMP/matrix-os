@@ -106,21 +106,16 @@ export function createProjectLayoutAdapter(options: {
       .where("id", "=", context.scopeId);
     scopeQuery = requireWrite ? scopeQuery.forUpdate() : scopeQuery.forShare();
     const scope = await scopeQuery.executeTakeFirst();
-    let memberQuery = trx.selectFrom("collaboration_members").selectAll()
-      .where("scope_id", "=", context.membershipScopeId)
-      .where("actor_id", "=", context.actorId);
-    memberQuery = requireWrite ? memberQuery.forUpdate() : memberQuery.forShare();
-    const member = await memberQuery.executeTakeFirst();
-    const expired = member?.expires_at && new Date(member.expires_at).getTime() <= now().getTime();
     if (!scope || scope.kind !== "project" || scope.lifecycle !== "shared"
       || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
       || scope.authority_runtime_id !== context.authorityRuntimeId
       || Number(scope.authority_generation) !== context.authorityGeneration
-      || Number(scope.auth_epoch) !== context.authEpoch
-      || !member || member.status !== "accepted" || expired) {
+      || Number(scope.auth_epoch) !== context.authEpoch) {
       throw new ProjectLayoutAdapterError("not_found");
     }
-    if (requireWrite && !["owner", "editor"].includes(member.role)) {
+    // The current context already carries fresh organization membership. Legacy project
+    // member rows cannot narrow a current member to Viewer or block a future member.
+    if (requireWrite && context.role === "viewer") {
       throw new ProjectLayoutAdapterError("forbidden");
     }
     return { ownerScope: scope.owner_type === "personal" ? "personal" : "org" };

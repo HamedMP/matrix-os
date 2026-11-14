@@ -12,6 +12,7 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
+    "./routine-cli": "./src/routine-cli.ts",
     "./app-gallery": "./src/app-gallery.ts",
     "./app-gallery-bridge-policy": "./src/app-gallery-bridge-policy.ts",
     "./app-gallery-inventory": "./src/app-gallery-inventory.ts",
@@ -27,9 +28,11 @@
     "./preview-pair-launch": "./src/preview-pair-launch.ts",
     "./http-request-deadlines": "./src/http-request-deadlines.ts",
     "./ai-usage": "./src/ai-usage/index.ts",
-    "./ai-usage/node": "./src/ai-usage/node.ts"
+    "./ai-usage/node": "./src/ai-usage/node.ts",
+    "./routine-destination": "./src/routine-destination.ts"
   },
   "imports": {
+    "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
@@ -49,6 +52,7 @@
     "#chat-message-wire": "./src/chat-message-wire.ts",
     "#chat-legacy-assistant-text": "./src/chat-legacy-assistant-text.ts",
     "#chat-links": "./src/chat-links.ts",
+    "#messaging-settings": "./src/messaging-settings.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
     "#project-agent-context": "./src/project-agent-context.ts",
@@ -96,6 +100,7 @@
     "#provider-settings": "./src/provider-settings.ts",
     "#provider-managed-credit": "./src/provider-managed-credit.ts",
     "#funded-ai": "./src/funded-ai.ts",
+    "#funded-ai-pricing": "./src/funded-ai-pricing.ts",
     "#funded-host-activation": "./src/funded-host-activation.ts",
     "#funded-workers-models": "./src/funded-workers-models.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",

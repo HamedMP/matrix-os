@@ -226,6 +226,31 @@ describe("CollaborationEventRegistry", () => {
     expect(finalSocket.close).toHaveBeenCalled();
     expect(registry.connectionCount).toBe(0);
   });
+
+  it("drains every event subscriber when the whole project scope is revoked", async () => {
+    const owner = socket();
+    const editor = socket();
+    await registry.open({
+      connectionId: "connection_owner_scope_revoke",
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      authorityGeneration: 1,
+      socket: owner,
+    });
+    await registry.open({
+      connectionId: "connection_editor_scope_revoke",
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      authorityGeneration: 1,
+      socket: editor,
+    });
+
+    registry.notifyScopeRevoked(collaborationIds.scope);
+
+    expect(registry.connectionCount).toBe(0);
+    expect(owner.close).toHaveBeenCalledWith(1008, "Revoked");
+    expect(editor.close).toHaveBeenCalledWith(1008, "Revoked");
+  });
 });
 
 async function seedEvents(fixture: CollaborationTestDatabase): Promise<void> {

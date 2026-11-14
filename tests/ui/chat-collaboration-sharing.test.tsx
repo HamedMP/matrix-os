@@ -51,7 +51,7 @@ describe("Chat collaboration sharing", () => {
     expect(api.get).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}`);
   });
 
-  it("lists current-organization app shares separately and opens the exact scope", async () => {
+  it("keeps app discovery out of Chat because shared apps belong in the launcher", async () => {
     const appScopeId = "10000000-0000-4000-8000-000000000099";
     const app = {
       scopeId: appScopeId,
@@ -76,14 +76,10 @@ describe("Chat collaboration sharing", () => {
     const openApp = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openApp={openApp} />);
 
-    expect(await screen.findByText("Team tracker")).toBeVisible();
-    expect(screen.getByText("App · shared by Nima")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Open app" }));
-    expect(openApp).toHaveBeenCalledWith(appScopeId, app);
-    fireEvent.click(screen.getByRole("button", { name: "Load more shared apps" }));
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(
-      "/api/collaboration/shared-apps?limit=50&cursor=next-app-page",
-    ));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared"));
+    expect(screen.queryByText("Team tracker")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open app" })).toBeNull();
+    expect(api.get.mock.calls.some(([path]) => path.startsWith("/api/collaboration/shared-apps"))).toBe(false);
   });
 
   it("recovers when browser history replaces stale pins for the same shared app scope", async () => {
@@ -131,6 +127,36 @@ describe("Chat collaboration sharing", () => {
       expectedBuildId: app.buildId, expectedShareRevision: app.shareRevision }} api={api} actorId="user_member" />);
 
     expect(await screen.findByTitle("Team tracker shared by Nima")).toBeVisible();
+  });
+
+  it("shows an accepted organization project once when inbox and shared discovery overlap", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000100";
+    const projectScope = {
+      id: projectScopeId, ownerId: "user_owner", kind: "project", resourceId: "project_duplicate",
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    } as const;
+    const discoveredProject = {
+      scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+      kind: "project" as const, authorityGeneration: 1, status: "accepted" as const,
+      organizationId: "org_matrix_team", resource: {
+        scope: projectScope,
+        project: { id: "project_duplicate", scopeId: projectScopeId, status: "active", resources: [] },
+        overview: { projectId: "project_duplicate", scopeId: projectScopeId,
+          name: "One organization project", status: "active", chats: [] },
+      },
+    };
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ items: [discoveredProject] })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" />);
+
+    expect(await screen.findAllByText("One organization project")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open project" })).toHaveLength(1);
   });
 
   it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
@@ -450,7 +476,8 @@ describe("Chat collaboration sharing", () => {
       openProject={openProject} openChat={openChat} />);
     expect(await screen.findByRole("heading", { name: "Launch" })).toBeVisible();
     expect(screen.queryByText("proj_launch")).toBeNull();
-    expect(screen.getByText(/Viewer · read only/i)).toBeVisible();
+    expect(screen.getByText(/Organization-wide project access/i)).toBeVisible();
+    expect(screen.queryByText(/Viewer|Editor|read only|can edit/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Launch checklist/ }));
     expect(openChat).toHaveBeenCalledWith(chatScope, "chat_launch", "Launch checklist");
     currentProjectScope = {
@@ -460,7 +487,8 @@ describe("Chat collaboration sharing", () => {
       capabilities: { ...projectScope.capabilities, discuss: true },
     };
     await act(async () => refreshProject());
-    expect(await screen.findByText(/Editor · can edit/i)).toBeVisible();
+    expect(await screen.findByText(/Organization-wide project access/i)).toBeVisible();
+    expect(screen.queryByText(/Viewer|Editor|read only|can edit/i)).toBeNull();
     act(() => revokeProject());
     expect(await screen.findByText("Shared project unavailable")).toBeVisible();
     expect(screen.queryByText("Launch checklist")).toBeNull();

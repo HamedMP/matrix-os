@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_INSTALLS, PACKAGE_MANAGER_INSTALLS, terminalNpmInstallCommand } from "./agent-install-matrix";
 import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
+import { TERMINAL_AGENT_OPTIONS, terminalAgentCreateOptions, terminalAgentInstallCommand, terminalAgentVisibleInstallCommand, terminalTabLaunchFields }
+  from "../../packages/ui/src/terminal/agent-launch.js";
 
 const root = process.cwd();
 
@@ -15,28 +17,26 @@ describe("agent CLI install matrix", () => {
   it("keeps Terminal install rows on direct npm commands with the Matrix node prefix fallback", () => {
     const terminalSidebar = readFileSync(join(root, "shell/src/components/terminal/TerminalSidebar.tsx"), "utf8");
     const mobileTerminalControls = readFileSync(join(root, "shell/src/components/terminal/MobileTerminalControls.tsx"), "utf8");
-    const terminalAgentOptions = readFileSync(join(root, "shell/src/components/terminal/terminal-agent-options.ts"), "utf8");
 
-    expect(terminalSidebar).toContain("terminalAgentVisibleInstallCommand");
-    expect(mobileTerminalControls).toContain("terminalAgentVisibleInstallCommand");
-    expect(terminalAgentOptions).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
+    expect(terminalSidebar).toContain("terminalAgentCreateOptions(option, action)");
+    expect(mobileTerminalControls).toContain("terminalAgentCreateOptions(option, action)");
 
     for (const agent of AGENT_INSTALLS) {
-      if (agent.id === "codex") {
-        expect(terminalAgentOptions).toContain("installPackage: CODEX_VERIFIED_NPM_PACKAGE");
-      } else {
-        expect(terminalAgentOptions).toContain(`installPackage: "${agent.npmPackage}"`);
-      }
-      expect(terminalNpmInstallCommand(agent)).toContain(`--prefix "$MATRIX_NODE_PREFIX" ${agent.npmPackage}`);
-      if (agent.ignoreScripts) {
-        expect(terminalNpmInstallCommand(agent)).toContain("npm install -g --ignore-scripts --prefix");
-      } else {
-        expect(terminalNpmInstallCommand(agent)).not.toContain("--ignore-scripts");
-      }
+      const option = TERMINAL_AGENT_OPTIONS.find((candidate) => candidate.id === agent.id);
+      if (!option) throw new Error(`Missing Terminal install option for ${agent.id}`);
+      expect(option.installPackage).toBe(agent.npmPackage);
+
+      const command = terminalAgentInstallCommand(option);
+      for (const segment of terminalNpmInstallCommand(agent).split("; ")) expect(command).toContain(segment);
+      const visible = terminalAgentVisibleInstallCommand(option);
+      expect(terminalAgentCreateOptions(option, "install")).toEqual({ cmd: visible });
+      expect(visible).toContain('export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+      expect(visible).toMatch(/^sh -lc .*printf /);
+      expect(terminalTabLaunchFields({ cmd: visible })).toEqual({ command: ["sh", "-lc", visible] });
+      expect(visible).not.toMatch(/matrix-install-tool-pack|MATRIX_INSTALL_TOOL_PACK/);
     }
 
-    expect(`${terminalSidebar}\n${mobileTerminalControls}\n${terminalAgentOptions}`).not.toContain("matrix-install-tool-pack");
-    expect(`${terminalSidebar}\n${mobileTerminalControls}\n${terminalAgentOptions}`).not.toContain("MATRIX_INSTALL_TOOL_PACK");
+    expect(`${terminalSidebar}\n${mobileTerminalControls}`).not.toMatch(/matrix-install-tool-pack|MATRIX_INSTALL_TOOL_PACK/);
   });
 
   it("defines npm-compatible install commands for popular package managers", () => {

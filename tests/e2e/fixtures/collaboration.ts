@@ -17,6 +17,7 @@ const CollaborationJourneyEnvironmentSchema = z.object({
   MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: RuntimeHandleSchema,
   MATRIX_COLLABORATION_E2E_OWNER_STATE: StorageStatePathSchema,
   MATRIX_COLLABORATION_E2E_EDITOR_STATE: StorageStatePathSchema,
+  MATRIX_COLLABORATION_E2E_OUTSIDER_STATE: StorageStatePathSchema,
   MATRIX_COLLABORATION_E2E_PROJECT_ID: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
   MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
   MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: z.email().max(254),
@@ -28,6 +29,7 @@ export interface CollaborationJourneyEnvironment {
   runtimePath: string;
   ownerStorageState: string;
   editorStorageState: string;
+  outsiderStorageState: string;
   projectId: string;
   editorActorId: string;
   editorEmail: string;
@@ -42,6 +44,9 @@ export interface CollaborationJourneyActor {
 export interface TwoAccountCollaborationJourney {
   owner: CollaborationJourneyActor;
   editor: CollaborationJourneyActor;
+  outsider: CollaborationJourneyActor;
+  editorActorId: string;
+  editorUsername: string;
   platformUrl: string;
   runtimeUrl: string;
   close(): Promise<void>;
@@ -50,7 +55,12 @@ export interface TwoAccountCollaborationJourney {
 export function parseCollaborationJourneyEnvironment(
   environment: Record<string, string | undefined> = process.env,
 ): CollaborationJourneyEnvironment {
-  const parsed = CollaborationJourneyEnvironmentSchema.parse(environment);
+  const parsed = CollaborationJourneyEnvironmentSchema.parse({
+    ...environment,
+    // MEMBER is the public qualification contract; EDITOR remains a compatibility alias.
+    MATRIX_COLLABORATION_E2E_EDITOR_STATE: environment.MATRIX_COLLABORATION_E2E_MEMBER_STATE
+      ?? environment.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
+  });
   const baseUrl = new URL(parsed.MATRIX_COLLABORATION_E2E_BASE_URL);
   const localHttp = baseUrl.protocol === "http:"
     && ["localhost", "127.0.0.1", "::1"].includes(baseUrl.hostname);
@@ -66,6 +76,7 @@ export function parseCollaborationJourneyEnvironment(
     runtimePath: `/vm/${encodeURIComponent(parsed.MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE)}`,
     ownerStorageState: parsed.MATRIX_COLLABORATION_E2E_OWNER_STATE,
     editorStorageState: parsed.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
+    outsiderStorageState: parsed.MATRIX_COLLABORATION_E2E_OUTSIDER_STATE,
     projectId: parsed.MATRIX_COLLABORATION_E2E_PROJECT_ID,
     editorActorId: parsed.MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID,
     editorEmail: parsed.MATRIX_COLLABORATION_E2E_EDITOR_EMAIL,
@@ -78,26 +89,31 @@ export async function createTwoAccountCollaborationJourney(
   environment: Record<string, string | undefined> = process.env,
 ): Promise<TwoAccountCollaborationJourney> {
   const config = parseCollaborationJourneyEnvironment(environment);
-  const [ownerContext, editorContext] = await Promise.all([
+  const [ownerContext, editorContext, outsiderContext] = await Promise.all([
     browser.newContext({ baseURL: config.baseUrl, storageState: config.ownerStorageState }),
     browser.newContext({ baseURL: config.baseUrl, storageState: config.editorStorageState }),
+    browser.newContext({ baseURL: config.baseUrl, storageState: config.outsiderStorageState }),
   ]);
   try {
-    const [ownerPage, editorPage] = await Promise.all([
+    const [ownerPage, editorPage, outsiderPage] = await Promise.all([
       ownerContext.newPage(),
       editorContext.newPage(),
+      outsiderContext.newPage(),
     ]);
     return {
       owner: { context: ownerContext, page: ownerPage },
       editor: { context: editorContext, page: editorPage },
+      outsider: { context: outsiderContext, page: outsiderPage },
+      editorActorId: config.editorActorId,
+      editorUsername: config.editorUsername,
       platformUrl: config.baseUrl,
       runtimeUrl: new URL(config.runtimePath, config.baseUrl).toString(),
       async close() {
-        await Promise.allSettled([ownerContext.close(), editorContext.close()]);
+        await Promise.allSettled([ownerContext.close(), editorContext.close(), outsiderContext.close()]);
       },
     };
   } catch (error: unknown) {
-    await Promise.allSettled([ownerContext.close(), editorContext.close()]);
+    await Promise.allSettled([ownerContext.close(), editorContext.close(), outsiderContext.close()]);
     throw error;
   }
 }

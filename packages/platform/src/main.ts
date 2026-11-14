@@ -675,7 +675,8 @@ export function createApp(deps: {
   deps.collaboration?.register(app);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
-  app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
+  const browserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
+  app.shutdownBrowserApprovals = browserApprovals.close;
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
@@ -716,6 +717,7 @@ export function createApp(deps: {
     orchestrator,
     clerkAuth,
     appEnv,
+    browserApprovals,
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,

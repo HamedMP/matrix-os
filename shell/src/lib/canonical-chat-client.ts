@@ -198,12 +198,12 @@ export function createCanonicalShellChatClient(options: {
   createId?: () => string;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number }) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
+  const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number; signal?: AbortSignal }) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
     ...init,
     ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
       headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
     } : {}),
-    signal: AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    signal: requestOptions?.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(requestOptions.timeoutMs ?? REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
   }).then(response => jsonResponse(response, path));
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {

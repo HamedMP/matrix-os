@@ -6,6 +6,11 @@ mode="${1:-validate}"
 enabled="${WHATSAPP_ENABLED:-false}"
 key_version="${WHATSAPP_ENCRYPTION_KEY_VERSION:-1}"
 admission_mode="${WHATSAPP_ADMISSION_MODE:-allowlist}"
+public_number="${WHATSAPP_BUSINESS_PHONE_NUMBER:-}"
+if [ -n "$public_number" ] && ! [[ "$public_number" =~ ^[1-9][0-9]{6,14}$ ]]; then
+  echo "WHATSAPP_BUSINESS_PHONE_NUMBER must be a public international number without punctuation." >&2
+  exit 1
+fi
 case "$admission_mode" in
   allowlist|eea_selfserve) ;;
   *) echo "WHATSAPP_ADMISSION_MODE must be allowlist or eea_selfserve." >&2; exit 1 ;;
@@ -33,7 +38,10 @@ bindings=(
 case "$mode" in
   validate) ;;
   env-bindings)
-    if [ "$enabled" = "true" ]; then printf '|WHATSAPP_ADMISSION_MODE=%s' "$admission_mode"; fi
+    if [ "$enabled" = "true" ]; then
+      printf '|WHATSAPP_ADMISSION_MODE=%s' "$admission_mode"
+      if [ -n "$public_number" ]; then printf '|WHATSAPP_BUSINESS_PHONE_NUMBER=%s' "$public_number"; fi
+    fi
     ;;
   secret-bindings)
     if [ "$enabled" = "true" ]; then printf ',%s' "${bindings[@]}"; fi
@@ -125,6 +133,9 @@ try {
   const admission = containers[0].env.filter(entry => entry.name === 'WHATSAPP_ADMISSION_MODE');
   if (process.argv[3] === 'false' ? admission.length !== 0
     : admission.length !== 1 || admission[0].value !== process.argv[4] || admission[0].valueFrom !== undefined) throw new Error();
+  const publicNumber = containers[0].env.filter(entry => entry.name === 'WHATSAPP_BUSINESS_PHONE_NUMBER');
+  const expectedNumber = process.argv[3] === 'true' ? process.env.WHATSAPP_BUSINESS_PHONE_NUMBER : undefined;
+  if (expectedNumber ? publicNumber.length !== 1 || publicNumber[0].value !== expectedNumber || publicNumber[0].valueFrom !== undefined : publicNumber.length !== 0) throw new Error();
   for (const binding of process.argv.slice(5)) {
     const [name, reference] = binding.split('=');
     const [secret, version] = reference.split(':');

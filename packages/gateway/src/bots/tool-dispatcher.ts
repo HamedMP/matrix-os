@@ -54,6 +54,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "routine.cli": "write",
   "routine.propose":"write",
   "routine.control":"write",
   "agent.task": "write",
@@ -197,6 +198,7 @@ function textResult(text: string): BotToolResult {
 export function createBotToolDispatcher(deps: {
   homePath: string;
   githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
+  managedRoutine?: { execute(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal): Promise<BotToolResult> };
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
   jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
@@ -207,8 +209,9 @@ export function createBotToolDispatcher(deps: {
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
-  nativeTask?: { prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
+  nativeTask?: { routine?(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<BotToolResult | undefined>; prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
 }): BotToolDispatcher {
+  if (deps.managedRoutine && typeof deps.managedRoutine.execute !== "function") throw new Error("Routine broker dependency unavailable");
   async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
       if (isManagedPiBinding(binding)) {
@@ -333,8 +336,12 @@ export function createBotToolDispatcher(deps: {
     if (request.args.selection.model !== binding.route.modelId) throw new BotBrokerActionError("invalid_arguments");
   }
   return {
-    effectClass: (request) => request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.cli" ? (["list", "show", "request"].includes(request.args.operation) ? "read" : "write") : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      if (request.capability === "routine.cli") {
+        if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
+        return;
+      }
       // Pure binding validation precedes the broker's dispatched checkpoint.
       validateRoutineProposal(binding, request);
       if (request.capability === "github.developer") {
@@ -352,6 +359,10 @@ export function createBotToolDispatcher(deps: {
       }
     },
     async dispatch(binding, request, signal) {
+      if (request.capability === "routine.cli") {
+        if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
+        return { result: await deps.managedRoutine.execute(binding, request.args, request.toolCallId, signal) };
+      }
       validateRoutineProposal(binding, request);
       if (request.capability === "github.developer") {
         if (!deps.githubDeveloper) throw new BotBrokerActionError("not_granted");
@@ -362,6 +373,8 @@ export function createBotToolDispatcher(deps: {
         }) };
       }
       if (request.capability === "routine.propose" || request.capability === "routine.control") {
+        const native = await deps.nativeTask?.routine?.(binding, request, signal);
+        if (native) return { result: native };
         if (!deps.routines || binding.group || isManagedPiBinding(binding) || binding.requestClass!=="interactive") throw new BotBrokerActionError("not_granted");
         if(request.capability==="routine.propose") return {result:textResult(JSON.stringify(await deps.routines.propose(binding,request.args)))};
         if(request.args.operation==="list") return {result:textResult(JSON.stringify(await deps.routines.list(binding.ownerId,binding.botId)))};

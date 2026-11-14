@@ -1,3 +1,4 @@
+export * from "#messaging-origin";
 export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
@@ -88,6 +89,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#provider-managed-credit";
 export * from "#funded-ai";
+export * from "#funded-ai-pricing";
 export * from "#jev";
 export * from "#jev-inbox";
 export * from "#get-started";
@@ -194,6 +196,20 @@ export const TerminalTabStatusSchema = z.enum([
   "unavailable",
 ]);
 
+/** Public I/O/cleanup reference. It cannot authenticate a source or restore proof. */
+export const TerminalNativeHostRefSchema = z.object({
+  path: z.string().max(103).regex(/^\/(?:[A-Za-z0-9_.-]+\/)*matrix-terminal-[a-f0-9]{32}\/io\.sock$/),
+  generation: z.string().regex(/^gen_[a-f0-9]{64}$/),
+}).strict();
+export const TerminalNativeHostStateSchema = TerminalNativeHostRefSchema.extend({
+  // A real canonical reservation exists before host dispatch; never replay it.
+  dispatchPending: z.literal(true).optional(),
+  stopRequested: z.literal(true).optional(),
+  // Unit stopped is independent of native exit status, which remains unknown.
+  managerStopped: z.literal(true).optional(),
+}).strict();
+export type TerminalNativeHostRef = z.infer<typeof TerminalNativeHostRefSchema>;
+
 export const TerminalTabSchema = z.object({
   id: TerminalTabIdSchema,
   workspaceId: TerminalWorkspaceIdSchema,
@@ -207,6 +223,7 @@ export const TerminalTabSchema = z.object({
       message: "Terminal cwd cannot contain traversal",
     }),
   status: TerminalTabStatusSchema,
+  nativeHost: TerminalNativeHostStateSchema.optional(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   order: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   accessScope: z.enum(["owner", "chat", "legacy"]).optional(),
@@ -1466,6 +1483,7 @@ export type {
 } from "#os-view";
 
 export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
+export * from "#messaging-settings";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 

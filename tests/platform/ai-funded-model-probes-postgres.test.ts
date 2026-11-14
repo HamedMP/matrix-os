@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runPlatformStartupMigrations } from "../../packages/platform/src/database/run-migrations.js";
 import { createPlatformDb, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createFundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, FUNDED_PROBE_MODELS } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { createSharedFundedProbeCache, fundedProbeCacheKey } from "../../packages/platform/src/ai-funded-shared-probe-cache.js";
 
 // Existing disposable-test-server convention: isolated schema, independent pools.
@@ -65,6 +65,35 @@ describe.skipIf(!databaseUrl)("shared model health on independent PostgreSQL con
     expect((await cachedService.readCached!(sonnet)).ready).toBe(false);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(await budget()).toEqual([{ day_used: 1, minute_used: 1 }]);
+  });
+
+  it("skips expired pricing across replicas while sharing a healthy model's fifteen-minute receipt", async () => {
+    const end = "2026-10-15T00:00:00.000Z";
+    const healthy = new Set<string>([sonnet, glm]);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => priced());
+    const settings = {
+      minuteLimit: 20,
+      readPricingReview: async (modelId: string) => ({
+        version: "reviewed-rate",
+        validThrough: healthy.has(modelId) ? end : clock.toISOString(),
+      }),
+    };
+    const replicas = [service(db, fetchFn, settings), service(secondDb, fetchFn, settings)];
+    const results = await Promise.all(replicas.map(probes => Promise.all(
+      FUNDED_PROBE_MODELS.map(async model => (await probes.probe(model)).ready),
+    )));
+    expect(results).toEqual(replicas.map(() => FUNDED_PROBE_MODELS.map(model => healthy.has(model))));
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(await budget()).toEqual([{ day_used: 2, minute_used: 2 }]);
+    clock = new Date(clock.getTime() + 14 * 60_000);
+    expect((await replicas[1].readCached!(sonnet)).ready).toBe(true);
+    healthy.delete(sonnet);
+    expect((await replicas[0].readCached!(sonnet)).ready).toBe(false);
+    expect((await replicas[1].probe(sonnet)).ready).toBe(false);
+    await replicas[1].invalidateAfterUpstreamFailure!(glm, "reviewed-rate", clock);
+    expect((await replicas[0].readCached!(glm)).ready).toBe(false);
+    expect((await replicas[1].probe(glm)).ready).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it("creates its additive schema despite a newer core marker without resetting budget counters", async () => {

@@ -7,6 +7,8 @@ export interface CanonicalCliProcess {
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   once(event: "error", listener: (error: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
+  /** Required for handing recovery authority to another process after stdio has closed. */
+  confirmScopeClosed?(): Promise<boolean>;
 }
 
 export type CanonicalCliSpawn = (
@@ -85,6 +87,8 @@ export async function runCanonicalCli(options: {
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
   onStart?: (write: (frame: string) => Promise<void>, end: () => void, idle: CanonicalCliIdleControl, startup: CanonicalCliStartupControl) => void;
+  /** Synchronous conservative source fence before process completion is delivered to consumers. */
+  onSettled?: () => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
 } & CanonicalCliLifetimeOptions): Promise<void> {
@@ -120,6 +124,7 @@ export async function runCanonicalCli(options: {
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
+      try { options.onSettled?.(); } catch (error: unknown) { console.warn("[chat-cli] Source settlement unavailable", error instanceof Error ? error.name : "UnknownError"); }
       if (timeout) clearTimeout(timeout);
       if (idleTimeout) clearTimeout(idleTimeout);
       if (startupTimeout) clearTimeout(startupTimeout);

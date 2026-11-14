@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { CollaborationProjectOverview } from "@matrix-os/contracts";
-import type { Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -10,11 +11,24 @@ import type {
 } from "./project-inventory.js";
 import type { ProjectTransitionRecord } from "./project-transition.js";
 import { ProjectOverviewError, readProjectOverview } from "./project-chat-routes.js";
+import {
+  appendMutationRecords,
+  completeAcceptedOperation,
+  jsonb,
+  OPERATION_RETENTION_MS,
+  parseJson,
+} from "./repository-shared.js";
 
 const MAX_MEMBERSHIP_EFFECTS = 1_000;
+const MAX_PENDING_UNSHARE_RECOVERY = 100;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const UnshareResultSchema = z.object({
+  scopeId: ScopeIdSchema,
+  lifecycle: z.literal("private"),
+  revision: z.number().int().nonnegative(),
+}).strict();
 
 interface InventoryResult {
   projectId: string;
@@ -84,10 +98,67 @@ export function createProjectSharingService(options: {
     authorityGeneration: number;
   }>;
   onPrepared?(transition: ProjectTransitionRecord): boolean;
+  /** Runs only after the private lifecycle/auth-epoch fence commits. */
+  onUnshared?(
+    input: { scopeId: string; revision: number },
+    executor: Transaction<OwnerCollaborationDatabase>,
+  ): Promise<void>;
   /** The owner's name for a project; without it the overview is unavailable, never a guess. */
   projectName?(ownerId: string, projectId: string): Promise<string | null>;
 }) {
+  async function completeUnshareCleanup(input: {
+    scopeId: string;
+    actorId: string;
+    clientRequestId: string;
+    revision: number;
+  }): Promise<void> {
+    await completeAcceptedOperation(options.db, {
+      scopeId: input.scopeId,
+      actorId: input.actorId,
+      clientRequestId: input.clientRequestId,
+      operationKind: "project.unshare",
+    }, async (trx) => {
+      await options.onUnshared?.({ scopeId: input.scopeId, revision: input.revision }, trx);
+    });
+  }
+
+  async function pendingUnshares(scopeId?: string, actorId?: string) {
+    let query = options.db.selectFrom("collaboration_operations")
+      .select(["scope_id", "actor_id", "client_request_id", "result_ref"])
+      .where("operation_kind", "=", "project.unshare")
+      .where("status", "=", "accepted")
+      .orderBy("created_at", "asc")
+      .limit(MAX_PENDING_UNSHARE_RECOVERY);
+    if (scopeId) query = query.where("scope_id", "=", scopeId);
+    if (actorId) query = query.where("actor_id", "=", actorId);
+    return query.execute();
+  }
+
+  async function recoverUnshares(scopeId?: string, actorId?: string, failFast = false) {
+    let recovered = 0;
+    let failed = 0;
+    for (const operation of await pendingUnshares(scopeId, actorId)) {
+      try {
+        const result = UnshareResultSchema.parse(parseJson(operation.result_ref));
+        await completeUnshareCleanup({
+          scopeId: operation.scope_id,
+          actorId: operation.actor_id,
+          clientRequestId: operation.client_request_id,
+          revision: result.revision,
+        });
+        recovered += 1;
+      } catch (error: unknown) {
+        failed += 1;
+        if (failFast) throw error;
+        console.warn("[collaboration-project] pending unshare cleanup deferred",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return { recovered, failed };
+  }
+
   async function preparePreview(scopeId: string, actorId: string) {
+    await recoverUnshares(scopeId, actorId, true);
     const scope = await loadPreparationScope(options.db, scopeId, actorId);
     const membershipEffects = await deriveProjectMembershipEffects(options.db, scope.id, scope.owner_id);
     const inventory = await options.inventory.preview({
@@ -99,6 +170,7 @@ export function createProjectSharingService(options: {
   }
 
   return {
+    recoverPendingUnshares: () => recoverUnshares(),
     async read(input: { scopeId: string }) {
       const scopeId = ScopeIdSchema.parse(input.scopeId);
       try {
@@ -240,6 +312,98 @@ export function createProjectSharingService(options: {
         throw new ProjectSharingError("capacity");
       }
       return transition;
+    },
+
+    async unshare(input: {
+      scopeId: string;
+      actorId: string;
+      clientRequestId: string;
+      expectedRevision: number;
+      payloadHash: string;
+    }) {
+      const parsed = z.object({
+        scopeId: ScopeIdSchema,
+        actorId: ActorIdSchema,
+        clientRequestId: z.uuid(),
+        expectedRevision: z.number().int().nonnegative(),
+        payloadHash: DigestSchema,
+      }).strict().parse(input);
+      const committed = await options.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+          .where("id", "=", parsed.scopeId).where("kind", "=", "project")
+          .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
+        if (!scope) throw new ProjectSharingError("not_found");
+        const replay = await trx.selectFrom("collaboration_operations").selectAll()
+          .where("scope_id", "=", parsed.scopeId)
+          .where("actor_id", "=", parsed.actorId)
+          .where("client_request_id", "=", parsed.clientRequestId)
+          .where("operation_kind", "=", "project.unshare")
+          .executeTakeFirst();
+        if (replay) {
+          if (replay.payload_hash !== parsed.payloadHash || replay.status === "failed" || replay.result_ref === null) {
+            throw new ProjectSharingError("conflict");
+          }
+          return {
+            result: UnshareResultSchema.parse(parseJson(replay.result_ref)),
+            drainRequired: replay.status === "accepted",
+          };
+        }
+        const owner = await trx.selectFrom("collaboration_members").select(["role", "status"])
+          .where("scope_id", "=", scope.id).where("actor_id", "=", parsed.actorId)
+          .forUpdate().executeTakeFirst();
+        if (scope.owner_id !== parsed.actorId || owner?.role !== "owner" || owner.status !== "accepted") {
+          throw new ProjectSharingError("forbidden");
+        }
+        if (Number(scope.revision) !== parsed.expectedRevision
+          || (scope.lifecycle !== "shared" && scope.lifecycle !== "archived")) {
+          throw new ProjectSharingError("conflict");
+        }
+        const children = await trx.selectFrom("collaboration_scopes").select("id")
+          .where("parent_scope_id", "=", scope.id).where("membership_mode", "=", "inherited")
+          .where("lifecycle", "=", scope.lifecycle)
+          .where("deleted_at", "is", null).forUpdate().execute();
+        const committedDate = new Date();
+        const committedAt = committedDate.toISOString();
+        const revision = Number(scope.revision) + 1;
+        const updated = await trx.updateTable("collaboration_scopes").set({
+          lifecycle: "private", revision, auth_epoch: sql<number>`auth_epoch + 1`, updated_at: committedAt,
+        }).where("id", "=", scope.id).where("revision", "=", parsed.expectedRevision)
+          .where("lifecycle", "=", scope.lifecycle).returningAll().executeTakeFirst();
+        if (!updated) throw new ProjectSharingError("conflict");
+        if (children.length > 0) {
+          await trx.updateTable("collaboration_scopes").set({
+            lifecycle: "private", revision: sql<number>`revision + 1`, auth_epoch: sql<number>`auth_epoch + 1`, updated_at: committedAt,
+          }).where("id", "in", children.map((child) => child.id)).execute();
+        }
+        const recipients = await trx.selectFrom("collaboration_members").select("actor_id")
+          .where("scope_id", "=", scope.id).where("status", "=", "accepted").execute();
+        await appendMutationRecords(trx, {
+          scope: updated,
+          actorId: parsed.actorId,
+          action: "scope.unshared",
+          now: committedAt,
+          recipients: recipients.map((recipient) => ({ actorId: recipient.actor_id })),
+          discoveryState: "revoked",
+        });
+        const result = UnshareResultSchema.parse({ scopeId: scope.id, lifecycle: "private", revision });
+        await trx.insertInto("collaboration_operations").values({
+          scope_id: scope.id, actor_id: parsed.actorId, client_request_id: parsed.clientRequestId,
+          operation_kind: "project.unshare", payload_hash: parsed.payloadHash, status: "accepted",
+          result_ref: jsonb(result), expected_revision: parsed.expectedRevision,
+          accepted_auth_epoch: Number(scope.auth_epoch), created_at: committedAt,
+          expires_at: new Date(committedDate.getTime() + OPERATION_RETENTION_MS),
+        }).execute();
+        return { result, drainRequired: true };
+      });
+      if (committed.drainRequired) {
+        await completeUnshareCleanup({
+          scopeId: parsed.scopeId,
+          actorId: parsed.actorId,
+          clientRequestId: parsed.clientRequestId,
+          revision: committed.result.revision,
+        });
+      }
+      return committed.result;
     },
   };
 }

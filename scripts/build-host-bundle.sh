@@ -32,6 +32,12 @@ GH_ARCHIVE="${GH_DIST}.tar.gz"
 GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"
 UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 
+# Keep pure argument validation above the baseline dispatch, before any writes.
+# No environment marker can bypass the actual platform/arch/libc check inside.
+if ! node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs" --check; then
+  exec node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs"
+fi
+
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
@@ -47,7 +53,10 @@ pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
+test -f "$ROOT_DIR/packages/gateway/dist/chat/hermes-routine-tool.py"
+test -f "$ROOT_DIR/packages/gateway/dist/coding-agents/opencode-routine-tool.mjs"
 test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
+test -f "$ROOT_DIR/packages/gateway/dist/terminal/terminal-writer.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
@@ -99,22 +108,14 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-watcher-sizing.mjs" "$STAGE_DIR/bin/zellij"
 node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"
-TERMINAL_RUNTIME_GENERATION="$(
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
-    "$STAGE_DIR/bin/zellij" \
-    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
-    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs"
-)"
+# Package pinned Node + complete native/JS/protocol closure before selecting a generation.
+TERMINAL_RUNTIME_GENERATION="$(node "$ROOT_DIR/scripts/build-terminal-generation.mjs" \
+  "$STAGE_DIR/runtime/node/bin/node" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/terminal-runtime")"
 TERMINAL_RUNTIME_GENERATION_DIR="$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"
-mkdir -p "$TERMINAL_RUNTIME_GENERATION_DIR"
-install -m 0755 "$STAGE_DIR/bin/zellij" "$TERMINAL_RUNTIME_GENERATION_DIR/zellij"
-install -m 0755 \
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
-  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-user-keeper.mjs"
-install -m 0755 \
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs" \
-  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-attach.mjs"
-printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$TERMINAL_RUNTIME_GENERATION_DIR/GENERATION"
+[ "$("$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/zellij" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-user-keeper.mjs" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-attach.mjs")" = "$TERMINAL_RUNTIME_GENERATION" ]
 ln -s "generations/$TERMINAL_RUNTIME_GENERATION" "$STAGE_DIR/terminal-runtime/current"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
@@ -127,6 +128,7 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+chmod 0644 "$STAGE_DIR/bin/matrix-claude-native-recovery.py"
 # Native Browser services live outside app/. Stage separate guarded Preview and
 # customer lifecycle payloads; customer setup is scheduled after core readiness.
 pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"
@@ -151,6 +153,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$S
 chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
+bash "$ROOT_DIR/scripts/stage-host-pnpm.sh" "$STAGE_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
@@ -199,5 +202,8 @@ HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREF
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
 tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json funded-host-config
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
+
+# Load the final archive's copied native/runtime closure without the build tree.
+node "$ROOT_DIR/scripts/smoke-host-bundle-native.mjs" "$DIST_DIR/$BUNDLE_NAME"
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

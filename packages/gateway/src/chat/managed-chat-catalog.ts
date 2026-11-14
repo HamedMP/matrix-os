@@ -5,6 +5,8 @@ import type {
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
 
+const DEFAULT_MANAGED_CHAT_MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+
 /** Project funded readiness from V3; model discovery must never acquire a credential. */
 export function managedChatInstances(
   snapshot: AiProviderSnapshotV3 | undefined,
@@ -85,7 +87,8 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     try { resolveManagedPiRoute(snapshot, { instanceId: MANAGED_PI_INSTANCE_ID, model: model.id }, now); return true; }
     catch (error: unknown) { if (error instanceof BotRouteError) return false; throw error; }
   });
-  const available = eligible.length > 0;
+  const defaultModel = eligible.find((model) => model.id === DEFAULT_MANAGED_CHAT_MODEL_ID) ?? eligible[0];
+  const available = defaultModel !== undefined;
   const sources = snapshot.accessSources.filter(source => ["matrix_included", "matrix_cloudflare"].includes(source.id)
     && source.fundingKind === "matrix_included"
     && source.checkedAt !== null && Date.parse(source.checkedAt) <= now
@@ -112,6 +115,6 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
     supports: MANAGED_PI_CHAT_SUPPORTS,
-    ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
+    ...(defaultModel ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: defaultModel.id } } : {}),
   }];
 }
