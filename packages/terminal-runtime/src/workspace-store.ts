@@ -262,8 +262,11 @@ export class TerminalWorkspaceStore {
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = zellijTabId;
+      // Re-activating the same pane (startup reconcile, ensure) keeps its time, so
+      // its earlier status reports stay valid; a different pane is a new program.
+      // A tab from older state keeps no time until its pane changes.
+      if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = now;
       tab.zellijPaneId = zellijPaneId;
-      tab.zellijPaneAssignedAt = now;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
       if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
