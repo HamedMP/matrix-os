@@ -88,10 +88,10 @@ nothing is added to the 1193-LOC `runtime.ts`.
 | send | `POST …/tabs/:tabId/send` `{text, force?}` | Single-line text is typed; multi-line text goes as one bracketed paste. Then Enter. Control and escape characters, including paste markers, are stripped. Refuses `blocked` with 409 `terminal_agent_blocked` unless `force`. If a person typed in a live viewer within the last 3 s, it holds until 3 s of keyboard quiet, never more than 60 s. Holding for output quiet comes with the layer 3 event stream. |
 | keys | `POST …/tabs/:tabId/keys` `{keys: KeyName[]}` | Named keys (`enter esc tab backspace up down left right home end pageup pagedown delete ctrl+<a-z> alt+<a-z> f1..f12 space`), max 64, encoded by the mouse/keyboard mode state (`application cursor` changes arrows). |
 | interrupt | `POST …/tabs/:tabId/interrupt` | Esc when the tab reports agent status, else Ctrl+C; returns `{pressed, observed: status-or-exit within 5 s}`. Never escalates. |
-| wait | `POST …/tabs/:tabId/wait` `{output?, timeoutMs?}` | Resolves `{reason: "stopped"|"exited"|"output"|"timeout", status?, exitCode?}`. Already not working → immediate. `output` matches text printed after the wait starts (literal, ≤256 chars). Timeout default 180 s, max 600 s. |
+| wait | `POST …/tabs/:tabId/wait` `{output?, timeoutMs?}` | Resolves `{reason: "stopped"|"exited"|"output"|"timeout"|"cancelled"|"shutdown", status?, exitCode?}`. Already not working → immediate; a program that never reported status counts as working until exit. `output` is a literal (≤256 chars) that must occur more often than when the wait began. One request waits at most 90 s (default 60 s), below proxy idle limits. `timeout` is a check-in: `matrix shell wait` keeps re-waiting until its own `--timeout` (default 180 s) and then exits 124, like `hc wait`. A client disconnect cancels the wait. |
 | wait children | `POST /api/terminal/wait-children` `{parent, mode: "any"|"all", timeoutMs?}` | `any`: next child status change, report or exit; `all`: none working. |
 | label | `PATCH …/tabs/:tabId/labels` `{set?: Record<k,v>, remove?: k[]}` | Free-form, never interpreted except reserved `matrix.*` keys. |
-| events | `WS /ws/terminal/events?labels=…&childrenOf=…` | Snapshot, then ordered `created lost restarted finished removed status turn title labels` events; heartbeat 15 s; `missed` + resnapshot for a slow subscriber. |
+| events | `WS /ws/terminal/events` | Snapshot of owner tabs (facts: name, cwd, project, live/finished, exit code, agent status), then ordered `created removed finished status title` events (`labels`, `turn`, `lost` and `restarted` arrive with layer 4). Server heartbeat every 15 s; the client pings at least every 30 s or is evicted after 60 s; above 1 MiB transport backlog the client gets `missed` and then a fresh snapshot. One shared 1 s poll runs only while someone is subscribed. |
 | templates | `GET /api/terminal/templates` | `{name, description}` from `~/agents/templates/*.md` |
 | run template | `POST …/workspaces/:id/tabs` `{template, task?, parent?, outliveParent?}` | Starts the template's command; sends body + task as first message once ready (≤60 s, settle retries); records `firstMessage {sent, reason?}` durably. |
 | put | existing `paste-assets` | Unchanged; documented as `put`. |
@@ -124,6 +124,17 @@ looking; it becomes `idle` when a viewer acknowledges (existing
    `started|ended → idle`; `error` from hook failure events.
 
 Plain programs report nothing; `wait` waits for exit, as in Herdr.
+
+**Exit detection.** Zellij keeps a command tab's pane open after its program
+exits: `list-panes --json` reports `is_held: true` with `exit_status`, and no
+`pane_closed` event fires. So the runtime also sweeps `list-panes` every 2 s,
+one call per workspace that has live tabs, at most the observer cap of sessions
+per pass, and never two passes at once. A held pane's tab is marked `exited`
+with its `exit_status`, which ends `wait`, emits `finished` with the code and
+lets the supervisor tell the parent. A viewer's attachment exit and
+`pane_closed` stay the other sources; whichever is recorded first wins, because
+an ended tab is never marked again. The held pane stays open, so `read` still
+shows the final screen until the tab is closed.
 
 ### Parent/child (layer 4)
 
@@ -226,6 +237,7 @@ error), `terminal_capacity_reached`. No paths, zellij output or stack traces.
 | First message not delivered | `firstMessage {sent:false, reason}` persisted; never blindly resent |
 | Event subscriber slow | Bounded queue (512); overflow → `missed` + resnapshot |
 | Partition skips WS close | Stale subscriber sweep by `lastTouched` (60 s) |
+| Program exits while no viewer is attached | Exit sweep marks the tab `exited` with `exit_status` within about 2 s |
 
 ## Resource Management
 

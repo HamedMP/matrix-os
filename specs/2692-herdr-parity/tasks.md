@@ -30,11 +30,12 @@ where possible (hard limit 3000 additions / 50 files).
 
 ## Layer 3: status, wait, events
 
-- [ ] T3.1 `matrix-status` reporter in terminal PATH bootstrap; status file schema + watcher.
-- [ ] T3.2 Hook phase → Herdr word mapping per tab.
-- [ ] T3.3 `matrix-osc-tap` pass-through for launched agents.
-- [ ] T3.4 `wait` (status/exit/output/timeout) with bounded waiters.
-- [ ] T3.5 `/ws/terminal/events` hub with snapshot, heartbeat, missed, sweep and shutdown drain; query-token allowlist.
+- [x] T3.1 `matrix-status` reporter in `/opt/matrix/bin`; status files indexed by the terminal runtime and served as `ListAgentStatuses`.
+- [x] T3.2 Hook events → Herdr words, written per pane by `matrix-agent-bridge`.
+- [ ] T3.3 `matrix-osc-tap` pass-through for launched agents (moved to layer 4, with template launches that use it).
+- [x] T3.4 `wait` (status/exit/output/timeout) with bounded waiters; CLI `matrix shell wait`; MCP `wait_terminal_tab`.
+- [x] T3.5 `/ws/terminal/events` hub with snapshot, heartbeat, missed, sweep and shutdown drain; query-token allowlist.
+- [x] T3.6 Exit sweep: tabs whose held pane reports an exit become `exited` with `exit_status` (found on the #3300 preview).
 
 ## Layer 4: agents
 

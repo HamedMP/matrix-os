@@ -11,6 +11,12 @@ import {
   type TerminalWorkspaceProjectAdmission,
 } from "../shell/workspace-routes.js";
 import {
+  TERMINAL_WAIT_MAX_MS,
+  TERMINAL_WAIT_OUTPUT_MAX_CHARS,
+  TerminalWaitCapacityError,
+  type TerminalWaiter,
+} from "./wait.js";
+import {
   TERMINAL_KEYS_MAX,
   TERMINAL_READ_LINES_MAX,
   TERMINAL_SEND_TEXT_MAX_CHARS,
@@ -28,6 +34,11 @@ const SendSchema = z.object({
 }).strict();
 const KeysSchema = z.object({ keys: z.array(z.string().min(1).max(16)).min(1).max(TERMINAL_KEYS_MAX) }).strict();
 const InterruptSchema = z.object({}).strict();
+const WaitSchema = z.object({
+  output: z.string().min(1).max(TERMINAL_WAIT_OUTPUT_MAX_CHARS).optional(),
+  seen: z.number().int().min(0).max(1_000_000).optional(),
+  timeoutMs: z.number().int().min(0).max(TERMINAL_WAIT_MAX_MS).optional(),
+}).strict();
 
 /**
  * Herdr-style agent verbs on canonical terminal tabs, mounted under `/api/terminal`.
@@ -35,6 +46,7 @@ const InterruptSchema = z.object({}).strict();
  */
 export function createTerminalAgentRoutes(options: {
   verbs: TerminalAgentVerbs;
+  waiter?: TerminalWaiter;
   getPrincipal: (context: Context) => RequestPrincipal;
   getPreviewTerminalOwner?: (context: Context) => string | undefined;
   terminalOwnerIds: readonly string[];
@@ -110,6 +122,15 @@ export function createTerminalAgentRoutes(options: {
     } catch (error) { return failure(c, error); }
   });
 
+  app.post("/workspaces/:workspaceId/tabs/:tabId/wait", mutationLimit, async (c) => {
+    try {
+      if (!options.waiter) return c.json({ error: "Terminal operation unavailable" }, 503);
+      const ref = refFrom(c);
+      const body = WaitSchema.parse(await readOptionalJson(c));
+      return c.json(await options.waiter.wait(ref, { ...body, signal: c.req.raw.signal }));
+    } catch (error) { return failure(c, error); }
+  });
+
   return app;
 }
 
@@ -124,6 +145,7 @@ async function readOptionalJson(c: Context): Promise<unknown> {
 
 function failure(c: Context, error: unknown) {
   if (error instanceof z.ZodError || error instanceof SyntaxError) return c.json({ error: "Invalid request" }, 400);
+  if (error instanceof TerminalWaitCapacityError) return c.json({ error: "terminal_capacity_reached" }, 429);
   if (error instanceof TerminalAgentVerbError) {
     if (error.code === "blocked") return c.json({ error: "terminal_agent_blocked" }, 409);
     if (error.code === "finished") return c.json({ error: "terminal_finished" }, 409);

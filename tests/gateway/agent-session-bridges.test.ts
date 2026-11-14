@@ -357,4 +357,54 @@ describe("agent session bridge ingestion", () => {
     const snapshot = await readFile(join(root, "system", "agent-sessions", "calm-otter.json"), "utf8");
     expect(snapshot).not.toContain("private prompt fragment");
   });
+
+  // Fault detected: in a canonical workspace every tab shares one zellij session,
+  // so only the pane identity can say which tab's agent needs the person.
+  it("records hook status for the exact pane that ran the agent", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    const sessionName = `matrix-w-${"c".repeat(32)}`;
+    await ingestAgentBridgePayload({
+      agent: "claude", eventName: "PermissionRequest", sessionName,
+      occurredAt: "2026-11-11T10:00:00.000Z", payload: {}, store, paneId: "12", homePath: root,
+    });
+    const status = JSON.parse(await readFile(
+      join(root, "system", "terminal-status", sessionName, "terminal_12.json"), "utf8",
+    ));
+    expect(status).toMatchObject({ version: 1, status: "blocked", source: "hook" });
+
+    await ingestAgentBridgePayload({
+      agent: "claude", eventName: "Stop", sessionName,
+      occurredAt: "2026-11-11T10:00:05.000Z", payload: {}, store, paneId: "12", homePath: root,
+    });
+    expect(JSON.parse(await readFile(
+      join(root, "system", "terminal-status", sessionName, "terminal_12.json"), "utf8",
+    ))).toMatchObject({ status: "done" });
+  });
+
+  it("writes no pane status for legacy named sessions or invalid pane ids", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    await ingestAgentBridgePayload({
+      agent: "claude", eventName: "Stop", sessionName: "calm-otter",
+      occurredAt: "2026-11-11T10:00:00.000Z", payload: {}, store, paneId: "12", homePath: root,
+    });
+    await ingestAgentBridgePayload({
+      agent: "claude", eventName: "Stop", sessionName: `matrix-w-${"c".repeat(32)}`,
+      occurredAt: "2026-11-11T10:00:00.000Z", payload: {}, store, paneId: "../1", homePath: root,
+    });
+    await expect(readFile(join(root, "system", "terminal-status"), "utf8")).rejects.toThrow();
+  });
+
+  it("records hook status under a customer VPS's physical session name", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    const sessionName = `matrix-rt_${"d".repeat(32)}`;
+    await ingestAgentBridgePayload({
+      agent: "codex", eventName: "UserPromptSubmit", sessionName,
+      occurredAt: "2026-11-12T10:00:00.000Z", payload: {}, store, paneId: "3", homePath: root,
+    });
+    expect(JSON.parse(await readFile(join(root, "system", "terminal-status", sessionName, "terminal_3.json"), "utf8")))
+      .toMatchObject({ status: "working", source: "hook" });
+  });
 });

@@ -86,6 +86,8 @@ function encodeSocketResponseFrame(value: unknown): Buffer {
 export interface TerminalRuntimeSocketServerOptions {
   socketPath: string;
   runtime: TerminalRuntimeControlApi;
+  /** Per-tab agent status reported from inside panes; absent means none is reported. */
+  agentStatus?: { list(): Promise<unknown[]> };
   maxConnections?: number;
   idleTimeoutMs?: number;
 }
@@ -409,6 +411,7 @@ export class TerminalRuntimeSocketServer {
         return this.options.runtime.completeNativeTab(request.input, request.input);
       }
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
+      case "ListAgentStatuses": return this.options.agentStatus?.list() ?? [];
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);

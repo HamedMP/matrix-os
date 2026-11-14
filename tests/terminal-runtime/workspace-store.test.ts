@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -111,6 +111,49 @@ describe("terminal workspace store", () => {
 
     await store.activateTab({ workspaceId: workspace.id, tabId: tab.id }, { tabId: 1, paneId: "terminal_1" });
     expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("startupCommand");
+  });
+
+  // Fault detected (#3297 review): status reports can only be told apart from a reused
+  // pane's old program if the store records when the tab got its pane.
+  it("records when a tab gets its pane and forgets it when the pane goes", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspaces-"));
+    homes.push(homePath);
+    let now = new Date("2026-11-11T10:00:00.000Z");
+    const store = new TerminalWorkspaceStore({ homePath, now: () => now });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, { name: "pane", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    now = new Date("2026-11-11T10:05:00.000Z");
+    const activated = await store.activateTab(ref, { tabId: 1, paneId: "terminal_7" });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:05:00.000Z");
+    expect(activated).not.toHaveProperty("zellijPaneAssignedAt");
+    // A refresh (startup reconcile, ensure) re-activates the same pane: its reports stay valid.
+    now = new Date("2026-11-11T10:09:00.000Z");
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_7" });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:05:00.000Z");
+    // A different pane is a new program.
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_8" });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:09:00.000Z");
+    await store.restoreTabStartupIntent(ref, []);
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("zellijPaneAssignedAt");
+  });
+
+  it("does not stamp a pane time on a tab from older state when its pane is refreshed", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspaces-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, { name: "legacy", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_7" });
+    // Simulate state written before the pane time existed.
+    const statePath = join(homePath, "system", "terminal-workspaces.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    delete state.workspaces[workspace.id].tabs[tab.id].zellijPaneAssignedAt;
+    await writeFile(statePath, JSON.stringify(state));
+    const restarted = new TerminalWorkspaceStore({ homePath });
+    await restarted.activateTab(ref, { tabId: 1, paneId: "terminal_7" });
+    expect((await restarted.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("zellijPaneAssignedAt");
   });
 
   it("advances presentation revision only for intentional snapshot replacement", async () => {

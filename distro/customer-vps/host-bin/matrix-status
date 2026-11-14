@@ -1,0 +1,60 @@
+#!/bin/sh
+# matrix-status: report what this terminal's program is doing, in Herdr's words.
+#
+#   matrix-status idle|working|done|blocked|error [message]
+#
+# Matrix terminals run inside zellij, which drops Herdr's OSC 7501 status
+# escapes, so programs report through this command instead. The pane is
+# identified by zellij's own ZELLIJ_SESSION_NAME and ZELLIJ_PANE_ID. Outside a
+# Matrix terminal it does nothing and succeeds.
+set -eu
+
+usage() {
+  echo "usage: matrix-status idle|working|done|blocked|error [message]" >&2
+  exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+word="$1"
+shift
+case "$word" in
+  idle|working|done|blocked|error) ;;
+  *) usage ;;
+esac
+
+session="${ZELLIJ_SESSION_NAME:-}"
+pane="${ZELLIJ_PANE_ID:-}"
+case "$session" in
+  matrix-w-*|matrix-rt_*) ;;
+  *) exit 0 ;;
+esac
+# Exact identity shapes only: these become path components. Customer VPSes run
+# each workspace under its physical name matrix-rt_<hash>.
+printf '%s' "$session" | grep -Eq '^matrix-(w-|rt_)[0-9a-f]{32}$' || exit 0
+printf '%s' "$pane" | grep -Eq '^[0-9]{1,9}$' || exit 0
+
+home="${MATRIX_HOME:-${HOME:-}}"
+[ -n "$home" ] || exit 1
+root="$home/system/terminal-status"
+dir="$root/$session"
+umask 077
+mkdir -p "$dir"
+if [ -L "$root" ] || [ -L "$dir" ]; then
+  echo "matrix-status: status folder is a symlink" >&2
+  exit 1
+fi
+
+# Printable text only, at most 200 characters, JSON-escaped.
+message="$(printf '%s' "$*" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200 | sed 's/\\/\\\\/g; s/"/\\"/g')"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# mktemp creates the file exclusively with an unpredictable name; the trap
+# removes it on any exit before the rename.
+tmp="$(mktemp "$dir/.terminal_$pane.XXXXXXXX.tmp")"
+trap 'rm -f "$tmp"' EXIT
+if [ -n "$message" ]; then
+  printf '{"version":1,"status":"%s","message":"%s","reportedAt":"%s","source":"reporter"}\n' "$word" "$message" "$now" > "$tmp"
+else
+  printf '{"version":1,"status":"%s","reportedAt":"%s","source":"reporter"}\n' "$word" "$now" > "$tmp"
+fi
+mv -f "$tmp" "$dir/terminal_$pane.json"
+trap - EXIT

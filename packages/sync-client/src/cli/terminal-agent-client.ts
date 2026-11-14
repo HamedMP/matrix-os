@@ -20,6 +20,8 @@ export interface TerminalAgentClient {
   send(ref: TerminalRef, input: { text: string; force?: boolean }): Promise<{ sent: boolean; heldMs: number }>;
   keys(ref: TerminalRef, keys: string[]): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef): Promise<TerminalInterruptOutput>;
+  /** One server-side wait of at most 90 s; callers loop for longer waits. */
+  wait(ref: TerminalRef, input: { output?: string; timeoutMs: number }): Promise<TerminalWaitOutput>;
 }
 
 /** What changed within five seconds of the stop key; null when nothing did. */
@@ -39,6 +41,14 @@ function interruptObserved(value: unknown): TerminalInterruptObserved {
   }
   return typeof observed.status === "string" && /^[a-z]{1,16}$/.test(observed.status) ? { status: observed.status } : null;
 }
+
+export interface TerminalWaitOutput {
+  reason: string;
+  status?: string;
+  exitCode?: number | null;
+}
+
+export const TERMINAL_WAIT_REQUEST_MAX_MS = 90_000;
 
 /** HTTP client for the gateway's Herdr-style terminal verbs. */
 export function createTerminalAgentClient(options: {
@@ -109,6 +119,18 @@ export function createTerminalAgentClient(options: {
     async keys(ref, keys) {
       const payload = await request(`${tabPath(ref)}/keys`, { method: "POST", body: { keys } });
       return { pressed: typeof payload.pressed === "number" ? payload.pressed : 0 };
+    },
+    async wait(ref, input) {
+      const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);
+      const payload = await request(`${tabPath(ref)}/wait`, {
+        method: "POST",
+        body: { timeoutMs, ...(input.output ? { output: input.output } : {}) },
+      }, timeoutMs + 15_000);
+      return {
+        reason: typeof payload.reason === "string" ? payload.reason : "unknown",
+        ...(typeof payload.status === "string" ? { status: payload.status } : {}),
+        ...(typeof payload.exitCode === "number" || payload.exitCode === null ? { exitCode: payload.exitCode as number | null } : {}),
+      };
     },
     async interrupt(ref) {
       const payload = await request(`${tabPath(ref)}/interrupt`, { method: "POST", body: {} });

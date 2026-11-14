@@ -30,6 +30,8 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   zellijTabName: z.string().regex(/^matrix-tab-[0-9a-f]{32}$/),
   zellijTabId: z.number().int().min(0).nullable(),
   zellijPaneId: z.string().regex(/^terminal_[0-9]+$/).nullable(),
+  // When the tab got its current pane. Optional so older state stays readable.
+  zellijPaneAssignedAt: z.string().datetime({ offset: true }).optional(),
   migrationKey: z.string().min(1).max(256).optional(),
   // Present, including an empty array for a plain shell, until activation.
   // Optional only so state written before startup-intent persistence remains readable.
@@ -260,6 +262,10 @@ export class TerminalWorkspaceStore {
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = zellijTabId;
+      // Re-activating the same pane (startup reconcile, ensure) keeps its time, so
+      // its earlier status reports stay valid; a different pane is a new program.
+      // A tab from older state keeps no time until its pane changes.
+      if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = now;
       tab.zellijPaneId = zellijPaneId;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
@@ -284,6 +290,7 @@ export class TerminalWorkspaceStore {
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = null;
       tab.zellijPaneId = null;
+      delete tab.zellijPaneAssignedAt;
       tab.startupCommand = startupCommand;
       tab.status = "starting";
       delete tab.exitCode;
@@ -663,6 +670,7 @@ export class TerminalWorkspaceStore {
       zellijTabName: _tabName,
       zellijTabId: _tabId,
       zellijPaneId: _paneId,
+      zellijPaneAssignedAt: _paneAssignedAt,
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
       ...publicTab

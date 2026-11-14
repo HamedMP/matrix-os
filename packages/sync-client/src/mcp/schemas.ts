@@ -179,3 +179,9 @@ export const SendTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
 export const PressTerminalKeysInputSchema = TerminalTabRefInputSchema.extend({
   keys: z.array(z.string().min(1).max(16)).min(1).max(64),
 }).strict();
+
+export const WaitTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
+  output: z.string().min(1).max(256).optional(),
+  // Hosted MCP gives each downstream request 50 s; a wait check-in must answer first.
+  timeoutMs: z.number().int().min(0).max(40_000).optional(),
+}).strict();

@@ -20,7 +20,7 @@ import {
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
-import { terminalCommandResultFromPanes, type TerminalCommandResult } from './terminal-command-state.js';
+import { heldPaneExitsFromPanes, terminalCommandResultFromPanes, type HeldPaneExit, type TerminalCommandResult } from './terminal-command-state.js';
 import { ArchiveTabInventorySchema, ArchivePaneInventorySchema, archivedTabRuntimeIdentity } from "./terminal-ended-tab-archive.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
@@ -573,6 +573,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
 
   async getCommandState(sessionNameInput: string, tabIdInput: number, paneIdInput: string): Promise<TerminalCommandState> {
     return this.readCommandObservation(sessionNameInput, tabIdInput, paneIdInput, terminalCommandStateFromPanes, 'unknown');
+  }
+
+  /** Panes zellij holds after their program exited, from one `list-panes` call. */
+  async listHeldPaneExits(sessionNameInput: string): Promise<HeldPaneExit[]> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const output = await this.run(
+      ["--session", sessionName, "action", "list-panes", "--all", "--json"], binaryPath,
+      TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+    );
+    return heldPaneExitsFromPanes(JSON.parse(output));
   }
 
   async getCommandResult(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult> {
