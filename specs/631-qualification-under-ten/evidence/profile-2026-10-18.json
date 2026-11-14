@@ -1,0 +1,630 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-18",
+  "inspectionSource": "101fbd5f48613db404b6deede191975971f9cd73",
+  "hosted": {
+    "runId": 39143979035,
+    "source": "2328c6c05fee0858faf457220095a5af4742a537",
+    "profiles": [
+      {
+        "artifact": "unit-profile-1",
+        "report": "unit-1.json",
+        "sha256": "74b76e093bda480b10b0b28589690d67c8b64033ed1573bea97c62c7400f5a14",
+        "files": 708,
+        "passed": 7877,
+        "skipped": 95,
+        "failed": 0
+      },
+      {
+        "artifact": "unit-profile-2",
+        "report": "unit-2.json",
+        "sha256": "4e8de39ab1b830af17315027b87598437c93c147b7979844a2294c02599f91de",
+        "files": 708,
+        "passed": 7546,
+        "skipped": 40,
+        "failed": 0
+      },
+      {
+        "artifact": "unit-profile-3",
+        "report": "unit-3.json",
+        "sha256": "c2eaedc10e5fb929d334dd4d0ccd4b30e43650c23cdaa2937a8298af3c20770e",
+        "files": 708,
+        "passed": 7690,
+        "skipped": 90,
+        "failed": 0
+      },
+      {
+        "artifact": "unit-profile-4",
+        "report": "unit-4.json",
+        "sha256": "4e2bd97129f1bc55c47d2a01a7791e16617af0bdc9ae528ea278373f36952b63",
+        "files": 708,
+        "passed": 7452,
+        "skipped": 99,
+        "failed": 0
+      }
+    ],
+    "files": 2832,
+    "cumulativeFileSeconds": 6519.952,
+    "groups": {
+      "gateway": {
+        "files": 993,
+        "fileSeconds": 2599.965
+      },
+      "platform": {
+        "files": 349,
+        "fileSeconds": 2205.458
+      },
+      "desktop": {
+        "files": 438,
+        "fileSeconds": 546.347
+      },
+      "shell": {
+        "files": 295,
+        "fileSeconds": 305.652
+      },
+      "integrations": {
+        "files": 66,
+        "fileSeconds": 259.387
+      },
+      "ui": {
+        "files": 177,
+        "fileSeconds": 203.054
+      },
+      "default-apps": {
+        "files": 89,
+        "fileSeconds": 110.816
+      },
+      "scripts": {
+        "files": 105,
+        "fileSeconds": 98.429
+      },
+      "cli": {
+        "files": 33,
+        "fileSeconds": 64.839
+      },
+      "helpers": {
+        "files": 2,
+        "fileSeconds": 46.999
+      },
+      "proxy": {
+        "files": 28,
+        "fileSeconds": 21.906
+      },
+      "deploy": {
+        "files": 28,
+        "fileSeconds": 17.315
+      },
+      "terminal-runtime": {
+        "files": 30,
+        "fileSeconds": 10.388
+      },
+      "scope-runtime": {
+        "files": 12,
+        "fileSeconds": 7.802
+      },
+      "contracts": {
+        "files": 78,
+        "fileSeconds": 5.92
+      },
+      "kernel": {
+        "files": 51,
+        "fileSeconds": 5.707
+      },
+      "sync-client": {
+        "files": 8,
+        "fileSeconds": 3.438
+      },
+      "edge-router": {
+        "files": 5,
+        "fileSeconds": 2.174
+      },
+      "bot-runtime": {
+        "files": 11,
+        "fileSeconds": 1.428
+      },
+      "web-tools": {
+        "files": 5,
+        "fileSeconds": 1.216
+      },
+      "observability": {
+        "files": 9,
+        "fileSeconds": 0.654
+      },
+      "plugins": {
+        "files": 6,
+        "fileSeconds": 0.325
+      },
+      "brand": {
+        "files": 5,
+        "fileSeconds": 0.299
+      },
+      "mcp-browser": {
+        "files": 5,
+        "fileSeconds": 0.265
+      },
+      "distro": {
+        "files": 1,
+        "fileSeconds": 0.118
+      },
+      "neo-worker": {
+        "files": 1,
+        "fileSeconds": 0.037
+      },
+      "repository": {
+        "files": 1,
+        "fileSeconds": 0.007
+      },
+      "docs": {
+        "files": 1,
+        "fileSeconds": 0.007
+      }
+    },
+    "slowestFiles": [
+      {
+        "file": "platform/proxy-routing.test.ts",
+        "seconds": 89.47520361328125,
+        "tests": 135,
+        "shard": "unit-2"
+      },
+      {
+        "file": "integrations/routes.test.ts",
+        "seconds": 72.58966943359376,
+        "tests": 71,
+        "shard": "unit-4"
+      },
+      {
+        "file": "platform/customer-vps.test.ts",
+        "seconds": 71.23482641601562,
+        "tests": 97,
+        "shard": "unit-1"
+      },
+      {
+        "file": "platform/billing-routes.test.ts",
+        "seconds": 68.98091967773438,
+        "tests": 95,
+        "shard": "unit-3"
+      },
+      {
+        "file": "platform/golden-snapshot-repository.test.ts",
+        "seconds": 66.6939521484375,
+        "tests": 66,
+        "shard": "unit-4"
+      },
+      {
+        "file": "platform/platform-db-test-helper.test.ts",
+        "seconds": 62.17873681640625,
+        "tests": 9,
+        "shard": "unit-3"
+      },
+      {
+        "file": "gateway/chat-orchestrator.test.ts",
+        "seconds": 59.51733178710938,
+        "tests": 36,
+        "shard": "unit-2"
+      },
+      {
+        "file": "platform/ai-funded-recovery-migration.test.ts",
+        "seconds": 58.27871948242188,
+        "tests": 50,
+        "shard": "unit-3"
+      },
+      {
+        "file": "platform/customer-vps-runtime-loader.test.ts",
+        "seconds": 58.0650830078125,
+        "tests": 1,
+        "shard": "unit-2"
+      },
+      {
+        "file": "gateway/bots/integration-tools.test.ts",
+        "seconds": 56.2727578125,
+        "tests": 50,
+        "shard": "unit-1"
+      },
+      {
+        "file": "platform/customer-funded-paid-recovery.test.ts",
+        "seconds": 55.6974658203125,
+        "tests": 69,
+        "shard": "unit-3"
+      },
+      {
+        "file": "platform/ai-funded-policy-routes.test.ts",
+        "seconds": 54.3447998046875,
+        "tests": 31,
+        "shard": "unit-3"
+      },
+      {
+        "file": "gateway/bots/integration-uncertainty.test.ts",
+        "seconds": 51.65699487304688,
+        "tests": 52,
+        "shard": "unit-2"
+      },
+      {
+        "file": "gateway/codex-startup-retry.test.ts",
+        "seconds": 50.84389965820313,
+        "tests": 13,
+        "shard": "unit-4"
+      },
+      {
+        "file": "gateway/chat-repository.test.ts",
+        "seconds": 50.52120727539062,
+        "tests": 66,
+        "shard": "unit-1"
+      },
+      {
+        "file": "platform/funded-host-config.test.ts",
+        "seconds": 50.37634985351563,
+        "tests": 84,
+        "shard": "unit-3"
+      },
+      {
+        "file": "gateway/chat-agent-execution.test.ts",
+        "seconds": 49.40998828125,
+        "tests": 44,
+        "shard": "unit-2"
+      },
+      {
+        "file": "platform/golden-snapshot-recovery.test.ts",
+        "seconds": 43.58091040039063,
+        "tests": 17,
+        "shard": "unit-1"
+      },
+      {
+        "file": "gateway/collaboration-owner-source.test.ts",
+        "seconds": 42.81643188476563,
+        "tests": 46,
+        "shard": "unit-4"
+      },
+      {
+        "file": "gateway/collaboration-direct-sessions.test.ts",
+        "seconds": 42.170028564453126,
+        "tests": 38,
+        "shard": "unit-4"
+      }
+    ]
+  },
+  "dedicated": {
+    "runId": 39146595799,
+    "requestingRunId": 39146593437,
+    "source": "101fbd5f48613db404b6deede191975971f9cd73",
+    "queueSeconds": 293,
+    "wallSeconds": 729,
+    "phaseCount": 55,
+    "guardCount": 14,
+    "independentHostSourceChecks": 4,
+    "unit": {
+      "expectedFiles": 2832,
+      "extraFiles": 0,
+      "failed": 0,
+      "files": 2832,
+      "inventoryComplete": true,
+      "missingFiles": 0,
+      "passed": 30568,
+      "skipped": 321,
+      "total": 30889
+    },
+    "allPhasesPassed": true,
+    "allGuardsClean": true,
+    "containerGone": true
+  },
+  "orchestrationSample": {
+    "runs": 200,
+    "fromUtc": "2026-10-18T16:24:08Z",
+    "toUtc": "2026-10-18T17:10:04Z",
+    "explicitExecutionFalse": 120,
+    "workflowRunEvents": 121,
+    "reconcileDispatches": 30,
+    "qualificationDispatches": 11,
+    "completeMainControllerPolling": {
+      "requests": 156,
+      "charged200": 55,
+      "conditionalHits": 101,
+      "errors": 0
+    }
+  },
+  "local": {
+    "node": "24.13.1",
+    "pnpm": "10.33.4",
+    "hostMemoryGiB": 48,
+    "logicalCpus": 12,
+    "ambientNode": "22.22.3",
+    "ambientBun": "1.2.18",
+    "freeDiskGiBBefore": 7.8,
+    "swapUsedGiBBefore": 18.36,
+    "registeredWorktrees": 77,
+    "existingWorktreesIncludingThisTask": 75,
+    "frozenOfflineInstallSeconds": 56.2,
+    "probes": {
+      "web-desktop-dev": {
+        "name": "web-desktop-dev",
+        "seconds": 55.17,
+        "peakAggregateRssMiB": 4976.8,
+        "peakProcesses": 3,
+        "exitCode": -15,
+        "timedOut": true,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "E2E_TEST_BYPASS": "1",
+          "NEXT_PUBLIC_E2E_TEST_BYPASS": "1",
+          "NEXT_TELEMETRY_DISABLED": "1"
+        },
+        "argv": [
+          "pnpm",
+          "--filter",
+          "shell",
+          "exec",
+          "next",
+          "dev",
+          "--webpack",
+          "--hostname",
+          "127.0.0.1",
+          "--port",
+          "55440"
+        ],
+        "timeoutSeconds": 55,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; prerequisites-warm overlapped this startup. No gateway or API proxy was launched.",
+        "stimulus": {
+          "url": "http://127.0.0.1:55440/",
+          "clientCall": "urllib.request.urlopen('http://127.0.0.1:55440/', timeout=45)",
+          "responseReadBytes": 1024,
+          "requestCount": 1,
+          "firstPageSeconds": 27.38,
+          "responseStatus": 200
+        }
+      },
+      "proxy-fallback-repeat": {
+        "name": "proxy-fallback-repeat",
+        "seconds": 21.94,
+        "peakAggregateRssMiB": 2332.9,
+        "peakProcesses": 4,
+        "exitCode": 0,
+        "timedOut": false,
+        "passed": 135,
+        "failed": 0,
+        "skipped": 0,
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-fallback-repeat-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
+      },
+      "proxy-fallback-one": {
+        "name": "proxy-fallback-one",
+        "seconds": 22.03,
+        "peakAggregateRssMiB": 2036.2,
+        "peakProcesses": 4,
+        "exitCode": 0,
+        "timedOut": false,
+        "passed": 135,
+        "failed": 0,
+        "skipped": 0,
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-fallback-one-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
+      },
+      "proxy-native-one": {
+        "name": "proxy-native-one",
+        "seconds": 16.64,
+        "peakAggregateRssMiB": 922.5,
+        "peakProcesses": 4,
+        "exitCode": 0,
+        "timedOut": false,
+        "passed": 135,
+        "failed": 0,
+        "skipped": 0,
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL": "postgresql://matrix_profile@127.0.0.1:55438/matrix_ci_platform_fixture_admin"
+        },
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-native-one-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "databasePrerequisites": {
+          "version": "PostgreSQL 17.10",
+          "host": "127.0.0.1",
+          "port": 55438,
+          "role": "matrix_profile",
+          "database": "matrix_ci_platform_fixture_admin",
+          "authentication": "Dedicated local test cluster; synthetic test identifiers, no production credentials.",
+          "permissions": "Role must be able to create/drop isolated fixture databases. Server must already be running before sampling.",
+          "measurementBoundary": "PostgreSQL server process is outside the sampled child process tree."
+        }
+      },
+      "focused-default": {
+        "name": "focused-default",
+        "seconds": 50.69,
+        "peakAggregateRssMiB": 5881.4,
+        "peakProcesses": 11,
+        "exitCode": 0,
+        "timedOut": false,
+        "passed": 303,
+        "failed": 0,
+        "skipped": 0,
+        "files": 5,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "tests/platform/customer-vps.test.ts",
+          "tests/platform/customer-vps-runtime-loader.test.ts",
+          "tests/gateway/chat-repository.test.ts",
+          "tests/contracts/chat-subagent.test.ts",
+          "--maxWorkers=2",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/focused-default-vitest.json"
+        ],
+        "timeoutSeconds": 240,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
+      },
+      "prerequisites-warm": {
+        "name": "prerequisites-warm",
+        "seconds": 4.33,
+        "peakAggregateRssMiB": 879.5,
+        "peakProcesses": 6,
+        "exitCode": 0,
+        "timedOut": false,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "run",
+          "test:prepare"
+        ],
+        "timeoutSeconds": 120,
+        "prerequisiteState": "Warm incremental build with existing outputs from initial test:prepare; overlapped Web Desktop startup."
+      },
+      "proxy-native-repeat": {
+        "name": "proxy-native-repeat",
+        "seconds": 19.61,
+        "peakAggregateRssMiB": 913.0,
+        "peakProcesses": 4,
+        "exitCode": 0,
+        "timedOut": false,
+        "passed": 135,
+        "failed": 0,
+        "skipped": 0,
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL": "postgresql://matrix_profile@127.0.0.1:55438/matrix_ci_platform_fixture_admin"
+        },
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-native-repeat-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "databasePrerequisites": {
+          "version": "PostgreSQL 17.10",
+          "host": "127.0.0.1",
+          "port": 55438,
+          "role": "matrix_profile",
+          "database": "matrix_ci_platform_fixture_admin",
+          "authentication": "Dedicated local test cluster; synthetic test identifiers, no production credentials.",
+          "permissions": "Role must be able to create/drop isolated fixture databases. Server must already be running before sampling.",
+          "measurementBoundary": "PostgreSQL server process is outside the sampled child process tree."
+        }
+      }
+    },
+    "notes": [
+      "Aggregate process-tree RSS sampled every 0.5 seconds, not unique physical memory or cgroup peak. Shared pages can be counted more than once; brief peaks can be missed.",
+      "Native PostgreSQL 17.10 is diagnostic only; Linux qualification uses PostgreSQL 16. Native process-tree RSS excludes the separately running PostgreSQL server.",
+      "Web development probe used test auth bypass, requested one page, and intentionally stopped after 55 seconds. A 4.33-second warm prerequisite probe overlapped its startup; this is not an isolated timing comparison.",
+      "No full local unit, coverage, SDK integration, or complete application-stack run was performed.",
+      "Root node_modules links were 2 MiB with the existing global virtual store; this excludes shared-store and package-local/build bytes."
+    ],
+    "reproduction": {
+      "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+      "workingDirectory": "repository root",
+      "sourceState": "Tracked source was clean at the source commit before probes. During web-desktop-dev, Next.js regenerated the route-types import in shell/next-env.d.ts; that generated tracked-file change was restored after the probe. No implementation edits were used.",
+      "runtimeSelection": {
+        "node": "24.13.1",
+        "pnpm": "10.33.4",
+        "pathOverride": "${NODE24_BIN}:${PATH}",
+        "pathOverrideMeaning": "Prepend the bin directory of the installed Node.js 24.13.1 distribution; do not use ambient Node.js 22.22.3."
+      },
+      "environmentApplication": "Apply runtimeSelection.pathOverride and commonEnvironmentOverrides to every probe, then each probe environmentOverrides; environmentUnset records variables absent for fallback selection. argv is the exact child argument vector without shell prefix env assignments.",
+      "commonEnvironmentOverrides": {
+        "MATRIX_NO_TELEMETRY": "1"
+      },
+      "environmentPolicy": "Other process environment variables were inherited. The metadata records intentional overrides; it is not a hermetic environment capture. No Clerk keys or generated key-claim tokens were supplied to the Web Desktop probe.",
+      "prerequisites": [
+        {
+          "argv": [
+            "pnpm",
+            "install",
+            "--offline",
+            "--frozen-lockfile"
+          ],
+          "condition": "Existing pnpm store populated; run from repository root with Node.js 24.13.1 selected. Elapsed install measurement is frozenOfflineInstallSeconds."
+        },
+        {
+          "argv": [
+            "pnpm",
+            "run",
+            "test:prepare"
+          ],
+          "condition": "Completed before the test probes using the existing installed dependencies. This initial prerequisite run was not resource-sampled; no cold prerequisite duration is claimed."
+        }
+      ],
+      "sampling": {
+        "implementationSha256": "7ea4aeedc40eed9399c628ed02bf235f30280dec54a3be7cfae8fd2e552bea05",
+        "intervalSeconds": 0.5,
+        "processInventoryArgv": [
+          "/bin/ps",
+          "-axo",
+          "pid=,ppid=,pgid=,rss="
+        ],
+        "membership": "Child PID plus descendants discovered through parent PIDs or the child process-group ID, expanded at most 32 times per sample. Child starts a new process session.",
+        "rssMetric": "Sum RSS KiB of matching processes at each sample, divided by 1024 for peakAggregateRssMiB; shared pages may be counted repeatedly and sub-interval peaks may be missed.",
+        "durationMetric": "Monotonic wall time from before child launch until child exit and final sampling cleanup; includes sampler overhead.",
+        "timeoutPolicy": "At the configured timeout send SIGTERM to the child process group; allow five seconds, then SIGKILL if still running.",
+        "limits": "Wall-time limits only; no CPU or memory cap was imposed. maxWorkers is an explicit Vitest argument, not a cross-worktree resource budget.",
+        "outputs": "Each probe wrote a .log and a resource .json under /tmp/matrix-local-profile; test probes also wrote the Vitest JSON named in argv. Temporary outputs were not committed."
+      }
+    }
+  },
+  "remoteDevelopmentReadiness": {
+    "logicalCpus": 8,
+    "memoryGiB": 15.24,
+    "freeMemoryGiBSnapshot": 10.24,
+    "freeDiskGiBSnapshot": 161.51,
+    "node": "26.10.0",
+    "selectedProjectHasPackageJson": false,
+    "selectedProjectHasVitest": false,
+    "readOnlyCommandExecutionVerified": true
+  }
+}
