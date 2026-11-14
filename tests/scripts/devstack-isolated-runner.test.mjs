@@ -124,7 +124,8 @@ test('separate publisher executable stages two deltas, runs real isolated tests,
       assert.equal(process.env.PLATFORM_SECRET, undefined);
       assert.throws(() => fs.writeFileSync('/source/value.txt', 'bad'), { code: 'EROFS' });
       console.log(process.env.DEVSTACK_SOURCE_REVISION + ' Validated ' + fs.readFileSync('value.txt', 'utf8'));
-      process.exit(fs.readFileSync('value.txt', 'utf8') === 'Second' ? 7 : 0);
+      if (fs.readFileSync('value.txt', 'utf8') === 'Cancelled') setInterval(() => {}, 1000);
+      else process.exit(fs.readFileSync('value.txt', 'utf8') === 'Second' ? 7 : 0);
     `);
     await git('add', '.');
     await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Baseline');
@@ -169,6 +170,34 @@ test('separate publisher executable stages two deltas, runs real isolated tests,
     const restored = await send([]);
     assert.equal(restored.revision, baseline.revision);
     receipts.push({ revision: restored.revision, exitCode: restored.test.exitCode });
+    assert.equal((await git('status', '--porcelain')).stdout, '');
+    const controller = new AbortController();
+    const pending = client.apply(binding, { base, entries: [{ kind: 'file', path: 'value.txt', mode: 420,
+      content: Buffer.from('Cancelled').toString('base64') }] }, async () => {}, controller.signal)
+      .then(() => 'completed', () => 'aborted');
+    let testContainer;
+    try {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const { stdout: ids } = await exec('docker', ['ps', '-q', '--filter', 'label=matrix.devstack.publisher-test=true'], { timeout: 5000 });
+        for (const id of ids.trim().split(/\s+/).filter(Boolean)) {
+          const { stdout: mounts } = await exec('docker', ['inspect', id, '--format', '{{json .Mounts}}'], { timeout: 5000 });
+          if (JSON.parse(mounts).some(mount => mount.Source === mirror)) testContainer = id;
+        }
+        if (testContainer) break;
+        await delay(25);
+      }
+      assert.ok(testContainer, 'our isolated test container must be running before cancellation');
+    } finally { controller.abort(); }
+    assert.equal(await pending, 'aborted');
+    let removed = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try { await exec('docker', ['inspect', testContainer], { timeout: 5000, maxBuffer: 64 * 1024 }); }
+      catch (error) { if (!/no such object/i.test(error.stderr ?? '')) throw error; removed = true; break; }
+      await delay(25);
+    }
+    assert.ok(removed, 'disconnect must remove only our exact test container');
+    await delay(50);
+    assert.equal((await send([])).revision, baseline.revision);
     assert.equal((await git('status', '--porcelain')).stdout, '');
     console.log(JSON.stringify({ lane: 'local-executable-socket-docker', receipts }));
   } finally {

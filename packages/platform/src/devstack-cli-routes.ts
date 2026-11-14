@@ -53,7 +53,7 @@ interface CliRoutesDeps {
   source?: {
     identity: string;
     apply(binding: DevstackCliBinding, delta: DevstackSourceDelta,
-      assertCurrent: () => Promise<void>): Promise<DevstackSourceReceipt>;
+      assertCurrent: () => Promise<void>, signal?: AbortSignal): Promise<DevstackSourceReceipt>;
   };
   isMember: DevstackBrowserMembership;
   resolve(target: DevstackPreviewTarget): Promise<Pick<RegisteredRuntimeEndpoint, 'handle' | 'clerkUserId' | 'containerId'> | null>;
@@ -211,7 +211,7 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
       }
       try {
         await assertCurrent();
-        const receipt = await source.apply(binding, delta, assertCurrent);
+        const receipt = await source.apply(binding, delta, assertCurrent, c.req.raw.signal);
         await assertCurrent();
         return c.json(receipt);
       } catch (error: unknown) {

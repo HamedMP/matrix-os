@@ -223,19 +223,22 @@ describe('public Stage 3 browser entry', () => {
   });
 
   it('requires the same verified owner and browser origin for HMR and rejects non-browser upgrade routes', async () => {
-    vi.stubEnv('MATRIX_APP_DOMAIN_HOSTS', host);
+    const approvalOrigin = 'https://approve.example.test';
+    const approvalHost = new URL(approvalOrigin).hostname;
+    vi.stubEnv('MATRIX_APP_DOMAIN_HOSTS', `${host},${approvalHost}`);
     const { db } = await createTestPlatformDb();
     const server = createServer();
     const clerkAuth = fixtureClerk();
     const isMember = vi.fn(async () => false);
     const resolve = vi.fn<() => ReturnType<typeof resolveRegisteredRuntimeEndpoint>>(async () => null);
     const devstackPublicPreview = createDevstackPublicPreviewAccess({
-      config, clerkAuth, isMember, resolve, publishableKey: 'pk_test_preview_fixture',
+      config, clerkAuth, isMember, resolve, publishableKey: 'pk_test_preview_fixture', approvalOrigin,
+      edgeRouterSecret: 'fixture-edge-secret',
     });
     const decision = { runtimeProxyAllowed: true } as never;
     registerPlatformWebSocketUpgradeHandler({
       server, app: { capturePlatformEvent: vi.fn() }, db, registeredRuntimeInstance: instance,
-      clerkAuth, devstackPublicPreview, env, platformSecret: 'platform-secret-test', platformJwtSecret: JWT_SECRET,
+      clerkAuth, devstackPublicPreview, env: { ...env, EDGE_ROUTER_SECRET: 'fixture-edge-secret' }, platformSecret: 'platform-secret-test', platformJwtSecret: JWT_SECRET,
       legacyContainerRoutingEnabled: true, codeServerPort: 8080, getRuntimeEntitlementDecision: () => decision,
       getRuntimeEntitlementDecisionForUser: async () => decision,
     });
@@ -253,10 +256,11 @@ describe('public Stage 3 browser entry', () => {
       await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('fixture listener unavailable');
-      const socket = (path: string, cookie?: string, requestOrigin = origin, requestHost = host) => new Promise<number | string>((done, reject) => {
+      const socket = (path: string, cookie?: string, requestOrigin = origin, requestHost = host,
+        extra: Record<string, string> = {}) => new Promise<number | string>((done, reject) => {
         const ws = new WebSocket(`ws://127.0.0.1:${address.port}${path}`, {
           origin: requestOrigin, handshakeTimeout: 1000,
-          headers: { host: requestHost, ...(cookie ? { cookie: `__session=${cookie}` } : {}) },
+          headers: { host: requestHost, ...(cookie ? { cookie: `__session=${cookie}` } : {}), ...extra },
         });
         ws.once('unexpected-response', (_request, response) => {
           response.resume();
@@ -267,6 +271,18 @@ describe('public Stage 3 browser entry', () => {
         ws.once('message', value => { ws.close(); done(value.toString()); });
       });
       const hmr = '/vm/dev-one/~runtime/primary/_next/webpack-hmr';
+      for (const path of ['/vm/dev-one/ws', hmr, '/internal/gemini-live']) {
+        expect(await socket(path, undefined, approvalOrigin, approvalHost)).toBe(404);
+        expect(await socket(path, 'owner', approvalOrigin, `${approvalHost.toUpperCase()}:443`)).toBe(404);
+        expect(await socket(path, 'owner', approvalOrigin, host, {
+          'x-forwarded-host': approvalHost, 'x-matrix-edge-secret': 'fixture-edge-secret',
+        })).toBe(404);
+        expect(await socket(path, 'owner', origin, approvalHost, {
+          'x-forwarded-host': host, 'x-matrix-edge-secret': 'fixture-edge-secret',
+        })).toBe(404);
+      }
+      expect(resolve).not.toHaveBeenCalled();
+      expect(isMember).not.toHaveBeenCalled();
       expect(await socket(hmr)).toBe(401);
       expect(await socket(hmr, 'owner', 'https://other.example')).toBe(403);
       expect(await socket(hmr, 'owner')).toBe(403);

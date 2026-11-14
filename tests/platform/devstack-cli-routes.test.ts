@@ -168,7 +168,7 @@ describe('hosted DevStack CLI pairing routes', () => {
     expect(await response.json()).toMatchObject({ revision: 'e'.repeat(64), test: { revision: 'e'.repeat(64), exitCode: 0 } });
     expect(applySource).toHaveBeenCalledWith(expect.objectContaining({
       sourceIdentity, owner, worktree: target.worktree, containerId: target.containerId,
-    }), delta, expect.any(Function));
+    }), delta, expect.any(Function), expect.any(AbortSignal));
     resolve.mockResolvedValueOnce({ handle: target.handle, clerkUserId: owner, containerId: 'f'.repeat(64) });
     expect((await post(source, delta, { authorization: 'Bearer ' + bearer })).status).toBe(409);
     expect(applySource).toHaveBeenCalledTimes(1);

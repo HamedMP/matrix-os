@@ -63,6 +63,12 @@ transport state, not new app-record storage. Partial staging/projection failures
 retain their existing operator-recovery semantics. Never blindly retry an unknown
 publication. A test failure returns its actual exit code with a matching content
 revision; it does not replace source or advance another revision.
+An incoming HTTP disconnect closes the private publisher socket and cancels its
+test, releasing the publication slot after cleanup. Cancellation after projection
+does not roll back uploaded source; the caller must reconcile that uncertain
+publication before another deliberate change. All WebSocket upgrades on the
+approval hostname are denied before runtime routing, including trusted edge
+forwarding and an overlapping app-domain allowlist.
 
 IPC caps four connections, one active publication, 4 MiB delta frames plus bounded
 binding overhead, 32 KiB result frames, sixteen live-check exchanges and a 120 s

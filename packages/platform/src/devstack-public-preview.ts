@@ -109,6 +109,9 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
   function matchesHost(host: string | undefined): boolean {
     return host !== undefined && normalizeSessionHost(host) === publicHostname;
   }
+  function matchesApprovalHost(host: string | undefined): boolean {
+    return Boolean(approvalHostname && host !== undefined && normalizeSessionHost(host) === approvalHostname);
+  }
 
   async function authorize(selector: PreviewTargetSelector | undefined, cookie?: string): Promise<{ binding: VerifiedPreview } | PublicPreviewDenial> {
     try {
@@ -154,7 +157,7 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
     const trustedHost = getTrustedSessionRouteHost(
       rawHost, c.req.header('x-forwarded-host'), c.req.header(EDGE_SECRET_HEADER), deps.edgeRouterSecret,
     );
-    if (approvalHostname && (normalizeSessionHost(trustedHost) === approvalHostname || normalizeSessionHost(rawHost ?? '') === approvalHostname)) {
+    if (matchesApprovalHost(trustedHost) || matchesApprovalHost(rawHost)) {
       c.header('Cache-Control', 'private, no-store');
       // Run before every Platform route. This host must never proxy a runtime,
       // an editable asset, a service worker, or an unrelated Platform handler.
@@ -223,5 +226,5 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
     c.header('Cloudflare-CDN-Cache-Control', 'no-store');
   };
 
-  return { matchesHost, authorizeUpgrade, middleware };
+  return { matchesHost, matchesApprovalHost, authorizeUpgrade, middleware };
 }

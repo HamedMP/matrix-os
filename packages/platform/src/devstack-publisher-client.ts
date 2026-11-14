@@ -19,15 +19,18 @@ export function createDevstackPublisherClient({ socketPath, identity }: { socket
     || !fingerprint.safeParse(identity).success) throw unavailable();
   return {
     identity,
-    async apply(binding: DevstackCliBinding, delta: DevstackSourceDelta, assertCurrent: () => Promise<void>) {
+    async apply(binding: DevstackCliBinding, delta: DevstackSourceDelta, assertCurrent: () => Promise<void>, signal?: AbortSignal) {
+      signal?.throwIfAborted();
       const parent = dirname(socketPath);
       const [directory, socketStat] = await Promise.all([lstat(parent), lstat(socketPath)]);
       if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077)
         || await realpath(parent) !== parent || !socketStat.isSocket() || socketStat.uid !== process.getuid?.()
         || (socketStat.mode & 0o077)) throw unavailable();
       await assertCurrent();
+      signal?.throwIfAborted();
       return new Promise<z.infer<typeof devstackSourceReceiptSchema>>((resolveReceipt, reject) => {
         const socket = connect(socketPath);
+        const abort = () => { reject(unavailable()); socket.destroy(); };
         const timer = setTimeout(() => socket.destroy(unavailable()), 120_000);
         let buffer = Buffer.alloc(0);
         let pending = false;
@@ -73,7 +76,13 @@ export function createDevstackPublisherClient({ socketPath, identity }: { socket
           }
         });
         socket.once('error', () => reject(unavailable()));
-        socket.once('close', () => { clearTimeout(timer); if (!complete) reject(unavailable()); });
+        socket.once('close', () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', abort);
+          if (!complete) reject(unavailable());
+        });
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
       });
     },
   };

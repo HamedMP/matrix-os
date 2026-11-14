@@ -11,12 +11,15 @@ import { createDevstackHostedAccess } from '../../packages/platform/src/devstack
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
 import { loadDevstackPreviewConfig } from '../../packages/platform/src/devstack-runs/config.js';
 import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import { setTimeout as delay } from 'node:timers/promises';
+import { request as httpRequest } from 'node:http';
 
 const exec = promisify(execFile);
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture() {
+async function fixture(testRevision?: (binding: unknown, revision: string, signal: AbortSignal) => Promise<{ exitCode: number; log: string }>) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'devstack-publisher-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const staging = join(root, 'staging');
@@ -34,7 +37,7 @@ async function fixture() {
     source: { root: staging, identity: await identifyStage3Source(staging), computerId: 'fixture-main' },
     target: { root: mirror, identity: await identifyStage3Target(mirror), handle: binding.handle, containerId: binding.containerId } };
   const publisher = createStage3Publisher({ enrollment, stateDir: join(root, 'state'),
-    testRevision: async () => ({ exitCode: 0, log: 'Validated ' + await readFile(join(mirror, 'example.txt'), 'utf8') }) });
+    testRevision: testRevision ?? (async () => ({ exitCode: 0, log: 'Validated ' + await readFile(join(mirror, 'example.txt'), 'utf8') })) });
   const socketPath = join(root, 'publisher.sock');
   const server = await listenStage3Publisher({ socketPath, publisher });
   cleanups.push(() => server.close());
@@ -46,7 +49,18 @@ async function fixture() {
 
 describe('dedicated DevStack publisher transport', () => {
   it('wires the production startup factory through pairing, trusted approval, ingress and the private publisher', async () => {
-    const f = await fixture();
+    let holdTest = false;
+    let started!: () => void;
+    let cancelled!: () => void;
+    const testStarted = new Promise<void>(resolve => { started = resolve; });
+    const testCancelled = new Promise<void>(resolve => { cancelled = resolve; });
+    const f = await fixture(async (_binding, _revision, signal) => {
+      if (!holdTest) return { exitCode: 0, log: 'Validated ' + await readFile(join(f.mirror, 'example.txt'), 'utf8') };
+      started();
+      try { await delay(30_000, undefined, { signal }); }
+      finally { cancelled(); }
+      return { exitCode: 0, log: 'Unexpected completion' };
+    });
     const previewOrigin = 'https://devstack.example.test', approvalOrigin = 'https://approve.example.test';
     const { sourceIdentity, clerkSessionId: _session, ...target } = f.binding;
     const issuer = 'https://clerk.example.test';
@@ -90,6 +104,43 @@ describe('dedicated DevStack publisher transport', () => {
     const restored = await post('/devstack/cli/source', { base: f.base, entries: [] }, bearer);
     expect(restored.status).toBe(200);
     expect(await readFile(join(f.mirror, 'example.txt'), 'utf8')).toBe('Baseline');
+
+    // A real TCP disconnect must reach the private socket and release the sole
+    // publication slot; app.request alone cannot prove the Node adapter wiring.
+    const http = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 });
+    cleanups.push(async () => {
+      http.closeAllConnections();
+      await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
+    });
+    await new Promise<void>(resolve => http.once('listening', resolve));
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('fixture HTTP listener unavailable');
+    holdTest = true;
+    const controller = new AbortController();
+    const disconnected = new Promise<string>(resolve => {
+      const request = httpRequest(`http://127.0.0.1:${address.port}/devstack/cli/source`, {
+        method: 'POST', headers: { host: new URL(previewOrigin).hostname, 'content-type': 'application/json', authorization: 'Bearer ' + bearer },
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+      }, response => { response.resume(); resolve('completed ' + response.statusCode); });
+      request.once('error', () => resolve('aborted'));
+      request.end(JSON.stringify(f.file('Interrupted')));
+    });
+    try {
+      await expect(Promise.race([testStarted.then(() => 'started'), disconnected, delay(2000).then(() => 'timeout')])).resolves.toBe('started');
+      controller.abort();
+      await expect(disconnected).resolves.toBe('aborted');
+      await expect(Promise.race([testCancelled.then(() => true), delay(2000).then(() => false)])).resolves.toBe(true);
+    } finally { controller.abort(); holdTest = false; }
+    // Cancellation does not undo a completed publication. Reconcile explicitly
+    // with the baseline; wait only for the old job to release its final lock.
+    let recovered: Response | undefined;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      recovered = await post('/devstack/cli/source', { base: f.base, entries: [] }, bearer);
+      if (recovered.status === 200) break;
+      await delay(25);
+    }
+    expect(recovered?.status).toBe(200);
+    expect(await readFile(join(f.mirror, 'example.txt'), 'utf8')).toBe('Baseline');
     revokeAt = membershipChecks + 5;
     const revoked = await post('/devstack/cli/source', f.file('Revoked'), bearer);
     expect(revoked.status).toBe(409);
@@ -132,6 +183,14 @@ describe('dedicated DevStack publisher transport', () => {
     })).rejects.toThrow();
     expect(checks).toBeGreaterThanOrEqual(5);
     expect(await readFile(join(f.mirror, 'example.txt'), 'utf8')).toBe('Baseline');
+  });
+
+  it('rejects an already disconnected request before staging any source', async () => {
+    const f = await fixture();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(f.client.apply(f.binding, f.file('Unwanted'), async () => {}, controller.signal)).rejects.toThrow();
+    expect(await readFile(join(f.staging, 'example.txt'), 'utf8')).toBe('Baseline');
   });
 
   it('refuses a world-accessible socket directory and never replaces an existing socket', async () => {

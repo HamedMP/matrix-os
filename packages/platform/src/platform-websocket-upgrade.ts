@@ -125,6 +125,13 @@ export function registerPlatformWebSocketUpgradeHandler(
     const trustedHost = getTrustedSessionRouteHost(
       req.headers.host, req.headers['x-forwarded-host'], req.headers[EDGE_SECRET_HEADER], env.EDGE_ROUTER_SECRET,
     );
+    // The trusted approval origin serves no editable runtime or WebSocket,
+    // even if it is also present in an ordinary app-domain allowlist.
+    if (devstackPublicPreview && (devstackPublicPreview.matchesApprovalHost(trustedHost)
+      || devstackPublicPreview.matchesApprovalHost(req.headers.host))) {
+      refuse(404);
+      return;
+    }
     let publicPreview: DevstackPublicPreviewBinding | undefined;
     if (devstackPublicPreview && (devstackPublicPreview.matchesHost(trustedHost) || devstackPublicPreview.matchesHost(req.headers.host))) {
       if (!devstackPublicPreview.matchesHost(trustedHost)) {
