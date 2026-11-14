@@ -38,6 +38,7 @@ export interface HandlerContext {
   authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
   openTerminalWindow: () => Promise<void>;
   focusMainWindow: () => void;
+  setTitlebarOverlay: (colors: InvokeRequest<"window:set-titlebar-overlay">) => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
     shouldOpen: boolean;
@@ -193,7 +194,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     throw new Error("download service unavailable");
   }
   if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
-    || typeof ctx.focusMainWindow !== "function") {
+    || typeof ctx.focusMainWindow !== "function" || typeof ctx.setTitlebarOverlay !== "function") {
     throw new Error("window services unavailable");
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
@@ -322,6 +323,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("window:toggle-maximize", () => {
     ctx.toggleWindowMaximize();
+    return { ok: true };
+  });
+  handle("window:set-titlebar-overlay", (colors) => {
+    ctx.setTitlebarOverlay(colors);
     return { ok: true };
   });
   handle("state:get", async ({ key }) => ({

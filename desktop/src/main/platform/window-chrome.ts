@@ -5,6 +5,8 @@ type WindowChromeOptions = Pick<
   "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
 >;
 
+export const WINDOWS_TITLEBAR_HEIGHT = 38;
+
 export function windowChromeOptions(platform: NodeJS.Platform): WindowChromeOptions {
   if (platform === "darwin") {
     return {
@@ -17,9 +19,9 @@ export function windowChromeOptions(platform: NodeJS.Platform): WindowChromeOpti
     return {
       titleBarStyle: "hidden",
       titleBarOverlay: {
-        color: "#0e0e13",
-        symbolColor: "#f9f7f1",
-        height: 38,
+        color: "#fafafa",
+        symbolColor: "#242323",
+        height: WINDOWS_TITLEBAR_HEIGHT,
       },
     };
   }
