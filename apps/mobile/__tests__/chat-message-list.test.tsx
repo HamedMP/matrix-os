@@ -332,7 +332,7 @@ describe("MessageList", () => {
     });
 
     it("shares the reply's text through the system share sheet", async () => {
-      const share = jest.spyOn(Share, "share").mockResolvedValue({ action: Share.sharedAction });
+      const share = jest.spyOn(Share, "share").mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
       render(<MessageList messages={[finished]} chatId="chat_1" />);
 
       fireEvent.press(screen.getByRole("button", { name: "Share reply" }));
