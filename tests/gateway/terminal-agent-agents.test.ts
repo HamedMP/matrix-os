@@ -343,6 +343,40 @@ describe("terminal agents: children after a send", () => {
     });
     await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toMatchObject({ reason: "timeout" });
   });
+
+  // Fault detected (#3298 review): matrix-status writes whole seconds, so a result in the
+  // send's own second looked older than the send.
+  it("counts a whole-second reporter result from the send's second as the child having stopped", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "idle");
+    const agents = createTerminalAgents({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+        }] as never,
+        ensureWorkspace: async () => ({ id: workspaceId }) as never,
+        createTab: async () => { throw new Error("unused"); },
+        terminateTab: async () => undefined,
+        getSnapshot: async () => ({ viewport: [] }),
+      },
+      verbs: h.verbs as never,
+      status: {
+        list: async () => new Map([[`${workspaceId}:${child.ref.tabId}`, {
+          ref: child.ref, status: "idle" as const, reportedAt: new Date(1_000).toISOString(), source: "reporter" as const,
+        }]]),
+        get: async () => undefined,
+        sentAt: () => 1_200,
+      },
+      registry: h.registry,
+      templates: createTerminalTemplates({ homePath: h.home }),
+      now: () => 1_800,
+      sleep: async () => undefined,
+    });
+    await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.not.toMatchObject({ reason: "timeout" });
+  });
 });
 
 // Fault detected (third review of #3298): a launch outlived its caller's request, and

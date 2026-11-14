@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 import type { TerminalAgentRegistry, TerminalAgentRecord, TerminalFirstMessage } from "./registry.js";
 import { MAX_TERMINAL_LABELS, TerminalLabelKeySchema, TerminalLabelValueSchema } from "./registry.js";
 import type { TerminalAgentStatusSource } from "./status-source.js";
-import { terminalRefKey } from "./status-source.js";
+import { reportPredatesSend, terminalRefKey } from "./status-source.js";
 import type { TerminalTemplates } from "./templates.js";
 import { TERMINAL_SEND_TEXT_MAX_CHARS, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
 import { TerminalWaitCapacityError } from "./wait.js";
@@ -204,7 +204,7 @@ export function createTerminalAgents(options: {
         // A report older than the child's latest task belongs to the previous turn.
         const sentAt = options.status.sentAt?.(child.ref);
         const previousTurn = entry !== undefined && sentAt !== undefined
-          && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
+          && reportPredatesSend(entry, sentAt) && now() - sentAt < SEND_TURN_GRACE_MS;
         const status = previousTurn ? "working" : entry?.status;
         const key = terminalRefKey(child.ref);
         facts.set(key, { ref: child.ref, live, reports: reportCounts.get(key) ?? 0, ...(status ? { status } : {}) });

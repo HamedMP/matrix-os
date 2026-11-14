@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { TerminalRefSchema, type TerminalRef, type TerminalTab } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { TerminalAgentStatusSource } from "./status-source.js";
-import { terminalRefKey } from "./status-source.js";
+import { reportPredatesSend, terminalRefKey } from "./status-source.js";
 import { visibleTerminalText } from "./screen-text.js";
 import { TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbRuntime } from "./verbs.js";
 
@@ -106,7 +106,7 @@ export function createTerminalWaiter(options: {
         lastStatus = entry?.status;
         const sentAt = options.status.sentAt?.(ref);
         const previousTurn = entry !== undefined && sentAt !== undefined
-          && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
+          && reportPredatesSend(entry, sentAt) && now() - sentAt < SEND_TURN_GRACE_MS;
         if (lastStatus && lastStatus !== "working" && !previousTurn) return { reason: "stopped", status: lastStatus };
       }
       const remaining = deadline - now();

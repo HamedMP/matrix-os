@@ -117,6 +117,31 @@ describe("terminal wait", () => {
 
   // Fault detected: a script sends a task and waits, but the wait returns at once
   // on the status the agent reported before it received the task.
+  // Fault detected (#3298 review): matrix-status writes whole seconds, so a result reported
+  // in the same second as the send looked older than the send and was ignored for 15 s.
+  it("treats a whole-second reporter result from the send's second as fresh, but not an older hook", async () => {
+    const sentAt = Date.parse("2026-11-11T12:00:00.200Z");
+    const make = (entry: { reportedAt: string; source: "reporter" | "hook" }) => createTerminalWaiter({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+          tabs: [{ id: tabId, workspaceId, name: "t", cwd: "", status: "running", revision: 1, order: 0, accessScope: "owner",
+            createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z" }],
+        }] as never,
+        getSnapshot: async () => undefined,
+      },
+      status: { list: async () => new Map(), get: async () => ({ ref, status: "done" as const, ...entry }), sentAt: () => sentAt },
+      now: () => sentAt + 600,
+      sleep: async () => undefined,
+      pollMs: 500,
+    });
+    await expect(make({ reportedAt: "2026-11-11T12:00:00.000Z", source: "reporter" }).wait(ref, { timeoutMs: 0 }))
+      .resolves.toEqual({ reason: "stopped", status: "done" });
+    await expect(make({ reportedAt: "2026-11-11T12:00:00.100Z", source: "hook" }).wait(ref, { timeoutMs: 0 }))
+      .resolves.toMatchObject({ reason: "timeout" });
+  });
+
   it("ignores a status reported before the latest send until the agent answers or a grace period passes", async () => {
     let now = 10_000;
     let reportedAt = new Date(5_000).toISOString();
