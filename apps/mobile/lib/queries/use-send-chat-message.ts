@@ -14,6 +14,7 @@ import {
   uploadChatAttachment,
 } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { AuthenticatedRequestError } from "@/lib/requests/http";
 import { recoverNewChatAdmission } from "./new-chat-admission-recovery";
 
 interface SendChatMessageInput {
@@ -169,6 +170,11 @@ export function useSendChatMessage() {
           void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey, chatId) });
           throw error;
         }
+
+        // A received client error is a refusal, so there is no uncertain
+        // admission to reconcile. Keep recovery for 5xx and missing responses.
+        if (error instanceof AuthenticatedRequestError && error.status !== undefined
+          && error.status >= 400 && error.status < 500) throw error;
 
         const recovered = await recoverNewChatAdmission({ gatewayUrl, chatId: targetChatId, turnRequestId, getToken });
         const { detail } = recovered;

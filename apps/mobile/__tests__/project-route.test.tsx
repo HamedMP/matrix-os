@@ -407,6 +407,56 @@ describe("project route", () => {
       expect(input().props.value).toBe("");
     });
 
+    it.each([400, 401, 403, 409, 422, 429])("shows an HTTP %s refusal immediately without reading for admission", async (status) => {
+      // Keep the request encoder and error mapper real: the HTTP status must
+      // survive that boundary before the send hook can decide to stop.
+      const actual = jest.requireActual<typeof import("@/lib/requests/canonical-chat")>("@/lib/requests/canonical-chat");
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockImplementation(actual.admitChatTurn);
+      jest.spyOn(global, "fetch").mockResolvedValue({
+        ok: false, status,
+        json: jest.fn().mockResolvedValue({ error: "private upstream details" }),
+      } as unknown as Response);
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      const sentAt = Date.now();
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again."));
+
+      expect(Date.now() - sentAt).toBeLessThan(1_000);
+      expect(requests.fetchChatDetail).not.toHaveBeenCalled();
+      expect(input().props.value).toBe("Draft the case study");
+      expect(screen.queryByText(/private upstream/)).toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
+    });
+
+    it.each([500, 503])("still recovers a saved first turn after HTTP %s", async (status) => {
+      const actual = jest.requireActual<typeof import("@/lib/requests/canonical-chat")>("@/lib/requests/canonical-chat");
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockImplementation(actual.admitChatTurn);
+      jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status } as Response);
+      requests.fetchChatDetail
+        .mockResolvedValueOnce({ record: created, turns: [], messages: [], runs: [] })
+        .mockImplementation(async () => ({
+          record: created,
+          turns: [{ id: "turn_1", clientRequestId: requests.admitChatTurn.mock.calls[0][3].clientRequestId, inputMessageId: "msg_1" }],
+          messages: [{ id: "msg_1" }],
+          runs: [{ id: "run_1", turnId: "turn_1" }],
+        }));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).toBeNull();
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000); });
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(requests.admitChatTurn).toHaveBeenCalledTimes(1);
+      expect(input().props.value).toBe("");
+    });
+
     it.each(["Reworded prompt", ""])("clears the previous send error when the draft becomes %j", async (draft) => {
       requests.createChat.mockRejectedValue(new Error("upstream said no"));
       await renderPortfolio();

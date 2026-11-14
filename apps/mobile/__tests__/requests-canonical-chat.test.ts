@@ -138,9 +138,21 @@ describe("chat list requests", () => {
   });
 
   it.each([400, 401, 503])("reports HTTP %s with the generic message only", async (status) => {
-    jest.spyOn(global, "fetch").mockResolvedValue(respond({ error: "postgres://internal detail" }, status));
+    const response = respond({ error: "postgres://internal detail" }, status);
+    jest.spyOn(global, "fetch").mockResolvedValue(response);
 
-    await expect(fetchChats(token, gatewayUrl)).rejects.toThrow("Chats unavailable. Try again.");
+    await expect(fetchChats(token, gatewayUrl)).rejects.toMatchObject({
+      name: "AuthenticatedRequestError", status, message: "Chats unavailable. Try again.",
+    });
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
+  it("keeps a network failure uncertain even if its raw error has a status property", async () => {
+    jest.spyOn(global, "fetch").mockRejectedValue(Object.assign(new Error("private network details"), { status: 403 }));
+
+    await expect(fetchChats(token, gatewayUrl)).rejects.toMatchObject({
+      name: "AuthenticatedRequestError", status: undefined, message: "Chats unavailable. Try again.",
+    });
   });
 
   it("does not send a cursor the server would reject", async () => {
