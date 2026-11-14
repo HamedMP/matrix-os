@@ -6,6 +6,7 @@ const UPGRADE_REJECTION_STATUS_TEXT = {
   401: 'Unauthorized',
   403: 'Forbidden',
   404: 'Not Found',
+  429: 'Too Many Requests',
   502: 'Bad Gateway',
   503: 'Service Unavailable',
 } as const;

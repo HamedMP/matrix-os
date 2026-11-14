@@ -429,7 +429,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       if (runningMachine.substrate === 'container') {
         if (!substrates) { refuse(503); return; }
         const wake = await decideContainerWake({ db, substrates, machine: runningMachine, identity });
-        if (wake.kind !== 'proceed') { refuse(503); return; }
+        if (wake.kind !== 'proceed') { refuse(wake.kind === 'limit_reached' ? 429 : 503); return; }
         const resolution = substrates.resolveUpstream(wake.machine, { path: webSocketProxyPath });
         if (resolution.kind !== 'upstream' || !isSafeWebSocketUpgradePath(webSocketProxyPath)) {
           refuse(resolution.kind === 'upstream' ? 400 : 503);
