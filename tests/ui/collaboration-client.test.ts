@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCollaborationBrowserApi } from "../../packages/ui/src/collaboration/client.js";
+import { organizationMembersPath } from "../../desktop/src/renderer/src/features/organization/organization-members-path.js";
 
 describe("collaboration browser client", () => {
   it("uses exact bounded requests and caller-provided actor authentication", async () => {
@@ -115,6 +116,19 @@ describe("collaboration browser client organization directory reads", () => {
     await expect(api.patch!("/api/organizations/org_alpha/invitations/orginv_one", {})).rejects.toThrow("CollaborationUnavailable");
   });
 
+  it("sends the Electron Desktop roster's full-page and photo requests unchanged", async () => {
+    const fetchImpl = ok();
+    const api = createCollaborationBrowserApi({ baseUrl: "https://app.matrix-os.com", fetchImpl });
+    await api.get(organizationMembersPath("org_alpha", { profileImages: true }));
+    await api.get(organizationMembersPath("org_alpha", { cursor: "dXNlcl9tZW1iZXI_-", profileImages: true }));
+    await api.get(organizationMembersPath("org_alpha", { cursor: "dXNlcl9tZW1iZXI_-" }));
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      "https://app.matrix-os.com/api/organizations/org_alpha/members?limit=100&include=imageUrl",
+      "https://app.matrix-os.com/api/organizations/org_alpha/members?cursor=dXNlcl9tZW1iZXI_-&limit=100&include=imageUrl",
+      "https://app.matrix-os.com/api/organizations/org_alpha/members?cursor=dXNlcl9tZW1iZXI_-&limit=100",
+    ]);
+  });
+
   it.each([
     ["a mutation of the listing", "post", "/api/organizations"],
     ["a mutation of a member page", "patch", "/api/organizations/org_alpha/members"],
@@ -129,7 +143,13 @@ describe("collaboration browser client organization directory reads", () => {
     ["an encoded separator", "get", "/api/organizations/org_alpha%2Fmembers/members"],
     ["a traversal", "get", "/api/organizations/org_alpha/../members"],
     ["a sibling prefix", "get", "/api/organizationsx"],
-    ["a limit parameter", "get", "/api/organizations/org_alpha/members?limit=100"],
+    ["an oversized page", "get", "/api/organizations/org_alpha/members?limit=101"],
+    ["an empty page size", "get", "/api/organizations/org_alpha/members?limit=0"],
+    ["a non-numeric page size", "get", "/api/organizations/org_alpha/members?limit=1e2"],
+    ["a repeated page size", "get", "/api/organizations/org_alpha/members?limit=50&limit=100"],
+    ["another member section", "get", "/api/organizations/org_alpha/members?include=emailAddress"],
+    ["a repeated photo opt-in", "get", "/api/organizations/org_alpha/members?include=imageUrl&include=imageUrl"],
+    ["an unknown member query", "get", "/api/organizations/org_alpha/members?cursor=dXNlcg&role=org:admin"],
     ["a repeated cursor", "get", "/api/organizations/org_alpha/members?cursor=a&cursor=b"],
     ["an empty cursor", "get", "/api/organizations/org_alpha/members?cursor="],
     ["a malformed cursor", "get", "/api/organizations/org_alpha/members?cursor=a%20b"],

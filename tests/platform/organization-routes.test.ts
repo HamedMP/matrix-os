@@ -292,6 +292,20 @@ describe("platform organization routes (T018)", () => {
       { actorId: member, role: "org:member", joinedAt: new Date(5_000).toISOString(),
         displayName: "Ada Lovelace", emailAddress: "ada@example.com" },
     ]);
+    // Already-shipped clients parse this page strictly, so profile photos are opt-in: the default page above
+    // stays byte-compatible, and only clients that request them receive the projected https image.
+    const photoPage = await (await app.request(`/api/organizations/${org}/members?include=imageUrl&limit=1`)).json() as {
+      members: Array<Record<string, unknown>>; nextCursor?: string;
+    };
+    expect(photoPage.members).toEqual([page.members[0]]);
+    const nextPhotoPage = await (await app.request(`/api/organizations/${org}/members?include=imageUrl&cursor=${photoPage.nextCursor}`)).json() as {
+      members: Array<Record<string, unknown>>;
+    };
+    expect(nextPhotoPage.members).toEqual([{ ...page.members[1], imageUrl: "https://img.clerk.com/ada.png" }]);
+    const reader = actor;
+    actor = outsider;
+    expect((await app.request(`/api/organizations/${org}/members?include=imageUrl`)).status).toBe(404);
+    actor = reader;
     // The current management contract always includes a safe display label and rejects unknown query sections.
     expect((await app.request(`/api/organizations/${org}/members?include=everything`)).status).toBe(422);
 

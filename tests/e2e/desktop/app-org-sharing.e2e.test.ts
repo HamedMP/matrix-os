@@ -42,7 +42,11 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
       organizationManagement: { organizations: [{
         organizationId: "org_matrix", name: "Matrix Team", slug: "matrix-team", role: "org:member",
         memberCount: 3, aiSubmission: "members", membershipEpoch: 1,
-      }], members: {}, invitations: {} },
+      }], members: { org_matrix: [
+        { actorId: "user_owner", displayName: "App Owner", role: "org:member", joinedAt: "2026-11-12T12:00:00.000Z" },
+        // An unreachable photo must fall back to initials in the real renderer.
+        { actorId: "user_piers", displayName: "Piers Cole", imageUrl: "https://photos.invalid/piers.png", role: "org:admin", joinedAt: "2026-11-12T12:00:00.000Z" },
+      ] }, invitations: {} },
       appSharing: {
         appId: "pomodoro", organizationId: "org_matrix", registrationIncarnation: build.registrationIncarnation,
         readiness,
@@ -76,26 +80,104 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     finally { await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); }
   });
 
-  it("keeps the native app behind one owner popover and never publishes when sharing", async () => {
-    await page.getByRole("button", { name: "Open App Launcher" }).click();
-    await page.getByText("Pomodoro", { exact: true }).last().click();
-    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
-    await trigger.waitFor();
-    await trigger.click();
+  /** Opens Pomodoro and its Publish app popover unless they are already open, so each test stands alone. */
+  async function openSharingPopover() {
     const dialog = page.getByRole("dialog", { name: "Share app" });
+    if (await dialog.isVisible()) return dialog;
+    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
+    if (!(await trigger.isVisible())) {
+      await page.getByRole("button", { name: "Open App Launcher" }).click();
+      await page.getByText("Pomodoro", { exact: true }).last().click();
+      await trigger.waitFor();
+    }
+    await trigger.click();
     await dialog.waitFor();
-    await dialog.getByText("Matrix Team").waitFor();
+    return dialog;
+  }
+
+  it("keeps the native app behind one owner popover, recognizes the share, and never publishes when sharing", async () => {
+    const dialog = await openSharingPopover();
+    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
+    const notShared = dialog.getByRole("button", { name: /Share with your organization.*Matrix Team · Not shared/ });
+    await notShared.waitFor();
     expect(await page.getByRole("button", { name: "Publish app", exact: true }).count()).toBe(1);
-    expect(await dialog.getByText(/including guests/).count()).toBe(1);
-    await dialog.getByRole("button", { name: "Check collaboration" }).click();
-    await dialog.getByText("Ready to share").waitFor();
+    expect(await dialog.locator('[data-sharing-status="active"]').count()).toBe(0);
+    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-overview-not-shared.png") });
+
+    await notShared.click();
+    const title = dialog.getByRole("heading", { name: "Organization sharing" });
+    await title.waitFor();
+    expect(await title.evaluate((element) => element === document.activeElement)).toBe(true);
+    const controls = dialog.getByRole("region", { name: "Share with your org" });
+    expect(await controls.getByText(/including guests/).count()).toBe(1);
+    await controls.getByRole("button", { name: "Check collaboration" }).click();
+    await controls.getByText("Ready to share").waitFor();
     if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-ready.png") });
-    await dialog.getByRole("button", { name: "Share with your org" }).click();
-    await dialog.getByText("Shared with Matrix Team").waitFor();
-    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-active.png") });
-    await dialog.getByRole("button", { name: "Stop sharing" }).click();
-    await dialog.getByText("Sharing stopped").waitFor();
+    await controls.getByRole("button", { name: "Share with your org" }).click();
+    await controls.getByText("Shared with Matrix Team").waitFor();
+    const members = dialog.getByRole("list", { name: "Members of Matrix Team" });
+    await members.getByText("Piers Cole").waitFor();
+    await members.getByText("PC").waitFor();
+    expect(await members.locator("img").count()).toBe(0);
+    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-details-active.png") });
+
+    await dialog.getByRole("button", { name: "Back to sharing options" }).click();
+    const shared = dialog.getByRole("button", { name: /Shared with Matrix Team/ });
+    await shared.waitFor();
+    expect(await shared.evaluate((element) => element === document.activeElement)).toBe(true);
+    expect(await shared.locator('[data-sharing-status="active"]').count()).toBe(1);
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+
+    // Reopening reads the share again and recognizes it from the server, not from earlier UI state.
+    await trigger.click();
+    await shared.waitFor();
+    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-overview-shared.png") });
+    await shared.click();
+    await controls.getByRole("button", { name: "Stop sharing" }).click();
+    await controls.getByText("Sharing stopped").waitFor();
+    await dialog.getByRole("button", { name: "Back to sharing options" }).click();
+    await dialog.getByRole("button", { name: /Share with your organization.*Sharing stopped/ }).waitFor();
+    expect(await dialog.locator('[data-sharing-status="active"]').count()).toBe(0);
     expect(await dialog.getByText("This app is private.").count()).toBe(1);
     expect(publicationMutations).toEqual([]);
-  }, 60_000);
+  }, 90_000);
+
+  it("slides between views normally and only fades under reduced motion", async () => {
+    // Record the keyframes the renderer requests; a finished 180ms animation leaves nothing to inspect.
+    await page.evaluate(() => {
+      const recorded: string[] = [];
+      Object.assign(window, { __shareMotion: recorded });
+      const original = Element.prototype.animate;
+      Element.prototype.animate = function (keyframes, options) {
+        recorded.push(JSON.stringify(keyframes));
+        return original.call(this, keyframes, options);
+      };
+    });
+    const motion = () => page.evaluate(() => (window as unknown as { __shareMotion: string[] }).__shareMotion.splice(0));
+    const dialog = await openSharingPopover();
+    const summary = dialog.getByRole("button", { name: /Share with your organization/ });
+    const back = dialog.getByRole("button", { name: "Back to sharing options" });
+    await summary.click();
+    await back.waitFor();
+    expect((await motion()).some((frames) => frames.includes("translateX(8px)"))).toBe(true);
+    await back.click();
+    await summary.waitFor();
+    expect((await motion()).some((frames) => frames.includes("translateX(-8px)"))).toBe(true);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    try {
+      expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+      await summary.click();
+      await back.waitFor();
+      if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-details-reduced-motion.png") });
+      await back.click();
+      await summary.waitFor();
+      const reduced = await motion();
+      expect(reduced.length).toBeGreaterThanOrEqual(2);
+      expect(reduced.filter((frames) => frames.includes("transform"))).toEqual([]);
+    } finally {
+      await page.emulateMedia({ reducedMotion: null });
+    }
+  }, 30_000);
 });
