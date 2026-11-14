@@ -30,6 +30,10 @@ export const RuntimeStateResponseSchema = z.object({
 );
 export type RuntimeStateResponse = z.infer<typeof RuntimeStateResponseSchema>;
 
+export const COMPUTE_MODE_HEADER = "x-matrix-compute-mode";
+export const ComputeModeSchema = z.enum(["full", "export_only"]);
+export type ComputeMode = z.infer<typeof ComputeModeSchema>;
+
 export const RuntimeProfileCapabilityIdSchema = z.enum([
   "chat.matrix_ai", "chat.coding_harness", "apps.build", "apps.node_runtime",
   "files", "terminal", "code_editor", "channels", "cron", "bots",

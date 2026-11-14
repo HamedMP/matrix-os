@@ -51,7 +51,7 @@ import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
 import { getActiveUserMachineByHandle } from './database/user-machines.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
-import { decideContainerWake, relayContainerWebSocket } from './substrates/container-websocket.js';
+import { computeModeOf, decideContainerWake, relayContainerWebSocket } from './substrates/container-websocket.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -438,7 +438,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         relayContainerWebSocket({
           req, socket: socket as Socket, head, upstream: resolution.upstream,
           upstreamPath: stripWebSocketUpgradeToken(webSocketProxyPath),
-          forwardedHeaders: buildUpgradeHeaders(wake.machine.handle, true),
+          forwardedHeaders: buildUpgradeHeaders(wake.machine.handle, true), computeMode: computeModeOf(wake.machine),
           refuse, adoptUpstream, onResponded: () => { upstreamResponded = true; },
         });
         return;

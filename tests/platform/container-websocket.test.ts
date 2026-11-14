@@ -203,6 +203,15 @@ describe('container WebSocket upgrades through the platform', () => {
     expect(written).not.toContain('lambda-microvms');
   });
 
+  it('sends the row\'s compute mode on the upgrade and replaces a client-sent value', async () => {
+    await makeRunning();
+    await upgrade(listen(), { authorization: `Bearer ${await token()}`, 'x-matrix-compute-mode': 'export_only' });
+    await vi.waitFor(() => expect(tls.upstreams.at(-1)?.writes.length).toBeGreaterThan(0));
+    const request = tls.upstreams.at(-1)!.writes[0]!;
+    expect(request.match(/x-matrix-compute-mode/gi)).toHaveLength(1);
+    expect(request).toContain('\r\nx-matrix-compute-mode: full\r\n');
+  });
+
   it('answers 502 instead of relaying an oversized handshake', async () => {
     await makeRunning();
     const socket = await upgrade(listen(), { authorization: `Bearer ${await token()}` });

@@ -35,7 +35,7 @@ import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleF
 import { issueSyncJwt } from './sync-jwt.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
-import { applyUpstreamCredentials, prepareContainerUpstream, stripUpstreamCredentials } from './substrates/container-wake.js';
+import { applyComputeModeHeader, applyUpstreamCredentials, prepareContainerUpstream, stripUpstreamCredentials } from './substrates/container-wake.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -513,6 +513,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
+      applyComputeModeHeader(headers, runningMachine);
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
       }
@@ -799,6 +800,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
       applyUpstreamCredentials(headers, resolution.upstream);
+      applyComputeModeHeader(headers, machine);
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
@@ -989,6 +991,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('connection', 'close');
       }
       applyUpstreamCredentials(headers, resolution.upstream);
+      applyComputeModeHeader(headers, runningMachine);
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         const platformUserId =

@@ -66,6 +66,8 @@ export interface RuntimeSubstrate {
   ensureRoutable?(ref: RuntimeRef, signal: AbortSignal): Promise<boolean>;
   /** Owner activity observed at the proxy; the idle authority for on-demand runtimes. */
   recordOwnerActivity?(machineId: string): void;
+  /** The substrate's clock, so proxy answers such as Retry-After agree with its lifecycle. */
+  now?(): Date;
 }
 
 export interface SubstrateComputeRecord {

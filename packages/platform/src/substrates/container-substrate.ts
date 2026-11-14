@@ -110,6 +110,7 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
   return {
     kind: 'container',
     startsOnDemand: true,
+    now,
 
     resolveUpstream(machine, target) {
       if (machine.status !== 'running' || !machine.substrateRef) return null;

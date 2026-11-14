@@ -1,10 +1,10 @@
 import type { Context } from 'hono';
-import type { RuntimeState } from '@matrix-os/contracts';
+import { COMPUTE_MODE_HEADER, type RuntimeState } from '@matrix-os/contracts';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
 import { getVpsBootPage } from '../vps-boot-page.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { RuntimeUpstream } from './types.js';
-import { decideContainerWake } from './container-websocket.js';
+import { computeModeOf, decideContainerWake } from './container-websocket.js';
 import { isMeaningfulOwnerRequest } from './idle-reaper.js';
 import type { ExportRequestLike } from './container-export-only.js';
 
@@ -52,10 +52,10 @@ function stateResponse(input: ContainerWakeInput, state: RuntimeState, retryAfte
  * The body's `limit_reached` is a terminal state for the shared client
  * model, so it does not retry; the reset is days away in any case.
  */
-function limitResponse(input: ContainerWakeInput, resetsAt: string): Response {
+function limitResponse(input: ContainerWakeInput, resetsAt: string, retryAfterSeconds: number): Response {
   const { c } = input;
   input.applyNoStoreHeaders(c);
-  c.header('Retry-After', String(Math.max(1, Math.ceil((Date.parse(resetsAt) - Date.now()) / 1_000))));
+  c.header('Retry-After', String(retryAfterSeconds));
   if (input.respondWithJson) {
     return c.json({ error: 'Matrix computer limit reached', runtimeState: 'limit_reached', limit: 'compute', resetsAt }, 429);
   }
@@ -85,7 +85,7 @@ export async function prepareContainerUpstream(input: ContainerWakeInput): Promi
   observeOwnerActivity(input);
   const decision = await decideContainerWake({ ...input, request: upstreamRequest(input) });
   if (decision.kind === 'proceed') return decision;
-  if (decision.kind === 'limit_reached') return { kind: 'respond', response: limitResponse(input, decision.resetsAt) };
+  if (decision.kind === 'limit_reached') return { kind: 'respond', response: limitResponse(input, decision.resetsAt, decision.retryAfterSeconds) };
   if (decision.kind === 'unavailable') {
     input.applyNoStoreHeaders(input.c);
     return { kind: 'respond', response: input.c.json({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' }, 503) };
@@ -109,6 +109,15 @@ function observeOwnerActivity(input: ContainerWakeInput): void {
 /** Platform-to-runtime credentials are set last so a client header of the same name cannot replace them. */
 export function applyUpstreamCredentials(headers: Headers, upstream: RuntimeUpstream): void {
   for (const [name, value] of Object.entries(upstream.headers ?? {})) headers.set(name, value);
+}
+
+/**
+ * Every request to a container carries the row's compute mode, replacing any
+ * client value; a VPS never receives the header.
+ */
+export function applyComputeModeHeader(headers: Headers, machine: UserMachineRecord): void {
+  headers.delete(COMPUTE_MODE_HEADER);
+  if (machine.substrate === 'container') headers.set(COMPUTE_MODE_HEADER, computeModeOf(machine));
 }
 
 /** Never hand a runtime credential back to the client, even if the upstream echoes it. */
