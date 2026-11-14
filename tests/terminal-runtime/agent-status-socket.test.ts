@@ -41,6 +41,12 @@ describe("terminal runtime agent status over the socket", () => {
     await expect(client.listAgentStatuses()).resolves.toEqual([entry]);
   });
 
+  it("returns statuses for more than 1,024 tabs", async () => {
+    const many = Array.from({ length: 1_500 }, (_, i) => ({ ...entry, ref: { ...entry.ref, tabId: `tt_${i.toString(16).padStart(32, "0")}` } }));
+    const client = await serve({ list: async () => many });
+    await expect(client.listAgentStatuses()).resolves.toHaveLength(1_500);
+  });
+
   it("returns nothing when the runtime has no status index", async () => {
     const client = await serve();
     await expect(client.listAgentStatuses()).resolves.toEqual([]);

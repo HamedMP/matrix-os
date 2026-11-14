@@ -16,7 +16,10 @@ const LOGICAL_SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const PANE_NUMBER = /^[0-9]{1,9}$/;
 const MAX_STATUS_FILE_BYTES = 4 * 1024;
 const MAX_MESSAGE_CHARS = 200;
-const MAX_INDEXED_TABS = 1_024;
+// Every live tab the runtime admits (MATRIX_TERMINAL_MAX_TABS_TOTAL is at most 10 000).
+// An entry is under 2 KiB of JSON (200-character message), so a full list stays
+// far below MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES.
+export const TERMINAL_AGENT_STATUS_MAX_ENTRIES = 10_000;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 const StatusFileSchema = z.object({
@@ -125,7 +128,7 @@ interface StatusIndexStore {
   listWorkspaces(): Promise<Array<{ id: string }>>;
   getRuntimeWorkspace(workspaceId: string): Promise<{
     zellijSessionName: string;
-    tabs: Record<string, { status: string; zellijPaneId: string | null }>;
+    tabs: Record<string, { status: string; zellijPaneId: string | null; zellijPaneAssignedAt?: string }>;
   } | undefined>;
 }
 
@@ -159,7 +162,7 @@ export function createTerminalAgentStatusIndex(options: { homePath: string; stor
         if (!workspace || !LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
         const sessionNames = [workspace.zellijSessionName, `matrix-${workspaceRuntimeId(workspace.zellijSessionName)}`];
         for (const [tabId, tab] of Object.entries(workspace.tabs)) {
-          if (entries.length >= MAX_INDEXED_TABS) return entries;
+          if (entries.length >= TERMINAL_AGENT_STATUS_MAX_ENTRIES) return entries;
           if (tab.status === "exited" || tab.status === "failed" || !tab.zellijPaneId) continue;
           const pane = tab.zellijPaneId.slice("terminal_".length);
           // The newer report wins if both the logical and physical names have one.
@@ -175,6 +178,11 @@ export function createTerminalAgentStatusIndex(options: { homePath: string; stor
             if (candidate && (!file || Date.parse(candidate.reportedAt) > Date.parse(file.reportedAt))) file = candidate;
           }
           if (!file) continue;
+          // Pane numbers are reused: a report from before this tab got its pane
+          // belongs to an earlier program. Reporters write whole seconds, so compare
+          // at that precision. Older state has no assignment time.
+          const assignedAt = tab.zellijPaneAssignedAt ? Date.parse(tab.zellijPaneAssignedAt) : Number.NaN;
+          if (Number.isFinite(assignedAt) && Date.parse(file.reportedAt) < Math.floor(assignedAt / 1_000) * 1_000) continue;
           const message = cleanMessage(file.message);
           entries.push({
             ref: { workspaceId, tabId },
