@@ -3,6 +3,7 @@ import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question
 import {
   cancelChatRun,
   chatActivityAt,
+  chatExists,
   retryChatTurn,
   fetchChats,
   fetchChatDetail,
@@ -427,5 +428,48 @@ describe("complete question detail", () => {
 
     expect(requestedUrl(fetchMock).searchParams.get("runtime")).toBe("primary");
     expect(parsed.activities).toEqual([activity]);
+  });
+});
+
+describe("chatExists", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("asks the computer for the chat's latest message only", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond({}));
+
+    await expect(chatExists(token, gatewayUrl, "chat_one", 5_000)).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/vm/alice/api/chats/chat_one");
+    expect(new URL(String(url)).searchParams.get("limit")).toBe("1");
+    expect(init).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it("reports a chat the computer does not have", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      respond({ error: { code: "chat_not_found", safeMessage: "Chat not found." } }, 404),
+    );
+
+    await expect(chatExists(token, gatewayUrl, "chat_one")).resolves.toBe(false);
+  });
+
+  it.each([
+    ["an unavailable service", () => Promise.resolve(respond({ error: { code: "service_unavailable" } }, 503))],
+    ["a dropped connection", () => Promise.reject(new TypeError("Network request failed"))],
+  ])("fails without an answer on %s", async (_label, answer) => {
+    jest.spyOn(global, "fetch").mockImplementation(answer);
+
+    await expect(chatExists(token, gatewayUrl, "chat_one")).rejects.toThrow();
+  });
+
+  it("does not call the server with an invalid chat id", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(chatExists(token, gatewayUrl, "../chat")).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
