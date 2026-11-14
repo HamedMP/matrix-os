@@ -31,7 +31,7 @@ import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
-import { VocalPanel } from "./VocalPanel";
+import { VoiceLivePanel } from "./VoiceLivePanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
@@ -76,10 +76,7 @@ import {
   isRetiredBuiltInAppPath,
   normalizeBuiltInAppPath,
 } from "@/lib/builtin-apps";
-import {
-  DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS,
-  findAppByName,
-} from "./desktop/desktop-app-routing";
+import { DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS } from "./desktop/desktop-app-routing";
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
 import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
@@ -473,19 +470,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
     };
   }, [openExistingProviderTerminal, openSettings]);
-
-  // Vocal mode's open_app tool and auto-open-after-build both go through
-  // this. Fuzzy-matches `query` against the current apps list and focuses
-  // (or opens) the best match. Returns the result so the caller can
-  // report success/failure back to Gemini for accurate narration.
-  const openAppByName = (query: string): { success: boolean; resolvedName?: string } => {
-    const match = findAppByName(apps, query);
-    if (match) {
-      openAppOrFocus(match.path, match.name);
-      return { success: true, resolvedName: match.name };
-    }
-    return { success: false };
-  };
 
   const entryKey = JSON.stringify([cacheScope?.storageKey ?? null, getGatewayUrl()]);
   const { loadModules, settled, navigationChangedRef } = useDesktopBootstrap({
@@ -1327,10 +1311,12 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
           {vocalMounted && (
-            <VocalPanel
+            <VoiceLivePanel
               active={vocalActive}
-              chat={chat}
-              onOpenApp={openAppByName}
+              onOpenChat={(chatId) => {
+                focusOrOpen("Chat", "__chat__");
+                chat?.switchConversation(chatId);
+              }}
             />
           )}
 

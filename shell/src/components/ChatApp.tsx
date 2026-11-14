@@ -1,4 +1,5 @@
 "use client";
+import { ChatVoiceLiveButton } from "./chat/ChatVoiceLiveButton";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
@@ -504,8 +505,11 @@ function ChatAppContent({
   };
 
   const composerToolbar = !collaborationView && !botIdentityUnknown && !directBotId
-    ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
-      onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
+    ? <>
+      <ChatVoiceLiveButton chatId={sessionId} />
+      <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
+        onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
+    </>
     : undefined;
   // Electron Desktop's pane toggle at the top-left of the Chat pane; the phone drawer has its own close button.
   const sidebarToggle = mobile && sidebarOpen ? null : (
