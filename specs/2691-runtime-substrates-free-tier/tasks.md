@@ -71,7 +71,7 @@ task means implemented on a local branch, not merged.
 - [x] T030 [US1] Add `matrix_free` and entitlement source `free` in `packages/platform/src/billing.ts` and `packages/contracts/src/billing-catalog.ts`, with access-decision tests in `tests/platform/billing-free-entitlement.test.ts`
 - [x] T031 [US1] Add the `free_tier_invites` migration, repository, and operator routes in `packages/platform/src/free-tier/invites.ts` with tests in `tests/platform/free-tier-invites.test.ts`
 - [x] T032 [US1] Extend `POST /api/auth/provision-runtime` for the free plan (invite check, capacity ceiling, one runtime per owner) in `packages/platform/src/auth-routes.ts` with tests in `tests/platform/provision-free-runtime.test.ts`
-- [ ] T032a [US1] Former paid owners may take the free plan: an ended paid entitlement (cancelled or expired, no active or grace-period subscription, no live VPS) no longer refuses free provisioning. Active, trialing, past-due, and grace-period paid owners are still refused. Old VPS data is not migrated. Tests in `tests/platform/provision-free-runtime.test.ts`
+- [x] T032a [US1] Former paid owners may take the free plan: an ended paid entitlement (cancelled or expired, no active or grace-period subscription, no live VPS) no longer refuses free provisioning. Active, trialing, past-due, and grace-period paid owners are still refused. Old VPS data is not migrated. Tests in `tests/platform/provision-free-runtime.test.ts`
 - [x] T033 [US1] Add `POST /internal/containers/:handle/register` in `packages/platform/src/substrates/container-internal-routes.ts` with epoch and generation tests in `tests/platform/container-register-route.test.ts`
 - [x] T034 [US1] Initialize funded-AI policy, balance, and once-per-owner starter credit on container registration in `packages/platform/src/customer-funded-starter-policy.ts`, and allow credential issuance for class `free` in `packages/platform/src/ai-funded-policy-repository.ts`, with tests in `tests/platform/ai-funded-container-runtime.test.ts`
 - [x] T035 [US1] Accept a container runtime in device sign-in (`packages/platform/src/auth-routes.ts`) and in journey phases (`packages/platform/src/journey.ts`), returning `RuntimeState`, with tests in `tests/platform/journey-container-runtime.test.ts`
@@ -79,10 +79,10 @@ task means implemented on a local branch, not merged.
 
 ### Stack D (web first)
 
-- [ ] T037 [US1] Shared runtime-state model and hook in `shell/src/lib/runtime-state.ts` with tests in `tests/shell/runtime-state.test.ts`
-- [ ] T038 [US1] Free plan choice and waitlist state in the pre-VPS shell (`shell/src/components/BillingGate.tsx` and `shell/src/app/runtime/page.tsx`) using `@matrix-os/brand`
-- [ ] T039 [US1] Waking, restoring, busy, and failed states through `ShellNotificationStack` and the Chat composer (draft preserved, sent once) in `shell/src/components/ChatApp.tsx`
-- [ ] T040 [US1] Capability gating from `GET /api/runtime/capabilities` for the launcher and Settings in `shell/src/lib/runtime-capabilities.ts`, wired in both `shell/src/components/Desktop.tsx` and `shell/src/components/canvas/CanvasWindow.tsx`
+- [x] T037 [US1] Shared runtime-state model and hook in `shell/src/lib/runtime-state.ts` with tests in `tests/shell/runtime-state.test.ts`
+- [x] T038 [US1] Free plan choice and waitlist state in the pre-VPS shell (`shell/src/components/BillingGate.tsx` and `shell/src/app/runtime/page.tsx`) using `@matrix-os/brand`
+- [x] T039 [US1] Waking, restoring, busy, and failed states through `ShellNotificationStack` and the Chat composer (draft preserved, sent once) in `shell/src/components/ChatApp.tsx`
+- [x] T040 [US1] Capability gating from `GET /api/runtime/capabilities` for the launcher and Settings in `shell/src/lib/runtime-capabilities.ts`, wired in both `shell/src/components/Desktop.tsx` and `shell/src/components/canvas/CanvasWindow.tsx`
 
 **Checkpoint US1**: quickstart.md section 1 passes on Web Desktop and Web Canvas with live evidence.
 
@@ -119,7 +119,7 @@ task means implemented on a local branch, not merged.
 - [x] T049 [US3] `ActivityTracker` (bounded, TTL) and `IdleReaper` (hard maximum session, quiesce then flush then stop) in `packages/platform/src/substrates/idle-reaper.ts`, with tests in `tests/platform/idle-reaper.test.ts`
 - [x] T050 [US3] `flushed` and `activity` internal routes and the needs-recovery path in `packages/platform/src/substrates/container-internal-routes.ts`, with tests in `tests/platform/container-flushed-route.test.ts`
 - [x] T051 [US3] `OrphanReconciler` deleting compute with no current-generation record, never databases or prefixes, in `packages/platform/src/substrates/orphan-reconciler.ts`, with tests in `tests/platform/orphan-reconciler.test.ts`
-- [ ] T052 [US3] Interrupted-run labelling after a crash start in `packages/gateway/src/chat/orchestrator.ts` recovery path, with tests in `tests/gateway/chat-interrupted-after-crash.test.ts`
+- [x] T052 [US3] Interrupted-run labelling after a crash start in `packages/gateway/src/chat/orchestrator.ts` recovery path, with tests in `tests/gateway/chat-interrupted-after-crash.test.ts`
 - [ ] T053 [US3] Staging lane: 10 stop and start cycles, 3 deletions, 1 crash in `tests/e2e/container-persistence.test.ts`
 
 ## Phase 6: User Story 4 - Hit a limit (P1)
@@ -129,10 +129,10 @@ task means implemented on a local branch, not merged.
 - [x] T054 [US4] Per-owner byte quota enforced in the same statement that authorizes a write in `packages/platform/src/internal-sync-routes.ts`, with the `runtime_storage_usage` migration and race tests in `tests/platform/sync-storage-quota.test.ts`
 - [x] T054a [US4] Home file-count limit (default 50,000, FR-022) enforced with the byte quota; the write fails visibly and read, export, and delete still work
 - [x] T055 [US4] Database size and connection limits per owner role in `packages/platform/src/substrates/container-owner-database.ts`, with tests in `tests/platform/container-database-limits.test.ts`
-- [ ] T055a [US4] Hard database size backstop: a platform sweep reads each free owner database's size on a schedule and, over the limit, revokes write privileges with a grant the owner role cannot override; writes come back when the size drops below the limit. Tests in `tests/platform/container-database-size-sweep.test.ts` must show that the owner role's read-only setting can be switched off and that the sweep still refuses writes
-- [ ] T056 [US4] Free runtime policy (model allowlist, monthly budget of $5 per owner, D2) in `packages/platform/src/free-tier/funded-policy.ts`, with boundary race tests in `tests/platform/free-funded-policy.test.ts`
-- [ ] T057 [US4] Global ceilings (running, total, daily funded spend) and busy responses in `packages/platform/src/free-tier/capacity.ts`, with tests in `tests/platform/free-tier-capacity.test.ts`
-- [ ] T058 [US4] Read, export, and delete stay available when a limit is reached: gateway export route in `packages/gateway/src/server/system-operator-routes.ts` (replacing the 501), with tests in `tests/gateway/owner-export.test.ts`
+- [x] T055a [US4] Hard database size backstop: a platform sweep reads each free owner database's size on a schedule and, over the limit, revokes write privileges with a grant the owner role cannot override; writes come back when the size drops below the limit. Tests in `tests/platform/container-database-size-sweep.test.ts` must show that the owner role's read-only setting can be switched off and that the sweep still refuses writes
+- [x] T056 [US4] Free runtime policy (model allowlist, monthly budget of $5 per owner, D2) in `packages/platform/src/free-tier/funded-policy.ts`, with boundary race tests in `tests/platform/free-funded-policy.test.ts`
+- [x] T057 [US4] Global ceilings (running, total, daily funded spend) and busy responses in `packages/platform/src/free-tier/capacity.ts`, with tests in `tests/platform/free-tier-capacity.test.ts`
+- [x] T058 [US4] Read, export, and delete stay available when a limit is reached: gateway export route in `packages/gateway/src/server/system-operator-routes.ts` (replacing the 501), with tests in `tests/gateway/owner-export.test.ts`
 - [ ] T059 [US4] `limit_reached` state and upgrade or own-account prompt in `shell/src/components/ChatApp.tsx` and Settings billing
 - [ ] T060 [US4] Two-owner isolation lane (database, object keys, private address, metadata endpoint, cross-handle token) in `tests/e2e/container-isolation.test.ts`
 

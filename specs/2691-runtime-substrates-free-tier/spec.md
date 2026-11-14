@@ -512,6 +512,7 @@ Provisional per-owner defaults, configuration-driven, so limit tests can be writ
 | Run duration | 15 min |
 | Idle before stop | 10 min |
 | Maximum session | 4 h |
+| Compute per month | 80 billed hours (UTC month, idle tail included); at the cap, no wakes until the 1st except 2 export-only wakes of 15 min |
 | Home size | 2 GiB |
 | Home files | 50,000 |
 | Database size and connections | 500 MB, 5 connections; size is held by a platform sweep that revokes writes, because the owner role can switch off its own read-only setting |
@@ -567,7 +568,7 @@ N/A without architectural rationale and reviewer approval.
 | D0 | Linear ticket | Decided: [ENG-446](https://linear.app/matrix-os/issue/ENG-446/runtime-substrates-container-based-free-tier-alongside-vps); stacks share it |
 | D1 | Container provider | Decided 2026-11-10: AWS Lambda MicroVMs, with Cloud Run gen2 as fallback (research.md R4) |
 | D2 | Free AI allowance | Decided 2026-11-13: once-per-owner starter credit plus $5 per month limited to the managed default model; own-account sources stay available |
-| D3 | Limits and retention | Set after Phase 0 measurement; propose 90 days inactivity, 30 days notice |
+| D3 | Limits and retention | Compute decided 2026-11-14: 80 billed hours per month, then read-only with export until the 1st. Retention: propose 90 days inactivity, 30 days notice |
 | D4 | Signup gate | Invite-only until SC-004 and SC-007 hold in production for two weeks |
 | D5 | Free capability set | Chat (Matrix AI), Files, app build and use, Settings. Terminal, coding CLIs, channels, cron, bots, integrations with platform secrets: paid |
 | D6 | App preview sharing | Owner-only at launch; sharing via existing Sites private links later |
