@@ -14,6 +14,8 @@ const env = (overrides: Record<string, string | undefined> = {}) => ({
   ...overrides,
 });
 const source = { orgId: "org_acme1", installationId: 42, repository: "acme/matrix-core", ref: "stable" };
+/** Every org counts as configured; for route tests about something other than config. */
+const everyOrgConfigured = { sourceForOrg: (orgId: string) => ({ ...source, orgId }) } as never;
 
 describe("Matrix Core repo config", () => {
   // Fault: a half-configured or hostile config enables the feature anyway.
@@ -206,6 +208,7 @@ describe("Matrix Core repo pins membership evidence", () => {
   async function pinsWith(membershipState: string, current: boolean) {
     const { createCoreRepoRoutes } = await import("../../packages/platform/src/core-repo/routes.js");
     const routes = createCoreRepoRoutes({
+      service: everyOrgConfigured,
       repository: { listPins: async () => [] } as never,
       organizations: {
         repository: {
@@ -247,6 +250,7 @@ describe("Matrix Core repo skill namespaces", () => {
       { organizationId: "org_short", slug: "acme" },
     ];
     const routes = createCoreRepoRoutes({
+      service: everyOrgConfigured,
       repository: { listPins: async (ids: string[]) => ids.map(organizationId => ({ organizationId, commit: "a".repeat(40), sha256: "f".repeat(64), bytes: 1 })) } as never,
       organizations: {
         repository: {
@@ -288,6 +292,7 @@ describe("Matrix Core repo pins beyond one membership page", () => {
       const at = new Date("2026-11-01T00:00:00.000Z");
       const request = async () => {
         const routes = createCoreRepoRoutes({
+          service: everyOrgConfigured,
           repository: { listPins: async () => [] } as never,
           organizations: { repository: organizations, projection: { isCurrentMember: async () => true } } as never,
           authenticateMachine: async () => "user_member", resolveActor: async () => null,
@@ -401,6 +406,54 @@ describe("Matrix Core repo retention claims", () => {
       await sweeper.stop();
     } finally {
       await t.db.destroy();
+    }
+  });
+});
+
+describe("Matrix Core repo sources removed from config", () => {
+  // Fault: an org dropped from MATRIX_CORE_REPO_SOURCES keeps publishing its last pin, so members never lose its skills.
+  it("stops listing and serving the saved pin of an org that is no longer configured", async () => {
+    const { KyselyPGlite } = await import("kysely-pglite");
+    const { Kysely } = await import("kysely");
+    const { bootstrapCoreRepoDatabase, createCoreRepoRepository } = await import("../../packages/platform/src/core-repo/database.js");
+    const { createCoreRepoSyncService } = await import("../../packages/platform/src/core-repo/service.js");
+    const { createCoreRepoRoutes } = await import("../../packages/platform/src/core-repo/routes.js");
+    const db = new Kysely<never>({ dialect: (await KyselyPGlite.create()).dialect });
+    try {
+      await bootstrapCoreRepoDatabase(db as never);
+      const repository = createCoreRepoRepository(db as never);
+      const commit = "a".repeat(40);
+      for (const organizationId of ["org_alpha", "org_beta"]) await repository.pin({ organizationId, commit, sha256: "f".repeat(64), bytes: 1 });
+      // Restart with org_alpha removed from the configured sources.
+      const service = createCoreRepoSyncService({
+        config: { sources: [{ orgId: "org_beta", installationId: 42, repository: "acme/matrix-core", ref: "stable" }] },
+        github: { headCommit: vi.fn(), downloadTarball: vi.fn() },
+        store: { putObject: vi.fn(), getObject: vi.fn(), headObject: vi.fn(), deleteObject: vi.fn() },
+        repository,
+      });
+      const routes = createCoreRepoRoutes({
+        service, repository,
+        store: { putObject: vi.fn(), headObject: vi.fn(), deleteObject: vi.fn(), getObject: async () => ({ body: new Response("x").body }) },
+        organizations: {
+          repository: {
+            getMembership: vi.fn(), listMembers: vi.fn(),
+            listOrganizationsForActorPage: async () => ({ complete: true, organizations: ["org_alpha", "org_beta"].map(organizationId => ({
+              organization: { organizationId, slug: organizationId.slice(4), lifecycle: "active" }, membership: { state: "active" } })) }),
+          },
+          projection: { isCurrentMember: async () => true },
+        } as never,
+        authenticateMachine: async () => "user_member", resolveActor: async () => null,
+      });
+      const headers = { "x-matrix-handle": "member-vps", authorization: "Bearer machine-token-0123456789" };
+      const pins = await routes.request("/internal/core-repo/pins", { headers });
+      expect(await pins.json()).toEqual({ membership: "verified", pins: [{ orgId: "org_beta", slug: "beta", commit, sha256: "f".repeat(64), bytes: 1 }] });
+      const removed = await routes.request(`/internal/core-repo/org_alpha/${commit}.tar.gz`, { headers });
+      expect(removed.status).toBe(404);
+      expect(await removed.json()).toEqual({ error: "Not found" });
+      expect((await routes.request(`/internal/core-repo/org_beta/${commit}.tar.gz`, { headers })).status).toBe(200);
+      await service.stop();
+    } finally {
+      await db.destroy();
     }
   });
 });

@@ -9,7 +9,9 @@
  *   the caller's pinned commits and their tarballs. A VPS authenticates with
  *   its existing machine credential (handle + platform verification token);
  *   the Matrix CLI off-VPS uses its platform session. Either way the identity
- *   must be a current member of the org.
+ *   must be a current member of the org. Config is the source of truth: an
+ *   org no longer in `MATRIX_CORE_REPO_SOURCES` gets no pin (installers then
+ *   remove its skills) and its tarball is the same 404 as an unknown pin.
  *
  * Missing configuration or storage is a generic 503, never a 404.
  */
@@ -151,11 +153,13 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
   app.get("/internal/core-repo/pins", async (c) => {
     const actorId = await caller(c);
     if (!actorId) return safeJson(c, "Unauthorized", 401);
-    const { repository, organizations } = options;
-    if (!repository || !organizations) return unavailable(c, "pins");
+    const { service, repository, organizations } = options;
+    if (!service || !repository || !organizations) return unavailable(c, "pins");
     try {
       const page = await organizations.repository.listOrganizationsForActorPage(actorId);
-      const memberships = page.organizations.filter(entry => entry.organization.lifecycle === "active");
+      // An org removed from config yields no pin, so installers remove its skills.
+      const memberships = page.organizations.filter(entry => entry.organization.lifecycle === "active"
+        && service.sourceForOrg(entry.organization.organizationId) !== undefined);
       const current = [];
       for (const entry of memberships) {
         if (await organizations.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId })) {
@@ -186,8 +190,10 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
     const organizationId = CoreRepoOrgIdSchema.safeParse(c.req.param("orgId"));
     const commit = /^([0-9a-f]{40})\.tar\.gz$/.exec(c.req.param("file"))?.[1];
     if (!organizationId.success || !commit) return safeJson(c, "Invalid request", 422);
-    const { repository, organizations, store } = options;
-    if (!repository || !organizations || !store) return unavailable(c, "tarball");
+    const { service, repository, organizations, store } = options;
+    if (!service || !repository || !organizations || !store) return unavailable(c, "tarball");
+    // A saved pin of an org no longer configured is not served.
+    if (!service.sourceForOrg(organizationId.data)) return safeJson(c, "Not found", 404);
     try {
       if (!(await organizations.projection.isCurrentMember({ organizationId: organizationId.data, actorId }))) return safeJson(c, "Not found", 404);
       const pin = await repository.getPin(organizationId.data);

@@ -292,6 +292,9 @@ It is capped at 40 tools per session.
     `stable`). Anything missing or invalid turns the feature off (503).
     The org ↔ installation mapping is operator-reviewed; self-serve binding
     needs a GitHub user check and is deferred.
+    Config is the source of truth: an org removed from the sources gets no
+    pin (members' installers remove its skills), its tarball is a 404, and
+    its webhook and sync calls are refused.
   - The platform validates every tarball with the same rules as the
     installer (one shared module): one top-level folder; regular files and
     directories only; no links, `..`, or absolute paths; ≤ 5,000 entries,
