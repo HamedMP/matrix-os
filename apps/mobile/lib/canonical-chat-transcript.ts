@@ -56,6 +56,12 @@ export interface TranscriptMessage {
   /** Only resolvable when the message is tied to a run (assistant turns). */
   elapsedSeconds?: number;
   isRunning: boolean;
+  /**
+   * Set on the reply that closes its turn: a run's last reply, or one that
+   * belongs to no run. Its actions (Copy, Share, its time) go under it once
+   * it has finished, as Electron Desktop shows them under a turn's final reply.
+   */
+  endsTurn?: true;
   createdAt: number;
   /**
    * A message sent from this phone that the computer does not have yet: on
@@ -192,6 +198,9 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
       isRunning: run ? !TERMINAL_RUN_STATUSES.has(run.status) : false,
+      ...(message.role === "assistant" && (!message.runId || isRunsLastAssistantMessage)
+        ? { endsTurn: true as const }
+        : {}),
       createdAt: Date.parse(message.createdAt),
     };
   }).reverse(); // Newest-first, matching the inverted transcript FlatList.

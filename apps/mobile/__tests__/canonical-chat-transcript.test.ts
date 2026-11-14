@@ -260,3 +260,47 @@ describe("turns that did not finish", () => {
     });
   });
 });
+
+describe("where a reply ends", () => {
+  const at = "2026-09-09T00:00:00.000Z";
+
+  function assistantMessage(id: string, seq: number, text: string, runId?: string) {
+    return {
+      id, chatId: "chat_1", role: "assistant", state: "committed", seq,
+      ...(runId ? { runId } : {}),
+      parts: [{ type: "text", text }], createdAt: at,
+    };
+  }
+
+  function chatWith(messages: unknown[], runStatus = "completed") {
+    return {
+      record: { chat: { id: "chat_1" } },
+      turns: [],
+      runs: [{
+        id: "run_1", chatId: "chat_1", turnId: "cturn_1", attempt: 1, status: runStatus,
+        createdAt: at, updatedAt: at, startedAt: at, completedAt: at,
+      }],
+      activities: [],
+      messages,
+    } as unknown as CanonicalChatDetailResponse;
+  }
+
+  it("marks only the last of a run's replies as the end of its turn", () => {
+    const transcript = buildTranscript(chatWith([
+      userMessage("msg_q", 1, "Build it"),
+      { ...assistantMessage("msg_first", 2, "Looking at the files first.", "run_1"),
+        parts: [{ type: "text", text: "Looking at the files first." }, { type: "tool_request", toolCallId: "call_1", label: "Read files" }] },
+      assistantMessage("msg_last", 4, "Done. It has a daily checklist.", "run_1"),
+    ]));
+
+    const byId = Object.fromEntries(transcript.map((message) => [message.id, message]));
+    expect(byId.msg_last).toMatchObject({ endsTurn: true });
+    expect(byId.msg_first!.endsTurn).toBeUndefined();
+    expect(byId.msg_q!.endsTurn).toBeUndefined();
+  });
+
+  it("treats a reply that belongs to no run as a turn of its own", () => {
+    const [reply] = buildTranscript(chatWith([assistantMessage("msg_alone", 1, "Hello")]));
+    expect(reply).toMatchObject({ id: "msg_alone", endsTurn: true });
+  });
+});
