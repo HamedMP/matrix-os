@@ -37,6 +37,13 @@ const ConnectionsQuerySchema = z.object({
 }).strict();
 const EmptyBodySchema = z.object({}).strict();
 const MAX_CONNECTIONS_PER_MEMBER = 100;
+/**
+ * Serialized block ids per connections response. The shared client refuses
+ * bodies over 2 MiB, and a full page (50 members x 500 blocks of up to 253
+ * characters) can exceed that, so a page ends early, at a member boundary,
+ * once its blocks pass this budget. One member at the cap (~128 KiB) always fits.
+ */
+const MAX_PAGE_BLOCK_CHARS = 1024 * 1024;
 
 type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 503;
 
@@ -60,6 +67,17 @@ function safeJson(c: Context, error: string, status: ErrorStatus) {
 function unavailable(c: Context, action: string, error?: unknown) {
   if (error !== undefined) console.warn(`[org-mcp] ${action} failed`, error instanceof Error ? error.name : "UnknownError");
   return safeJson(c, "Organization connections unavailable", 503);
+}
+
+/** The leading members whose blocks fit the budget; never fewer than one. */
+function fitMembersToBlockBudget<T extends { actorId: string }>(members: readonly T[], blocks: ReadonlyMap<string, readonly string[]>): T[] {
+  let chars = 0;
+  for (let index = 0; index < members.length; index++) {
+    // JSON cost of each id: the id plus its quotes and separator.
+    for (const id of blocks.get(members[index]!.actorId) ?? []) chars += id.length + 3;
+    if (chars > MAX_PAGE_BLOCK_CHARS && index > 0) return members.slice(0, index);
+  }
+  return [...members];
 }
 
 function encodeCursor(actorId: string): string {
@@ -123,16 +141,19 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
       const page = await admin.organizations.repository.listMembers(admin.organizationId, {
         limit: query.data.limit, ...(afterActorId ? { afterActorId } : {}),
       });
-      const actorIds = page.members.map(member => member.actorId);
-      const [connections, blocks, servers, profiles] = await Promise.all([
+      const pageActorIds = page.members.map(member => member.actorId);
+      const blocks = await admin.repository.listMemberBlocks(admin.organizationId, pageActorIds);
+      const members = fitMembersToBlockBudget(page.members, blocks);
+      const nextActorId = members.length < page.members.length ? members[members.length - 1]!.actorId : page.nextActorId;
+      const actorIds = members.map(member => member.actorId);
+      const [connections, servers, profiles] = await Promise.all([
         admin.repository.listConnections(actorIds),
-        admin.repository.listMemberBlocks(admin.organizationId, actorIds),
         admin.repository.listServerDefinitions(admin.organizationId),
         options.profiles ? options.profiles.resolveMemberProfiles(actorIds) : Promise.resolve(new Map()),
       ]);
       const lastUsed = await admin.repository.lastUsedByConnection(admin.organizationId, connections.map(row => row.connectionId));
       const body = OrgMcpConnectionsPageSchema.parse({
-        members: page.members.map(member => {
+        members: members.map(member => {
           const profile = profiles.get(member.actorId);
           const email = member.email ?? profile?.emailAddress;
           return {
@@ -156,7 +177,7 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
           };
         }),
         servers: servers.map(server => ({ ...server, updatedAt: server.updatedAt.toISOString() })),
-        ...(page.nextActorId ? { nextCursor: encodeCursor(page.nextActorId) } : {}),
+        ...(nextActorId ? { nextCursor: encodeCursor(nextActorId) } : {}),
       });
       c.header("Cache-Control", "private, no-store");
       return c.json(body);

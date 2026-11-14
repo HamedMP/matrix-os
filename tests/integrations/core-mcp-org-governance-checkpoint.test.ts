@@ -157,6 +157,55 @@ describe("Matrix Core MCP org governance checkpoint", () => {
     expect((await admin("GET", `/api/orgs/${ORG}/mcp/connections?limit=10`)).status).toBe(200);
   });
 
+  async function addBulkMembers(count: number, blockId: (member: number, block: number) => string) {
+    const organizations = new PlatformOrganizationRepository(db);
+    for (let member = 0; member < count; member++) {
+      // "user_bulk_*" sorts before the fixture member, so these fill the front of the page.
+      const actorId = `user_bulk_${String(member).padStart(2, "0")}`;
+      await organizations.applyMembership({ organizationId: ORG, membershipId: `mem_${actorId}`, actorId, role: "org:member", state: "active", sourceUpdatedAt: SOURCE_TIME });
+      await db.insertInto("org_mcp_member_blocks").values(Array.from({ length: ORG_MCP_MAX_MEMBER_BLOCKS }, (_, block) => ({
+        organization_id: ORG, actor_id: actorId, server_def_id: blockId(member, block), created_by: ADMIN }))).execute();
+    }
+  }
+  async function walkConnectionPages() {
+    const blocks = new Map<string, string[]>();
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 20; pages++) {
+      const response = await admin("GET", `/api/orgs/${ORG}/mcp/connections?limit=50${cursor ? `&cursor=${cursor}` : ""}`);
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      // The shared client refuses bodies over 2 MiB.
+      expect(text.length).toBeLessThanOrEqual(2 * 1024 * 1024);
+      const page = JSON.parse(text) as { members: Array<{ actorId: string; blockedServerDefIds: string[] }>; nextCursor?: string };
+      for (const member of page.members) blocks.set(member.actorId, member.blockedServerDefIds);
+      cursor = page.nextCursor;
+      if (!cursor) return blocks;
+    }
+    throw new Error("connections pages did not end");
+  }
+
+  // Fault: a page-wide row cap drops later members' saved blocks, so the panel offers "Block" for a server that is still blocked.
+  it("returns every saved block for every member on a page whose earlier members are at the block cap", async () => {
+    await addBulkMembers(10, (member, block) => `h${block}.m${member}.example`);
+    expect((await admin("PUT", blockPath)).status).toBe(200);
+    const blocks = await walkConnectionPages();
+    expect(blocks.get(fixture.actorId)).toEqual(["mcp.linear.test"]);
+    for (let member = 0; member < 10; member++) expect(blocks.get(`user_bulk_0${member}`)).toHaveLength(ORG_MCP_MAX_MEMBER_BLOCKS);
+  });
+
+  // Fault: returning every block on a 50-member page overflows the client's response cap, so the panel fails to load.
+  it("splits a page of maximum-length blocks across cursors so every response fits the client cap", async () => {
+    const label = (char: string) => char.repeat(59);
+    await addBulkMembers(20, (member, block) => `${label("a")}.${label("b")}.${label("c")}.${label("d")}.m${member}b${block}.ex`);
+    expect((await admin("PUT", blockPath)).status).toBe(200);
+    const blocks = await walkConnectionPages();
+    expect(blocks.get(fixture.actorId)).toEqual(["mcp.linear.test"]);
+    expect(blocks.get(ADMIN)).toEqual([]);
+    for (let member = 0; member < 20; member++) {
+      expect(blocks.get(`user_bulk_${String(member).padStart(2, "0")}`)).toHaveLength(ORG_MCP_MAX_MEMBER_BLOCKS);
+    }
+  });
+
   // Fault: usage reads only rolled-up aggregates, so calls since the last hourly rollup are missing (or counted twice).
   it("counts a call recorded before the rollup exactly once, before and after the rollup", async () => {
     const today = new Date().toISOString().slice(0, 10);

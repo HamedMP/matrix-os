@@ -12,7 +12,7 @@
  * content-free usage tables.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
-import { ORG_MCP_MAX_MEMBER_BLOCKS, type OrgMcpServerMode, type OrgMcpToolPolicy } from "@matrix-os/contracts";
+import { ORG_MCP_CONNECTIONS_PAGE_LIMIT, ORG_MCP_MAX_MEMBER_BLOCKS, type OrgMcpServerMode, type OrgMcpToolPolicy } from "@matrix-os/contracts";
 import { runPlatformMigration } from "../migration-runner.js";
 import { MCP_USAGE_ROLLUP_SCOPE, type McpUsageDatabase } from "../mcp-usage/database.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
@@ -244,12 +244,18 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
         .where("actor_id", "=", input.actorId).where("server_def_id", "=", input.serverDefId).execute();
     },
 
+    /**
+     * Every block for one bounded member page. Blocks are capped per member when
+     * written, so members × that cap covers the page exactly: a row cap shared by
+     * the page would hide later members' blocks while they are still enforced.
+     */
     async listMemberBlocks(organizationId: string, actorIds: readonly string[]): Promise<Map<string, string[]>> {
       const blocks = new Map<string, string[]>();
       if (actorIds.length === 0) return blocks;
+      if (actorIds.length > ORG_MCP_CONNECTIONS_PAGE_LIMIT) throw new RangeError("member page too large");
       const rows = await db.selectFrom("org_mcp_member_blocks").select(["actor_id", "server_def_id"])
         .where("organization_id", "=", organizationId).where("actor_id", "in", [...actorIds])
-        .orderBy("actor_id").orderBy("server_def_id").limit(MAX_CONNECTION_ROWS).execute();
+        .orderBy("actor_id").orderBy("server_def_id").limit(actorIds.length * ORG_MCP_MAX_MEMBER_BLOCKS).execute();
       for (const row of rows) blocks.set(row.actor_id, [...(blocks.get(row.actor_id) ?? []), row.server_def_id]);
       return blocks;
     },
