@@ -70,6 +70,7 @@
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
     "lint": "bun run --filter './shell' lint",
+    "mcp-catalog:verify": "bun scripts/mcp-catalog/verify-remote-mcp-catalog.ts",
     "preview:pair:create": "bun scripts/preview-pair/control.ts create",
     "preview:pair:update": "bun scripts/preview-pair/control.ts update",
     "preview:pair:qualify:fixtures": "bun scripts/preview-pair/qualify-fixtures.ts",
