@@ -8,7 +8,8 @@ import { registerCodingAgentAttentionNotifications } from "../coding-agents/atte
 import { createCodingAgentNotificationPreferenceStore } from "../coding-agents/notification-preferences.js";
 import { createChannelManager, type ChannelManager } from "../channels/manager.js";
 import { createOutboundQueue } from "../security/outbound-queue.js";
-import { createPushAdapter } from "../channels/push.js";
+import { createPushAdapter, type PushAdapter } from "../channels/push.js";
+import type { PushTokenStore } from "../notifications/push-tokens.js";
 import { createSessionStore } from "../session-store.js";
 import { createTelegramAdapter, type TelegramAdapter } from "../channels/telegram.js";
 import { createTelegramStream } from "../channels/telegram-stream.js";
@@ -27,18 +28,20 @@ export interface GatewayChannelStartupOptions {
   /** Speech-to-text used for Telegram voice notes. Required: without it voice messages
       silently stop transcribing, which no test covers. */
   channelStt: Parameters<TelegramAdapter["setVoiceContext"]>[0]["stt"];
+  /** Owner Postgres push tokens; null when the owner database is missing (push registration then fails closed). */
+  pushTokens: PushTokenStore | null;
 }
 
 export interface GatewayChannels {
   channelManager: ChannelManager;
-  pushAdapter: ReturnType<typeof createPushAdapter>;
+  pushAdapter: PushAdapter;
   codingAgentAttentionNotifications: ReturnType<typeof registerCodingAgentAttentionNotifications> | undefined;
 }
 
 export function initializeGatewayChannels(options: GatewayChannelStartupOptions): GatewayChannels {
   const { homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure,
-    channelStt } = options;
+    channelStt, pushTokens } = options;
   // Channel manager -- reads config, starts enabled adapters
   let channelsConfig: Partial<Record<ChannelId, ChannelConfig>> = {};
   try {
@@ -52,7 +55,11 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
 
   const outboundQueue = createOutboundQueue(homePath);
 
-  const pushAdapter = createPushAdapter();
+  const pushAdapter = createPushAdapter({
+    tokens: pushTokens,
+    handle: process.env.MATRIX_HANDLE,
+    ownerId: process.env.MATRIX_USER_ID || process.env.MATRIX_CLERK_USER_ID,
+  });
 
   const channelSessions = createSessionStore(join(homePath, "system", "sessions.json"));
 

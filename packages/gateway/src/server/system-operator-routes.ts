@@ -4,7 +4,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod/v4";
 import { createUsageTracker } from "@matrix-os/kernel";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
-import { createPushAdapter } from "../channels/push.js";
+import { describePushStorageError, PushTokenStorageUnavailableError, type PushAdapter } from "../channels/push.js";
 import {
   CLIENT_ERROR_LOG_BODY_LIMIT, ClientErrorReportSchema,
   forwardClientErrorToPostHog, writeClientErrorReport,
@@ -28,13 +28,22 @@ const PushUnregisterBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
 }).strict();
 
+function pushStorageFailure(c: Context, err: unknown): Response {
+  if (err instanceof PushTokenStorageUnavailableError) {
+    console.error("[push] Owner database unavailable; push registration refused");
+    return c.json({ error: "Push registration unavailable" }, 503);
+  }
+  console.error("[push] Push token storage failed:", describePushStorageError(err));
+  return c.json({ error: "Push registration failed" }, 500);
+}
+
 export interface SystemOperatorRouteOptions {
   app: Hono;
   homePath: string;
   model: GatewayConfig["model"];
   runningVersion: string;
   interactionLogger: InteractionLogger;
-  pushAdapter: ReturnType<typeof createPushAdapter>;
+  pushAdapter: PushAdapter;
   posthogErrorTracker: ReturnType<typeof installPostHogHonoErrorTracking>;
   ownerTelemetryDistinctId: string;
   upgradeBodyLimit: ReturnType<typeof bodyLimit>;
@@ -226,7 +235,11 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
       return c.json({ error: "Invalid push registration" }, 400);
     }
 
-    pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
+    try {
+      await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
+    } catch (err: unknown) {
+      return pushStorageFailure(c, err);
+    }
     return c.json({ ok: true });
   });
 
@@ -258,7 +271,11 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
       return c.json({ error: "Invalid push registration" }, 400);
     }
 
-    pushAdapter.removeToken(parsed.data.token, principal.userId);
+    try {
+      await pushAdapter.removeToken(parsed.data.token, principal.userId);
+    } catch (err: unknown) {
+      return pushStorageFailure(c, err);
+    }
     return c.json({ ok: true });
   });
 
