@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { auditBillingOwners } from '../../packages/platform/src/account-deletion/orphaned-billing-audit.js';
+import { auditBillingOwners, readStripeAuditStatus, selectBillingAuditOwners } from '../../packages/platform/src/account-deletion/orphaned-billing-audit.js';
 
 const owner = 'user_trialOwner';
 const missing = () => Response.json({ errors: [{ code: 'resource_not_found' }] }, { status: 404 });
@@ -60,5 +60,35 @@ describe('billing owner identity audit', () => {
     });
     await auditBillingOwners(Array.from({ length: 15 }, (_, i) => `user_${i}`), { clerkSecretKey: 'secret', request });
     expect(maximum).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('ambiguous stored subscription status lookup', () => {
+  it('stops queued provider reads after the first failure', async () => {
+    const inventory = Array.from({ length: 20 }, (_, n) => ({ clerk_user_id: `user_${n}`, stripe_subscription_id: `sub_${n}`, status: 'ended' }));
+    const readEndedStatus = vi.fn(async (id: string) => {
+      if (id === 'sub_0') throw new Error('provider unavailable');
+      await new Promise(resolve => setTimeout(resolve, 2));
+      return 'paused';
+    });
+    await expect(selectBillingAuditOwners(inventory, { readEndedStatus })).rejects.toThrow('provider unavailable');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(readEndedStatus.mock.calls.length).toBeLessThanOrEqual(5);
+  });
+  it('reads the exact live subscription with a timeout and rejects redirects', async () => {
+    const request = vi.fn<typeof fetch>(async () => Response.json({ id: 'sub_paused', status: 'paused' }));
+    expect(await readStripeAuditStatus('sub_paused', 'fixture', request)).toBe('paused');
+    expect(request).toHaveBeenCalledWith('https://api.stripe.com/v1/subscriptions/sub_paused',
+      expect.objectContaining({ method: 'GET', redirect: 'error', signal: expect.any(AbortSignal) }));
+  });
+
+  it.each([404, 503])('fails instead of treating HTTP %s as terminal', async status => {
+    const request = vi.fn<typeof fetch>(async () => new Response('', { status }));
+    await expect(readStripeAuditStatus('sub_paused', 'fixture', request)).rejects.toThrow('lookup unavailable');
+  });
+
+  it('rejects a response for a different subscription', async () => {
+    const request = vi.fn<typeof fetch>(async () => Response.json({ id: 'sub_other', status: 'canceled' }));
+    await expect(readStripeAuditStatus('sub_paused', 'fixture', request)).rejects.toThrow('mismatch');
   });
 });

@@ -51,14 +51,17 @@ Clerk deleting an identity before the job captured its Apple credentials makes a
 ### Detect orphaned billing owners
 
 Run `pnpm exec tsx scripts/ops/audit-orphaned-billing.ts --gcp-project <project-id>`
-with access to the production platform database and Clerk secrets. Alternatively,
-supply `PLATFORM_DATABASE_URL` and `CLERK_SECRET_KEY` in the environment. The
+with access to the production platform database, Clerk, and Stripe secrets. Alternatively,
+supply `PLATFORM_DATABASE_URL`, `CLERK_SECRET_KEY`, and `STRIPE_SECRET_KEY` in the environment. The
 command opens an explicitly read-only transaction and never starts platform
-migrations. It checks up to 1,000 distinct owners of non-ended subscriptions,
-using five concurrent, timed Clerk lookups. A larger inventory fails rather than
-reporting partial success. Stored terminal statuses (`canceled`, `ended`, and
-legacy `incomplete_expired`) are excluded. Confirm that the database and Clerk
-credentials belong to the same environment before using the results.
+migrations. It reads up to 1,000 subscription rows and checks up to 1,000 owners,
+using five concurrent, timed lookups per provider. A larger inventory fails rather
+than reporting partial success. Canceled and legacy expired rows are excluded.
+The platform normalizes both paused and expired Stripe subscriptions to `ended`,
+so those rows are checked against live Stripe status after the database connection
+closes. Paused owners remain in the audit; confirmed terminal subscriptions are
+excluded. Stripe failures stop the audit rather than silently skipping owners.
+Confirm that database, Clerk, and Stripe credentials belong to the same environment.
 
 The Billing Owner Audit workflow runs every thirty minutes and supports manual
 dispatch. It emits aggregate counts only and fails for confirmed missing owners,
