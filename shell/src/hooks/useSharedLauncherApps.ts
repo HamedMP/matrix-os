@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { sharedAppDisplayName, useSharedAppDirectory } from "@matrix-os/ui/collaborative-app-sharing";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppPresentation, useSharedAppDirectory } from "@matrix-os/ui/collaborative-app-sharing";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { useOwnerCollaborationParticipant } from "@/lib/owner-collaboration-participant";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
@@ -16,10 +17,13 @@ export function useSharedLauncherApps(enabled: boolean) {
   const identity = `${participant?.actorId ?? ""}:${organization.organizationId ?? ""}`;
   const api = useShellCollaborationApi(origin, enabled && !!participant && organization.status !== "none", identity);
   const directory = useSharedAppDirectory(api, identity, enabled);
-  const apps = useMemo<AppEntry[]>(() => directory.items.map((target) => ({
-    name: sharedAppDisplayName(target.appId), path: sharedAppWindowPath(target), sharedAppTarget: target,
-  })), [directory.items]);
+  const apps = useMemo<AppEntry[]>(() => directory.items.map(sharedLauncherAppEntry), [directory.items]);
   return { ...directory, apps };
+}
+
+/** The web shell is served from the platform origin, so member-gated artwork paths stay relative. */
+export function sharedLauncherAppEntry(target: CollaborativeAppDirectoryItem): AppEntry {
+  return { ...sharedAppPresentation(target), path: sharedAppWindowPath(target), sharedAppTarget: target };
 }
 
 export function openSharedLauncherApp(app: AppEntry): boolean {

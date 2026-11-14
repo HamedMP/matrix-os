@@ -56,15 +56,15 @@ export function createCollaborationBrowserApi(options: {
       });
       if (!response.ok || !response.headers.get("content-type")?.startsWith("application/json")) {
         await response.body?.cancel();
-        throw new Error("CollaborationUnavailable");
+        // The status (never the body) stays available to callers that negotiate optional fields.
+        throw new Error("CollaborationUnavailable", { cause: { status: response.status } });
       }
       const text = await readBoundedText(response, MAX_RESPONSE_BYTES);
       if (text === null) throw new Error("CollaborationUnavailable");
       return JSON.parse(text) as unknown;
     } catch (error: unknown) {
-      if (!(error instanceof Error && error.message === "CollaborationUnavailable")) {
-        console.warn("[chat-collaboration] request failed", error instanceof Error ? error.name : "UnknownError");
-      }
+      if (error instanceof Error && error.message === "CollaborationUnavailable") throw error;
+      console.warn("[chat-collaboration] request failed", error instanceof Error ? error.name : "UnknownError");
       throw new Error("CollaborationUnavailable");
     }
   };
@@ -75,6 +75,13 @@ export function createCollaborationBrowserApi(options: {
     patch: (path, body) => request(path, "PATCH", body),
     delete: (path, body) => request(path, "DELETE", body),
   };
+}
+
+/** The platform's HTTP status for a failed collaboration request, when one was received. */
+export function collaborationRequestStatus(error: unknown): number | undefined {
+  const cause = error instanceof Error ? error.cause : undefined;
+  const status = typeof cause === "object" && cause !== null && "status" in cause ? cause.status : undefined;
+  return typeof status === "number" ? status : undefined;
 }
 
 function requireBaseUrl(value: string): URL {

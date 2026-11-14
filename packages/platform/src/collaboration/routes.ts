@@ -23,6 +23,8 @@ import {
   type CollaborativeAppLaunchSessions,
 } from "./app-launch-sessions.js";
 import { cancelCollaborativeAppResponseReader } from "./app-launch-upstream.js";
+import { CollaborativeAppPresentationRepository } from "./app-presentation-repository.js";
+import { directoryPresentation, registerSharedAppPresentationRoutes } from "./app-presentation-routes.js";
 
 const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
 const RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/;
@@ -88,6 +90,12 @@ export function createPlatformCollaborationRoutes(options: {
   const routeNow = () => (options.now ?? (() => new Date()))().getTime();
   const appDiscoveryLimit = new PerActorRateLimit({ maxActors: 10_000, maxAttempts: 120, windowMs: 60_000, now: routeNow });
   const appLaunchLimit = new PerActorRateLimit({ maxActors: 10_000, maxAttempts: 20, windowMs: 60_000, now: routeNow });
+  // One launcher view revalidates every listed icon, so artwork has its own larger budget.
+  const appArtworkLimit = new PerActorRateLimit({ maxActors: 10_000, maxAttempts: 600, windowMs: 60_000, now: routeNow });
+  const presentations = new CollaborativeAppPresentationRepository(
+    options.repository.db,
+    () => (options.now ?? (() => new Date()))(),
+  );
 
   app.on(
     ["POST", "PUT", "PATCH", "DELETE"],
@@ -143,14 +151,25 @@ export function createPlatformCollaborationRoutes(options: {
     },
   );
 
+  registerSharedAppPresentationRoutes(app, {
+    presentations,
+    authenticateRuntime: (c) => requireRuntime(c, options.authenticateRuntime),
+    resolveActor: (c) => resolveValidatedActor(c, options.resolveActor),
+    admit: (actorId, scopeId) => admitCollaborativeApp(options, actorId, scopeId),
+    allowArtworkRead: (actorId) => appArtworkLimit.allow(actorId),
+  });
+
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));
   app.get("/api/collaboration/shared", async (c) => listDiscovery(c, "accepted", options));
   app.get("/api/collaboration/shared-apps", async (c) => {
     const actorId = await resolveValidatedActor(c, options.resolveActor);
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     if (!appDiscoveryLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
-    const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
-    if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
+    const { presentation: withPresentation, ...query } = exactDiscoveryQuery(c, ["presentation"]);
+    const pageRequest = CollaborationPageRequestSchema.safeParse(query);
+    if (!pageRequest.success || (withPresentation !== undefined && withPresentation !== "1")) {
+      return safeJson(c, "Invalid request", 422);
+    }
     const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
     if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
     try {
@@ -159,9 +178,11 @@ export function createPlatformCollaborationRoutes(options: {
         limit: pageRequest.data.limit,
         ...(after ? { after } : {}),
       });
+      const presented = withPresentation ? await presentations.listForShares(page.items) : new Map();
       const items = await Promise.all(page.items.map(async (entry) => {
         const owner = await options.resolveParticipant(entry.ownerId);
         if (!owner) throw new Error("CollaborativeAppOwnerUnavailable");
+        const presentation = directoryPresentation(entry.scopeId, presented.get(entry.scopeId));
         return {
           scopeId: entry.scopeId,
           runtimeId: entry.runtimeId,
@@ -174,6 +195,7 @@ export function createPlatformCollaborationRoutes(options: {
           buildId: entry.buildId,
           shareRevision: String(entry.shareRevision),
           owner,
+          ...(presentation ? { presentation } : {}),
         };
       }));
       c.header("Cache-Control", "private, no-store");
@@ -200,6 +222,9 @@ export function createPlatformCollaborationRoutes(options: {
         || !route.app || route.app.state !== "active") return safeJson(c, "Collaboration resource not found", 404);
       const owner = await options.resolveParticipant(route.ownerId);
       if (!owner) return safeJson(c, "Collaboration unavailable", 503);
+      const presentation = c.req.query("presentation") === "1"
+        ? await sharePresentation(presentations, route.scopeId, route.app.appId)
+        : undefined;
       c.header("Cache-Control", "private, no-store");
       return c.json(CollaborativeAppDirectoryItemSchema.parse({
         scopeId: route.scopeId,
@@ -213,6 +238,7 @@ export function createPlatformCollaborationRoutes(options: {
         buildId: route.app.buildId,
         shareRevision: String(route.app.shareRevision),
         owner,
+        ...(presentation ? { presentation } : {}),
       }));
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app lookup failed", error instanceof Error ? error.name : "UnknownError");
@@ -233,6 +259,7 @@ export function createPlatformCollaborationRoutes(options: {
         || admitted.app.buildId !== request.expectedBuildId) return safeJson(c, "Collaboration resource not found", 404);
       const owner = await options.resolveParticipant(admitted.ownerId);
       if (!owner) return safeJson(c, "Collaboration unavailable", 503);
+      const presentation = await sharePresentation(presentations, admitted.scopeId, admitted.app.appId);
       const launch = await options.launchSessions.create({
         actorId,
         clientRequestId: request.clientRequestId,
@@ -253,7 +280,8 @@ export function createPlatformCollaborationRoutes(options: {
           appId: admitted.app.appId,
           catalogId: admitted.app.catalogId,
           buildId: admitted.app.buildId,
-          name: admitted.app.appId,
+          name: presentation?.name ?? admitted.app.appId,
+          ...(presentation?.iconUrl ? { iconUrl: presentation.iconUrl } : {}),
           owner,
           shareRevision: String(admitted.app.shareRevision),
         },
@@ -522,11 +550,15 @@ async function listCurrentOrganizationIds(
   return current;
 }
 
-function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
+async function sharePresentation(presentations: CollaborativeAppPresentationRepository, scopeId: string, appId: string) {
+  return directoryPresentation(scopeId, (await presentations.listForShares([{ scopeId, appId }])).get(scopeId));
+}
+
+function exactDiscoveryQuery(c: RouteContext, extraKeys: readonly string[] = []): Record<string, string> {
   const parameters = new URL(c.req.url).searchParams;
   const output: Record<string, string> = {};
   for (const key of parameters.keys()) {
-    if (!["cursor", "limit"].includes(key) || key in output) return { invalid: "true" };
+    if (!["cursor", "limit", ...extraKeys].includes(key) || key in output) return { invalid: "true" };
     output[key] = parameters.get(key)!;
   }
   return output;

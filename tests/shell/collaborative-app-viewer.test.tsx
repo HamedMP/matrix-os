@@ -22,7 +22,9 @@ vi.mock("@/lib/collaboration", () => ({
   createShellCollaborationApi: mocks.createApi,
   releaseShellCollaborationApi: mocks.releaseApi,
 }));
-vi.mock("@matrix-os/ui/collaborative-app-sharing", () => ({
+vi.mock("@matrix-os/ui/collaborative-app-sharing", async (importOriginal) => ({
+  // Window titles use the real shared presentation derivation.
+  sharedAppPresentation: (await importOriginal<typeof import("@matrix-os/ui/collaborative-app-sharing")>()).sharedAppPresentation,
   CollaborativeAppShareButton: (props: unknown) => { mocks.shareButton(props); return null; },
   ReadinessSummary: () => null,
   useCollaborativeAppSharing: () => ({ readiness: null }),

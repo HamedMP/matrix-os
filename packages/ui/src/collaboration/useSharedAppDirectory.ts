@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CollaborativeAppDirectoryResponseSchema, type CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { collaborationRequestStatus } from "./client.js";
 import { subscribeCollaborationDiscoveryChanged } from "./discovery-events.js";
 
 type DirectoryApi = { get(path: string): Promise<unknown> };
@@ -7,6 +8,10 @@ const EMPTY: CollaborativeAppDirectoryItem[] = [];
 const MAX_PAGES = 20;
 const MAX_VISIBLE_ITEMS = 2_000;
 const MAX_VISIBLE_PAGES = MAX_PAGES + 1;
+const DIRECTORY_PATH = "/api/collaboration/shared-apps?limit=100";
+/** How long a platform that rejected `presentation=1` is asked without it before trying again. */
+const PRESENTATION_RETRY_MS = 5 * 60_000;
+const presentationUnsupportedUntil = new WeakMap<DirectoryApi, number>();
 type DirectoryPage = { cursor?: string; items: CollaborativeAppDirectoryItem[] };
 type DirectoryState = {
   api: DirectoryApi; identity: string; items: CollaborativeAppDirectoryItem[];
@@ -48,9 +53,7 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
         const cursors = new Set<string>();
         // Initial discovery is bounded. Further pages are a deliberate user action.
         for (let pageIndex = 0; pageIndex < (continuation?.pageCount ?? MAX_PAGES); pageIndex++) {
-          const page = CollaborativeAppDirectoryResponseSchema.parse(await api.get(
-            `/api/collaboration/shared-apps?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-          ));
+          const page = await readDirectoryPage(api, cursor);
           if (!active) return;
           pages.push({ cursor, items: page.items });
           while (pages.length > MAX_VISIBLE_PAGES || pages.reduce((count, entry) => count + entry.items.length, 0) > MAX_VISIBLE_ITEMS) {
@@ -100,6 +103,40 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
   };
 }
 
+/**
+ * Released clients parse items strictly, so the platform adds presentation only on request.
+ * A platform that predates it rejects the parameter; the same page is then read without it.
+ */
+async function readDirectoryPage(api: DirectoryApi, cursor: string | undefined) {
+  const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+  if ((presentationUnsupportedUntil.get(api) ?? 0) <= Date.now()) {
+    try {
+      return CollaborativeAppDirectoryResponseSchema.parse(await api.get(`${DIRECTORY_PATH}&presentation=1${suffix}`));
+    } catch (error: unknown) {
+      // Only an explicit rejection of the parameter means "older platform"; other failures surface.
+      if (collaborationRequestStatus(error) !== 422) throw error;
+      presentationUnsupportedUntil.set(api, Date.now() + PRESENTATION_RETRY_MS);
+    }
+  }
+  return CollaborativeAppDirectoryResponseSchema.parse(await api.get(`${DIRECTORY_PATH}${suffix}`));
+}
+
 export function sharedAppDisplayName(appId: string): string {
   return appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
+}
+
+/**
+ * The owner's launcher name and artwork for a shared app. Missing presentation (an older
+ * platform or owner home) falls back to the slug; `assetBaseUrl` prefixes the member-gated
+ * artwork path for clients that are not served from the platform origin.
+ */
+export function sharedAppPresentation(
+  target: Pick<CollaborativeAppDirectoryItem, "appId" | "presentation">,
+  assetBaseUrl?: string,
+): { name: string; iconUrl?: string } {
+  const iconPath = target.presentation?.iconUrl;
+  return {
+    name: target.presentation?.name ?? sharedAppDisplayName(target.appId),
+    ...(iconPath ? { iconUrl: assetBaseUrl ? `${assetBaseUrl.replace(/\/+$/, "")}${iconPath}` : iconPath } : {}),
+  };
 }

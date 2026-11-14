@@ -17,6 +17,8 @@ import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { CollaborativeAppReadinessRepository } from "../collaboration/collaborative-app-readiness-repository.js";
 import { CollaborativeAppShareRepository } from "../collaboration/collaborative-app-share-repository.js";
 import { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
+import { CollaborativeAppPresentationPublisher } from "../collaboration/app-presentation-publisher.js";
+import { createOwnerAppPresentationSource } from "../collaboration/app-presentation-source.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,
@@ -43,6 +45,8 @@ export function createCollaborativeAppInfrastructure(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   buildStoreRoot: string;
   startTimers?: boolean;
+  /** Publishes launcher names and artwork for active shares; absent without an owner identity. */
+  presentation?: { homePath: string; ownerId: string; config: GatewayCollaborationConfig };
 }): CollaborativeAppInfrastructure {
   const builds = new ImmutableCollaborativeBuildStore({
     rootDir: options.buildStoreRoot,
@@ -66,12 +70,36 @@ export function createCollaborativeAppInfrastructure(options: {
       return Boolean(binding);
     },
   });
+  const presentation = createPresentationPublisher(options);
   return {
     readiness: new CollaborativeAppReadinessRepository(options.db),
     shares: new CollaborativeAppShareRepository(options.db),
     builds,
-    close: () => builds.close(),
+    close: async () => {
+      await presentation?.shutdown();
+      await builds.close();
+    },
   };
+}
+
+/** Presentation is best-effort: a missing or invalid platform connection leaves shares nameless, not broken. */
+function createPresentationPublisher(options: Parameters<typeof createCollaborativeAppInfrastructure>[0]) {
+  if (!options.presentation) return null;
+  const { homePath, ownerId, config } = options.presentation;
+  try {
+    return new CollaborativeAppPresentationPublisher({
+      db: options.db,
+      ownerId,
+      runtimeId: config.runtimeId,
+      platformBaseUrl: config.platformBaseUrl,
+      serviceToken: config.serviceToken,
+      source: createOwnerAppPresentationSource(homePath),
+      startTimer: options.startTimers !== false,
+    });
+  } catch (error: unknown) {
+    console.warn("[collaborative-app-presentation] publisher unavailable", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
 }
 
 function ownCollaborativeAppInfrastructure<T extends {
@@ -154,6 +182,9 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
   const collaborativeApps = createCollaborativeAppInfrastructure({
     db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
     buildStoreRoot: join(homePath, "system", "collaboration", "app-builds"),
+    ...(collaborationConfig.ownerId
+      ? { presentation: { homePath, ownerId: collaborationConfig.ownerId, config: collaborationConfig } }
+      : {}),
   });
   const projectGitDriver = createProjectGitDriver({
     homePath,
