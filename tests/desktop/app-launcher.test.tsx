@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -118,10 +118,18 @@ describe("AppLauncher", () => {
     const tabs = useTabs.getState().tabs.filter((tab) => tab.kind === "app");
     const sharedTab = tabs.find((tab) => tab.sharedAppTarget?.scopeId === target.scopeId)!;
     const ownTab = tabs.find((tab) => !tab.sharedAppTarget)!;
-    expect(sharedTab.icon).toBe(`https://platform.test${iconPath}`);
-    expect(ownTab.icon).toBe("https://platform.test/icons/own.png");
-    const { container } = render(<SurfaceIcon tab={sharedTab} size={44} />);
-    expect(container.querySelector("img")?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
+    const shared = render(<SurfaceIcon tab={sharedTab} size={44} />);
+    expect(shared.container.querySelector("img")?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
+    const own = render(<SurfaceIcon tab={ownTab} size={44} />);
+    expect(own.container.querySelector("img")?.getAttribute("src")).toBe("https://platform.test/icons/own.png");
+
+    // The artwork follows the current platform host instead of a URL captured at launch.
+    act(() => { useConnection.setState({ platformHost: "https://other-platform.test" }); });
+    expect(shared.container.querySelector("img")?.getAttribute("src")).toBe(`https://other-platform.test${iconPath}`);
+    // A revoked or stale digest falls back to the surface glyph.
+    fireEvent.error(shared.container.querySelector("img")!);
+    expect(shared.container.querySelector("img")).toBeNull();
+    expect(shared.container.querySelector("svg")).toBeTruthy();
   });
 
   it("retries shared artwork whenever its URL changes, including a URL that failed earlier", async () => {

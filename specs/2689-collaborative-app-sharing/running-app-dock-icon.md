@@ -49,5 +49,9 @@ There is no new metadata API, artwork store, or owner-file URL. The icon is #336
 
 - Web Desktop and Web Canvas: changed.
 - Web Mobile: unchanged. The open-app header shows the window title, and the launcher already uses #3361's presentation.
-- Electron Desktop: changed. The same defect existed: shared app tabs opened without an icon, so `SurfaceIcon` fell back to `LayoutGrid`. `AppLauncher` now passes the presentation's platform-host artwork URL (the same one the launcher tile uses) as the tab icon. Tab identity already includes the `scopeId`, so a same-slug own app keeps its own icon. Test: `tests/desktop/app-launcher.test.tsx`.
+- Electron Desktop: changed. The same defect existed: shared app tabs had no icon, so `SurfaceIcon` fell back to `LayoutGrid`.
+  - `SurfaceIcon` now derives a shared tab's artwork from its `sharedAppTarget` via `sharedAppPresentation(target, platformHost)` on every render. A host or account change never reuses a URL captured at launch.
+  - A changed URL remounts the image and clears any earlier failure, and a 404 falls back to the surface glyph.
+  - Tab identity includes the `scopeId`, so a same-slug own app keeps its own icon.
+  - Test: `tests/desktop/app-launcher.test.tsx`.
 - Native Mobile: N/A. There is no shared-app launcher or dock (see launcher-followup). Reviewer approval required.
