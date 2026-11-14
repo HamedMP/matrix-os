@@ -13,6 +13,7 @@ import { createDevstackCliRoutes, type DevstackSourceReceipt } from '../../packa
 import type { DevstackCliBinding } from '../../packages/platform/src/devstack-cli-pairing.js';
 import type { DevstackSourceDelta } from '../../packages/platform/src/devstack-source-delta.js';
 import { loadDevstackPreviewConfig } from '../../packages/platform/src/devstack-runs/config.js';
+import { desktopPalette } from '@matrix-os/brand/tokens';
 
 const origin = 'https://devstack.example.test';
 const issuer = 'https://clerk.example.test';
@@ -88,6 +89,13 @@ describe('hosted DevStack CLI pairing routes', () => {
     expect(html).toContain(sourceIdentity.slice(0, 12));
     expect(html).not.toContain(peer.worktree);
     expect(html).not.toContain(pollSecret);
+    expect(html).toContain(`background: ${desktopPalette.paper}`);
+    expect(html).toContain(`background: ${desktopPalette.forest}`);
+    expect(html).toContain('button:focus-visible');
+    expect(html).toContain('overflow-wrap: anywhere');
+    const styleNonce = /<style nonce="([^"]+)">/.exec(html)?.[1];
+    expect(styleNonce).toBeTruthy();
+    expect(approval.headers.get('content-security-policy')).toContain(`style-src 'nonce-${styleNonce}'`);
     expect((await approve(approvalId)).headers.get('location')).toBe('/devstack/worktrees/worktree-one/');
     const grant = await post(poll, { pollSecret });
     expect(grant.status).toBe(200);

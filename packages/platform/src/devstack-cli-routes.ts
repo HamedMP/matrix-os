@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
+import { desktopFonts, desktopPalette as colors, radii } from '@matrix-os/brand/tokens';
 import { browserAuthContentSecurityPolicy } from './auth-pages.js';
 import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import { createDevstackCliPairing, type DevstackCliBinding } from './devstack-cli-pairing.js';
@@ -72,13 +73,33 @@ async function readJson<T>(c: Context, schema: z.ZodType<T>): Promise<T | undefi
   }
 }
 
-function renderApproval(path: string, fingerprint: string, targets: DevstackPreviewTarget[]): string {
+function renderApproval(path: string, fingerprint: string, targets: DevstackPreviewTarget[], nonce: string): string {
   const choices = targets.map(({ worktree }) =>
-    `<li><button name="worktree" value="${escapeHtmlAttr(worktree)}">Connect ${escapeHtml(worktree)}</button></li>`).join('');
+    `<li><button type="submit" name="worktree" value="${escapeHtmlAttr(worktree)}">Connect ${escapeHtml(worktree)}</button></li>`).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect DevStack</title></head>
-<body><main><h1>Connect your Matrix CLI</h1>
-<p>Confirm the source fingerprint shown in your terminal: <code>${escapeHtml(fingerprint.slice(0, 12))}</code>.</p>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>Connect DevStack · Matrix OS</title><style nonce="${nonce}">
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 1.5rem;
+  background: ${colors.canvas}; color: ${colors.forest}; font: 1rem/1.6 ${desktopFonts.sans}; }
+main { width: 100%; max-width: 30rem; padding: clamp(1.5rem, 6vw, 3rem);
+  background: ${colors.paper}; border-radius: ${radii.card}; }
+.brand { margin: 0 0 2rem; font-weight: 650; }
+h1 { margin: 0 0 1rem; font: 650 1.75rem/1.2 ${desktopFonts.display}; }
+p { margin: 0 0 1.5rem; color: ${colors.textMuted}; }
+code { display: block; width: fit-content; margin-top: .75rem; padding: .5rem .75rem;
+  background: ${colors.surfaceMuted}; color: ${colors.forest}; border-radius: ${radii.control};
+  font: 1rem/1.5 ${desktopFonts.mono}; letter-spacing: .08em; }
+ul { display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+button { width: 100%; min-height: 2.75rem; padding: .75rem 1rem; border: 0;
+  border-radius: ${radii.control}; background: ${colors.forest}; color: ${colors.paper};
+  font: 600 1rem/1.5 ${desktopFonts.sans}; cursor: pointer; overflow-wrap: anywhere; }
+button:hover { background: ${colors.forestHover}; }
+button:focus-visible { outline: 3px solid ${colors.forest}; outline-offset: 4px; }
+</style></head>
+<body><main><p class="brand">Matrix OS</p><h1>Connect your Matrix CLI</h1>
+<p>Match this source fingerprint with the one in your terminal, then choose your worktree.
+<code>${escapeHtml(fingerprint.slice(0, 12))}</code></p>
 <form method="post" action="${escapeHtmlAttr(path)}"><ul>${choices}</ul></form>
 </main></body></html>`;
 }
@@ -225,8 +246,9 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     if (!available.length) return unavailable(c);
     if (!hasVerifiedClerkBrowserSession(auth.session, owner)) return c.json({ error: 'Authentication required' }, 401);
     if (worktree === undefined) {
-      c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      return c.html(renderApproval(c.req.path, pending.sourceIdentity, available));
+      const nonce = randomBytes(16).toString('base64');
+      c.header('Content-Security-Policy', `default-src 'none'; style-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+      return c.html(renderApproval(c.req.path, pending.sourceIdentity, available, nonce));
     }
     const target = available[0];
     if (available.length !== 1 || !target || !pairing.approve(approvalId, { ...target, clerkSessionId: auth.session.sessionId }, {
