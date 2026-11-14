@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { exportSPKI, generateKeyPair, SignJWT } from 'jose';
+import { createDevstackApprovalAuth } from '../../packages/platform/src/devstack-approval-auth.js';
 import {
   CLERK_SESSION_REVOKE_TIMEOUT_MS,
   createClerkAuth,
@@ -8,6 +10,19 @@ import {
 } from "../../packages/platform/src/clerk-auth.js";
 
 describe("T800: Clerk JWT verification on subdomain proxy", () => {
+  it('uses a distinct real signature verifier for the approval origin and rejects preview-party token replay', async () => {
+    const { privateKey, publicKey } = await generateKeyPair('RS256');
+    const issuer = 'https://clerk.example.test', origin = 'https://approval.example.test';
+    const env = { PLATFORM_RUNTIME_MODE: 'local', MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY: 'true',
+      CLERK_JWT_KEY: await exportSPKI(publicKey), CLERK_JWT_ISSUER: issuer, CLERK_AUTHORIZED_ORIGIN: 'https://preview.example.test' };
+    const auth = createDevstackApprovalAuth(env, origin, issuer);
+    const token = (azp: string) => new SignJWT({ sub: 'user_owner', sid: 'sess_fixture', azp })
+      .setProtectedHeader({ alg: 'RS256', kid: 'fixture' }).setIssuer(issuer).setIssuedAt().setNotBefore('0s').setExpirationTime('1m').sign(privateKey);
+    expect(await auth.verify(await token(origin))).toMatchObject({ authenticated: true, authorizedParty: origin });
+    expect(await auth.verify(await token('https://preview.example.test'))).toMatchObject({ authenticated: false });
+    const original = resolveClerkVerificationConfig(env)!;
+    expect(original.verifyTokenOptions).toMatchObject({ authorizedParties: ['https://preview.example.test'] });
+  });
   let auth: ClerkAuth;
 
   beforeEach(() => {

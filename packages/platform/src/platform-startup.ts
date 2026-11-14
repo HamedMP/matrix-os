@@ -37,11 +37,12 @@ import type { ClerkAuth } from './clerk-auth.js';
 import { DevstackRunConfigError, loadDevstackPreviewConfig, loadDevstackRunConfig } from './devstack-runs/config.js';
 import { createDevstackRunStore, migrateDevstackRuns } from './devstack-runs/store.js';
 import { createDevstackRunRoutes } from './devstack-runs/routes.js';
-import { createDevstackCliRoutes } from './devstack-cli-routes.js';
+import type { createDevstackCliRoutes } from './devstack-cli-routes.js';
+import { createDevstackHostedAccess } from './devstack-hosted-access.js';
 import { createDevstackPreviewRoutes } from './devstack-preview-routes.js';
 import type { DevstackBrowserMembership } from './devstack-preview-auth.js';
 import { createDevstackPreviewMembershipLookup } from './devstack-preview-membership.js';
-import { createDevstackPublicPreviewAccess, type DevstackPublicPreviewAccess } from './devstack-public-preview.js';
+import type { DevstackPublicPreviewAccess } from './devstack-public-preview.js';
 import { executeDevstackRun } from './devstack-runs/execute.js';
 import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 import {
@@ -582,14 +583,7 @@ async function startPlatformServerWithCleanup(
       }
     : undefined;
   const devstackPreviewRoutes = devstackPreviewDeps && createDevstackPreviewRoutes(devstackPreviewDeps);
-  const devstackCliWorktree = process.env.MATRIX_DEVSTACK_CLI_PILOT_WORKTREE;
-  const devstackCliRoutes = devstackPreviewDeps?.config.publicBrowserOnly && devstackCliWorktree
-    && devstackPreviewDeps.config.targets.some(target => target.worktree === devstackCliWorktree)
-    ? createDevstackCliRoutes({ ...devstackPreviewDeps, enabledWorktrees: new Set([devstackCliWorktree]) })
-    : undefined;
-  const devstackPublicPreview = devstackPreviewDeps?.config.publicBrowserOnly
-    ? createDevstackPublicPreviewAccess({ ...devstackPreviewDeps, cliPairingEnabled: Boolean(devstackCliRoutes) })
-    : undefined;
+  const { devstackCliRoutes, devstackPublicPreview } = createDevstackHostedAccess(devstackPreviewDeps, process.env);
 
   const collaboration = registeredRuntimeInstance ? undefined : await bootstrapPlatformCollaboration({
     env: process.env,

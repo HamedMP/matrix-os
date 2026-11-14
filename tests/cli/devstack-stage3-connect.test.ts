@@ -34,6 +34,7 @@ beforeEach(async () => {
         sourceIdentity = input.sourceIdentity;
         return Response.json({
           approvalId: ${JSON.stringify(approvalId)}, pollSecret: ${JSON.stringify(pollSecret)}, expiresAt: Date.now() + 60_000,
+          ...(process.env.DEVSTACK_TEST_APPROVAL_ORIGIN ? { approvalOrigin: process.env.DEVSTACK_TEST_APPROVAL_ORIGIN } : {}),
         }, { status: 201 });
       }
       if (pathname === "/devstack/cli/poll") {
@@ -75,6 +76,14 @@ async function requests() {
 }
 
 describe("hosted matrix devstack", () => {
+  it("opens the separate trusted approval origin while keeping poll and source on the hosted origin", async () => {
+    const approvalOrigin = 'https://devstack-approve.example.test';
+    const { stderr } = await run(repo, [], { DEVSTACK_TEST_APPROVAL_ORIGIN: approvalOrigin });
+    expect(stderr).toContain(`${approvalOrigin}/devstack/cli/pair/${approvalId}`);
+    expect((await requests()).every(request => request.origin === origin)).toBe(true);
+    await expect(run(repo, [], { DEVSTACK_TEST_APPROVAL_ORIGIN: 'https://user:secret@untrusted.test/path' }))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('devstack_pairing_invalid') });
+  });
   it("pairs the current Git checkout and returns the approved stable preview with no credentials in output", async () => {
     const nested = join(repo, "shell", "src");
     await mkdir(nested, { recursive: true });

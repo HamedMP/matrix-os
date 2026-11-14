@@ -11,6 +11,8 @@ export interface VerifyResult {
   /** Verified Clerk JWT epoch seconds, when exposed by the verifier. */
   tokenExpiresAt?: number;
   issuer?: string;
+  /** Verified JWT authorized party; never inferred from the request Origin. */
+  authorizedParty?: string;
   expiresAt?: number;
   /** A verified token for an impersonated or non-active Clerk session. */
   restrictedSession?: true;
@@ -148,6 +150,7 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
     userId: payload.sub,
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) && payload.exp > 0 ? { tokenExpiresAt: payload.exp } : {}),
     ...(typeof payload.iss === "string" ? { issuer: payload.iss } : {}),
+    ...(typeof payload.azp === "string" ? { authorizedParty: payload.azp } : {}),
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) ? { expiresAt: payload.exp * 1000 } : {}),
     ...(payload.act !== undefined || (payload.sts !== undefined && payload.sts !== "active")
       ? { restrictedSession: true as const } : {}),

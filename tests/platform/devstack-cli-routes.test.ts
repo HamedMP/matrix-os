@@ -10,12 +10,14 @@ import { createDevstackPublicPreviewAccess } from '../../packages/platform/src/d
 import { describe, expect, it, vi } from 'vitest';
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
 import { createDevstackCliRoutes, type DevstackSourceReceipt } from '../../packages/platform/src/devstack-cli-routes.js';
+import { createDevstackHostedAccess } from '../../packages/platform/src/devstack-hosted-access.js';
 import type { DevstackCliBinding } from '../../packages/platform/src/devstack-cli-pairing.js';
 import type { DevstackSourceDelta } from '../../packages/platform/src/devstack-source-delta.js';
 import { loadDevstackPreviewConfig } from '../../packages/platform/src/devstack-runs/config.js';
 import { desktopPalette } from '@matrix-os/brand/tokens';
 
 const origin = 'https://devstack.example.test';
+const approvalOrigin = 'https://devstack-approve.example.test';
 const issuer = 'https://clerk.example.test';
 const owner = 'user_owner';
 const other = 'user_other';
@@ -35,8 +37,9 @@ function fixture(runSource?: ApplySource) {
   }), 'stage-three')!;
   const clerkAuth = createClerkAuth({
     async verifyToken(token) {
-      if (token !== owner && token !== other) throw new Error('Invalid fixture');
-      return { sub: token, sid: 'sess_fixture', exp: Math.floor(Date.now() / 1000) + 60, iss: issuer };
+      if (token !== owner && token !== other && token !== 'preview-token') throw new Error('Invalid fixture');
+      return { sub: token === 'preview-token' ? owner : token, azp: token === 'preview-token' ? origin : approvalOrigin,
+        sid: 'sess_fixture', exp: Math.floor(Date.now() / 1000) + 60, iss: issuer };
     },
   });
   const isMember = vi.fn(async (_id: string) => true);
@@ -48,7 +51,7 @@ function fixture(runSource?: ApplySource) {
     return { revision: 'e'.repeat(64), files: 1, updated: 1, removed: 0,
       test: { revision: 'e'.repeat(64), exitCode: 0, log: '4 tests passed' } };
   }));
-  const deps = { config, clerkAuth, isMember, resolve, publishableKey: 'pk_test_fixture' };
+  const deps = { config, clerkAuth, isMember, resolve, approvalOrigin, publishableKey: 'pk_test_fixture' };
   const app = new Hono();
   app.use('*', createDevstackPublicPreviewAccess({
     ...deps, cliPairingEnabled: true, cliSourceEnabled: true, resolve: async entry => ({
@@ -58,19 +61,32 @@ function fixture(runSource?: ApplySource) {
   app.route('/', createDevstackCliRoutes({ ...deps, enabledWorktrees: new Set([target.worktree]), source: { identity: sourceIdentity, apply: applySource } }));
   const request = (path: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
-    if (!headers.has('host')) headers.set('host', new URL(origin).hostname);
-    return app.request(origin + path, { ...init, headers });
+    const destination = path.startsWith(pair + '/') ? approvalOrigin : origin;
+    if (!headers.has('host')) headers.set('host', new URL(destination).hostname);
+    return app.request(destination + path, { ...init, headers });
   };
   const post = (path: string, data: unknown, headers?: Record<string, string>) => request(path, {
     method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(data),
   });
-  const approve = (approvalId: string, worktree = target.worktree, user = owner, requestOrigin = origin) =>
+  const approve = (approvalId: string, worktree = target.worktree, user = owner, requestOrigin = approvalOrigin) =>
     request(pair + '/' + approvalId, { method: 'POST', headers: { origin: requestOrigin, cookie: '__session=' + user },
       body: new URLSearchParams({ worktree }) });
   return { request, post, approve, isMember, resolve, applySource };
 }
 
 describe('hosted DevStack CLI pairing routes', () => {
+  it('fails startup closed if source publication lacks an isolated approval origin or a registered pilot', () => {
+    expect(() => createDevstackHostedAccess(undefined, {
+      MATRIX_DEVSTACK_SOURCE_PUBLISHER: JSON.stringify({ socketPath: '/tmp/publisher.sock', identity: sourceIdentity, approvalOrigin }),
+    })).toThrow('requires an enrolled');
+    expect(() => createDevstackCliRoutes({
+      config: loadDevstackPreviewConfig(JSON.stringify({ issuer, previewOrigin: origin, operators: [owner], targets: [target], publicBrowserOnly: true }), 'stage-three')!,
+      clerkAuth: createClerkAuth({ verifyToken: async () => { throw new Error('Unused'); } }),
+      isMember: async () => true, resolve: async () => null, publishableKey: 'pk_test_fixture',
+      enabledWorktrees: new Set([target.worktree]), source: { identity: sourceIdentity, apply: async () => { throw new Error('Unused'); } },
+      approvalOrigin: origin,
+    })).toThrow('approval origin');
+  });
   it('uses normal Clerk sign-in and explicit worktree approval, then returns a single scoped grant', async () => {
     const { request, post, approve } = fixture();
     const response = await post(pair, { sourceIdentity });
@@ -96,13 +112,31 @@ describe('hosted DevStack CLI pairing routes', () => {
     const styleNonce = /<style nonce="([^"]+)">/.exec(html)?.[1];
     expect(styleNonce).toBeTruthy();
     expect(approval.headers.get('content-security-policy')).toContain(`style-src 'nonce-${styleNonce}'`);
-    expect((await approve(approvalId)).headers.get('location')).toBe('/devstack/worktrees/worktree-one/');
+    expect((await approve(approvalId)).headers.get('location')).toBe(origin + '/devstack/worktrees/worktree-one/');
     const grant = await post(poll, { pollSecret });
     expect(grant.status).toBe(200);
     expect(grant.headers.get('cache-control')).toBe('private, no-store');
     expect(await grant.json()).toEqual({ bearer: expect.any(String), expiresAt: expect.any(Number),
       binding: { runtime: target.runtime, worktree: target.worktree, sourceIdentity, sourceSync: true } });
     expect((await post(poll, { pollSecret })).status).toBe(404);
+  });
+
+  it('keeps approval and every trusted-origin response outside editable preview code', async () => {
+    const { request, post, approve, applySource } = fixture();
+    const response = await post(pair, { sourceIdentity });
+    const { approvalId, approvalOrigin: returnedOrigin } = await response.json();
+    expect(returnedOrigin).toBe(approvalOrigin);
+    const path = pair + '/' + approvalId;
+    const previewHost = new URL(origin).hostname;
+    expect((await request(path, { headers: { host: previewHost, cookie: '__session=' + owner } })).status).toBe(404);
+    expect((await approve(approvalId, target.worktree, owner, origin)).status).toBe(403);
+    // Even a server caller forging Origin cannot replay an editable-preview JWT.
+    expect((await approve(approvalId, target.worktree, 'preview-token')).status).toBe(403);
+    const trustedHost = new URL(approvalOrigin).hostname;
+    for (const path of ['/', '/vm/dev-one/', '/devstack/worktrees/worktree-one/', '/api/auth/computers']) {
+      expect((await request(path, { headers: { host: trustedHost, cookie: '__session=' + owner } })).status).toBe(404);
+    }
+    expect(applySource).not.toHaveBeenCalled();
   });
 
   it('checks membership, same origin, the owner, and the live target', async () => {

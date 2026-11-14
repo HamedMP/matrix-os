@@ -72,8 +72,8 @@ ignored, sensitive and generated files stay out of the delta.
 | Route | Authorization and behavior |
 | --- | --- |
 | `POST /devstack/cli/pair` | Exact hosted origin, rate-limited request, bounded checkout fingerprint. Returns separate one-time approval and poll identifiers. Source-enabled deployments require the configured source fingerprint. |
-| `GET /devstack/cli/pair/:approvalId` | An anonymous navigation shows normal Clerk sign-in and returns to the exact approval path. A verified session with live Private Preview membership sees only enabled worktrees owned by that account and backed by the live registry. |
-| `POST /devstack/cli/pair/:approvalId` | Same-origin browser form, verified Clerk session, current membership and exact owner/worktree/runtime/container. One explicit approval. |
+| `GET /devstack/cli/pair/:approvalId` | For source-enabled deployments, served only on the separate trusted approval origin. An anonymous navigation shows normal Clerk sign-in and returns to the exact approval path. A verified session with matching signed `azp` and live Private Preview membership sees only its enabled live worktrees. |
+| `POST /devstack/cli/pair/:approvalId` | Exact approval-origin browser form and signed JWT party, verified Clerk session, current membership and exact owner/worktree/runtime/container. One explicit approval. |
 | `POST /devstack/cli/poll` | Separate random poll secret, one exchange. The opaque bearer expires no later than the approving Clerk token and stays in the CLI process. |
 | `POST /devstack/cli/source` | Available only with a configured publisher. The dedicated bearer is bound to the approved source and exact target. Check its expiry, current membership and live registration before staging, before publication and before returning results. The request cannot select paths on the server, an owner, a runtime or a test command. |
 
@@ -90,8 +90,24 @@ which Matrix Computer is running the CLI.
 The combined route and Git receiver test uses a fixture Clerk identity and
 runs a real test process against two successive revisions. HEL1 deployment
 also requires wiring a private publisher and verifying browser HMR with a
-real account. Before the writer is exposed to additional users, serve its
-approval on a trusted origin separate from editable preview code, or use a
-separate user-presence check. Continuous sync, retained run log recovery
+real account. Source-enabled startup now requires an approval origin separate
+from editable preview code. Pair responses name that HTTPS approval origin;
+CLI polling and upload stay on the original hosted origin. Its host serves no
+runtime or unrelated Platform routes. The separate verifier requires the signed
+JWT's authorized party to match that approval origin.
+
+The opt-in and private socket publisher deployment contract, isolated test
+runner, preview container plan, activation/rollback gates and acceptance matrix
+are in [spec.md](./spec.md). Run the trusted source service with Node 24:
+`node scripts/devstack/stage3-publisher-service.mjs /absolute/private/publisher.json`.
+Its 0600 config has `version: 1`, `socketPath`, `stateDir`, the existing full
+source/target `enrollment` plus `base` and the Main checkout `sourceIdentity`, and
+`test: { image, command, timeoutMs }`. Use a digest-pinned dependency image. Platform
+receives only `MATRIX_DEVSTACK_SOURCE_PUBLISHER` JSON containing `socketPath`,
+`identity` and `approvalOrigin`; the existing pilot-worktree setting remains
+required. Keep all service/config/staging/journal paths outside the uploaded
+source mirror. Deployment and access changes require separate owner approval.
+
+Continuous sync, retained content-revision run log recovery
 and additional developer acceptance are follow-up gates. Publish the corresponding Matrix OS
 site guide once the real workflow is released and qualified.

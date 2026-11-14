@@ -3,6 +3,7 @@ import { MatrixComputerListSchema } from '@matrix-os/contracts';
 import type { MiddlewareHandler } from 'hono';
 import { browserAuthContentSecurityPolicy } from './auth-pages.js';
 import { isDevstackCliPath } from './devstack-cli-routes.js';
+import { devstackApprovalOrigin } from './devstack-approval-origin.js';
 import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import { isDevstackBrowserOperator, matchesRegisteredPreviewTarget, readDevstackBrowserSession, type DevstackBrowserMembership } from './devstack-preview-auth.js';
 import { readDevstackWorktreePreviewPath } from './devstack-preview-path.js';
@@ -27,6 +28,7 @@ interface PublicPreviewDeps {
   edgeRouterSecret?: string;
   cliPairingEnabled?: boolean;
   cliSourceEnabled?: boolean;
+  approvalOrigin?: string;
   isMember: DevstackBrowserMembership;
   resolve(target: DevstackPreviewTarget): Promise<RegisteredRuntimeEndpoint | null>;
 }
@@ -91,6 +93,8 @@ function readInventoryTarget(referer: string | undefined, origin: string): Previ
 export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
   const origin = deps.config.previewOrigin;
   const publicHostname = new URL(origin).hostname;
+  const approvalHostname = deps.approvalOrigin
+    ? new URL(devstackApprovalOrigin(deps.approvalOrigin, origin)).hostname : undefined;
   // Only the configured operators reach this lookup. Coalesce parallel browser
   // requests without keeping a membership decision after the lookup settles.
   const membershipRequests = new Map<string, Promise<boolean>>();
@@ -150,6 +154,16 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
     const trustedHost = getTrustedSessionRouteHost(
       rawHost, c.req.header('x-forwarded-host'), c.req.header(EDGE_SECRET_HEADER), deps.edgeRouterSecret,
     );
+    if (approvalHostname && (normalizeSessionHost(trustedHost) === approvalHostname || normalizeSessionHost(rawHost ?? '') === approvalHostname)) {
+      c.header('Cache-Control', 'private, no-store');
+      // Run before every Platform route. This host must never proxy a runtime,
+      // an editable asset, a service worker, or an unrelated Platform handler.
+      if (normalizeSessionHost(trustedHost) !== approvalHostname || !deps.cliPairingEnabled
+        || !c.req.path.startsWith('/devstack/cli/pair/') || !isDevstackCliPath(c.req.method, c.req.path)) {
+        return c.text('Not Found', 404);
+      }
+      return next();
+    }
     if (!matchesHost(trustedHost) && !matchesHost(rawHost)) return next();
     c.header('Cache-Control', 'private, no-store');
     if (!matchesHost(trustedHost)) return c.text('Not Found', 404);

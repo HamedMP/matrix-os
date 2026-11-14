@@ -6,6 +6,7 @@ import { desktopFonts, desktopPalette as colors, radii } from '@matrix-os/brand/
 import { browserAuthContentSecurityPolicy } from './auth-pages.js';
 import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import { createDevstackCliPairing, type DevstackCliBinding } from './devstack-cli-pairing.js';
+import { devstackApprovalOrigin } from './devstack-approval-origin.js';
 import { DevstackInstanceSchema } from './devstack-identity.js';
 import { isDevstackBrowserOperator, matchesRegisteredPreviewTarget, readDevstackBrowserSession,
   type DevstackBrowserMembership } from './devstack-preview-auth.js';
@@ -44,8 +45,10 @@ class StaleSourceBinding extends Error {}
 interface CliRoutesDeps {
   config: DevstackPreviewConfig;
   clerkAuth: ClerkAuth;
+  approvalClerkAuth?: ClerkAuth;
   publishableKey: string;
   edgeRouterSecret?: string;
+  approvalOrigin?: string;
   enabledWorktrees: ReadonlySet<string>;
   source?: {
     identity: string;
@@ -110,6 +113,8 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
   const host = new URL(origin).hostname;
   const pairing = createDevstackCliPairing();
   const source = deps.source;
+  const approvalOrigin = source || deps.approvalOrigin
+    ? devstackApprovalOrigin(deps.approvalOrigin, origin) : origin;
   if (source && !z.string().length(64).regex(/^[0-9a-f]+$/).safeParse(source.identity).success) {
     throw new Error('Invalid DevStack source enrollment');
   }
@@ -130,11 +135,13 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     c.header('Referrer-Policy', 'no-referrer');
     const routed = getTrustedSessionRouteHost(c.req.header('host'), c.req.header('x-forwarded-host'),
       c.req.header(EDGE_SECRET_HEADER), deps.edgeRouterSecret);
-    if (!deps.config.publicBrowserOnly || normalizeSessionHost(routed) !== host
+    const approving = c.req.path.startsWith(pairPath + '/');
+    const expectedOrigin = approving ? approvalOrigin : origin;
+    if (!deps.config.publicBrowserOnly || normalizeSessionHost(routed) !== (approving ? new URL(approvalOrigin).hostname : host)
       || !isDevstackCliPath(c.req.method, c.req.path, Boolean(source)) || new URL(c.req.url).search) return unavailable(c);
     const requestOrigin = c.req.header('origin');
-    if ((requestOrigin && requestOrigin !== origin) ||
-      (c.req.method === 'POST' && c.req.path !== pairPath && c.req.path !== pollPath && c.req.path !== sourcePath && requestOrigin !== origin)) {
+    if ((requestOrigin && requestOrigin !== expectedOrigin) ||
+      (c.req.method === 'POST' && approving && requestOrigin !== approvalOrigin)) {
       return c.json({ error: 'Forbidden' }, 403);
     }
     const limiter = c.req.path === pairPath ? startRate : c.req.path === pollPath ? pollRate
@@ -150,7 +157,8 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     if (!input) return c.json({ error: 'Invalid DevStack CLI request' }, 400);
     if (source && source.identity !== input.sourceIdentity) return unavailable(c);
     const request = pairing.create(input.sourceIdentity);
-    return request ? c.json(request, 201) : c.json({ error: 'Try again later' }, 429);
+    return request ? c.json({ ...request, ...(approvalOrigin !== origin && { approvalOrigin }) }, 201)
+      : c.json({ error: 'Try again later' }, 429);
   });
 
   app.post(pollPath, requestLimit, async c => {
@@ -217,7 +225,7 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     const approvalId = c.req.param('approvalId') ?? '';
     const pending = pairing.lookupApproval(approvalId);
     if (!pending) return unavailable(c);
-    const auth = await readDevstackBrowserSession(deps.clerkAuth, c.req.header('cookie'));
+    const auth = await readDevstackBrowserSession(deps.approvalClerkAuth ?? deps.clerkAuth, c.req.header('cookie'));
     if (!auth) {
       if (c.req.method !== 'GET') return c.json({ error: 'Authentication required' }, 401);
       const nonce = randomBytes(16).toString('base64');
@@ -225,6 +233,9 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
       return c.html(renderDevstackPreviewSignIn(deps.publishableKey, nonce, c.req.path));
     }
     const owner = auth.session.userId;
+    if (approvalOrigin !== origin && auth.session.authorizedParty !== approvalOrigin) {
+      return c.json({ error: 'DevStack approval access required' }, 403);
+    }
     if (!owner || !await isDevstackBrowserOperator(auth, deps.config, deps.isMember)) {
       return c.json({ error: 'DevStack access required' }, 403);
     }
@@ -256,7 +267,7 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     })) {
       return c.json({ error: 'DevStack CLI approval no longer available' }, 409);
     }
-    return c.redirect(devstackWorktreePreviewRoot(worktree), 303);
+    return c.redirect((approvalOrigin === origin ? '' : origin) + devstackWorktreePreviewRoot(worktree), 303);
   }
   app.get(pairPath + '/:approvalId', approve);
   app.post(pairPath + '/:approvalId', requestLimit, approve);

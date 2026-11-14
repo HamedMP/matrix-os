@@ -26,7 +26,17 @@ const expiration = z.number().int().positive().refine(value => {
   const now = Date.now();
   return value > now && value <= now + maxLifetimeMs + clockSkewMs;
 });
-const pairingSchema = z.object({ approvalId: secret, pollSecret: secret, expiresAt: expiration })
+const approvalOriginSchema = z.string().max(256).refine(value => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value && !url.port && /^[a-z0-9.-]+$/.test(url.hostname);
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) throw error;
+    return false;
+  }
+});
+const pairingSchema = z.object({ approvalId: secret, pollSecret: secret, expiresAt: expiration,
+  approvalOrigin: approvalOriginSchema.optional() })
   .refine(value => value.approvalId !== value.pollSecret);
 const grantSchema = z.object({
   bearer: secret,
@@ -137,7 +147,7 @@ export async function pairHostedStageThree({ origin, worktree, open }: {
   const pairing = pairingSchema.safeParse(await boundedJson(response));
   if (!pairing.success) throw invalidResponse();
   const { approvalId, pollSecret, expiresAt } = pairing.data;
-  const approvalUrl = `${origin}/devstack/cli/pair/${approvalId}`;
+  const approvalUrl = `${pairing.data.approvalOrigin ?? origin}/devstack/cli/pair/${approvalId}`;
   console.error(`Worktree fingerprint: ${sourceIdentity.slice(0, 12)}\nApprove this worktree in Matrix: ${approvalUrl}`);
   if (open) openBrowser(approvalUrl);
 
@@ -180,7 +190,7 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
   if (response.status !== 200) {
     await response.body?.cancel();
     if (response.status === 409) throw cliError("devstack_source_conflict", "The DevStack binding or Git baseline changed. Check the selected worktree and retry.");
-    throw cliError("devstack_source_unavailable", "DevStack did not apply the source changes. Check the connection and retry.");
+    throw cliError("devstack_source_unavailable", "DevStack did not return a source result. Inspect the worktree state before retrying.");
   }
   const receipt = sourceReceiptSchema.safeParse(await boundedJson(response, 32 * 1024));
   if (!receipt.success) throw invalidResponse();
