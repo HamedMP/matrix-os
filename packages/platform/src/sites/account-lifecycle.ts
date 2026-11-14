@@ -122,9 +122,55 @@ export async function eraseOwnerSites(db: PlatformDB, owner: string, store: Acco
     const present = await registryExists(db);
     await withAccountDeletionOwnerLock(db, owner, async (trx) => {
         if (present) {
-            await trx.executor.deleteFrom('public_site_access_links').where('site_id', 'in',
-                trx.executor.selectFrom('public_sites').select('id').where('owner_id', '=', owner)).execute();
-            await trx.executor.updateTable('public_sites').set({ status: 'unpublished', revision: sql `revision + 1` }).where('owner_id', '=', owner).where('status', '=', 'published').execute();
+            let siteCursor = '';
+            const now = new Date();
+            for (;;) {
+                const sites = await trx.executor.selectFrom('public_sites').select('id')
+                    .where('owner_id', '=', owner).where('id', '>', siteCursor)
+                    .orderBy('id').limit(100).execute();
+                if (!sites.length) break;
+                for (const site of sites) {
+                    await trx.executor.selectFrom('public_sites').select('id')
+                        .where('id', '=', site.id).forUpdate().executeTakeFirst();
+                    let invitationCursor: { email: string; id: string } | null = null;
+                    for (;;) {
+                        let rows = trx.executor.selectFrom('public_site_email_invitations')
+                            .select(['id', 'normalized_email']).where('site_id', '=', site.id)
+                            .where('state', 'in', ['pending', 'accepted']);
+                        const after = invitationCursor;
+                        if (after) rows = rows.where(eb => eb.or([
+                            eb('normalized_email', '>', after.email),
+                            eb.and([eb('normalized_email', '=', after.email), eb('id', '>', after.id)]),
+                        ]));
+                        const page = await rows.orderBy('normalized_email').orderBy('id')
+                            .limit(100).forUpdate().execute();
+                        if (!page.length) break;
+                        invitationCursor = { email: page[page.length - 1]!.normalized_email, id: page[page.length - 1]!.id };
+                        if (page.length < 100) break;
+                    }
+                    await trx.executor.updateTable('public_site_email_invitations').set({
+                        state: 'revoked', revoked_at: now, state_reason: 'owner', updated_at: now,
+                        revision: sql`revision + 1`,
+                        delivery_state: sql`CASE WHEN delivery_state IN ('queued','sending','failed','ambiguous')
+                            THEN 'suppressed' ELSE delivery_state END`,
+                    }).where('site_id', '=', site.id).where('state', 'in', ['pending', 'accepted']).execute();
+                    await trx.executor.updateTable('public_site_viewer_grants')
+                        .set({ revoked_at: now, revocation_reason: 'owner_deleted' })
+                        .where('site_id', '=', site.id).where('revoked_at', 'is', null).execute();
+                    await trx.executor.updateTable('public_site_viewer_sessions').set({ revoked_at: now })
+                        .where('site_id', '=', site.id).where('revoked_at', 'is', null).execute();
+                    await trx.executor.updateTable('public_site_invitation_deliveries').set({
+                        state: 'cancelled', lease_token: null, lease_until: null, updated_at: now,
+                    }).where('invitation_id', 'in', trx.executor.selectFrom('public_site_email_invitations')
+                        .select('id').where('site_id', '=', site.id))
+                        .where('state', 'in', ['queued', 'leased', 'failed', 'ambiguous']).execute();
+                    await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', site.id).execute();
+                    await trx.executor.updateTable('public_sites').set({ status: 'unpublished', revision: sql`revision + 1` })
+                        .where('id', '=', site.id).where('status', '=', 'published').execute();
+                }
+                siteCursor = sites[sites.length - 1]!.id;
+                if (sites.length < 100) break;
+            }
         }
     }, env);
     const known = present ? await db.executor.selectFrom('public_sites').select('id').where('owner_id', '=', owner).limit(1).executeTakeFirst() : undefined;

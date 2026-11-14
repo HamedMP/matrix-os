@@ -74,13 +74,34 @@ describe('portable account exports',()=>{
      await sql`INSERT INTO public_site_access_links (id,site_id,claim_token_hash,session_token_hash,created_at,claim_expires_at,claimed_at,session_expires_at) VALUES
        ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',${'a'.repeat(64)},${'b'.repeat(64)},'2026-10-02','2026-10-09','2026-10-03','2026-11-02'),
        ('ffffffff-ffff-4fff-8fff-ffffffffffff','cccccccc-cccc-4ccc-8ccc-cccccccccccc',${'c'.repeat(64)},null,'2026-10-02','2026-10-09',null,null)`.execute(db.executor);
+     await sql`INSERT INTO public_site_email_invitations
+       (id,site_id,normalized_email,display_email,state,delivery_state,invited_by_clerk_user_id,created_at,issued_at,expires_at,updated_at)
+       VALUES ('01010101-0101-4101-8101-010101010101','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','guest@example.test','guest@example.test','pending','queued','user_a',now(),now(),now()+interval '7 days',now()),
+       ('02020202-0202-4202-8202-020202020202','cccccccc-cccc-4ccc-8ccc-cccccccccccc','foreign@example.test','foreign@example.test','pending','queued','user_b',now(),now(),now()+interval '7 days',now())`.execute(db.executor);
+     await sql`INSERT INTO public_site_viewer_grants
+       (id,site_id,invitation_id,invitation_generation,clerk_user_id,granted_at,revoked_at,revocation_reason)
+       VALUES ('03030303-0303-4303-8303-030303030303','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','01010101-0101-4101-8101-010101010101',1,'user_guest',now(),now(),'owner')`.execute(db.executor);
+     await sql`INSERT INTO public_site_viewer_sessions
+       (id,site_id,grant_id,secret_hash,clerk_session_key,created_at,expires_at,revoked_at)
+       VALUES ('04040404-0404-4404-8404-040404040404','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','03030303-0303-4303-8303-030303030303',${'d'.repeat(64)},${'e'.repeat(64)},now(),now()+interval '7 days',now())`.execute(db.executor);
+     await sql`INSERT INTO public_site_invitation_deliveries
+       (id,invitation_id,invitation_generation,idempotency_key,state,available_at,provider_message_id,created_at,updated_at)
+       VALUES ('05050505-0505-4505-8505-050505050505','01010101-0101-4101-8101-010101010101',1,'06060606-0606-4606-8606-060606060606','sent',now(),'secret-provider-id',now(),now())`.execute(db.executor);
+     await sql`INSERT INTO public_site_access_audit_events
+       (id,site_id,invitation_id,event_type,actor_kind,actor_reference,details,occurred_at)
+       VALUES ('07070707-0707-4707-8707-070707070707','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','01010101-0101-4101-8101-010101010101','invitation_created','owner','user_a','{}'::jsonb,now())`.execute(db.executor);
      const result=await exportOwnerPlatformData(db,'user_a');
      expect(result.profile).toHaveLength(1);expect(result.posts.map(post=>post.content)).toEqual(['portable']);
      expect(result.publicSites.sites.map(site=>site.id)).toEqual(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']);
      expect(result.publicSites.versions.map(version=>version.config)).toEqual([{data:{message:'portable site data'},forms:[]}]);
      expect(result.publicSites.aliases).toEqual([{slug:'launch',site_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}]);
      expect(result.publicSites.accessLinks).toEqual([{id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',site_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',created_at:'2026-10-02',claim_expires_at:'2026-10-09',claimed_at:'2026-10-03',session_expires_at:'2026-11-02'}]);
-     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data|private other site|a{64}|b{64}|c{64}/);
+     expect(result.publicSites.emailInvitations).toMatchObject([{id:'01010101-0101-4101-8101-010101010101',normalized_email:'guest@example.test'}]);
+     expect(result.publicSites.viewerGrants).toMatchObject([{id:'03030303-0303-4303-8303-030303030303',clerk_user_id:'user_guest'}]);
+     expect(result.publicSites.viewerSessions).toMatchObject([{id:'04040404-0404-4404-8404-040404040404'}]);
+     expect(result.publicSites.deliveryOutbox).toMatchObject([{id:'05050505-0505-4505-8505-050505050505',state:'sent'}]);
+     expect(result.publicSites.auditEvents).toMatchObject([{id:'07070707-0707-4707-8707-070707070707',event_type:'invitation_created'}]);
+     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data|private other site|foreign@example|secret-provider-id|a{64}|b{64}|c{64}|d{64}|e{64}/);
      await expect(exportOwnerPlatformData(db,'user_b/../user_a')).rejects.toThrow();
    }finally{await db.destroy();}
  });
