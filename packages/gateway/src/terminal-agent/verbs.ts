@@ -20,6 +20,8 @@ export const TERMINAL_KEYS_MAX = 64;
 
 const DEFAULT_QUIET_MS = 3_000;
 const DEFAULT_DRAFT_WAIT_MS = 60_000;
+const INTERRUPT_OBSERVE_MS = 5_000;
+const INTERRUPT_POLL_MS = 250;
 const PASTE_OPEN = "\x1b[200~";
 const PASTE_CLOSE = "\x1b[201~";
 // C0 controls (except tab and newline), DEL and C1 controls. ESC is included, so no
@@ -75,7 +77,20 @@ export interface TerminalAgentVerbs {
     signal?: AbortSignal;
   }): Promise<{ sent: true; heldMs: number }>;
   keys(ref: TerminalRef, input: { keys: string[] }): Promise<{ pressed: number }>;
-  interrupt(ref: TerminalRef): Promise<{ pressed: "esc" | "ctrl+c" }>;
+  interrupt(ref: TerminalRef, input?: {
+    /** The caller went away: stop looking for what the key did. */
+    signal?: AbortSignal;
+  }): Promise<TerminalInterruptResult>;
+}
+
+/** What changed within five seconds of the stop key; null when nothing did. */
+export type TerminalInterruptObservation =
+  | { status: TerminalAgentStatus }
+  | { exited: true; exitCode?: number };
+
+export interface TerminalInterruptResult {
+  pressed: "esc" | "ctrl+c";
+  observed: TerminalInterruptObservation | null;
 }
 
 /**
@@ -172,7 +187,9 @@ export function createTerminalAgentVerbs(options: {
         throw new TerminalAgentVerbError("blocked");
       }
       // Text and Enter in one write, so concurrent sends to a tab cannot interleave.
-      await write(ref, current, `${text.includes("\n") ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text}\r`);
+      // Newlines would submit line by line and tabs would trigger completion, so both paste.
+      const paste = text.includes("\n") || text.includes("\t");
+      await write(ref, current, `${paste ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text}\r`);
       return { sent: true, heldMs };
     },
 
@@ -189,11 +206,29 @@ export function createTerminalAgentVerbs(options: {
       return { pressed: keys.length };
     },
 
-    async interrupt(ref) {
+    async interrupt(ref, input = {}) {
       const tab = await requireLiveTab(ref);
-      const reportsStatus = options.agentStatus?.(ref, tab) !== undefined;
-      await write(ref, tab, reportsStatus ? "\x1b" : "\x03");
-      return { pressed: reportsStatus ? "esc" : "ctrl+c" };
+      const before = await options.agentStatus?.(ref, tab);
+      const pressed = before !== undefined ? "esc" : "ctrl+c";
+      await write(ref, tab, pressed === "esc" ? "\x1b" : "\x03");
+      // Look, never escalate: one key is pressed whatever happens next.
+      const start = now();
+      while (!input.signal?.aborted && now() - start < INTERRUPT_OBSERVE_MS) {
+        await sleep(Math.min(INTERRUPT_POLL_MS, INTERRUPT_OBSERVE_MS - (now() - start)));
+        if (input.signal?.aborted) break;
+        let current: TerminalTab;
+        try { current = await requireTab(ref); }
+        catch (error: unknown) {
+          if (error instanceof TerminalAgentVerbError) return { pressed, observed: { exited: true } };
+          throw error;
+        }
+        if (current.incarnation !== tab.incarnation || isFinished(current)) {
+          return { pressed, observed: { exited: true, ...(typeof current.exitCode === "number" ? { exitCode: current.exitCode } : {}) } };
+        }
+        const status = await options.agentStatus?.(ref, current);
+        if (status !== undefined && status !== before) return { pressed, observed: { status } };
+      }
+      return { pressed, observed: null };
     },
   };
 }

@@ -78,6 +78,22 @@ describe("matrix shell agent verbs", () => {
     ]);
   });
 
+  // Fault detected: the CLI drops what the stop key did, so a caller must poll to find out.
+  it("reports what was observed after interrupt", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    gateway(() => json({ pressed: "ctrl+c", observed: { exited: true, exitCode: 130 } }));
+    await run("interrupt", {});
+    expect(JSON.parse(logs[0]!)).toMatchObject({ ok: true, data: { pressed: "ctrl+c", observed: { exited: true, exitCode: 130 } } });
+    logs.length = 0;
+    await run("interrupt", { json: false });
+    expect(logs.join("\n")).toContain("Pressed ctrl+c; the program exited (code 130).");
+    logs.length = 0;
+    gateway(() => json({ pressed: "esc", observed: null }));
+    await run("interrupt", { json: false });
+    expect(logs.join("\n")).toContain("Pressed esc; nothing changed within 5 s.");
+  });
+
   it("explains a blocked agent instead of a generic failure", async () => {
     const errors: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));

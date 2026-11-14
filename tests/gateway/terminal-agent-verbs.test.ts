@@ -125,6 +125,13 @@ describe("terminal agent verbs: send", () => {
     expect(writes.map((write) => write.data)).toEqual(["\x1b[200~line one\nline two\x1b[201~\r"]);
   });
 
+  // Fault detected: a tab in the text triggers shell completion instead of being inserted.
+  it("pastes single-line text containing a tab so the shell does not complete it", async () => {
+    const { verbs, writes } = harness();
+    await verbs.send(ref, { text: "echo a\tb" });
+    expect(writes.map((write) => write.data)).toEqual(["\x1b[200~echo a\tb\x1b[201~\r"]);
+  });
+
   it("strips paste markers out of the text so a sender cannot end the paste early", async () => {
     const { verbs, writes } = harness();
     await verbs.send(ref, { text: "a\nb\x1b[201~\rrm -rf ~\r" });
@@ -185,11 +192,45 @@ describe("terminal agent verbs: keys and interrupt", () => {
   // Fault detected: interrupting an agent kills its process instead of stopping its turn.
   it("presses Esc for an agent that reports status and Ctrl+C for a plain program", async () => {
     const agent = harness({ status: "working" });
-    await expect(agent.verbs.interrupt(ref)).resolves.toEqual({ pressed: "esc" });
+    await expect(agent.verbs.interrupt(ref)).resolves.toMatchObject({ pressed: "esc" });
     expect(agent.writes[0]?.data).toBe("\x1b");
     const plain = harness();
-    await expect(plain.verbs.interrupt(ref)).resolves.toEqual({ pressed: "ctrl+c" });
+    await expect(plain.verbs.interrupt(ref)).resolves.toMatchObject({ pressed: "ctrl+c" });
     expect(plain.writes[0]?.data).toBe("\x03");
+  });
+
+  // Fault detected: the caller cannot tell whether the stop key worked without another request.
+  it("reports the status the agent shows after the stop key", async () => {
+    let checks = 0;
+    const { verbs, writes } = harnessWithStatus(() => (checks++ < 2 ? "working" : "blocked"));
+    await expect(verbs.interrupt(ref)).resolves.toEqual({ pressed: "esc", observed: { status: "blocked" } });
+    expect(writes.map((write) => write.data)).toEqual(["\x1b"]);
+  });
+
+  it("reports a program that exits after Ctrl+C with its exit code", async () => {
+    const { verbs, runtime } = harness();
+    const running = await runtime.listWorkspaces();
+    runtime.listWorkspaces
+      .mockResolvedValueOnce(running)
+      .mockResolvedValue([{ ...running[0]!, tabs: [tab({ status: "exited", exitCode: 130 })] }]);
+    await expect(verbs.interrupt(ref)).resolves.toEqual({ pressed: "ctrl+c", observed: { exited: true, exitCode: 130 } });
+  });
+
+  it("stops looking after five seconds and never presses a second key", async () => {
+    const { verbs, writes, time } = harness({ status: "working" });
+    const start = time();
+    await expect(verbs.interrupt(ref)).resolves.toEqual({ pressed: "esc", observed: null });
+    expect(time() - start).toBe(5_000);
+    expect(writes.map((write) => write.data)).toEqual(["\x1b"]);
+  });
+
+  it("stops looking when the caller goes away", async () => {
+    const { verbs, time } = harness({ status: "working" });
+    const controller = new AbortController();
+    controller.abort();
+    const start = time();
+    await expect(verbs.interrupt(ref, { signal: controller.signal })).resolves.toEqual({ pressed: "esc", observed: null });
+    expect(time() - start).toBe(0);
   });
 });
 

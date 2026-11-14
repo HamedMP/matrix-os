@@ -19,7 +19,24 @@ export interface TerminalAgentClient {
   read(ref: TerminalRef, lines: number): Promise<TerminalReadOutput>;
   send(ref: TerminalRef, input: { text: string; force?: boolean }): Promise<{ sent: boolean; heldMs: number }>;
   keys(ref: TerminalRef, keys: string[]): Promise<{ pressed: number }>;
-  interrupt(ref: TerminalRef): Promise<{ pressed: string }>;
+  interrupt(ref: TerminalRef): Promise<TerminalInterruptOutput>;
+}
+
+/** What changed within five seconds of the stop key; null when nothing did. */
+export type TerminalInterruptObserved = { status: string } | { exited: true; exitCode?: number } | null;
+
+export interface TerminalInterruptOutput {
+  pressed: string;
+  observed: TerminalInterruptObserved;
+}
+
+function interruptObserved(value: unknown): TerminalInterruptObserved {
+  if (!value || typeof value !== "object") return null;
+  const observed = value as Record<string, unknown>;
+  if (observed.exited === true) {
+    return { exited: true, ...(Number.isInteger(observed.exitCode) ? { exitCode: observed.exitCode as number } : {}) };
+  }
+  return typeof observed.status === "string" && /^[a-z]{1,16}$/.test(observed.status) ? { status: observed.status } : null;
 }
 
 /** HTTP client for the gateway's Herdr-style terminal verbs. */
@@ -94,7 +111,7 @@ export function createTerminalAgentClient(options: {
     },
     async interrupt(ref) {
       const payload = await request(`${tabPath(ref)}/interrupt`, { method: "POST", body: {} });
-      return { pressed: typeof payload.pressed === "string" ? payload.pressed : "" };
+      return { pressed: typeof payload.pressed === "string" ? payload.pressed : "", observed: interruptObserved(payload.observed) };
     },
   };
 }

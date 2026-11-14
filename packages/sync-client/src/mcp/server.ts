@@ -242,7 +242,7 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
   }))));
 
   server.registerTool("interrupt_terminal_tab", {
-    description: "Press the stop key in a terminal tab: Esc for an agent that reports status (stops its turn), otherwise Ctrl+C. Never escalates.",
+    description: "Press the stop key in a terminal tab: Esc for an agent that reports status (stops its turn), otherwise Ctrl+C. Never escalates; returns `observed`, the status or exit seen within 5 s (null if nothing changed).",
     inputSchema: TerminalTabRefInputSchema.shape,
     annotations: executionAnnotations,
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({

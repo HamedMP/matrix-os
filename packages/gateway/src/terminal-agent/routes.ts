@@ -106,7 +106,7 @@ export function createTerminalAgentRoutes(options: {
     try {
       const ref = refFrom(c);
       InterruptSchema.parse(await readOptionalJson(c));
-      return await run(c, ref.workspaceId, async () => c.json(await options.verbs.interrupt(ref)));
+      return await run(c, ref.workspaceId, async () => c.json(await options.verbs.interrupt(ref, { signal: c.req.raw.signal })));
     } catch (error) { return failure(c, error); }
   });
 
