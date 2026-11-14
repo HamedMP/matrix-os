@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  TerminalAttentionCard,
   retainTerminalAttention,
   terminalAttentionChanges,
   type TerminalAttention,
@@ -9,7 +10,6 @@ import {
 } from "@matrix-os/ui/terminal-agents";
 import { openTerminalSession } from "@/lib/terminal-session-open";
 import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
-import { ShellNotificationCard } from "../ShellNotificationCard";
 import { ShellNotificationPortal } from "../ShellNotificationPortal";
 import { visibleTerminalSessions } from "./visible-terminal-sessions";
 
@@ -19,12 +19,6 @@ const MAX_PENDING = 32;
 // Blocked and errored agents need the person; they are shown before completions.
 const URGENT = (alert: TerminalAttention) => (alert.kind === "done" ? 1 : 0);
 const DONE_TIMEOUT_MS = 12_000;
-
-const COPY: Record<TerminalAttention["kind"], string> = {
-  blocked: "needs you",
-  error: "reported an error",
-  done: "finished",
-};
 
 function sameAlerts(left: TerminalAttention[], right: TerminalAttention[]): boolean {
   return left.length === right.length
@@ -97,32 +91,7 @@ export function TerminalAttentionNotifier() {
   return (
     <ShellNotificationPortal>
       {visible.map((alert) => (
-        <ShellNotificationCard
-          key={alert.key}
-          role={alert.kind === "done" ? "status" : "alert"}
-          data-testid="terminal-attention"
-          className="flex items-center gap-3 rounded-lg border border-border bg-card/95 px-4 py-2.5 text-sm text-foreground shadow-lg backdrop-blur-md"
-        >
-          <span
-            aria-hidden
-            className={`size-2 shrink-0 rounded-full ${alert.kind === "done" ? "bg-emerald-500" : "bg-amber-500"}`}
-          />
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-medium">{alert.name}</span> {COPY[alert.kind]}
-            {alert.message ? <span className="text-muted-foreground">: {alert.message}</span> : null}
-          </span>
-          <button type="button" className="shrink-0 rounded px-2 py-1 text-xs font-medium hover:bg-muted" onClick={() => open(alert)}>
-            Open
-          </button>
-          <button
-            type="button"
-            aria-label={`Dismiss ${alert.name}`}
-            className="shrink-0 rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted"
-            onClick={() => dismiss(alert.key)}
-          >
-            ×
-          </button>
-        </ShellNotificationCard>
+        <TerminalAttentionCard key={alert.key} alert={alert} onOpen={() => open(alert)} onDismiss={() => dismiss(alert.key)} />
       ))}
     </ShellNotificationPortal>
   );

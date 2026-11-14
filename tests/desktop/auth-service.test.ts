@@ -217,6 +217,69 @@ describe("AuthService token expiry", () => {
 });
 
 describe("AuthService runtime selection", () => {
+  it.each([
+    ["missing", null],
+    ["another owner's", { ...PROFILE, userId: "previous-owner", platformHost: "https://previous.example" }],
+  ] as const)("switches an authenticated owner with a %s profile cache", async (_label, profile) => {
+    const fetchFn = vi.fn(async () => jsonResponse({ accessToken: "r".repeat(64),
+      expiresAt: 1_800_000_000_000, handle: "neo-review", slot: "review" }));
+    const { auth, getProfile, peekCredential } = makeService({ credential: VALID, profile, now: 10_000, fetchFn });
+    await auth.init();
+    expect(auth.getStatus()).toMatchObject({ signedIn: true, userId: VALID.userId, runtimeSlot: "primary" });
+    await auth.selectRuntime("review");
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(fetchFn.mock.calls[0]).toMatchObject(["https://api.matrix-os.com/api/auth/runtime-selection", {
+      method: "POST", headers: { authorization: "Bearer tok" }, body: JSON.stringify({ slot: "review" }),
+    }]);
+    expect(getProfile()).toEqual({ userId: VALID.userId, handle: "neo-review",
+      platformHost: "https://app.matrix-os.com", runtimeSlot: "review" });
+    expect(peekCredential()?.accessToken).toBe("r".repeat(64));
+    expect(auth.getStatus()).toMatchObject({ signedIn: true, runtimeSlot: "review", handle: "neo-review" });
+  });
+
+  it("keeps a missing profile and the original credential when profile persistence fails", async () => {
+    const { auth, getProfile, peekCredential } = makeService({ credential: VALID, now: 10_000,
+      fetchFn: async () => jsonResponse({ accessToken: "r".repeat(64), expiresAt: 1_800_000_000_000,
+        handle: "neo-review", slot: "review" }),
+      saveProfile: async () => { throw new Error("disk unavailable"); },
+    });
+    await auth.init();
+    await expect(auth.selectRuntime("review")).rejects.toThrow("Computer switch failed. Try again.");
+    expect(getProfile()).toBeNull();
+    expect(peekCredential()).toEqual(VALID);
+    expect(auth.getStatus()).toMatchObject({ signedIn: true, runtimeSlot: "primary" });
+  });
+
+  it("never recovers a profile without an unexpired authenticated credential", async () => {
+    const fetchFn = vi.fn();
+    const { auth, getProfile } = makeService({ credential: { ...VALID, expiresAt: 1 },
+      profile: null, now: 10_000, fetchFn });
+    await auth.init();
+    await expect(auth.selectRuntime("review")).rejects.toThrow("Computer switch failed. Try again.");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(getProfile()).toBeNull();
+  });
+
+  it("does not leave a recovered profile behind when expiry wins its slow write", async () => {
+    const saveStarted = deferred<void>();
+    const finishSave = deferred<void>();
+    const { auth, getProfile, peekCredential } = makeService({ credential: VALID, now: 10_000,
+      fetchFn: async () => jsonResponse({ accessToken: "r".repeat(64), expiresAt: 1_800_000_000_000,
+        handle: "neo-review", slot: "review" }),
+      saveProfile: async () => { saveStarted.resolve(); await finishSave.promise; },
+    });
+    await auth.init();
+    const selection = auth.selectRuntime("review");
+    await saveStarted.promise;
+    const expiry = auth.expireSession();
+    finishSave.resolve();
+    await expect(selection).rejects.toThrow("Computer switch failed. Try again.");
+    await expiry;
+    expect(getProfile()).toBeNull();
+    expect(peekCredential()).toBeNull();
+    expect(auth.getStatus().signedIn).toBe(false);
+  });
+
   it("keeps the profile when expiry wins during credential persistence", async () => {
     const saveStarted = deferred<void>();
     const finishSave = deferred<void>();

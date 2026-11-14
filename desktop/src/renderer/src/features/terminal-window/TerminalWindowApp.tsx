@@ -2,7 +2,7 @@
 // Machines on the left, one attached terminal on the right. Every Matrix
 // computer is reached with its own credential, held by the trusted core.
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Cloud, Laptop, Plus, SquareTerminal, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Cloud, Laptop, Pencil, Plus, SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
@@ -10,7 +10,9 @@ import TerminalView from "../terminal/TerminalView";
 import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-machines";
 import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
 import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
-import type { LocalTerminal } from "../../../../shared/local-terminals";
+import type { LocalTerminal, LocalTerminalAgent } from "../../../../shared/local-terminals";
+import { LocalTerminalAttention } from "./LocalTerminalAttention";
+import { LocalTerminalRenameInput, NewLocalTerminalMenu } from "./LocalTerminalActions";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -24,7 +26,7 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
 };
 
 // Status is whatever the program in the terminal reported about itself.
-const LOCAL_STATUS_LABEL = { working: "Working", done: "Done", blocked: "Needs you", error: "Error" } as const;
+const LOCAL_STATUS_LABEL = { working: "Working", done: "Finished", blocked: "Needs you", error: "Needs you" } as const;
 const LOCAL_STATUS_COLOR = {
   working: "var(--text-secondary, var(--color-muted-foreground))",
   done: "var(--color-success)",
@@ -109,15 +111,18 @@ function ComputerTabs({ computer, state, active, creating, busy, createFailed, o
 const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "create-failed": "Couldn't start a terminal. Try again.",
   "create-rate-limited": "Too many terminals started at once. Try again in a moment.",
+  "rename-failed": "Couldn't rename that terminal. Try again.",
   "end-failed": "Couldn't end that terminal. Try again.",
 };
 
-function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate, onEnd, onDismissEnded, onRetry }: {
+function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate, onRename, onEnd, onDismissEnded, onRetry }: {
   state: LocalTerminalsState; activeId: string | null; creating: boolean; notice: LocalTerminalsNotice;
   /** The open terminal, when its program has exited: its pane stays until dismissed. */
   ended: { id: string; title: string } | null;
-  onOpen(id: string): void; onCreate(): void; onEnd(id: string): void; onDismissEnded(): void; onRetry(): void;
+  onOpen(id: string): void; onCreate(launch: { agent?: LocalTerminalAgent }): void; onRename(id: string, name: string): void;
+  onEnd(id: string): void; onDismissEnded(): void; onRetry(): void;
 }) {
+  const [renaming, setRenaming] = useState<string | null>(null);
   if (state.status === "loading") {
     return <p role="status" className="py-1.5 pl-10 text-[12px]" style={secondaryText}>Loading terminals…</p>;
   }
@@ -145,6 +150,16 @@ function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate,
         ? <li className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet.</li>
         : state.terminals.map((terminal) => {
           const current = activeId === terminal.id;
+          if (renaming === terminal.id) {
+            return (
+              <li key={terminal.id} className="flex items-center rounded-md" style={current ? { background: "var(--bg-selected)" } : undefined}>
+                <LocalTerminalRenameInput title={terminal.title} onDone={(name) => {
+                  setRenaming(null);
+                  if (name) onRename(terminal.id, name);
+                }} />
+              </li>
+            );
+          }
           return (
             <li key={terminal.id} className="group flex items-center rounded-md hover:bg-black/5"
               style={current ? { background: "var(--bg-selected)" } : undefined}>
@@ -155,6 +170,10 @@ function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate,
                 {terminal.status && terminal.status !== "idle" ? (
                   <span className="shrink-0 text-[10px]" style={{ color: LOCAL_STATUS_COLOR[terminal.status] }}>{LOCAL_STATUS_LABEL[terminal.status]}</span>
                 ) : null}
+              </button>
+              <button type="button" aria-label={`Rename ${terminal.title}`} title="Rename" onClick={() => setRenaming(terminal.id)}
+                className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100">
+                <Pencil size={11} aria-hidden="true" />
               </button>
               <button type="button" aria-label={`End ${terminal.title}`} title="End terminal" onClick={() => onEnd(terminal.id)}
                 className="mr-1 flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100">
@@ -178,12 +197,7 @@ function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate,
       ) : null}
       {notice ? <li role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[notice]}</li> : null}
       <li>
-        <button type="button" disabled={creating} onClick={onCreate}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
-          style={secondaryText}>
-          <Plus size={12} aria-hidden="true" className="shrink-0" />
-          {creating ? "Starting…" : "New terminal"}
-        </button>
+        <NewLocalTerminalMenu creating={creating} onCreate={onCreate} />
       </li>
     </ul>
   );
@@ -321,10 +335,10 @@ function useTerminalWindow() {
   return {
     machines, ready, cloud, local, localActive, localTerminal, endedLocal, expanded,
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
-    createLocal: () => {
+    createLocal: (launch: { agent?: LocalTerminalAgent } = {}) => {
       const chosen = localChoice.current;
       const cloudChosen = cloud.active;
-      void local.create().then((id) => {
+      void local.create(launch).then((id) => {
         // Opened only if the user did not pick another terminal meanwhile.
         if (!id || localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
         localChoice.current += 1;
@@ -337,6 +351,12 @@ function useTerminalWindow() {
       localChoice.current += 1;
       clearActive();
       setLocalOpen({ id, title: localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
+    },
+    // The open pane keeps the new name too, including once its program exits.
+    renameLocal: (id: string, name: string) => {
+      void local.rename(id, name).then((renamed) => {
+        if (renamed) setLocalOpen((current) => (current?.id === id ? { ...current, title: name } : current));
+      });
     },
     // The pane stays until the trusted core confirms the terminal ended.
     endLocal: (id: string) => {
@@ -375,7 +395,7 @@ function LocalMachine({ view }: { view: TerminalWindow }) {
       </button>
       {open ? (
         <LocalTabs state={local.state} activeId={view.localActive} ended={view.endedLocal} onDismissEnded={view.dismissEndedLocal} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
-          onCreate={view.createLocal}
+          onCreate={view.createLocal} onRename={view.renameLocal}
           onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
       ) : null}
     </li>
@@ -422,6 +442,7 @@ export default function TerminalWindowApp() {
 
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
+      <LocalTerminalAttention state={view.local.state} activeId={view.localActive} onOpen={view.openLocal} />
       <header className="titlebar-drag flex shrink-0 items-center justify-center border-b text-[12px] font-medium"
         style={{ height: "var(--titlebar-height)", borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
         {windowTitle(view)}

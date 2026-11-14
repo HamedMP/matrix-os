@@ -10,6 +10,8 @@ function setup(authorized = true) {
     list: vi.fn(async () => [{ id: "t1", title: "zsh", status: null }]),
     create: vi.fn(async (): Promise<string | null> => "t2"),
     kill: vi.fn(async () => undefined),
+    rename: vi.fn(async () => undefined),
+    put: vi.fn(async () => "/tmp/hc/t1/shot.png"),
     attach: vi.fn(async () => 5),
     input: vi.fn(() => true),
     resize: vi.fn(() => true),
@@ -39,6 +41,8 @@ describe("local terminal IPC", () => {
       "local-terminal:attach": { id: "t1", cols: 80, rows: 24 }, "local-terminal:input": { attachId: 1, data: "rm -rf ~\r" },
       "local-terminal:resize": { attachId: 1, cols: 80, rows: 24 }, "local-terminal:ack": { attachId: 1, count: 1 },
       "local-terminal:detach": { attachId: 1 },
+      "local-terminal:rename": { id: "t1", name: "review" },
+      "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
@@ -90,5 +94,44 @@ describe("local terminal IPC", () => {
     host.input.mockReturnValueOnce(false);
     await expect(invoke("local-terminal:input", { attachId: 9, data: "ls" })).resolves.toEqual({ ok: false });
     await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: true, attachId: 5 });
+  });
+
+  // Fault detected: the renderer can launch an arbitrary program, escape home, or
+  // push an oversized or path-shaped file into the core.
+  it("accepts only known agents, home-relative folders, bounded names and safe pasted files", async () => {
+    const { host, invoke } = setup();
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24, agent: "claude", folder: "projects/app" }))
+      .resolves.toEqual({ status: "ready", id: "t2" });
+    expect(host.create).toHaveBeenCalledWith({ cols: 80, rows: 24 }, { agent: "claude", folder: "projects/app" });
+    for (const bad of [
+      { cols: 80, rows: 24, agent: "bash" },
+      { cols: 80, rows: 24, folder: "/etc" },
+      { cols: 80, rows: 24, folder: "projects/../.." },
+      { cols: 80, rows: 24, argv: ["rm"] },
+    ]) {
+      await expect(invoke("local-terminal:create", bad)).rejects.toThrow("invalid request");
+    }
+    await expect(invoke("local-terminal:rename", { id: "t1", name: "x\u0007" })).rejects.toThrow("invalid request");
+    await expect(invoke("local-terminal:put", { id: "t1", name: "../shot.png", dataBase64: "aGk=" })).rejects.toThrow("invalid request");
+    await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "a".repeat(12_000_000) })).rejects.toThrow("invalid request");
+    await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "aGk=" })).resolves.toEqual({ ok: true, path: "/tmp/hc/t1/shot.png" });
+    await expect(invoke("local-terminal:put", { id: "t1", name: "shot.png", dataBase64: "a=b" })).rejects.toThrow("invalid request");
+  });
+
+  // Fault detected (Greptile on #3300): a zero-byte file encodes to "", which the contract
+  // rejected, so pasting it said "File upload failed. Try again." although herdr-core
+  // writes empty files and a retry could never succeed.
+  it("pastes an empty file", async () => {
+    const { host, invoke } = setup();
+    await expect(invoke("local-terminal:put", { id: "t1", name: "empty.txt", dataBase64: "" })).resolves.toEqual({ ok: true, path: "/tmp/hc/t1/shot.png" });
+    expect(host.put).toHaveBeenCalledWith("t1", "empty.txt", "");
+  });
+
+  it("reports a failed rename or put as a fixed outcome", async () => {
+    const { host, invoke } = setup();
+    host.rename.mockRejectedValueOnce(new Error("core said /private/path"));
+    host.put.mockRejectedValueOnce(new Error("core said /private/path"));
+    await expect(invoke("local-terminal:rename", { id: "t1", name: "review" })).resolves.toEqual({ ok: false });
+    await expect(invoke("local-terminal:put", { id: "t1", name: "a.png", dataBase64: "aGk=" })).resolves.toEqual({ ok: false });
   });
 });

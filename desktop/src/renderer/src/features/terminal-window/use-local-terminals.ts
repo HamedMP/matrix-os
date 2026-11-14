@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
 import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
-  LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalUnavailable,
+  LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalAgent, type LocalTerminalUnavailable,
 } from "../../../../shared/local-terminals";
 import { createLocalTerminalSocket } from "./local-terminal-socket";
 
@@ -12,7 +12,7 @@ export type LocalTerminalsState =
   | { [S in LocalTerminalUnavailable]: { status: S } }[LocalTerminalUnavailable];
 
 /** The last action that did not take effect; the list it acted on stays shown. */
-export type LocalTerminalsNotice = "create-failed" | "create-rate-limited" | "end-failed" | null;
+export type LocalTerminalsNotice = "create-failed" | "create-rate-limited" | "end-failed" | "rename-failed" | null;
 
 const STATUS_POLL_MS = 3_000;
 
@@ -42,9 +42,9 @@ export function useLocalTerminals() {
   useEffect(() => {
     setAlternateTerminalSockets({ prefix: LOCAL_TERMINAL_SESSION_PREFIX, create: createLocalTerminalSocket });
     void refresh();
-    // Titles and program-reported status change without user action; poll
-    // while the window is visible, and stop when it is not.
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, STATUS_POLL_MS);
+    // Keep observing while hidden too: a completion must be noticed while
+    // the person is away, not after refocusing the terminal.
+    const timer = setInterval(() => { void refresh(); }, STATUS_POLL_MS);
     return () => {
       clearInterval(timer);
       generation.current += 1;
@@ -52,12 +52,12 @@ export function useLocalTerminals() {
     };
   }, [refresh]);
 
-  /** Starts a login shell and returns its id, or null when it could not start. */
-  const create = useCallback(async (): Promise<string | null> => {
+  /** Starts a login shell, or a known agent in one, and returns its id, or null when it could not start. */
+  const create = useCallback(async (launch: { agent?: LocalTerminalAgent } = {}): Promise<string | null> => {
     if (creating) return null;
     setCreating(true);
     try {
-      const result = await invoke("local-terminal:create", { cols: 100, rows: 30 });
+      const result = await invoke("local-terminal:create", { cols: 100, rows: 30, ...(launch.agent ? { agent: launch.agent } : {}) });
       if (result.status === "ready") {
         setNotice(null);
         await refresh();
@@ -92,5 +92,18 @@ export function useLocalTerminals() {
     return ended;
   }, [refresh]);
 
-  return { state, creating, notice, refresh, create, end };
+  /** Renames a terminal; the new name shows on every client of this core. */
+  const rename = useCallback(async (id: string, name: string): Promise<boolean> => {
+    let renamed = false;
+    try {
+      renamed = (await invoke("local-terminal:rename", { id, name })).ok;
+    } catch (error: unknown) {
+      console.warn("[local-terminal] rename failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    setNotice(renamed ? null : "rename-failed");
+    await refresh();
+    return renamed;
+  }, [refresh]);
+
+  return { state, creating, notice, refresh, create, end, rename };
 }

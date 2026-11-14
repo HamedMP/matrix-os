@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,20 @@ describe("local shell environment", () => {
       XDG_CONFIG_HOME: "/elsewhere", undefinedValue: undefined,
     })).toEqual({ HOME: "/Users/neo", USER: "neo", SHELL: "/bin/zsh", PATH: "/usr/bin", LANG: "en_US.UTF-8", LC_ALL: "C",
       TMPDIR: "/tmp/x", SSH_AUTH_SOCK: "/tmp/agent" });
+  });
+});
+
+describe("local status reporter", () => {
+  it("installs a private executable reporter and emits herdr's actual OSC format", async () => {
+    const { installLocalStatusReporter } = await import("@desktop/main/local-terminals/status-reporter");
+    const root = scratchDir("mx-status-");
+    const bin = await installLocalStatusReporter(root);
+    const executable = join(bin, "matrix-status");
+    expect(statSync(executable).mode & 0o777).toBe(0o700);
+    expect(execFileSync(executable, ["blocked", "approve v2?"], { encoding: "utf8" }))
+      .toBe("\x1b]7501;state=blocked:msg=YXBwcm92ZSB2Mj8=\x1b\\");
+    expect(() => execFileSync(executable, ["bogus"], { stdio: "ignore" })).toThrow();
+    expect(() => execFileSync(executable, ["blocked", "x".repeat(201)], { stdio: "ignore" })).toThrow();
   });
 });
 
@@ -212,7 +226,45 @@ describe("local terminal host against a scripted core", () => {
       expect(argv.join(" ")).toContain(`-u ${name}`);
     }
     expect(argv.slice(-2)).toEqual(["/bin/zsh", "-l"]);
-    expect(Object.keys(runs[0]!.params.env as object).sort()).toEqual(["COLORTERM", "TERM", "TERM_PROGRAM"]);
+    expect(Object.keys(runs[0]!.params.env as object).sort()).toEqual(["COLORTERM", "PATH", "TERM", "TERM_PROGRAM"]);
+  });
+
+  // Fault detected: an agent started from the window runs a command the renderer
+  // chose, runs outside the user's home, or loses its login environment.
+  it("starts a known agent through the login shell, in a folder under home only", async () => {
+    const runs: Call[] = [];
+    const { host, root } = start((core, call) => {
+      if (call.method === "terminal.run") { runs.push(call); core.reply(call.id, { result: { address: "t8" } }); }
+    });
+    mkdirSync(join(root, "projects", "app"), { recursive: true });
+    symlinkSync(tmpdir(), join(root, "escape"));
+    await expect(host.create({ cols: 100, rows: 30 }, { agent: "codex", folder: "projects/app" })).resolves.toBe("t8");
+    const argv = runs[0]!.params.argv as string[];
+    expect(argv.slice(-6)).toEqual(["/bin/sh", "-c", '"$1" -l -i -c "$2"; exec "$1" -l', "matrix-agent", "/bin/zsh", "codex --no-daemon"]);
+    expect(runs[0]!.params.cwd).toBe(realpathSync(join(root, "projects", "app")));
+    expect(runs[0]!.params.labels).toEqual({ "matrix.agent": "codex" });
+    await expect(host.create({ cols: 100, rows: 30 }, { folder: "escape" })).rejects.toThrow("not a folder in your home");
+    await expect(host.create({ cols: 100, rows: 30 }, { folder: "missing" })).rejects.toThrow("not a folder in your home");
+    expect(runs).toHaveLength(1);
+  });
+
+  it("renames through a label that wins over the program's title, and puts pasted files beside the terminal", async () => {
+    const calls: Call[] = [];
+    const { host } = start((core, call) => {
+      calls.push(call);
+      if (call.method === "terminal.label") core.reply(call.id, { result: {} });
+      if (call.method === "terminal.put") core.reply(call.id, { result: { path: "/tmp/hc/t1/shot.png", bytes: 2 } });
+      if (call.method === "terminal.list") {
+        core.reply(call.id, { result: { terminals: [{ address: "t1", state: "live", title: "zsh", labels: { "matrix.title": "review\u202e" } }] } });
+      }
+    });
+    await host.rename("t1", "review");
+    await expect(host.put("t1", "shot.png", "aGk=")).resolves.toBe("/tmp/hc/t1/shot.png");
+    await expect(host.list()).resolves.toEqual([{ id: "t1", title: "review", status: null }]);
+    expect(calls.filter((call) => call.method !== "terminal.list").map((call) => [call.method, call.params])).toEqual([
+      ["terminal.label", { terminal: "t1", labels: { "matrix.title": "review" } }],
+      ["terminal.put", { terminal: "t1", name: "shot.png", data: "aGk=" }],
+    ]);
   });
 
   it("limits how fast terminals are started, not how many exist", async () => {
@@ -379,6 +431,16 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     const names = [...text.matchAll(/E:([A-Z_a-z0-9]+)=/g)].map((match) => match[1]!);
     expect(names).toEqual(expect.arrayContaining(["HOME", "PATH", "TERM"]));
     for (const name of names) expect(name, name).not.toMatch(/^(XDG_|HC_|MATRIX_|ELECTRON_|NODE_)/);
+    host.detach(attachId);
+  }, 30_000);
+
+  it("runs matrix-status in the login shell and relays bounded status messages", async () => {
+    const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
+    host.input(attachId, 'matrix-status blocked "approve the migration?"\r', false);
+    await vi.waitFor(async () => expect((await host.list()).find(terminal => terminal.id === terminalId)?.status).toBe("blocked"), { timeout: 10_000 });
+    expect((await host.list()).find(terminal => terminal.id === terminalId)).toMatchObject({ status: "blocked", statusMessage: "approve the migration?" });
+    host.input(attachId, 'matrix-status blocked "approve v2?"\r', false);
+    await vi.waitFor(async () => expect((await host.list()).find(terminal => terminal.id === terminalId)?.statusMessage).toBe("approve v2?"), { timeout: 10_000 });
     host.detach(attachId);
   }, 30_000);
 
