@@ -52,9 +52,11 @@ where possible (hard limit 3000 additions / 50 files).
 
 ## Layer 5: attention UI
 
-- [ ] T5.1 Shared derivation: roll-up, attention, agent order.
-- [ ] T5.2 Web Desktop + Web Canvas: badges, agents list, pin, next/prev, toast + sound.
-- [ ] T5.3 Electron Desktop main + Terminal windows on the same components.
+- [x] T5.1 Shared derivation in `@matrix-os/ui/terminal-agents`: roll-up, attention, agent order, events reducer and reconnecting client.
+- [x] T5.2 Web Desktop + Web Canvas (one `Desktop.tsx` host): live per-tab status on Terminal sidebar badges, and attention toasts (blocked and error always, done when the person isn't looking) that open the exact tab.
+- [ ] T5.3 Electron Desktop: the same derivation through a main-process events bridge, so tokens stay in main (FR-010). Moved to layer 6.
+- [ ] T5.4 Agents list panel with pin and next/prev agent keys; project roll-up badge. Follow-on.
+- [ ] T5.5 Attention sound that respects notification preferences. Follow-on.
 
 ## Layer 6: Electron local terminals
 

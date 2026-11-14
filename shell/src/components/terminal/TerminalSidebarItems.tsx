@@ -28,12 +28,12 @@ import type {
 } from "./terminal-agent-options";
 import {
   getShellVisualStatus,
-  SHELL_WAITING_STATUS_DOT_STYLE,
-  shouldShowShellStatusDot,
   type ShellSessionSummary,
 } from "./terminal-session-state";
 import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
 import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
+
+import { TerminalSessionStatusDot } from "./TerminalSessionStatusDot";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
@@ -551,7 +551,6 @@ function CollapsedRailGroup({
         const label = formatCollapsedShellLabel(displayName);
         const selected = shell.name === selectedShellName;
         const accent = sessionAccent(shell.name);
-        const showStatusDot = shouldShowShellStatusDot(shell);
         return (
           <button
             key={shell.name}
@@ -581,16 +580,7 @@ function CollapsedRailGroup({
             }}
           >
             {label}
-            {showStatusDot ? (
-              <span
-                aria-hidden="true"
-                data-testid={`terminal-session-status-${shell.name}`}
-                style={{
-                  ...COLLAPSED_SESSION_STATUS_DOT_STYLE,
-                  ...SHELL_WAITING_STATUS_DOT_STYLE,
-                }}
-              />
-            ) : null}
+            <TerminalSessionStatusDot shell={shell} style={COLLAPSED_SESSION_STATUS_DOT_STYLE} />
           </button>
         );
       })}
@@ -874,7 +864,6 @@ function ShellCard({
   onDrop: () => void;
   onDragEnd: () => void;
 }) {
-  const showStatusDot = shouldShowShellStatusDot(shell);
   const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
   const displayName = shell.subtitle?.trim() || formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
@@ -1217,18 +1206,7 @@ function ShellCard({
         >
           <GripVerticalIcon size={12} strokeWidth={2.1} />
         </button>
-        {showStatusDot ? (
-          <span
-            data-testid={`terminal-session-status-${shell.name}`}
-            style={{
-              width: foreground ? 7 : 8,
-              height: foreground ? 7 : 8,
-              borderRadius: "50%",
-              flexShrink: 0,
-              ...SHELL_WAITING_STATUS_DOT_STYLE,
-            }}
-          />
-        ) : null}
+        <TerminalSessionStatusDot shell={shell} style={{ width: foreground ? 7 : 8, height: foreground ? 7 : 8 }} />
         <div
           className="min-w-0"
           style={{

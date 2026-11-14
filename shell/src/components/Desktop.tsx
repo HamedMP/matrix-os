@@ -63,6 +63,8 @@ import {
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
+import { TerminalAttentionNotifier } from "./terminal/TerminalAttentionNotifier";
+import { useOpenTerminalSession } from "./terminal/useOpenTerminalSession";
 import {
   OPEN_PROVIDER_SETTINGS_EVENT,
   OPEN_PROVIDER_TERMINAL_EVENT,
@@ -451,6 +453,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       if (targetId) enqueueExistingProviderTerminal(sessionId, targetId);
     });
   }, [focusTerminalForHandoff]);
+
+  useOpenTerminalSession(dockXOffset);
 
   const openSettingsTerminal = useCallback((sessionId: string) => {
     setSettingsOpen(false);
@@ -1325,6 +1329,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           />
 
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
+
+          <TerminalAttentionNotifier />
 
           {vocalMounted && (
             <VocalPanel

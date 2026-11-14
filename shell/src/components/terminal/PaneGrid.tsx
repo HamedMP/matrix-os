@@ -66,6 +66,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
       <div
         key={node.id}
         className="h-full w-full min-h-0 min-w-0"
+        data-terminal-session={node.sessionId}
         style={{
           boxShadow: focused
             ? "inset 0 0 0 2px var(--primary), inset 0 0 0 3px color-mix(in srgb, var(--background) 68%, transparent)"

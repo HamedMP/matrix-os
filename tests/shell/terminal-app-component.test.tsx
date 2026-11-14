@@ -158,6 +158,17 @@ describe("TerminalApp workspace contract", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows a plain reporter tab working in the Canvas sidebar", () => {
+    const shell: ShellSessionSummary = { name: REF_KEY, subtitle: "agent-a", workspaceId: WORKSPACE_ID,
+      tabId: TAB_ID, revision: 1, workspaceRevision: 1, status: "active", agentVisualStatus: "running" };
+    render(<ShellSessionGroup label="Active" shells={[shell]} expanded foreground
+      deletingShellNames={[]} selectedShellName={null}
+      onOpen={vi.fn()} onToggle={vi.fn()} onPin={vi.fn()} onRename={vi.fn(async () => true)}
+      onDelete={vi.fn()} draggingShellName={null} dragOverShellName={null}
+      onDragStart={vi.fn()} onDragOver={vi.fn()} onDrop={vi.fn()} onDragEnd={vi.fn()} />);
+    expect(screen.getByTestId(`terminal-session-status-${REF_KEY}`).getAttribute("title")).toBe("Working");
+  });
+
   it("renders whole-project sharing in the web project group", () => {
     const projectShell: ShellSessionSummary = {
       name: REF_KEY,
@@ -303,6 +314,140 @@ describe("TerminalApp workspace contract", () => {
     render(<TerminalApp initialSessionId={REF_KEY} />);
     await settle();
     expect((paneGridSpy.mock.lastCall?.[0] as { allowRemoteResize?: boolean }).allowRemoteResize).toBe(true);
+  });
+
+  it("uses the canonical focused-session name instead of a stale saved pane heading", async () => {
+    let name = "agent-a";
+    let unavailable = false;
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) {
+        return unavailable ? json({}, 503) : json({ workspaces: [workspace([
+          tab(TAB_ID, name), tab(SECOND_TAB_ID, "agent-b"),
+        ])] });
+      }
+      if (url.endsWith("/api/terminal/layout") && !init?.method) return json({
+        activeTabId: "saved-tab", sidebarOpen: true,
+        tabs: [{ id: "saved-tab", label: "azure-drift", paneTree: {
+          type: "pane", id: "saved-pane", cwd: "projects", sessionId: REF_KEY,
+        } }],
+      });
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { id: string } }).paneTree.id).toBe("saved-pane");
+    expect(screen.getByRole("heading", { level: 2, name: "agent-a" })).toBeTruthy();
+
+    name = "agent-a-renamed";
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByRole("heading", { level: 2, name })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(REF_KEY);
+    fireEvent.click(screen.getByRole("button", { name: `Open ${REF_KEY}` }));
+    act(() => { window.dispatchEvent(new Event("pagehide")); });
+    await settle();
+    const save = vi.mocked(fetch).mock.calls.find(([input, init]) =>
+      String(input).endsWith("/api/terminal/layout") && init?.method === "PUT");
+    expect(JSON.parse(String(save?.[1]?.body)).tabs[0].label).toBe("azure-drift");
+
+    unavailable = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByRole("heading", { level: 2, name })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `Open ${WORKSPACE_ID}:${SECOND_TAB_ID}` }));
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: "agent-b" })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(`${WORKSPACE_ID}:${SECOND_TAB_ID}`);
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("follows focus between restored split panes without replacing their attachment tree", async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [workspace([
+        tab(TAB_ID, "agent-a"), tab(SECOND_TAB_ID, "agent-b"),
+      ])] });
+      if (url.endsWith("/api/terminal/layout") && !init?.method) return json({
+        activeTabId: "saved-tab", sidebarOpen: true,
+        tabs: [{ id: "saved-tab", label: "azure-drift", paneTree: {
+          type: "split", direction: "horizontal", ratio: 0.5, children: [
+            { type: "pane", id: "left-pane", cwd: "projects", sessionId: REF_KEY },
+            { type: "pane", id: "right-pane", cwd: "projects", sessionId: `${WORKSPACE_ID}:${SECOND_TAB_ID}` },
+          ],
+        } }],
+      });
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    const paneProps = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: unknown; onFocusPane: (id: string) => void;
+    };
+    expect(paneProps.paneTree).toMatchObject({ type: "split", children: [{ id: "left-pane" }, { id: "right-pane" }] });
+    expect(screen.getByRole("heading", { level: 2, name: "agent-a" })).toBeTruthy();
+    act(() => paneProps.onFocusPane("right-pane"));
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: "agent-b" })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: unknown }).paneTree).toBe(paneProps.paneTree);
+    act(() => paneProps.onFocusPane("left-pane"));
+    await settle();
+    expect(screen.getByRole("heading", { level: 2, name: "agent-a" })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: unknown }).paneTree).toBe(paneProps.paneTree);
+  });
+
+  it("keeps the first created Desktop shell visible before inventory polling catches up", async () => {
+    let listed = false;
+    let createdName = "";
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: listed
+        ? [workspace([tab(SECOND_TAB_ID, createdName)])] : [] });
+      if (url.endsWith("/api/terminal/workspaces/ensure")) return json({ workspace: workspace([]) });
+      if (url.endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") {
+        createdName = JSON.parse(String(init.body)).name;
+        return json({ tab: tab(SECOND_TAB_ID, createdName) }, 201);
+      }
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    expect(screen.getByText("No shell sessions yet")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "New shell session" })[0]!);
+    await settle();
+    expect(screen.queryByText("No shell sessions yet")).toBeNull();
+    const tree = (paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree;
+    expect(tree.sessionId).toBe(`${WORKSPACE_ID}:${SECOND_TAB_ID}`);
+    listed = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByRole("heading", { level: 2, name: createdName })).toBeTruthy();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: unknown }).paneTree).toBe(tree);
+  });
+
+  // Fault detected (Greptile on #3299): moving focus to another shell before the next
+  // inventory poll re-reported the sidebar's stale empty count, so Web Desktop replaced the
+  // live panes with "No shell sessions yet" until polling caught up.
+  it("keeps new Desktop shells visible when focus moves before inventory catches up", async () => {
+    const created = [SECOND_TAB_ID, TAB_ID];
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [] });
+      if (url.endsWith("/api/terminal/workspaces/ensure")) return json({ workspace: workspace([]) });
+      if (url.endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST") {
+        return json({ tab: tab(created.shift()!, JSON.parse(String(init.body)).name) }, 201);
+      }
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: "New shell session" })[0]!);
+    await settle();
+    fireEvent.keyDown(screen.getByRole("application", { name: "Terminal" }), { key: "t", ctrlKey: true, shiftKey: true });
+    await settle();
+    expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(`${WORKSPACE_ID}:${TAB_ID}`);
+    expect(screen.queryByText("No shell sessions yet")).toBeNull();
   });
 
   it("creates a tab under the ensured workspace", async () => {

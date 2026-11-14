@@ -13,6 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
@@ -434,14 +435,10 @@ export class TerminalRuntime {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    const tab = workspace.tabs[ref.tabId];
-    if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
-    await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
-    return this.store.renameTab(ref, input);
+  renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+    // The display name is owner metadata. Zellij's random internal name is the
+    // durable identity used by reconciliation and must survive a UI rename.
+    return this.store.renameTab(refInput, input);
   }
 
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace> {
@@ -710,14 +707,20 @@ export class TerminalRuntime {
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
-            void this.handleAttachmentExit(key, exitCode)
-              .catch((error: unknown) => { console.error("[terminal-runtime] failed to record terminal attachment exit", error); })
-              .finally(releasePaneClosure);
+            void this.runWorkspaceMutation(async () => {
+              try {
+                await disconnectAttachmentClient({
+                  current: () => this.attachments.get(key) === next,
+                  viewers: [...next.viewers.values()],
+                  close: () => this.closeAttachment(key, true),
+                });
+              } finally { releasePaneClosure(); }
+            }).catch((error: unknown) => { console.error("[terminal-runtime] failed to disconnect terminal client", error); });
           },
         }), (data) => { void this.broadcast(key, data); });
         next.handle = bootstrap.handle;
         this.attachments.set(key, next);
-        if (openingExit) { await this.handleAttachmentExit(key, openingExit.exitCode); throw new Error("Terminal tab unavailable"); }
+        if (openingExit) { await this.closeAttachment(key, true); throw new Error("Terminal tab unavailable"); }
       } finally { openingExit?.release(); }
       attachment = next;
     }

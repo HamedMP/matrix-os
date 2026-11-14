@@ -1,3 +1,4 @@
+import { useShellsWithAgentStatus } from "./useShellsWithAgentStatus";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { deleteTerminalSession } from "./terminal-session-delete";
 import type { TerminalWorkspace } from "@matrix-os/contracts";
@@ -42,6 +43,7 @@ import {
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
+import type { DesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -224,10 +226,11 @@ export function LocalTerminalSidebar({
 }: {
   canvasZoom?: number;
   desktopParity?: boolean;
-  onDesktopSessionStateChange?: (state: { count: number; ready: boolean }) => void;
+  onDesktopSessionStateChange?: (state: Partial<DesktopTerminalSessionState>) => void;
 } = {}) {
   const ctx = useTerminalAppContext();
-  const [shells, setShells] = useState<ShellSessionSummary[]>([]);
+  const [listedShells, setShells] = useState<ShellSessionSummary[]>([]);
+  const shells = useShellsWithAgentStatus(listedShells);
   const [shellsAuthoritative, setShellsAuthoritative] = useState(false);
   const [shellsStale, setShellsStale] = useState(false);
   const [shellsLoading, setShellsLoading] = useState(false);
@@ -571,9 +574,13 @@ export function LocalTerminalSidebar({
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   const desktopSessionCount = shellsAuthoritative ? shells.length : 0;
   const desktopSessionsReady = shellsAuthoritative || Boolean(shellsError);
+  const desktopSessionName = shells.find((shell) => shell.name === activeShellName)?.subtitle?.trim();
   useEffect(() => {
     onDesktopSessionStateChange?.({ count: desktopSessionCount, ready: desktopSessionsReady });
   }, [desktopSessionCount, desktopSessionsReady, onDesktopSessionStateChange]);
+  useEffect(() => {
+    onDesktopSessionStateChange?.({ sessionId: activeShellName, name: desktopSessionName });
+  }, [activeShellName, desktopSessionName, onDesktopSessionStateChange]);
   const queueFocusAfterManagedShellDelete = (shellName: string) => {
     const shellIndex = unfilteredRenderedShells.findIndex((shell) => shell.name === shellName);
     const remainingShells = unfilteredRenderedShells.filter((shell) => shell.name !== shellName);

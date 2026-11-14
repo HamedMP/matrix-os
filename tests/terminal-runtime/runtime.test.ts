@@ -179,8 +179,10 @@ class FakeZellij implements ZellijRuntimeAdapter {
       await deletedPause.wait;
     }
   }
-  async renameTab(_sessionName: string, tabId: number, name: string): Promise<void> {
+  async renameTab(sessionName: string, tabId: number, name: string): Promise<void> {
     this.renamedTabs.push({ tabId, name });
+    const tab = this.sessions.get(sessionName)?.get(tabId);
+    if (tab) tab.name = name;
   }
   async resizeSession(_sessionName: string, size: { cols: number; rows: number }): Promise<void> {
     this.resizedSessions.push(size);
@@ -266,7 +268,7 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
-  it("rejects an attachment when its pane exits while the adapter is opening it", async () => {
+  it("rejects an attachment when its client exits during opening without ending the program", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
     const store = new TerminalWorkspaceStore({ homePath });
@@ -281,7 +283,7 @@ describe("project-scoped terminal runtime", () => {
       send: () => undefined,
     })).rejects.toThrow("Terminal tab unavailable");
     await runtime.flushCheckpoints();
-    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "exited", exitCode: 17 });
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "running" });
     expect(zellij.attachments.size).toBe(0);
     await runtime.shutdown();
   });
@@ -1603,6 +1605,30 @@ describe("project-scoped terminal runtime", () => {
     expect(restartedZellij.sessions.size).toBe(1);
     expect([...restartedZellij.sessions.values()][0]?.size).toBe(0);
     await restartedRuntime.shutdown();
+  });
+
+  it("keeps a renamed tab live with the same runtime identity after reconciliation", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-rename-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    try {
+      const workspace = await runtime.ensureWorkspace();
+      const tab = await runtime.createTab(workspace.id, { name: "before", cwd: "" });
+      const ref = { workspaceId: workspace.id, tabId: tab.id };
+      const original = (await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!;
+      await runtime.renameTab(ref, { name: "agent-a", baseRevision: tab.revision });
+      await runtime.restoreAll();
+      expect(await store.getTab(ref)).toMatchObject({ name: "agent-a", status: "running", incarnation: tab.incarnation });
+      const current = (await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!;
+      expect(current).toMatchObject({ zellijTabName: original.zellijTabName, zellijTabId: original.zellijTabId, zellijPaneId: original.zellijPaneId });
+      expect(zellij.sessions.get((await store.getRuntimeWorkspace(workspace.id))!.zellijSessionName)?.size).toBe(1);
+      expect(zellij.renamedTabs).toEqual([]);
+      const viewer = await runtime.attach(ref, { viewerId: "after-rename", send: () => undefined });
+      await expect(viewer.write("same-process")).resolves.toBeUndefined();
+      await viewer.detach();
+    } finally { await runtime.shutdown(); }
   });
 
   it("separates detach, tab termination, canonical hard sizing, and confirmed workspace deletion", async () => {
