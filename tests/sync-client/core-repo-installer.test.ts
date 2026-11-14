@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lutimesSync, readlinkSync, symlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lutimesSync, readlinkSync, symlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -286,7 +286,9 @@ describe("Matrix Core repo installer", () => {
       renewedDuringRun = Date.now() - statSync(lock).mtimeMs < 60_000;
       writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "someone-else" }));
     };
-    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: slowSync, lockHeartbeatMs: 20 });
+    // The takeover at the end of the sync stops the run before it touches anything else.
+    await expect(installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: slowSync, lockHeartbeatMs: 20 }))
+      .rejects.toMatchObject({ code: "locked" });
     expect(renewedDuringRun).toBe(true);
     expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
   });
@@ -301,6 +303,92 @@ describe("Matrix Core repo installer", () => {
     await expect(installCoreRepo({ root, transport: transportFor(pins, bytes), runSkillSync: takeOver })).rejects.toMatchObject({ code: "locked" });
     expect(existsSync(join(root, "org_beta1"))).toBe(false);
     expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
+  });
+
+  // Fault: a run that stops after switching `current` during an org rename, before unlinking the old
+  // namespace, leaves `org-<old>-*` skills linked forever (the next run sees an unchanged release).
+  it("retries an interrupted namespace move on the next run before reporting current", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    const renamed = transportFor([pinFor(a, bytes.get(a)!, "acme-co")], bytes);
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    // Capture the org exactly as a crash at the old-namespace unlink would leave it, then restore that state.
+    const snapshot = mkdtempSync(join(tmpdir(), "core-crash-"));
+    try {
+      const crashAtUnlink = async (input: { source: string; namespace: string }) => {
+        if (input.namespace !== "org-acme-" || readdirSync(input.source).length > 0) return;
+        cpSync(orgRoot, join(snapshot, "org"), { recursive: true, verbatimSymlinks: true });
+        throw new Error("killed");
+      };
+      await installCoreRepo({ root, transport: renamed, runSkillSync: crashAtUnlink });
+      rmSync(orgRoot, { recursive: true, force: true });
+      cpSync(join(snapshot, "org"), orgRoot, { recursive: true, verbatimSymlinks: true });
+    } finally {
+      rmSync(snapshot, { recursive: true, force: true });
+    }
+    expect(readlinkSync(join(orgRoot, "current"))).toBe(`releases/${a}-acme-co`);
+
+    const failing = recordingSync(call => call.emptySource);
+    expect(await installCoreRepo({ root, transport: renamed, runSkillSync: failing.run })).toEqual([{ orgId: "org_acme1", status: "failed", commit: a }]);
+    const sync = recordingSync();
+    expect(await installCoreRepo({ root, transport: renamed, runSkillSync: sync.run })).toEqual([{ orgId: "org_acme1", status: "current", commit: a }]);
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-", true], ["org-acme-co-", false]]);
+    sync.calls.length = 0;
+    await installCoreRepo({ root, transport: renamed, runSkillSync: sync.run });
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-co-", false]]);
+  });
+
+  // Fault: a failed first install whose unlink also fails drops `current`, so a later org removal never unlinks its skills.
+  it("keeps a failed first install's namespace until it is unlinked, and unlinks it when the org is removed", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    expect(await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: recordingSync(() => true).run }))
+      .toEqual([{ orgId: "org_acme1", status: "failed" }]);
+    expect(await installCoreRepo({ root, transport: transportFor([], bytes), runSkillSync: recordingSync(() => true).run }))
+      .toEqual([{ orgId: "org_acme1", status: "failed" }]);
+    expect(existsSync(orgRoot)).toBe(true);
+    const sync = recordingSync();
+    expect(await installCoreRepo({ root, transport: transportFor([], bytes), runSkillSync: sync.run })).toEqual([{ orgId: "org_acme1", status: "removed" }]);
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-", true]]);
+    expect(existsSync(orgRoot)).toBe(false);
+  });
+
+  // Fault: a run reclaimed as hung resumes and replaces `current` or prunes the newer run's release.
+  it("stops before switching current or pruning once another run takes the lock mid-install", async () => {
+    const lock = join(root, ".lock");
+    const a = "a".repeat(40), b = "b".repeat(40), c = "c".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])], [b, good(b, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    const transport: CoreRepoTransport = {
+      listPins: async () => ({ pins: [pinFor(b, bytes.get(b)!)], membershipVerified: true }),
+      downloadTarball: async (pin) => {
+        // Meanwhile another run took the lock and installed a newer release.
+        mkdirSync(join(orgRoot, "releases", `${c}-acme`));
+        writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "someone-else" }));
+        return bytes.get(pin.commit)!;
+      },
+    };
+    const sync = vi.fn(async () => {});
+    await expect(installCoreRepo({ root, transport, runSkillSync: sync })).rejects.toMatchObject({ code: "locked" });
+    expect(readlinkSync(join(orgRoot, "current"))).toBe(`releases/${a}-acme`);
+    expect(existsSync(join(orgRoot, "releases", `${c}-acme`))).toBe(true);
+    expect(existsSync(join(orgRoot, "releases", `${b}-acme`))).toBe(false);
+    expect(sync).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
+  });
+
+  // Fault: a run that lost the lock during an org's skill removal still deletes the org's files.
+  it("keeps a removed org's files once another run takes the lock during its unlink", async () => {
+    const lock = join(root, ".lock");
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    const takeOver = async () => { writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "someone-else" })); };
+    await expect(installCoreRepo({ root, transport: transportFor([], bytes), runSkillSync: takeOver })).rejects.toMatchObject({ code: "locked" });
+    expect(existsSync(join(root, "org_acme1", "current"))).toBe(true);
   });
 
   // Fault: a timer installed with the VPS machine credential cannot load it at run time and falls back to CLI login.

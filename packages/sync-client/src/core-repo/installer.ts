@@ -27,6 +27,7 @@ import {
 } from "@matrix-os/contracts";
 import { extractCoreRepoArchive, sha256Hex } from "./archive.js";
 import { CoreRepoLockedError, acquireCoreRepoLock, type CoreRepoLock } from "./lock.js";
+import { STATE_TEMP_PREFIX, readStateList, writeStateList } from "./state.js";
 
 const execFileAsync = promisify(execFile);
 const ORG_DIR = /^org_[A-Za-z0-9]{1,124}$/;
@@ -63,7 +64,10 @@ export const DEFAULT_SKILL_TARGETS: readonly string[] = ["matrix", "claude", "co
 const KNOWN_SKILL_TARGETS = new Set(["matrix", "claude", "codex", "hermes", "agent"]);
 const MAX_SKILL_TARGETS = 16;
 const TARGETS_FILE = ".matrix-core-targets.json";
-const TARGETS_TEMP_PREFIX = ".targets-";
+/** Skill namespaces a run moved away from (rename, failed install) and has not yet unlinked. */
+const PENDING_FILE = ".matrix-core-pending.json";
+const NAMESPACE = /^org-[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?-$/;
+const MAX_PENDING = 16;
 /** Temporary links created by `pointAt` before they are renamed over `current`/`previous`. */
 const POINTER_TEMP_PATTERN = /^\.(current|previous)-\d+-\d+$/;
 
@@ -246,7 +250,7 @@ async function sweepStaging(orgRoot: string, now: number): Promise<void> {
       if (link.isSymbolicLink() && now - link.mtimeMs > STAGING_TTL_MS) await rm(path, { force: true });
       continue;
     }
-    if (!staging && !entry.startsWith(TARGETS_TEMP_PREFIX)) continue;
+    if (!staging && !entry.startsWith(STATE_TEMP_PREFIX)) continue;
     const info = await lstat(path);
     if (info.isSymbolicLink() || now - info.mtimeMs <= STAGING_TTL_MS) continue;
     // Staging leftovers are directories; targets temp files are regular files. Nothing else is touched.
@@ -264,29 +268,55 @@ async function pruneReleases(orgRoot: string, keep: readonly string[]): Promise<
 }
 
 /** Every agent this org was ever linked into on this machine (a union across installs). */
-async function recordedTargets(orgRoot: string): Promise<string[]> {
-  try {
-    const value = JSON.parse(await readFile(join(orgRoot, TARGETS_FILE), "utf8")) as unknown;
-    return Array.isArray(value) ? value.filter((target): target is string => typeof target === "string" && KNOWN_SKILL_TARGETS.has(target)).slice(0, MAX_SKILL_TARGETS) : [];
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return [];
-    throw error;
-  }
+function recordedTargets(orgRoot: string): Promise<string[]> {
+  return readStateList(orgRoot, TARGETS_FILE, target => KNOWN_SKILL_TARGETS.has(target), MAX_SKILL_TARGETS);
 }
 
 function currentTargets(options: InstallOptions): string[] {
   return options.targets === undefined ? [...DEFAULT_SKILL_TARGETS] : parseSkillTargets(options.targets.join(","));
 }
 
-/** Atomic replace; the temp file is removed if the write or rename fails (stale ones are swept too). */
-async function writeTargets(orgRoot: string, targets: readonly string[]): Promise<void> {
-  const temporary = join(orgRoot, `${TARGETS_TEMP_PREFIX}${process.pid}-${Date.now()}`);
-  try {
-    await writeFile(temporary, JSON.stringify([...new Set(targets)].slice(0, MAX_SKILL_TARGETS)), { flag: "wx" });
-    await rename(temporary, join(orgRoot, TARGETS_FILE));
-  } catch (error: unknown) {
-    await rm(temporary, { force: true });
-    throw error;
+/** One install run; `held()` throws `CoreRepoInstallError("locked")` once another run owns the lock. */
+interface RunContext extends InstallOptions {
+  held(): Promise<void>;
+}
+
+/** Lock loss stops the whole run; it is never reported as one org's failure. */
+function rethrowLockLoss(error: unknown): void {
+  if (error instanceof CoreRepoInstallError && error.code === "locked") throw error;
+}
+
+async function writeTargets(ctx: RunContext, orgRoot: string, targets: readonly string[]): Promise<void> {
+  await ctx.held();
+  await writeStateList(orgRoot, TARGETS_FILE, targets, MAX_SKILL_TARGETS);
+}
+
+const pendingNamespaces = (orgRoot: string) => readStateList(orgRoot, PENDING_FILE, namespace => NAMESPACE.test(namespace), MAX_PENDING);
+
+async function addPending(ctx: RunContext, orgRoot: string, namespace: string): Promise<void> {
+  const pending = await pendingNamespaces(orgRoot);
+  if (pending.includes(namespace)) return;
+  await ctx.held();
+  await writeStateList(orgRoot, PENDING_FILE, [...pending, namespace], MAX_PENDING);
+}
+
+async function clearPending(ctx: RunContext, orgRoot: string, namespace: string): Promise<void> {
+  const pending = await pendingNamespaces(orgRoot);
+  if (!pending.includes(namespace)) return;
+  await ctx.held();
+  await writeStateList(orgRoot, PENDING_FILE, pending.filter(entry => entry !== namespace), MAX_PENDING);
+}
+
+/**
+ * Unlinks namespaces an interrupted or failed run left pending, except `keep`
+ * (this run links it, and clears it only once that link succeeds). Throws on
+ * the first failure, so the org is not reported current or removed.
+ */
+async function settlePending(ctx: RunContext, orgRoot: string, keep?: string): Promise<void> {
+  for (const namespace of await pendingNamespaces(orgRoot)) {
+    if (namespace === keep) continue;
+    await unlinkNamespace(ctx, orgRoot, namespace);
+    await clearPending(ctx, orgRoot, namespace);
   }
 }
 
@@ -297,31 +327,36 @@ async function writeTargets(orgRoot: string, targets: readonly string[]): Promis
  * leaves the record only after that unlink succeeds. The new targets are
  * recorded before linking, so a crash mid-sync still knows where to clean up.
  */
-async function linkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
-  const targets = currentTargets(options);
+async function linkNamespace(ctx: RunContext, orgRoot: string, namespace: string): Promise<void> {
+  const targets = currentTargets(ctx);
   let recorded = await recordedTargets(orgRoot);
   const dropped = recorded.filter(target => !targets.includes(target));
   if (dropped.length > 0) {
     const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
     try {
-      await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets: dropped });
+      await ctx.held();
+      await ctx.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets: dropped });
       recorded = recorded.filter(target => targets.includes(target));
     } catch (error: unknown) {
+      rethrowLockLoss(error);
       console.warn("[core-repo] dropped-agent unlink failed; retried next run", error instanceof Error ? error.name : "UnknownError");
     } finally {
       await rm(empty, { recursive: true, force: true });
     }
   }
-  await writeTargets(orgRoot, [...recorded, ...targets]);
-  await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot, targets });
+  await writeTargets(ctx, orgRoot, [...recorded, ...targets]);
+  await ctx.held();
+  await ctx.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot, targets });
+  await clearPending(ctx, orgRoot, namespace);
 }
 
 /** Unlinks every skill in `namespace` that points into this org's root, in every agent it was ever linked into. */
-async function unlinkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
-  const targets = [...new Set([...(await recordedTargets(orgRoot)), ...currentTargets(options)])];
+async function unlinkNamespace(ctx: RunContext, orgRoot: string, namespace: string): Promise<void> {
+  const targets = [...new Set([...(await recordedTargets(orgRoot)), ...currentTargets(ctx)])];
   const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
   try {
-    await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets });
+    await ctx.held();
+    await ctx.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets });
   } finally {
     await rm(empty, { recursive: true, force: true });
   }
@@ -331,78 +366,110 @@ function warnStep(step: string, orgId: string, error: unknown): void {
   console.warn(`[core-repo] ${step} failed`, { orgId, error: error instanceof Error ? error.name : "UnknownError" });
 }
 
-async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<CoreRepoInstallResult> {
-  const orgRoot = join(options.root, pin.orgId);
+/** A best-effort rollback step: logged on failure, except lock loss, which stops the run. */
+const softly = (step: string, orgId: string) => (error: unknown) => { rethrowLockLoss(error); warnStep(step, orgId, error); };
+
+async function installPin(ctx: RunContext, pin: CoreRepoPin): Promise<CoreRepoInstallResult> {
+  const orgRoot = join(ctx.root, pin.orgId);
   await mkdir(join(orgRoot, "releases"), { recursive: true });
   await sweepStaging(orgRoot, Date.now());
   const before = await currentMeta(orgRoot);
+  const namespace = coreRepoSkillNamespace(pin.slug);
   // The slug is part of what is installed: a renamed org must move namespaces even at the same commit.
-  if (before?.commit === pin.commit && before.slug === pin.slug) {
+  const unchanged = before?.commit === pin.commit && before.slug === pin.slug;
+  try {
+    await settlePending(ctx, orgRoot, namespace);
+  } catch (error: unknown) {
+    rethrowLockLoss(error);
+    warnStep("pending namespace unlink", pin.orgId, error);
+    return { orgId: pin.orgId, status: "failed", ...(unchanged ? { commit: pin.commit } : {}) };
+  }
+  if (unchanged) {
     // Same release, but agents (targets) may have been added since: relink it. The script is idempotent.
     try {
-      await linkNamespace(options, orgRoot, coreRepoSkillNamespace(pin.slug));
+      await linkNamespace(ctx, orgRoot, namespace);
     } catch (error: unknown) {
+      rethrowLockLoss(error);
       warnStep("skill relink", pin.orgId, error);
       return { orgId: pin.orgId, status: "failed", commit: pin.commit };
     }
     return { orgId: pin.orgId, status: "current", commit: pin.commit };
   }
-  const namespace = coreRepoSkillNamespace(pin.slug);
   const previousNamespace = before && before.slug !== pin.slug ? coreRepoSkillNamespace(before.slug) : undefined;
   const staging = await mkdtemp(join(orgRoot, STAGING_PREFIX));
   const releaseName = `releases/${pin.commit}-${pin.slug}`;
   let rejectedSkills: string[];
   try {
-    const bytes = await options.transport.downloadTarball(pin);
+    const bytes = await ctx.transport.downloadTarball(pin);
     if (bytes.byteLength !== pin.bytes || sha256Hex(bytes) !== pin.sha256) throw new Error("CoreRepoChecksumMismatch");
     const release = join(staging, "release");
     await mkdir(release);
     const files = await extractCoreRepoArchive(bytes, release);
     rejectedSkills = await buildSkills(release, files, namespace);
     await writeFile(join(release, META_FILE), JSON.stringify({ orgId: pin.orgId, slug: pin.slug, commit: pin.commit, sha256: pin.sha256 }), { flag: "wx" });
+    await ctx.held();
     await rm(join(orgRoot, releaseName), { recursive: true, force: true });
     await rename(release, join(orgRoot, releaseName));
   } catch (error: unknown) {
+    rethrowLockLoss(error);
     console.warn("[core-repo] install rejected; previous commit kept", { orgId: pin.orgId, error: error instanceof Error ? error.message.slice(0, 64) : "UnknownError" });
     return { orgId: pin.orgId, status: "failed" };
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
+  // Recorded before `current` moves, so a run that stops before the unlink still knows to clean it up.
+  if (previousNamespace) await addPending(ctx, orgRoot, previousNamespace);
+  await ctx.held();
   await pointAt(orgRoot, "current", releaseName);
   try {
-    if (previousNamespace) await unlinkNamespace(options, orgRoot, previousNamespace);
-    await linkNamespace(options, orgRoot, namespace);
+    if (previousNamespace) {
+      await unlinkNamespace(ctx, orgRoot, previousNamespace);
+      await clearPending(ctx, orgRoot, previousNamespace);
+    }
+    await linkNamespace(ctx, orgRoot, namespace);
   } catch (error: unknown) {
+    rethrowLockLoss(error);
     warnStep("skill sync; rolling back", pin.orgId, error);
+    // Whatever this attempt may have linked stays pending until it is unlinked.
+    if (!before || previousNamespace) await addPending(ctx, orgRoot, namespace).catch(softly("pending namespace record", pin.orgId));
+    const unlinkAttempt = (step: string) => unlinkNamespace(ctx, orgRoot, namespace)
+      .then(() => clearPending(ctx, orgRoot, namespace)).catch(softly(step, pin.orgId));
     if (before) {
+      await ctx.held();
       await pointAt(orgRoot, "current", before.target);
-      if (previousNamespace) await unlinkNamespace(options, orgRoot, namespace).catch((retry: unknown) => warnStep("new namespace unlink", pin.orgId, retry));
-      await linkNamespace(options, orgRoot, coreRepoSkillNamespace(before.slug))
-        .catch((retry: unknown) => warnStep("rollback skill sync", pin.orgId, retry));
+      if (previousNamespace) await unlinkAttempt("new namespace unlink");
+      await linkNamespace(ctx, orgRoot, coreRepoSkillNamespace(before.slug)).catch(softly("rollback skill sync", pin.orgId));
     } else {
       // No earlier release to return to: unlink whatever this attempt linked before dropping `current`.
-      await unlinkNamespace(options, orgRoot, namespace).catch((retry: unknown) => warnStep("failed-install unlink", pin.orgId, retry));
+      await unlinkAttempt("failed-install unlink");
+      await ctx.held();
       await rm(join(orgRoot, "current"), { force: true });
     }
     return { orgId: pin.orgId, status: "failed" };
   }
-  if (before) await pointAt(orgRoot, "previous", before.target);
+  if (before) {
+    await ctx.held();
+    await pointAt(orgRoot, "previous", before.target);
+  }
+  await ctx.held();
   await pruneReleases(orgRoot, before ? [releaseName, before.target] : [releaseName]);
   return { orgId: pin.orgId, status: "installed", commit: pin.commit, ...(rejectedSkills.length > 0 ? { rejectedSkills } : {}) };
 }
 
-/** Membership ended or the org stopped publishing: unlink its skills, then remove its files. */
-async function removeOrg(options: InstallOptions, orgId: string): Promise<CoreRepoInstallResult> {
-  const orgRoot = join(options.root, orgId);
+/** Membership ended or the org stopped publishing: unlink its skills (and any pending ones), then remove its files. */
+async function removeOrg(ctx: RunContext, orgId: string): Promise<CoreRepoInstallResult> {
+  const orgRoot = join(ctx.root, orgId);
   const meta = await currentMeta(orgRoot);
-  if (meta) {
-    try {
-      await unlinkNamespace(options, orgRoot, coreRepoSkillNamespace(meta.slug));
-    } catch (error: unknown) {
-      warnStep("skill removal; files kept", orgId, error);
-      return { orgId, status: "failed" };
-    }
+  const namespace = meta ? coreRepoSkillNamespace(meta.slug) : undefined;
+  try {
+    await settlePending(ctx, orgRoot, namespace);
+    if (namespace) await unlinkNamespace(ctx, orgRoot, namespace);
+  } catch (error: unknown) {
+    rethrowLockLoss(error);
+    warnStep("skill removal; files kept", orgId, error);
+    return { orgId, status: "failed" };
   }
+  await ctx.held();
   await rm(orgRoot, { recursive: true, force: true });
   return { orgId, status: "removed" };
 }
@@ -450,9 +517,10 @@ export async function installCoreRepo(options: InstallOptions): Promise<CoreRepo
         throw error;
       }
     };
+    const ctx: RunContext = { ...options, held: stillHeld };
     for (const pin of pins) {
       await stillHeld();
-      results.push(await installPin(options, pin));
+      results.push(await installPin(ctx, pin));
     }
     // Removal needs confirmed membership loss; an unverified list only installs.
     if (!membershipVerified) return results;
@@ -462,7 +530,7 @@ export async function installCoreRepo(options: InstallOptions): Promise<CoreRepo
       const info = await lstat(join(options.root, entry));
       if (!info.isDirectory() || info.isSymbolicLink()) continue;
       await stillHeld();
-      results.push(await removeOrg(options, entry));
+      results.push(await removeOrg(ctx, entry));
     }
     return results;
   } finally {
