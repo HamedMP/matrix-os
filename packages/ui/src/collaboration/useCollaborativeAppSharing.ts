@@ -175,10 +175,11 @@ export function useCollaborativeAppSharing(input: {
     }
   }, [input.api, input.manageShare, path]);
 
+  // A rebuild can move an active share to needs_recheck, so the share is re-read with readiness.
   useEffect(() => {
     if (input.manageShare) void refreshShare();
     return () => { shareGeneration.current += 1; };
-  }, [input.manageShare, refreshShare]);
+  }, [buildEpoch, input.manageShare, refreshShare]);
 
   const recheck = useCallback(async (rawInput: {
     organizationId: string;

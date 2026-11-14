@@ -186,6 +186,27 @@ describe("collaborative app owner readiness", () => {
     await waitFor(() => expect(view.result.current.state).toBe("blocked"));
   });
 
+  it("re-reads the share with readiness when the build changes, so a needed recheck is not hidden", async () => {
+    let share: unknown = activeShare;
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : share),
+      post: vi.fn(),
+    };
+    const view = renderHook(({ buildEpoch }) => useCollaborativeAppSharing({
+      appId: "team-tracker", api, buildEpoch, manageShare: true,
+    }), { initialProps: { buildEpoch: 0 } });
+    await waitFor(() => expect(view.result.current.share?.state).toBe("active"));
+    const shareReads = () => api.get.mock.calls.filter(([path]) => path.endsWith("/share")).length;
+    expect(shareReads()).toBe(1);
+
+    share = { ...activeShare, state: "needs_recheck" };
+    view.rerender({ buildEpoch: 1 });
+
+    await waitFor(() => expect(view.result.current.share?.state).toBe("needs_recheck"));
+    expect(shareReads()).toBe(2);
+    expect(view.result.current.shareKnown).toBe(true);
+  });
+
   it("uses only bounded safe copy when the response or transport is invalid", async () => {
     const api = {
       get: vi.fn(async () => { throw new Error("postgres password=private"); }),

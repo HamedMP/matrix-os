@@ -230,6 +230,23 @@ describe("Web Publish app organization sharing", () => {
     await waitFor(() => expect(readinessReads()).toBe(2));
   });
 
+  it("re-reads the share on a rebuild so an open popover offers the recheck", async () => {
+    render(<Window />);
+    const dialog = await openPublish();
+    const summary = await within(dialog).findByRole("button", { name: /Shared with Matrix team/ });
+    await waitFor(() => expect(summary.textContent).toContain("Active for all current members"));
+    fireEvent.click(summary);
+    await within(dialog).findByRole("button", { name: "Stop sharing" });
+    expect(within(dialog).queryByRole("button", { name: "Check collaboration" })).toBeNull();
+
+    server.share["shared-tasks-lab"] = { ...activeShare, state: "needs_recheck" };
+    act(() => { notifyOwnerAppSharing("shared-tasks-lab", "build-changed"); });
+
+    await within(dialog).findByRole("button", { name: "Check collaboration" });
+    expect(dialog.querySelector('[data-sharing-status="active"]')).toBeNull();
+    expect(dialog.querySelector('[data-sharing-status="needs_recheck"]')).toBeTruthy();
+  });
+
   it("never applies a late share read to another app or account", async () => {
     server.pendingShare["shared-tasks-lab"] = deferred();
     const view = render(<Window />);
