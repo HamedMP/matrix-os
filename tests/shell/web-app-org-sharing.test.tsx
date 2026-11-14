@@ -270,6 +270,48 @@ describe("Web Publish app organization sharing", () => {
   });
 });
 
+describe("Web organization sharing recovery", () => {
+  it("retries an unavailable member roster", async () => {
+    let rosterFailures = 1;
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname.startsWith("/api/organizations/org_matrix/members") && rosterFailures-- > 0) {
+        return json({ error: "upstream" }, 503);
+      }
+      return base(input, init);
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<Window />);
+    const dialog = await openPublish();
+    fireEvent.click(await within(dialog).findByRole("button", { name: /Shared with Matrix team/ }));
+    await within(dialog).findByText("Members are unavailable.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+    expect(await within(dialog).findByRole("list", { name: "Members of Matrix team" })).toBeTruthy();
+  });
+
+  it("says organizations are unavailable instead of offering a share target", async () => {
+    server.share["shared-tasks-lab"] = null;
+    render(<Window organization={{ status: "unavailable", organizationId: null }} />);
+    const dialog = await openPublish();
+    const summary = await within(dialog).findByRole("button", { name: /Share with your organization/ });
+    await waitFor(() => expect(summary.textContent).toContain("Organizations are unavailable. Try again later."));
+  });
+
+  it("ignores malformed or unrelated sharing events", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeOwnerAppSharing("shared-tasks-lab", "share-changed", listener);
+    window.dispatchEvent(new CustomEvent("matrix:owner-app-sharing", { detail: { appId: "shared-tasks-lab", kind: "deleted" } }));
+    window.dispatchEvent(new CustomEvent("matrix:owner-app-sharing", { detail: "shared-tasks-lab" }));
+    window.dispatchEvent(new CustomEvent("matrix:owner-app-sharing", { detail: null }));
+    notifyOwnerAppSharing("shared-tasks-lab", "build-changed");
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+    notifyOwnerAppSharing("shared-tasks-lab", "share-changed");
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
 describe("Web Mobile Publish app entry", () => {
   function MobileHeader({ path, shared = false }: { path: string; shared?: boolean }) {
     return <OrganizationStateProvider value={MEMBER}>
