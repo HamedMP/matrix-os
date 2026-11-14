@@ -216,7 +216,11 @@ export default function AppLauncher({
 
   const open = (entry: LauncherEntry) => {
     if (entry.type === "shared") {
-      const tabId = openTab({ kind: "app", slug: entry.target.appId, title: entry.name, sharedAppTarget: entry.target });
+      // The running app's taskbar tab keeps the owner's artwork from the same presentation the tile used.
+      const tabId = openTab({
+        kind: "app", slug: entry.target.appId, title: entry.name, sharedAppTarget: entry.target,
+        ...(entry.iconUrl ? { icon: entry.iconUrl } : {}),
+      });
       onLaunch?.(tabId);
       return;
     }

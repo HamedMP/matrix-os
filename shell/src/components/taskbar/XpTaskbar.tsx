@@ -9,8 +9,8 @@ import {
   TaskbarClock,
   XpFlagLogo,
 } from "./taskbar-shared";
+import { windowAppEntry } from "@/lib/window-app-entry";
 import {
-  baseWindowPath,
   resolveBuiltInStartApps,
   useStartMenuDismiss,
 } from "./taskbar-utils";
@@ -41,9 +41,6 @@ export function XpTaskbar({
     (best, w) => (!w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best),
     undefined,
   );
-  const appIconByPath = new Map(apps.map((a) => [a.path, a.iconUrl]));
-  const iconForWindow = (winPath: string) =>
-    appIconByPath.get(baseWindowPath(winPath)) ?? appIconByPath.get(winPath);
   const quickLaunchApps = resolveBuiltInStartApps(apps);
 
   const onTaskButtonClick = (win: AppWindow) => {
@@ -102,7 +99,7 @@ export function XpTaskbar({
               aria-pressed={focusedWindow?.id === win.id}
               onClick={() => onTaskButtonClick(win)}
             >
-              <TaskbarAppIcon name={win.title} iconUrl={iconForWindow(win.path)} size={16} />
+              <TaskbarAppIcon name={win.title} iconUrl={windowAppEntry(win, apps).iconUrl} size={16} />
               <span className="xp-task-button-label">{win.title}</span>
             </button>
           ))}

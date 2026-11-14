@@ -9,6 +9,7 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events";
+import SurfaceIcon from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceIcon";
 
 describe("AppLauncher", () => {
   beforeEach(() => {
@@ -93,6 +94,34 @@ describe("AppLauncher", () => {
     expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "app", title: "Sprint Board", sharedAppTarget: target }),
     ]));
+  });
+
+  it("keeps the owner's shared artwork on the running app's taskbar tab, separate from a same-slug own app", async () => {
+    const iconPath = `/api/collaboration/shared-apps/10000000-0000-4000-8000-000000000001/artwork/${"c".repeat(64)}`;
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+      presentation: { name: "Sprint Board", iconUrl: iconPath },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    render(<AppLauncher presentation="launchpad" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sprint Board" }));
+    useTabs.getState().openTab({ kind: "app", slug: "shared-tasks-lab", title: "Shared Tasks Lab", icon: "https://platform.test/icons/own.png" });
+
+    const tabs = useTabs.getState().tabs.filter((tab) => tab.kind === "app");
+    const sharedTab = tabs.find((tab) => tab.sharedAppTarget?.scopeId === target.scopeId)!;
+    const ownTab = tabs.find((tab) => !tab.sharedAppTarget)!;
+    expect(sharedTab.icon).toBe(`https://platform.test${iconPath}`);
+    expect(ownTab.icon).toBe("https://platform.test/icons/own.png");
+    const { container } = render(<SurfaceIcon tab={sharedTab} size={44} />);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
   });
 
   it("retries shared artwork whenever its URL changes, including a URL that failed earlier", async () => {
