@@ -31,13 +31,14 @@ const key = (owner: string, site: string, version: string, path: string) => `${s
 function ownership(db: PlatformDB, owner: SiteOwner) {
     return db.executor.selectFrom('public_sites').selectAll().where('owner_id', '=', owner.ownerId).where('machine_id', '=', owner.machineId).where('app_slug', '=', owner.appSlug);
 }
-async function project(db: PlatformDB, row: Selectable<SitesTable>): Promise<SiteRecord> {
+async function project(db: PlatformDB, row: Selectable<SitesTable>, emailCapability?: () => Promise<boolean>): Promise<SiteRecord> {
     const versions = await db.executor.selectFrom('public_site_versions').select(['id', 'created_at']).where('site_id', '=', row.id).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(50).execute();
     const active = row.active_version ? await db.executor.selectFrom('public_site_versions').select('config').where('id', '=', row.active_version).where('site_id', '=', row.id).executeTakeFirst() : undefined;
     return SiteRecordSchema.parse({ id: row.id, appSlug: row.app_slug, title: row.title, description: row.description, slug: row.slug,
         url: `https://matrix.page/${row.slug ?? row.id}`, revision: row.revision, status: row.status, accessMode: row.access_mode,
         activeVersion: row.active_version,
-        versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}) });
+        versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}),
+        ...(emailCapability ? { capabilities: { privateEmailInvitations: await emailCapability() } } : {}) });
 }
 function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now = Date.now()): SiteAccessLinkSummary {
     const expired = Date.parse(row.claimed_at ? row.session_expires_at! : row.claim_expires_at) <= now;
@@ -63,6 +64,7 @@ export function createSitesService(options: {
     storage?: Storage;
     env?: NodeJS.ProcessEnv;
     captureEvent?: SiteTelemetryCapture;
+    emailCapability?: () => Promise<boolean>;
 }) {
     const { db, storage } = options;
     const captureEvent = options.captureEvent;
@@ -76,7 +78,7 @@ export function createSitesService(options: {
     const privateFrames = new Map<string, { expiresAt: number; value: Promise<string> }>();
     const PRIVATE_FRAME_CACHE_MAX = 4;
     const PRIVATE_FRAME_CACHE_TTL_MS = 5 * 60_000;
-    async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
+    async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row, options.emailCapability) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
         const row = await scoped.executor.selectFrom('public_sites').selectAll().where(eb => eb.or([
@@ -87,7 +89,7 @@ export function createSitesService(options: {
                 .whereRef('user_machines.clerk_user_id', '=', 'public_sites.owner_id')
                 .where('deleted_at', 'is', null).where('status', '!=', 'deleted')))
             .executeTakeFirst();
-        return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
+        return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row, options.emailCapability) : null;
     }
     async function deploy(owner: SiteOwner, input: unknown, publication: { deadlineAt?: number; signal?: AbortSignal } = {}) {
         const now = Date.now();
@@ -167,7 +169,7 @@ export function createSitesService(options: {
                 check();
                 if (!changed)
                     throw new SiteError('conflict');
-                const result = await project(trx, changed);
+                const result = await project(trx, changed, options.emailCapability);
                 check(); // Roll back activation if any awaited DB work crossed the deadline.
                 activationCompleted = true;
                 return result;
@@ -209,7 +211,7 @@ export function createSitesService(options: {
             const next = await trx.executor.updateTable('public_sites').set({ ...changes, revision: row.revision + 1 }).where('id', '=', row.id).where('revision', '=', row.revision).returningAll().executeTakeFirst();
             if (!next)
                 throw new SiteError('conflict');
-            return project(trx, next);
+            return project(trx, next, options.emailCapability);
         }, env));
     }
     async function patch(owner: SiteOwner, input: unknown) {
@@ -323,7 +325,7 @@ export function createSitesService(options: {
             const locked = await trx.executor.selectFrom('public_sites').selectAll().where('id', '=', site.id).forUpdate().executeTakeFirst();
             if (!locked || locked.status !== 'published')
                 throw new SiteError('not_found');
-            const projected = await project(trx, locked);
+            const projected = await project(trx, locked, options.emailCapability);
             if (projected.accessMode === 'private_link') {
                 const credential = readSiteViewerCookie(cookieHeader, projected.id);
                 const link = credential ? await trx.executor.selectFrom('public_site_access_links').selectAll()

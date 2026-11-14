@@ -44,17 +44,21 @@ export function createSiteManagementRoutes(options: {
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
     const usesCurrentContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION;
+    const usesAccessModeContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '2' || usesCurrentContract(c);
     const rejectUnnegotiatedAccessMode = (c: Context, input: unknown) => {
-        if (!usesCurrentContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
+        if (!usesAccessModeContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
             throw new SiteError('invalid_request');
     };
     const siteResponse = (c: Context, site: SiteRecord) => {
         if (usesCurrentContract(c))
             return c.json(site);
-        const { accessMode: _, ...legacySite } = site;
+        const { capabilities: _, ...withoutEmail } = site;
+        if (usesAccessModeContract(c))
+            return c.json(withoutEmail);
+        const { accessMode: __, ...legacySite } = withoutEmail;
         return c.json(legacySite);
     };
-    const accessLinksResponse = (c: Context, result: SiteAccessLinksResponse) => c.json(usesCurrentContract(c) ? result : { links: result.links });
+    const accessLinksResponse = (c: Context, result: SiteAccessLinksResponse) => c.json(usesAccessModeContract(c) ? result : { links: result.links });
     app.get('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const site = await options.service.get(identity); if (!site)
         throw new SiteError('not_found'); return siteResponse(c, site); });

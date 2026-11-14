@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { withSiteOwnerAdmission, eraseOwnerSites, eraseOwnerSiteRegistry } from '../../packages/platform/src/sites/account-lifecycle.js';
 import { SiteError } from '../../packages/platform/src/sites/types.js';
+import { migrateSites } from '../../packages/platform/src/sites/migration.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
 postgres('public sites independent PostgreSQL sessions', () => {
@@ -31,6 +33,43 @@ postgres('public sites independent PostgreSQL sessions', () => {
             await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
             await admin.end();
         }
+    });
+    it('upgrades existing publications to generation 3 without changing old access and enforces invitation state', async () => {
+        const id = randomUUID();
+        await sql`INSERT INTO public_sites (id, owner_id, machine_id, app_slug, title, description, slug, revision, status, active_version, created_at)
+            VALUES (${id}, 'legacy_owner', 'legacy_machine', 'legacy_app', 'Legacy', '', NULL, 0, 'published', NULL, '2026-11-12T00:00:00.000Z')`.execute(dbA.kysely);
+        await sql`ALTER TABLE public_sites DROP CONSTRAINT public_sites_access_mode_check`.execute(dbA.kysely);
+        await sql`ALTER TABLE public_sites ADD CONSTRAINT public_sites_access_mode_check
+            CHECK (access_mode IN ('public','private_link'))`.execute(dbA.kysely);
+        await migrateSites(dbA.kysely);
+        await migrateSites(dbB.kysely);
+        const legacy = await sql<{ access_mode: string }>`SELECT access_mode FROM public_sites WHERE id = ${id}`.execute(dbA.kysely);
+        expect(legacy.rows[0]?.access_mode).toBe('public');
+        const check = await sql<{ definition: string }>`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+            WHERE conrelid = 'public_sites'::regclass AND conname = 'public_sites_access_mode_check'`.execute(dbA.kysely);
+        expect(check.rows).toHaveLength(1);
+        expect(check.rows[0]?.definition).toContain('private_email');
+        const tableNames = [
+            'public_site_email_invitations', 'public_site_viewer_grants', 'public_site_viewer_sessions',
+            'public_site_invitation_deliveries', 'public_site_access_audit_events',
+            'public_site_recipient_lifecycle', 'public_site_clerk_session_terminations',
+        ];
+        for (const table of tableNames) {
+            const found = await sql<{ name: string | null }>`SELECT to_regclass(${table})::text AS name`.execute(dbA.kysely);
+            expect(found.rows[0]?.name, table).toBe(table);
+        }
+        const indexes = await sql<{ indexname: string }>`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()`.execute(dbA.kysely);
+        const names = new Set(indexes.rows.map(row => row.indexname));
+        for (const name of ['public_site_email_invitations_site_email_key', 'public_site_email_invitations_inventory_idx',
+            'public_site_viewer_grants_one_active_identity_idx', 'public_site_viewer_sessions_clerk_session_idx',
+            'public_site_invitation_deliveries_claim_idx']) expect(names.has(name), name).toBe(true);
+        const invitationId = randomUUID();
+        await sql`INSERT INTO public_site_email_invitations
+            (id, site_id, normalized_email, display_email, generation, state, delivery_state,
+             invited_by_clerk_user_id, created_at, issued_at, expires_at, updated_at, revision)
+            VALUES (${invitationId}, ${id}, 'recipient@example.com', 'recipient@example.com', 1,
+                    'pending', 'queued', 'owner', now(), now(), now() + interval '7 days', now(), 0)`.execute(dbA.kysely);
+        await expect(sql`UPDATE public_site_email_invitations SET state = 'accepted' WHERE id = ${invitationId}`.execute(dbA.kysely)).rejects.toThrow();
     });
     it('allows exactly one claim across separate services and independent PostgreSQL connections', async () => {
         const claimant = { ownerId: 'user_private_claim_race', machineId: 'private-claim-race-runtime', appSlug: 'event' };

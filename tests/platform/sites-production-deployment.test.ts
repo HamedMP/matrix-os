@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { checkPublicSitesEnv } from '../../packages/platform/src/platform-startup-env.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { readSiteEmailCapability, type SiteEmailReadiness } from '../../packages/platform/src/sites/registration.js';
+import { sql } from 'kysely';
 
 type Step = { name?: string; run?: string; if?: string };
 const root = process.cwd();
@@ -99,6 +102,19 @@ afterEach(() => {
 });
 
 describe('production Matrix.page deployment contract', () => {
+  it('requires generation 3 and every independent readiness signal before enabling email access', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      const all: SiteEmailReadiness = { edgeExchange: true, clerkInline: true, lifecycleWebhook: true, mailDelivery: true };
+      expect(await readSiteEmailCapability(db, {}, all)).toBe(false);
+      for (const missing of Object.keys(all) as (keyof SiteEmailReadiness)[]) {
+        expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, { ...all, [missing]: false })).toBe(false);
+      }
+      expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, all)).toBe(true);
+      await sql`UPDATE platform_schema_revisions SET generation = 2 WHERE scope = 'sites'`.execute(db.executor);
+      expect(await readSiteEmailCapability(db, { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' }, all)).toBe(false);
+    } finally { await destroyTestPlatformDb(db); }
+  });
   it('narrows endpoint parse failures without hiding unexpected validation errors', () => {
     expect(sitesEnvScript).toContain('catch (error)');
     expect(sitesEnvScript).toContain('error instanceof TypeError');
