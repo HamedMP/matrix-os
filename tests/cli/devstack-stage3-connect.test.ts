@@ -58,6 +58,7 @@ beforeEach(async () => {
           const runId = headers.get('x-devstack-run-id'), key = headers.get('x-devstack-run-key');
           writeFileSync(${JSON.stringify(join(home, 'server-run.json'))}, JSON.stringify({ runId, key, receipt }));
           if (process.env.DEVSTACK_TEST_SOURCE_LOST === "1") throw new Error('fixture response lost after admission');
+          if (process.env.DEVSTACK_TEST_SOURCE_TRUNCATED === "1") return new Response('{"runId":', {status:202});
           return Response.json({runId, runtime:'dev-linux', worktree:'feature-one', status:'running'}, {status:202});
         }
         return Response.json(receipt);
@@ -90,6 +91,15 @@ async function requests() {
 }
 
 describe("hosted matrix devstack", () => {
+  it('keeps the original runId recovery guidance when an accepted response body is incomplete', async () => {
+    await exec('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'Baseline']);
+    const result = await run(repo, ['sync', '--hosted'], {DEVSTACK_TEST_RECOVERY:'1',DEVSTACK_TEST_SOURCE_TRUNCATED:'1'})
+      .catch((error:unknown)=>error) as {code:number;stderr:string};
+    const stored=JSON.parse(await readFile(join(home,'server-run.json'),'utf8'));
+    expect(result).toMatchObject({code:1,stderr:expect.stringContaining('devstack_source_run_pending')});
+    expect(result.stderr).toContain('result --hosted --run-id '+stored.runId);
+    expect(result.stderr).not.toContain('Retry from your worktree');
+  });
   it('recovers the same run from another CLI process after an admitted upload loses its response, without uploading again', async () => {
     await writeFile(join(repo, 'example.txt'), 'baseline');
     await exec('git', ['-C', repo, 'add', '.']);

@@ -204,9 +204,9 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
       await response.body?.cancel();
       throw interruptedSourceRun(retained.runId);
     }
-    const admitted = sourceRunSchema.safeParse(await boundedJson(response, 32 * 1024));
-    if (!admitted.success || admitted.data.runId !== retained.runId || admitted.data.runtime !== binding.runtime
-      || admitted.data.worktree !== binding.worktree) throw interruptedSourceRun(retained.runId);
+    const admitted = await readSourceRunResponse(response, retained.runId);
+    if (admitted.runId !== retained.runId || admitted.runtime !== binding.runtime
+      || admitted.worktree !== binding.worktree) throw interruptedSourceRun(retained.runId);
     const result = await waitForSourceRun(origin, retained, grant, true);
     const { runId, status, ...receipt } = result;
     const validated = sourceReceiptSchema.safeParse(receipt);
@@ -229,6 +229,13 @@ const sourceRunSchema = z.strictObject({ runId: sourceRunIdSchema, runtime: slug
 }).refine(value => ['succeeded', 'failed', 'timed_out'].includes(value.status) === Boolean(value.receipt));
 function interruptedSourceRun(id: string) {
   return cliError('devstack_source_run_pending', `DevStack runId ${id} has no confirmed result. Use matrix devstack result --hosted --run-id ${id}.`);
+}
+async function readSourceRunResponse(response: Response, runId: string) {
+  try { return sourceRunSchema.parse(await boundedJson(response, 32 * 1024)); }
+  catch (error: unknown) {
+    if (!(error instanceof Error)) throw error;
+    throw interruptedSourceRun(runId);
+  }
 }
 export async function prepareHostedSourceResult(origin: string, worktree: string, runId: string) {
   return loadHostedSourceRun(runId, origin, await identifyCheckout(worktree));
@@ -254,10 +261,10 @@ async function waitForSourceRun(origin: string, record: HostedSourceRun, grant: 
       throw interruptedSourceRun(record.runId);
     }
     if (response.status !== 200) { await response.body?.cancel(); throw interruptedSourceRun(record.runId); }
-    const parsed = sourceRunSchema.safeParse(await boundedJson(response, 32 * 1024));
-    if (!parsed.success || parsed.data.runId !== record.runId || parsed.data.runtime !== record.runtime
-      || parsed.data.worktree !== record.worktree) throw invalidResponse();
-    if (!wait || parsed.data.status !== 'running') return { runId: record.runId, status: parsed.data.status, ...parsed.data.receipt };
+    const result = await readSourceRunResponse(response, record.runId);
+    if (result.runId !== record.runId || result.runtime !== record.runtime
+      || result.worktree !== record.worktree) throw interruptedSourceRun(record.runId);
+    if (!wait || result.status !== 'running') return { runId: record.runId, status: result.status, ...result.receipt };
     await delay(1000);
   } while (Date.now() < deadline);
   throw interruptedSourceRun(record.runId);
