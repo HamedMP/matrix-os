@@ -154,7 +154,7 @@ describe("shared app deep link", () => {
     const page = await SharedAppPage({ params: Promise.resolve({ scopeId }) });
     const names = componentNames(page);
 
-    expect(names).toContain("SharedAppStandalone");
+    expect(names).toContain("ShellChatCollaboration");
     expect(names).not.toContain("ShellHome");
     expect(names).not.toContain("OnboardingGate");
     expect(names).not.toContain("CollaborationPage");
@@ -192,7 +192,7 @@ describe("shared app deep link", () => {
 
     const page = await SharedAppPage({ params: Promise.resolve({ scopeId }) });
 
-    expect(JSON.stringify(page)).toContain('"nativeCollaborationActorId":"user_native_member"');
+    expect(JSON.stringify(page)).toContain('"actorId":"user_native_member"');
   });
 
   it("rejects malformed app scope IDs at the server route boundary", async () => {
