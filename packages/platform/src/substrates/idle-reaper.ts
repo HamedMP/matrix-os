@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
+import { monthKey, monthStartUtc, type ComputeCapConfig } from '../free-tier/compute-meter.js';
 import { CONTAINER_QUIESCE_TIMEOUT_MS, type ContainerLifecycleService } from './container-lifecycle-service.js';
 import type { ContainerRuntimeClient, RuntimeTarget } from './container-runtime-client.js';
 
@@ -28,6 +29,8 @@ export interface IdleReaperConfig {
    * written (it writes every ACTIVITY_FLUSH_INTERVAL_MS) can still cancel it.
    */
   activityFlushGraceMs: number;
+  /** When set, units at their owner's monthly cap and export-only units past their window are stopped too. */
+  computeCap?: ComputeCapConfig;
 }
 
 export const DEFAULT_IDLE_REAPER_CONFIG: IdleReaperConfig = {
@@ -166,7 +169,7 @@ export function createActivityTracker(deps: {
   };
 }
 
-type StopReason = 'idle' | 'max_session';
+type StopReason = 'idle' | 'max_session' | 'compute_cap' | 'export_window';
 
 interface Candidate {
   machine_id: string;
@@ -227,8 +230,17 @@ export function createIdleReaper(deps: IdleReaperDeps) {
     const at = now();
     const idleBefore = new Date(at.getTime() - config.idleMs);
     const sessionBefore = new Date(at.getTime() - config.maxSessionMs);
+    const cap = config.computeCap;
+    const exportBefore = new Date(at.getTime() - (cap?.exportWindowMs ?? 0));
+    const monthStart = monthStartUtc(at);
+    /** Closed billed time this month plus this unit's open interval, as the meter counts it. */
+    const billedMs = sql<number>`(COALESCE((SELECT u.billed_ms FROM runtime_compute_usage u
+        WHERE u.clerk_user_id = m.clerk_user_id AND u.month_start = ${monthKey(monthStart)}::date), 0)
+      + CASE WHEN m.metered_since IS NULL THEN 0
+        ELSE GREATEST(0, EXTRACT(EPOCH FROM (${at.toISOString()}::timestamptz - GREATEST(m.metered_since, ${monthStart.toISOString()}::timestamptz))) * 1000) END)::float8`;
     const rows = await db.executor.selectFrom('user_machines as m')
-      .select(['m.machine_id', 'm.clerk_user_id', 'm.handle', 'm.generation', 'm.substrate_ref', 'm.private_address', 'm.started_at'])
+      .select(['m.machine_id', 'm.clerk_user_id', 'm.handle', 'm.generation', 'm.substrate_ref', 'm.private_address', 'm.started_at', 'm.compute_mode'])
+      .select(billedMs.as('billed_ms'))
       .where('m.substrate', '=', 'container')
       .where('m.deleted_at', 'is', null)
       .where('m.status', '=', 'running')
@@ -236,6 +248,10 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       .where('m.private_address', 'is not', null)
       .where(eb => eb.or([
         eb('m.started_at', '<=', sessionBefore),
+        ...(cap ? [
+          eb.and([eb('m.compute_mode', '=', 'export_only'), eb('m.started_at', '<=', exportBefore)]),
+          eb.and([eb('m.compute_mode', '=', 'full'), eb(billedMs, '>=', cap.capMs)]),
+        ] : []),
         eb.and([
           eb(eb.fn.coalesce('m.last_activity_at', 'm.started_at', 'm.status_changed_at'), '<=', idleBefore),
           eb.not(eb.exists(eb.selectFrom('ai_funded_usage_reservations as r')
@@ -260,10 +276,17 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       generation: row.generation,
       substrate_ref: row.substrate_ref,
       private_address: row.private_address,
-      reason: row.started_at && row.started_at.getTime() <= sessionBefore.getTime() ? 'max_session' as const : 'idle' as const,
+      reason: stopReason(row),
       selected_at: at,
       idle_before: idleBefore,
     }] : []);
+
+    function stopReason(row: { started_at: Date | null; compute_mode: string; billed_ms: number }): StopReason {
+      const started = row.started_at?.getTime() ?? Number.POSITIVE_INFINITY;
+      if (cap && row.compute_mode === 'export_only' && started <= exportBefore.getTime()) return 'export_window';
+      if (cap && row.compute_mode === 'full' && Number(row.billed_ms) >= cap.capMs) return 'compute_cap';
+      return started <= sessionBefore.getTime() ? 'max_session' : 'idle';
+    }
   }
 
   /**
