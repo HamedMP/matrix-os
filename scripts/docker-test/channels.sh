@@ -37,8 +37,9 @@ INNEREOF'
 
 # Restart to pick up channel config
 echo -e "${YELLOW}[SETUP]${NC} Restarting to load channel config..."
-$COMPOSE stop dev
-$COMPOSE up $COMPOSE_UP_FLAGS -d dev
+# Request an actual restart: up only reconciles desired state and can reuse a
+# container reported as running during a stop/exit race.
+$COMPOSE restart --timeout 30 dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
