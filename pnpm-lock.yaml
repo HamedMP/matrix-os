@@ -1081,6 +1081,9 @@ importers:
       stripe:
         specifier: 22.5.0
         version: 22.5.0(@types/node@25.5.0)
+      tar:
+        specifier: 7.5.21
+        version: 7.5.21
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -1204,6 +1207,9 @@ importers:
       pino-roll:
         specifier: ^2.1.0
         version: 2.2.0
+      tar:
+        specifier: 7.5.21
+        version: 7.5.21
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
