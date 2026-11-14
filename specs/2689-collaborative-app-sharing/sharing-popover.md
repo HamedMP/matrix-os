@@ -62,8 +62,8 @@ An existing active or needs-recheck share's organization determines the roster a
 ## Surfaces
 
 - Electron Desktop: changed (organization entry point is Electron-only today).
-- Web Desktop / Web Canvas: shared `AppSiteSharePanel` is used without organization sharing; header icons changed from text glyphs to SVG, layout otherwise unchanged. Regression: `tests/ui/app-site-button.test.tsx`. The web AppViewer's separate `CollaborativeAppShareButton` is unchanged; aligning it with this status model is a recommended follow-up.
-- Web Mobile / Native Mobile: no Publish app popover; N/A pending reviewer approval.
+- Web Desktop / Web Canvas / Web Mobile: organization sharing joins the same popover in the follow-up layer; see [web-sharing-parity.md](web-sharing-parity.md).
+- Native Mobile: no owner Publish app surface; N/A pending reviewer approval.
 
 ## Separate known failures
 

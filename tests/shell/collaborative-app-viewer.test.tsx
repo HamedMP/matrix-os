@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   releaseApi: vi.fn(),
   createTransport: vi.fn(),
   sharedViewer: vi.fn(),
-  shareButton: vi.fn(),
   organization: vi.fn().mockReturnValue({ status: "unknown", organizationId: null, organizationName: null }),
   openSession: vi.fn().mockResolvedValue(undefined),
   subscribe: vi.fn().mockReturnValue(() => undefined),
@@ -23,9 +22,6 @@ vi.mock("@/lib/collaboration", () => ({
   releaseShellCollaborationApi: mocks.releaseApi,
 }));
 vi.mock("@matrix-os/ui/collaborative-app-sharing", () => ({
-  CollaborativeAppShareButton: (props: unknown) => { mocks.shareButton(props); return null; },
-  ReadinessSummary: () => null,
-  useCollaborativeAppSharing: () => ({ readiness: null }),
   createSharedAppTransport: mocks.createTransport,
   SharedAppViewer: (props: { target: CollaborativeAppDirectoryItem; transport: unknown }) => {
     mocks.sharedViewer(props);
@@ -44,6 +40,7 @@ vi.mock("@/lib/collaboration-organization-state", () => ({
 
 import { AppViewer } from "../../shell/src/components/AppViewer.js";
 import { OwnerCollaborationParticipantProvider } from "../../shell/src/lib/owner-collaboration-participant.js";
+import { notifyOwnerAppSharing } from "../../shell/src/lib/owner-app-sharing-events.js";
 import {
   sharedAppDeepLink,
   sharedAppWindowPath,
@@ -259,7 +256,7 @@ describe("collaborative app web viewer", () => {
     expect(iframe.srcdoc).toContain('"buildId":"' + "b".repeat(64) + '"');
   });
 
-  it("updates the owner bridge context without replacing an unfinished iframe", async () => {
+  it("updates the owner bridge context after the Publish app popover confirms a share, without replacing the iframe", async () => {
     mocks.organization.mockReturnValue({ status: "member", organizationId: target.organizationId, organizationName: "Matrix" });
     mocks.ownerShareGet.mockResolvedValueOnce(null).mockResolvedValue(ownerShare());
     mocks.createApi.mockReturnValue({
@@ -269,20 +266,23 @@ describe("collaborative app web viewer", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response("<html><head></head><body></body></html>")));
 
     render(<AppViewer path="matrix-app:tracker" />);
-    await waitFor(() => expect(mocks.shareButton).toHaveBeenCalled());
+    // The viewer no longer renders its own sharing bar; sharing lives in the window's Publish app popover.
+    expect(screen.queryByText("App collaboration readiness")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Manage app sharing|Share app|Check collaboration/ })).toBeNull();
     const iframe = screen.getByTitle("matrix-app:tracker") as HTMLIFrameElement;
     await waitFor(() => expect(iframe.srcdoc).toContain("collaboration:"));
     const originalHtml = iframe.srcdoc;
     const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
-    await act(async () => {
-      await (mocks.shareButton.mock.lastCall![0] as { onShareChanged(): Promise<void> }).onShareChanged();
-    });
+    // A different app's share change is ignored.
+    await act(async () => { notifyOwnerAppSharing("other-app", "share-changed"); });
+    expect(postMessage).not.toHaveBeenCalled();
+    await act(async () => { notifyOwnerAppSharing("tracker", "share-changed"); });
 
     expect(screen.getByTitle("matrix-app:tracker")).toBe(iframe);
     expect(iframe.srcdoc).toBe(originalHtml);
-    expect(postMessage).toHaveBeenCalledWith({
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({
       type: "os:collaboration-context",
       participant: expect.objectContaining({ scopeId: target.scopeId, shareRevision: "1" }),
-    }, "*");
+    }, "*"));
   });
 });
