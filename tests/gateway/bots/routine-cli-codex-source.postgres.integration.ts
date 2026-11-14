@@ -39,8 +39,9 @@ it("keeps the admitted native tool alive past its execution deadline while an ow
   vi.stubEnv("MATRIX_CODEX_TOOL_DEADLINE_MS", String(deadlineMs));
   try {
     const requestId = "de000000-0000-4000-8000-000000000607", chatId = "chat_codex_owner_wait";
-    f = await codexFixture({ dynamicToolLifecycle: true,
-      intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+    const native = { dynamicToolLifecycle: true,
+      intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } };
+    f = await codexFixture(native);
     const admitted = await f.start(chatId);
     await expect.poll(() => f!.sourceEvents.some(event => event.type === "approval.requested"), { timeout: 8000 }).toBe(true);
     const approval = f.sourceEvents.find(event => event.type === "approval.requested")!;
