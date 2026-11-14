@@ -174,3 +174,6 @@ distro/observability/logs-edge/logs-edge.env
 
 # Local shared-package compiler state (never included in bundles)
 .matrix-build-cache/
+
+# Private TypeScript emit, published only after a successful compile
+.matrix-build-output/

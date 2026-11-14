@@ -79,14 +79,20 @@ describe('incremental compiler cancellation and delivery', () => {
 
   it('keeps ownership until the real compiler stops after wrapper cancellation', async () => {
     const directory = await compilerFixture();
+    await mkdir(join(directory, 'dist'));
+    const lastGood = 'exports.value = 42;';
+    await writeFile(join(directory, 'dist/index.js'), lastGood);
     const wrapper = start(directory);
     const lock = join(directory, '.matrix-build-cache/.matrix-build.lock');
     await waitFor(() => exists(join(directory, 'compiler-writes')));
+    expect(await readFile(join(directory, 'dist/index.js'), 'utf8')).toBe(lastGood);
     compilerPids.push(Number(await readFile(join(directory, 'compiler-pid'), 'utf8')));
     wrapper.kill('SIGTERM');
     await new Promise(accept => setTimeout(accept, 50));
     expect(await readFile(join(lock, 'owner'), 'utf8')).toBe(String(wrapper.pid));
     expect(await exited(wrapper)).toEqual({ code: 143, signal: null });
+    expect(await readFile(join(directory, 'dist/index.js'), 'utf8')).toBe(lastGood);
+    expect(await readdir(join(directory, '.matrix-build-output'))).toEqual([]);
     const writes = await readFile(join(directory, 'compiler-writes'), 'utf8');
     await new Promise(accept => setTimeout(accept, 100));
     expect(await readFile(join(directory, 'compiler-writes'), 'utf8')).toBe(writes);
@@ -218,10 +224,13 @@ describe('incremental compiler cancellation and delivery', () => {
     const stage = await mkdtemp(join(tmpdir(), 'matrix-cache-staging-'));
     directories.push(stage);
     await mkdir(join(stage, 'app/packages/a/.matrix-build-cache'), { recursive: true });
+    await mkdir(join(stage, 'app/packages/a/.matrix-build-output'), { recursive: true });
+    await writeFile(join(stage, 'app/packages/a/.matrix-build-output/partial.js'), 'never ship');
     await mkdir(join(stage, 'app/packages/b'), { recursive: true });
     await mkdir(join(stage, 'outside'));
     await writeFile(join(stage, 'outside/keep'), 'preserved');
     await symlink(join(stage, 'outside'), join(stage, 'app/packages/b/.matrix-build-cache'));
+    await symlink(join(stage, 'outside'), join(stage, 'app/packages/b/.matrix-build-output'));
     await writeFile(join(stage, 'app/packages/a/runtime.js'), 'runtime');
     execFileSync('bash', ['-euc', prune!], { env: { ...process.env, STAGE_DIR: stage } });
     expect(await readdir(join(stage, 'app/packages/a'))).toEqual(['runtime.js']);

@@ -187,7 +187,7 @@ fi
 rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
 # Compiler state is local build input, never runtime or incremental release data.
 # Default find traversal does not follow directory symlinks; remove links themselves.
-find "$STAGE_DIR/app/packages" -name .matrix-build-cache -prune -exec rm -rf {} +
+find "$STAGE_DIR/app/packages" \( -name .matrix-build-cache -o -name .matrix-build-output \) -prune -exec rm -rf {} +
 # Portable gallery starters live under app-templates, outside home/apps.
 # Their dependency stores are build-only too; preserve source, lockfiles and dist.
 find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
