@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CORE_REPO_MAX_ENTRIES } from "../../packages/contracts/src/core-repo.js";
 import { inspectCoreRepoArchive } from "../../packages/sync-client/src/core-repo/archive.js";
 import { CoreRepoInstallError, installCoreRepo, type CoreRepoTransport } from "../../packages/sync-client/src/core-repo/installer.js";
-import { coreSyncTimerFiles } from "../../packages/sync-client/src/cli/commands/core.js";
+import { coreSyncTimerEnv, coreSyncTimerFiles, resolveCoreSyncProgram } from "../../packages/sync-client/src/cli/commands/core.js";
 
 interface RawEntry { name: string; type?: "0" | "1" | "2" | "5"; content?: string; link?: string; mode?: string }
 
@@ -307,7 +307,7 @@ describe("Matrix Core repo installer", () => {
   it("schedules machine-credential runs to reload the protected host env file, with no secret in the unit", async () => {
     const { loadCoreRepoMachineCredential } = await import("../../packages/sync-client/src/cli/commands/core.js");
     const secret = "platform-verification-token-0123456789";
-    const linux = coreSyncTimerFiles({ platform: "linux", home: "/home/matrix", node: "/usr/bin/node", launcher: "/opt/matrix/bin/matrix.mjs",
+    const linux = coreSyncTimerFiles({ platform: "linux", home: "/home/matrix", program: ["/usr/bin/node", "/opt/matrix/bin/matrix.mjs"],
       machine: true, env: { MATRIX_CORE_ROOT: "/home/matrix/.local/share/matrix-core" } });
     expect(linux[0]!.content).toContain('ExecStart="/usr/bin/node" "/opt/matrix/bin/matrix.mjs" "core" "sync" "--machine"');
     expect(linux[0]!.content).not.toContain("--profile");
@@ -332,7 +332,7 @@ describe("Matrix Core repo installer", () => {
     const launcher = resolveCoreSyncLauncher();
     expect(launcher.endsWith(join("sync-client", "bin", "matrix.mjs"))).toBe(true);
     expect(existsSync(launcher)).toBe(true);
-    const input = { home: "/home/u", node: "/usr/bin/node", launcher: "/opt/my tools/matrix.mjs", profile: "work",
+    const input = { home: "/home/u", program: ["/usr/bin/node", "/opt/my tools/matrix.mjs"], profile: "work",
       env: { MATRIX_SKILLS_SYNC_SCRIPT: "/srv/50%$off/sync.sh", MATRIX_CORE_ROOT: '/data/core "x"' } };
     const linux = coreSyncTimerFiles({ ...input, platform: "linux" });
     expect(linux.map(file => file.path)).toEqual(["/home/u/.config/systemd/user/matrix-core-sync.service", "/home/u/.config/systemd/user/matrix-core-sync.timer"]);
@@ -340,12 +340,43 @@ describe("Matrix Core repo installer", () => {
     expect(linux[0]!.content).toContain('Environment="MATRIX_SKILLS_SYNC_SCRIPT=/srv/50%%$off/sync.sh"');
     expect(linux[0]!.content).toContain('Environment="MATRIX_CORE_ROOT=/data/core \\"x\\""');
     expect(linux[1]!.content).toContain("OnUnitActiveSec=1h");
-    const mac = coreSyncTimerFiles({ ...input, platform: "darwin", launcher: "/a&b/matrix.mjs" });
+    const mac = coreSyncTimerFiles({ ...input, platform: "darwin", program: ["/usr/bin/node", "/a&b/matrix.mjs"] });
     expect(mac[0]!.content).toContain("<integer>3600</integer>");
     expect(mac[0]!.content).toContain("<string>/a&amp;b/matrix.mjs</string><string>core</string><string>sync</string><string>--profile</string><string>work</string>");
     expect(mac[0]!.content).toContain("<key>MATRIX_CORE_ROOT</key><string>/data/core &quot;x&quot;</string>");
-    expect(() => coreSyncTimerFiles({ ...input, platform: "linux", launcher: "/x\n; rm -rf ~" })).toThrow();
+    expect(() => coreSyncTimerFiles({ ...input, platform: "linux", program: ["/usr/bin/node", "/x\n; rm -rf ~"] })).toThrow();
     expect(() => coreSyncTimerFiles({ ...input, platform: "linux", profile: "../../etc" })).toThrow();
     expect(JSON.stringify(linux)).not.toMatch(/UPGRADE_TOKEN|Bearer/);
+  });
+
+  // Fault: an explicitly empty agent selection is dropped, so the hourly run links every default agent;
+  // or the run links into different agent homes than the manual run did.
+  it("saves the effective agent targets and destinations for the hourly run, including an empty selection", () => {
+    const base = { script: "/opt/matrix/app/scripts/sync.sh", root: "/data/core", machine: false };
+    const empty = coreSyncTimerEnv({ MATRIX_SKILL_TARGETS: "", MATRIX_HOME: "/home/m/matrixos", HERMES_HOME: "/home/m/matrixos/.hermes",
+      AGENT_HOME: "/home/m/.agent", MATRIX_AGENT_SKILLS_ROOT: "/home/m/skills", UPGRADE_TOKEN: "secret", PATH: "/usr/bin" }, base);
+    expect(empty).toEqual({ MATRIX_SKILLS_SYNC_SCRIPT: base.script, MATRIX_CORE_ROOT: base.root, MATRIX_SKILL_TARGETS: "",
+      MATRIX_HOME: "/home/m/matrixos", HERMES_HOME: "/home/m/matrixos/.hermes", AGENT_HOME: "/home/m/.agent", MATRIX_AGENT_SKILLS_ROOT: "/home/m/skills" });
+    expect(coreSyncTimerEnv({}, base).MATRIX_SKILL_TARGETS).toBe("matrix,claude,codex,hermes");
+    expect(coreSyncTimerEnv({ MATRIX_SKILL_TARGETS: "hermes, claude" }, base).MATRIX_SKILL_TARGETS).toBe("hermes,claude");
+    expect(() => coreSyncTimerEnv({ MATRIX_SKILL_TARGETS: "Claude" }, base)).toThrow();
+    expect(() => coreSyncTimerEnv({ MATRIX_HOME: "relative/home" }, base)).toThrow();
+    expect(() => coreSyncTimerEnv({ HERMES_HOME: "/home/m/x\nExecStart=/bin/evil" }, base)).toThrow();
+
+    const files = (platform: NodeJS.Platform) => coreSyncTimerFiles({ platform, home: "/home/m", program: ["/usr/bin/matrix"], env: empty });
+    expect(files("linux")[0]!.content).toContain('Environment="MATRIX_SKILL_TARGETS="\n');
+    expect(files("linux")[0]!.content).toContain('Environment="HERMES_HOME=/home/m/matrixos/.hermes"');
+    expect(files("darwin")[0]!.content).toContain("<key>MATRIX_SKILL_TARGETS</key><string></string>");
+    expect(JSON.stringify(files("linux"))).not.toContain("secret");
+  });
+
+  // Fault: a standalone (compiled) CLI timer runs `<binary> <missing bin/matrix.mjs> core sync` and fails every hour.
+  it("runs a standalone CLI timer through the executable itself, and a source install through node and the launcher", () => {
+    expect(resolveCoreSyncProgram({ standalone: true, execPath: "/usr/local/bin/matrix" })).toEqual(["/usr/local/bin/matrix"]);
+    const source = resolveCoreSyncProgram({ standalone: false, execPath: "/usr/bin/node" });
+    expect(source[0]).toBe("/usr/bin/node");
+    expect(source[1]!.endsWith(join("sync-client", "bin", "matrix.mjs"))).toBe(true);
+    const unit = coreSyncTimerFiles({ platform: "linux", home: "/home/m", program: ["/usr/local/bin/matrix"], machine: true, env: {} });
+    expect(unit[0]!.content).toContain('ExecStart="/usr/local/bin/matrix" "core" "sync" "--machine"\n');
   });
 });

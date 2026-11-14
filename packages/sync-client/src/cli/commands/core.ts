@@ -18,6 +18,7 @@ import { defineCommand } from "citty";
 import { requireCliAuthToken } from "../auth-state.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
+import { isStandaloneRuntime } from "../standalone-runtime.js";
 import {
   CoreRepoInstallError,
   createCoreRepoHttpTransport,
@@ -58,8 +59,8 @@ function systemdQuote(value: string, escapeDollar: boolean): string {
   return `"${escaped}"`;
 }
 
-function xml(value: string): string {
-  return checked(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+function xml(value: string, allowEmpty = false): string {
+  return (allowEmpty && value === "" ? value : checked(value)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 /**
@@ -68,6 +69,45 @@ function xml(value: string): string {
  */
 export function resolveCoreSyncLauncher(): string {
   return fileURLToPath(new URL("../../../bin/matrix.mjs", import.meta.url));
+}
+
+/**
+ * The command a scheduled run executes before `core sync`. A standalone
+ * (compiled) CLI is its own executable, as for the daemon service
+ * (`createStandaloneDaemonServiceCommand`); a source/npm install re-runs Node
+ * on the published launcher.
+ */
+export function resolveCoreSyncProgram(input: { standalone?: boolean; execPath?: string } = {}): string[] {
+  const execPath = input.execPath ?? process.execPath;
+  return (input.standalone ?? isStandaloneRuntime()) ? [execPath] : [execPath, resolveCoreSyncLauncher()];
+}
+
+/** Agent-home settings the skills sync script reads; a scheduled run must link into the same places. */
+const DESTINATION_ENV_KEYS = ["MATRIX_HOME", "HERMES_HOME", "AGENT_HOME", "MATRIX_AGENT_SKILLS_ROOT"] as const;
+
+function absolutePath(value: string): string {
+  if (!value.startsWith("/") || value.length > 4_096 || /[\x00-\x1f\x7f]/.test(value)) throw invalidTimer();
+  return value;
+}
+
+/**
+ * Non-secret settings a scheduled run needs to repeat this run exactly: the
+ * script, the install root, the effective agent targets (an explicitly empty
+ * selection stays empty instead of falling back to the defaults), and the
+ * agent destinations. Paths must be absolute and free of control characters.
+ */
+export function coreSyncTimerEnv(env: NodeJS.ProcessEnv, settings: { script: string; root: string; machine: boolean }): Record<string, string> {
+  const out: Record<string, string> = {
+    MATRIX_SKILLS_SYNC_SCRIPT: absolutePath(settings.script),
+    MATRIX_CORE_ROOT: absolutePath(settings.root),
+    MATRIX_SKILL_TARGETS: parseSkillTargets(env.MATRIX_SKILL_TARGETS).join(","),
+  };
+  if (settings.machine && env.MATRIX_MACHINE_ENV_FILE) out.MATRIX_MACHINE_ENV_FILE = absolutePath(env.MATRIX_MACHINE_ENV_FILE);
+  for (const key of DESTINATION_ENV_KEYS) {
+    const value = env[key];
+    if (value !== undefined && value !== "") out[key] = absolutePath(value);
+  }
+  return out;
 }
 
 function machineCredentialUnavailable(): Error {
@@ -117,8 +157,8 @@ export async function loadCoreRepoMachineCredential(path: string): Promise<{ han
 export interface CoreSyncTimerInput {
   platform: NodeJS.Platform;
   home: string;
-  node: string;
-  launcher: string;
+  /** The executable and any leading arguments before `core sync` (see `resolveCoreSyncProgram`). */
+  program: readonly string[];
   /** The CLI profile the manual run used; absent for the machine credential. */
   profile?: string;
   /** Re-read the machine credential from the host env file on every run (`--machine`). */
@@ -132,11 +172,12 @@ export function coreSyncTimerFiles(input: CoreSyncTimerInput): Array<{ path: str
   if (input.profile !== undefined && !PROFILE_NAME.test(input.profile)) throw invalidTimer();
   const env = Object.entries(input.env);
   if (env.some(([key]) => !ENV_KEY.test(key))) throw invalidTimer();
-  const args = [input.node, input.launcher, "core", "sync",
+  if (input.program.length === 0) throw invalidTimer();
+  const args = [...input.program, "core", "sync",
     ...(input.machine ? ["--machine"] : input.profile ? ["--profile", input.profile] : [])];
   if (input.platform === "darwin") {
     const environment = env.length === 0 ? "" : `
-  <key>EnvironmentVariables</key><dict>${env.map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`).join("")}</dict>`;
+  <key>EnvironmentVariables</key><dict>${env.map(([key, value]) => `<key>${key}</key><string>${xml(value, true)}</string>`).join("")}</dict>`;
     return [{ path: join(input.home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`), content: `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -173,8 +214,7 @@ WantedBy=timers.target
 }
 
 async function installTimer(settings: { profile?: string; machine?: boolean; env: Record<string, string> }): Promise<string> {
-  const files = coreSyncTimerFiles({ platform: process.platform, home: homedir(), node: process.execPath,
-    launcher: resolveCoreSyncLauncher(), ...settings });
+  const files = coreSyncTimerFiles({ platform: process.platform, home: homedir(), program: resolveCoreSyncProgram(), ...settings });
   for (const file of files) {
     await mkdir(join(file.path, ".."), { recursive: true });
     await writeFile(file.path, file.content, { mode: 0o644 });
@@ -235,15 +275,13 @@ const syncCommand = defineCommand({
       }
       const { transport, profile, machine } = await transportFor(args, process.env);
       const root = coreRepoRoot();
+      // Validate the timer's settings before anything is installed.
+      const timerEnv = args["install-timer"] === true ? coreSyncTimerEnv(process.env, { script, root, machine: machine === true }) : undefined;
       const results = await installCoreRepo({ transport, root, runSkillSync: createScriptSkillSync(script),
         targets: parseSkillTargets(process.env.MATRIX_SKILL_TARGETS) });
-      // The timer repeats this exact run: same profile, script, root, and targets (never a token).
+      // The timer repeats this exact run: same profile, script, root, targets, and destinations (never a token).
       // A machine-credential timer re-reads the host env file each run instead of carrying the token.
-      const timer = args["install-timer"] === true ? await installTimer({ ...(machine ? { machine } : profile ? { profile } : {}), env: {
-        MATRIX_SKILLS_SYNC_SCRIPT: script, MATRIX_CORE_ROOT: root,
-        ...(machine && process.env.MATRIX_MACHINE_ENV_FILE ? { MATRIX_MACHINE_ENV_FILE: process.env.MATRIX_MACHINE_ENV_FILE } : {}),
-        ...(process.env.MATRIX_SKILL_TARGETS ? { MATRIX_SKILL_TARGETS: process.env.MATRIX_SKILL_TARGETS } : {}),
-      } }) : undefined;
+      const timer = timerEnv ? await installTimer({ ...(machine ? { machine } : profile ? { profile } : {}), env: timerEnv }) : undefined;
       if (json) console.log(formatCliSuccess({ results, ...(timer ? { timer } : {}) }));
       else {
         if (results.length === 0) console.log("No organization publishes a Matrix Core repo for you yet.");
