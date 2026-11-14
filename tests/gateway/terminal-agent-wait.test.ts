@@ -117,9 +117,9 @@ describe("terminal wait", () => {
 
   // Fault detected: a script sends a task and waits, but the wait returns at once
   // on the status the agent reported before it received the task.
-  // Fault detected (#3298 review): matrix-status writes whole seconds, so a result reported
-  // in the same second as the send looked older than the send and was ignored for 15 s.
-  it("treats a whole-second reporter result from the send's second as fresh, but not an older hook", async () => {
+  // Fault detected (#3298 reviews): a result reported in the same second as the send was
+  // ignored, and then an older result in that second ended the wait early.
+  it("tells results from before and after a send in the same second apart", async () => {
     const sentAt = Date.parse("2026-11-11T12:00:00.200Z");
     const make = (entry: { reportedAt: string; source: "reporter" | "hook" }) => createTerminalWaiter({
       runtime: {
@@ -136,9 +136,16 @@ describe("terminal wait", () => {
       sleep: async () => undefined,
       pollMs: 500,
     });
-    await expect(make({ reportedAt: "2026-11-11T12:00:00.000Z", source: "reporter" }).wait(ref, { timeoutMs: 0 }))
+    await expect(make({ reportedAt: "2026-11-11T12:00:00.700Z", source: "reporter" }).wait(ref, { timeoutMs: 0 }))
       .resolves.toEqual({ reason: "stopped", status: "done" });
+    // The previous task's result, earlier in the same second, does not end the wait.
+    await expect(make({ reportedAt: "2026-11-11T12:00:00.100Z", source: "reporter" }).wait(ref, { timeoutMs: 0 }))
+      .resolves.toMatchObject({ reason: "timeout" });
     await expect(make({ reportedAt: "2026-11-11T12:00:00.100Z", source: "hook" }).wait(ref, { timeoutMs: 0 }))
+      .resolves.toMatchObject({ reason: "timeout" });
+    // A whole-second report from an older reporter counts as the previous turn: the wait
+    // may hold for the grace period, but never ends on the previous task's result.
+    await expect(make({ reportedAt: "2026-11-11T12:00:00.000Z", source: "reporter" }).wait(ref, { timeoutMs: 0 }))
       .resolves.toMatchObject({ reason: "timeout" });
   });
 

@@ -84,10 +84,10 @@ export function createTerminalAgentStatusSource(options: {
 
 /**
  * Whether a status report predates the latest send, and so belongs to the
- * previous turn. `matrix-status` writes whole seconds, so its reports compare at
- * that precision; hook reports carry milliseconds.
+ * previous turn. Reports carry milliseconds. A whole-second report from an older
+ * reporter in the send's second also counts as the previous turn: the wait may
+ * hold for the grace period, but never ends on the previous task's result.
  */
-export function reportPredatesSend(entry: Pick<TerminalAgentStatusEntry, "reportedAt" | "source">, sentAt: number): boolean {
-  const reportedAt = Date.parse(entry.reportedAt);
-  return reportedAt < (entry.source === "reporter" ? Math.floor(sentAt / 1_000) * 1_000 : sentAt);
+export function reportPredatesSend(entry: Pick<TerminalAgentStatusEntry, "reportedAt">, sentAt: number): boolean {
+  return Date.parse(entry.reportedAt) < sentAt;
 }
