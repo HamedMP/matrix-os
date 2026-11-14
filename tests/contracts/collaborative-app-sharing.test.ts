@@ -358,6 +358,10 @@ describe("shared app presentation contract", () => {
     expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode(
       `${"<!-- c -->\n".repeat(1_000)}<svg xmlns="http://www.w3.org/2000/svg"/>`,
     ))).toBe("image/svg+xml");
+    // A standard doctype is often wrapped and indented before `svg`.
+    expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode(
+      '<?xml version="1.0"?>\n<!DOCTYPE\n      svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"/>',
+    ))).toBe("image/svg+xml");
   });
 
   it("recognizes PNG, WebP, JPEG, and inert SVG artwork by its bytes", () => {

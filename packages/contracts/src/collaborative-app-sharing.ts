@@ -168,9 +168,13 @@ function hasSvgRoot(text: string): boolean {
       const end = text.indexOf("-->", index + 4);
       if (end < 0) return false;
       index = end + 3;
-    } else if (/^<!DOCTYPE\s+svg\b/i.test(text.slice(index, index + 16))) {
-      const end = text.indexOf(">", index);
-      if (end < 0 || text.slice(index, end).includes("[")) return false;
+    } else if (text.slice(index, index + 9).toUpperCase() === "<!DOCTYPE") {
+      // Whitespace before `svg` is scanned separately: standard doctypes are often wrapped.
+      let name = index + 9;
+      while (name < text.length && /\s/.test(text[name]!)) name += 1;
+      const end = text.indexOf(">", name);
+      if (name === index + 9 || !/^svg(?![A-Za-z0-9_.:-])/i.test(text.slice(name, name + 4))
+        || end < 0 || text.slice(name, end).includes("[")) return false;
       index = end + 1;
     } else {
       break;
