@@ -11,7 +11,7 @@ import type { RoutineFullAccessService } from "./routine-full-access.js";
 type Service = Pick<RoutineFullAccessService, "status" | "createChallenge" | "submitDecision" | "revoke">;
 /** Owner auth only selects the private Chat; scope approval additionally requires fresh Platform proof.
  * Null explicitly exposes unavailable startup. No source-scheme auth exemption or body-selected identity. */
-export function createRoutineFullAccessRoutes(deps: { service: Service | null; getPrincipal(c: Context): RequestPrincipal }) {
+export function createRoutineFullAccessRoutes(deps: { service: Service | null; unconfigured?: boolean; getPrincipal(c: Context): RequestPrincipal }) {
   if (typeof deps.getPrincipal !== "function" || deps.service !== null && (!deps.service
     || ["status", "createChallenge", "submitDecision", "revoke"].some(key => typeof deps.service?.[key as keyof Service] !== "function")))
     throw new Error("Routine origin dependencies unavailable");
@@ -33,7 +33,13 @@ export function createRoutineFullAccessRoutes(deps: { service: Service | null; g
     return { principal, chatId };
   };
   const limit = bodyLimit({ maxSize: 4000, onError: c => error(c, "invalid_input", 413) });
-  app.get(path, async c => { const { principal, chatId } = context(c);
+  app.get(path, async c => {
+    const { principal, chatId } = context(c);
+    if (!deps.service && deps.unconfigured) {
+      return c.json(RoutineFullAccessStatusSchema.parse({
+        revision: 0, eligibility: "ineligible", origin: "browser_required", consent: null, challenge: null,
+      }));
+    }
     return c.json(RoutineFullAccessStatusSchema.parse(await service().status(principal, chatId))); });
   app.post(`${path}/challenges`, limit, async c => { const { principal, chatId } = context(c);
     return c.json(RoutineFullAccessStatusSchema.parse(await service().createChallenge(principal, chatId,

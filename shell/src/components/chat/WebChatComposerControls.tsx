@@ -1,7 +1,7 @@
 "use client";
 import type { CanonicalProviderInstanceDescriptor, CanonicalProviderSetupAction } from "@matrix-os/contracts";
 import { canonicalProviderModelRouteLabel, isChatgptPlanChatRoute, isManagedPiBotRoute, isMatrixAnthropicChatRoute } from "@matrix-os/contracts";
-import { ChatComposerOptionControls, ChatModelPicker, chatPermissionModeLabel, type ChatComposerOptionControl } from "@matrix-os/ui";
+import { ChatComposerOptionControls, ChatModelPicker, RoutineFullAccessConsent, chatPermissionModeLabel, type ChatComposerOptionControl } from "@matrix-os/ui";
 import { Cpu } from "@/lib/hugeicons";
 import { openProviderSettings } from "@/lib/canonical-provider-setup";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -64,6 +64,7 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
         onOpenSettings={openProviderSettings}
       />
       <ChatComposerOptionControls controls={controls} openRequest={permissionModeRequest} menuSide="top" menuZIndex={SHELL_Z_INDEX.popover} />
+      {providerState.routineAccess ? <RoutineFullAccessConsent controller={providerState.routineAccess} menuZIndex={SHELL_Z_INDEX.popover}/> : null}
     </>
   );
 }

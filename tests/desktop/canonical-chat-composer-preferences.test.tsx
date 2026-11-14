@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { RoutineFullAccessStatusSchema } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useProviderPreferences } from "@desktop/renderer/src/features/settings/provider-preferences";
+import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import {
+  canonicalChatRecord,
   createCanonicalChatWorkspaceClient as client,
   providerCatalog,
   snapshot,
@@ -35,6 +38,79 @@ describe("Canonical Chat composer preferences", () => {
   });
 
   afterEach(cleanup);
+
+  it("finishes scope revocation without applying an earlier run's selection to a newer run", async () => {
+    const codex = providerCatalog.instances[0]!;
+    const claude = {
+      ...codex, id: "claude_fixture", driverKind: "claude_code" as const,
+      models: [{ ...codex.models[0]!, id: "claude-opus-4-6", displayName: "Claude Opus 4.6" }],
+      options: [{
+        id: "effort", label: "Reasoning", kind: "enum" as const,
+        values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }],
+        defaultValue: "low", placement: "composer" as const,
+      }],
+    };
+    const selection = { instanceId: claude.id, model: claude.models[0]!.id, options: [{ id: "effort", value: "low" }] };
+    const catalog = {
+      ...providerCatalog,
+      drivers: [{ ...providerCatalog.drivers[0]!, kind: claude.driverKind, displayName: "Claude Code" }],
+      instances: [{ ...claude, defaultSelection: selection }],
+    };
+    const run = {
+      ...snapshot.runs[0]!, selection, driverKind: claude.driverKind, instanceId: claude.id,
+      interactionMode: "default", permissionMode: "full_access",
+    };
+    const record = {
+      ...canonicalChatRecord, chat: { ...canonicalChatRecord.chat, currentSelection: selection },
+      providerBinding: { ...canonicalChatRecord.providerBinding!, driverKind: claude.driverKind, instanceId: claude.id },
+    };
+    let detail = { record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: snapshot.activities };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail).mockImplementation(async () => detail);
+    const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+    const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+      subscribe(listener) {
+        listeners.add(listener);
+        return { dispose: () => { listeners.delete(listener); } };
+      },
+    };
+    const access = RoutineFullAccessStatusSchema.parse({ revision: 1, eligibility: "eligible", origin: "browser_required", challenge: null,
+      consent: { scopeId: `rcfull_${"a".repeat(32)}`, expiresAt: new Date(Date.now() + 300_000).toISOString(), policyRevision: 0,
+        actions: ["read", "propose", "control"], target: { botId: "bot_fixture1", chatId: "chat_destination" } } });
+    let finishRevocation!: (value: typeof access) => void;
+    const revoke = vi.fn((_chatId: string, _revision: number, _signal?: AbortSignal) =>
+      new Promise<typeof access>((resolve) => { finishRevocation = resolve; }));
+    routeClient.routineFullAccess = { read: vi.fn(async () => access), revoke, challenge: vi.fn(), decide: vi.fn() };
+    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={record.chat.id}
+      initialView="conversation" active catalog={catalog} eventSource={eventSource} />);
+
+    await screen.findByRole("textbox", { name: "Reply to chat" });
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("Low");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Supervised" }));
+    await waitFor(() => expect(revoke).toHaveBeenCalledExactlyOnceWith(record.chat.id, 1, expect.any(AbortSignal)));
+
+    const nextSelection = { ...selection, options: [{ id: "effort", value: "high" }] };
+    const nextTurn = { ...snapshot.turns[0]!, id: "cturn_fixture_second", clientRequestId: "req_fixture_second",
+      inputMessageId: "msg_fixture_second", baseMessageSeq: 1 };
+    const nextMessage = { ...snapshot.messages[0]!, id: nextTurn.inputMessageId, turnId: nextTurn.id, seq: 2 };
+    const nextRun = { ...run, id: "run_fixture_second", turnId: nextTurn.id, historyBoundarySeq: 1, selection: nextSelection };
+    detail = { ...detail, record: { ...record, chat: { ...record.chat, currentSelection: nextSelection, revision: 2 } },
+      runs: [run, nextRun], turns: [...snapshot.turns, nextTurn], messages: [...snapshot.messages, nextMessage] };
+    act(() => [...listeners].forEach(listener => listener({ type: "chat.full_refresh", cursor: 2 })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High"));
+
+    expect(revoke.mock.calls[0]?.[2]?.aborted).toBe(false);
+    await act(async () => { finishRevocation({ ...access, revision: 2, consent: null }); });
+
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+    expect(useProviderPreferences.getState().composerSelections[claude.id]).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "Routine CLI access" }));
+    expect(screen.getByText("Routine CLI in this private Chat")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Revoke routine CLI access" })).toBeNull();
+  });
 
   it("uses the last effort and permission choice as the default for a new Chat", async () => {
     const preferenceCatalog = {

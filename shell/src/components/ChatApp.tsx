@@ -1,4 +1,5 @@
 "use client";
+import { routineFullAccessChatPresentationEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
@@ -176,6 +177,8 @@ interface ChatAppProps {
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
+  routineFullAccess?: import("@matrix-os/ui").RoutineFullAccessClient;
+  routineFullAccessChat?: import("@/hooks/useChatState").ChatState["routineFullAccessChat"];
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   gatewayUrl?: string;
@@ -236,7 +239,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, routineFullAccess, routineFullAccessChat, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -352,7 +355,12 @@ function ChatAppContent({
   const [permissionModeRequest, setPermissionModeRequest] = useState(0);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
+  const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
+  const directBotId = botBinding.agentId;
+  const routineScopeChat = routineFullAccessChat?.id === sessionId ? routineFullAccessChat : undefined;
+  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls,
+    routineFullAccessClient: routineFullAccess, allowRoutineScope: !collaborationView && routineFullAccessChatPresentationEligible({
+      chat: routineScopeChat, ordinary: botBinding.status === "ordinary", fresh: navigationFresh === true && (isCurrentAuthority?.() ?? false) }) });
   const agentProviderCatalog = useMemo(() => createAgentProviderCatalogSource({
     catalog: providerState.catalog,
     hasTrustedCatalog: providerState.hasTrustedCatalog,
@@ -360,8 +368,6 @@ function ChatAppContent({
     refreshError: providerState.unavailable,
     refresh: providerState.refresh,
   }), [providerState.catalog, providerState.hasTrustedCatalog, providerState.loading, providerState.refresh, providerState.unavailable]);
-  const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
-  const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;

@@ -19,6 +19,16 @@ it("resolves the real HTTP dependencies at registration and exposes explicit saf
   expect(response.status).toBe(503); expect(await response.json()).toEqual({ code: "unavailable", message: "Routine requests are temporarily unavailable." });
   expect(response.headers.get("cache-control")).toBe("private, no-store");
 });
+it("reports an inert scope on a configured Chat gateway without routine CLI support", async () => {
+  const getPrincipal = vi.fn(() => principal);
+  const app = createRoutineFullAccessRoutes({ service: null, unconfigured: true, getPrincipal });
+  const response = await app.request(path);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ...status, eligibility: "ineligible" });
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(getPrincipal).toHaveBeenCalledOnce();
+  expect((await app.request(`${path}/revoke`, { method: "POST", body: JSON.stringify({ baseRevision: 0 }) })).status).toBe(503);
+});
 it("passes only the authenticated principal, fixed Chat and strict bodies through all production routes", async () => {
   const { app, service } = routes(), body = { scopeDigest: digest, decision: "approve", clientRequestId: requestId };
   expect((await app.request(path)).status).toBe(200);

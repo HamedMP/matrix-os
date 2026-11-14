@@ -50,6 +50,7 @@ import {
   buildBillingSetupPath,
   buildForwardedQueryString,
   buildPostAuthRedirectPath,
+  isRoutineOwnerCompletionPath,
   getPlatformShellAssetUpstreamPath,
   getAuthShellOrigin,
   isAppDomainGatewayPath,
@@ -648,7 +649,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
-      if (isAppDomain && allowAuthShellUnroutedIdentity) {
+      // These scoped completion pages carry selectors the auth shell's generic sign-in redirect does not retain.
+      if (isAppDomain && allowAuthShellUnroutedIdentity && !isRoutineOwnerCompletionPath(path)) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
       }
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {

@@ -26,6 +26,7 @@ import {
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
 import { useConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
+import { RoutineFullAccessConsent, useRoutineFullAccessSelection, type RoutineFullAccessContext } from "@matrix-os/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
@@ -135,6 +136,8 @@ export function SharedChatComposer({
   menuSide = "top",
   layout = "default",
   speech,
+  routineFullAccess,
+  acceptedRunId,
 }: {
   permissionModeRequest?: number;
   value: string;
@@ -180,7 +183,11 @@ export function SharedChatComposer({
   menuSide?: "top" | "bottom";
   layout?: "default" | "narrow";
   speech?: { scopeKey: string; onDraft: (text: string) => void };
+  routineFullAccess?: RoutineFullAccessContext;
+  acceptedRunId?: string;
 }) {
+  const routineAccess = useRoutineFullAccessSelection({ context: routineFullAccess, acceptedRunId, selection, onChange: onSelectionChange,
+    isQualified: next => catalog.instances.find(instance => instance.id === next.instanceId)?.driverKind === "claude_code" && next.permissionMode === "full_access" && next.interactionMode === "default" });
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
@@ -364,7 +371,7 @@ export function SharedChatComposer({
       label: option.label,
       value: String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? ""),
       options: (option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label })),
-      onChange: (next: string) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next)),
+      onChange: (next: string) => routineAccess.onChange(updateCanonicalComposerOption(catalog, selection, option.id, next)),
     }] : []),
     {
       id: "permission-mode",
@@ -372,7 +379,7 @@ export function SharedChatComposer({
       value: selection.permissionMode,
       options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
       openRequest: permissionModeRequest,
-      onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
+      onChange: (permissionMode: string) => routineAccess.onChange({ ...selection, permissionMode }),
     },
   ] : [];
   const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
@@ -518,9 +525,10 @@ export function SharedChatComposer({
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
               onNewChat={onNewChat}
-              onChange={onSelectionChange}
+              onChange={routineAccess.onChange}
             />}
             <ChatComposerOptionControls controls={optionControls} openRequest={permissionModeRequest} menuSide={menuSide} />
+            <RoutineFullAccessConsent controller={routineAccess.controller} menuZIndex={DESKTOP_Z_INDEX.popover}/>
           </>
         )}
       />
