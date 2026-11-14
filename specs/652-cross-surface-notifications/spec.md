@@ -1,6 +1,6 @@
 # 652 · Cross-surface notifications
 
-Status: draft for review, rewritten 2026-11-10 around a mobile-first release train. Requester: Amin. Linear: none (standing waiver for tickets and the `#tech` post, recorded 2026-10-16).
+Status: in review. Rewritten 2026-11-10 around a mobile-first release train; revised 2026-11-14 to ship controls first, make previews and Time Sensitive delivery opt-in, escalate unseen approvals and questions to the phone, and recover them after a crash. Requester: Amin. Linear: [ENG-453](https://linear.app/matrix-os/issue/ENG-453/specify-cross-surface-attention-notification-delivery); the requester's standing waiver covers per-release tickets and the `#tech` post.
 Plan and diagrams: [Matrix OS Notifications Plan](https://claude.ai/artifact/NgqV44ZgDfSSLtcPxQ2GBG).
 
 ## Goal
@@ -21,8 +21,8 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 - **Phone first.** Track A makes phone notifications correct and useful before any computer work starts. Until computers report presence (Track B), "still unread after a short wait" stands in for "the owner is away". Opening a chat on a focused, visible computer already marks it read (spec 123), so someone watching at their desk is not pushed.
 - **One native build, early.** Every native change (Firebase config, channels, background push, entitlements, new native modules) goes into release A3. Everything else on Native Mobile ships over the air with EAS Update.
 - **Ship paths.** Gateway changes go out in the host bundle (`dev` → `canary` → `stable`). Platform changes go out in the platform deploy. Native Mobile JS goes out with EAS Update, and native changes go through TestFlight and Play.
-- **Kill switch.** From A4, `MATRIX_NOTIFICATIONS_ROUTER=off` in `/opt/matrix/env/host.env` turns the router off on a VPS. The legacy coding-agent bridge then runs as it does today. The legacy bridge is deleted only in A8a, once the router has run on `stable` for a full release.
-- **Defaults never surprise.** A release never turns on a new kind of push for owners who have not enabled push on their phone.
+- **Kill switch.** From A6, `MATRIX_NOTIFICATIONS_ROUTER=off` in `/opt/matrix/env/host.env` turns the router off on a VPS. The legacy coding-agent bridge then runs as it does today. The legacy bridge is deleted only in A10, once the router has run on `stable` for a full release.
+- **Defaults never surprise.** A release never turns on a new kind of push for owners who have not enabled push on their phone. Previews and Time Sensitive delivery are opt-in, and the switch for every new kind ships before the kind does (A4, A5).
 
 ## Release train
 
@@ -31,29 +31,32 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 | A1 | Tapping a notification opens the right chat | `apps/mobile` | EAS Update | none | Existing coding-agent pushes open the exact thread or chat from warm or cold start, on the right computer once pushes name it (A2). No banner for the chat already on screen. |
 | A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts, and name the computer they came from |
 | A3 | One native build | `apps/mobile` | TestFlight, Play | none | Android receives pushes. Channels, background push and the Time Sensitive capability are in place for later releases. |
-| A4 | Approvals and questions from every chat | gateway | host bundle | A2 | Every harness notifies when it needs the owner, not only Codex, Pi and OpenCode threads |
-| A5 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
-| A6 | Replies and failures, only if still unread | gateway | host bundle | A4, A5 | A push when a reply finishes, unless the owner already read it anywhere |
-| A7a | Notification preferences API | gateway | host bundle | A4 | none on its own |
-| A7b | Notifications screen | `apps/mobile` | EAS Update | A7a | The owner controls kinds, phone timing and previews |
-| A8a | Resolve and dismiss events | gateway | host bundle | A6 | none on its own |
-| A8b | Clear and badge on the phone | `apps/mobile` | EAS Update | A3, A8a | Answering or reading anywhere removes the phone notification; the app icon shows a count |
-| B1 | Presence socket | gateway | host bundle | A6 | none on its own (dark launch) |
-| B2 | Electron reports activity and shows banners | `desktop/` + small gateway change | desktop OTA + host bundle | B1 | Banner on the laptop and a quiet phone while the owner is active in Electron |
+| A4 | Notification preferences API | gateway, `packages/contracts` | host bundle | none | none on its own |
+| A5 | Notifications screen | `apps/mobile` | EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
+| A6 | Approvals and questions from every chat | gateway | host bundle | A2, A5 | Every canonical chat notifies when it needs the owner, not only Codex, Pi and OpenCode threads, and a gateway crash cannot lose the alert |
+| A7 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
+| A8 | Replies and failures, only if still unread | gateway | host bundle | A6, A7 | A push when a reply finishes, unless the owner already read it anywhere |
+| A9 | Coding-agent threads join the router | gateway | host bundle | A6 | Codex, Pi and OpenCode threads, including those bound to Terminal tabs, follow the same waits and settings as chats |
+| A10 | Resolve and dismiss events | gateway | host bundle | A8, A9 | none on its own |
+| A11 | Clear and badge on the phone | `apps/mobile` | EAS Update | A3, A10 | Answering or reading anywhere removes the phone notification; the app icon shows a count |
+| B1 | Presence socket | gateway | host bundle | A8 | none on its own (dark launch) |
+| B2 | Electron reports activity and shows banners | `desktop/` + small gateway change | desktop OTA + host bundle | B1 | Banner on the laptop and a quiet phone while the owner is active in Electron. An approval or question the owner doesn't open still reaches the phone after a short delay. |
 | B3 | Web reports activity and shows banners | `shell/` | host bundle | B1 | The same for Web Desktop and Web Canvas |
-| B4 | Notifications section on computers | `shell/`, `desktop/` | host bundle, desktop OTA | A7a, B2, B3 | The same settings on every surface |
+| B4 | Notifications section on computers | `shell/`, `desktop/` | host bundle, desktop OTA | A4, B2, B3 | The same settings on every surface, plus per-device switches |
 | B5 | The open phone app counts as active | `apps/mobile` | EAS Update | B1 | An in-app banner instead of a push while the app is open |
 | C1 | Platform device registry | `packages/platform` | platform deploy | none | none on its own |
 | C2 | The app registers with the platform too | `apps/mobile` | EAS Update | C1 | none on its own (dual registration) |
 | C3 | Platform push relay and receipts | `packages/platform` | platform deploy | C1 | none on its own |
 | C4 | The gateway sends through the relay | gateway | host bundle | C2, C3 | Same behaviour. Dead tokens are cleaned up centrally. |
 | C5 | Expo access token on, direct path removed | config, gateway, `apps/mobile` | EAS dashboard, host bundle | C4 on every VPS | Nobody can send to a device just by knowing its token |
-| C6 | Approve, Deny and quick reply from the notification | `apps/mobile`, gateway | EAS Update, host bundle | A8b, C4 | Act without opening the app (unlock required) |
+| C6 | Approve, Deny and quick reply from the notification | `apps/mobile`, gateway | EAS Update, host bundle | A11, C4 | Act without opening the app (unlock required) |
 | C7 | Web Push for closed tabs | `packages/platform`, `shell/` | platform deploy, host bundle | C3, B3 | Browser alerts with no tab open, for owners without the app |
 
-Track A can start today. Track B starts after A6, because B2 adds a step to the router that A4 and A6 build. Track C can run alongside Track B, but C5 waits until every VPS runs C4.
+- **Controls come first.** The preferences API (A4) and the phone's Notifications screen (A5) ship before any new kind of push (A6, A8), so owners can turn each kind off and choose what the lock screen shows from the first alert.
+- **Computers before their own settings.** Computers show banners from B2 and B3, before their Settings section arrives in B4. The phone's Notifications screen already controls the same kinds, previews and timing; B4 brings that section to computers and adds per-device switches.
+- **Order.** Track A has no prerequisites. Track B starts after A8, because B2 adds a step to the router that A6 and A8 build. Track C can run alongside Track B, but C5 waits until every VPS runs C4.
 
-Estimated effort (engineer-days): Track A 15–20, Track B 11–16, Track C 15–20. Native Mobile releases (A1, A3, A5, A7b, A8b, B5, C2) can run in parallel with gateway releases.
+Estimated effort (engineer-days): Track A 16–21, Track B 11–16, Track C 15–20. Native Mobile releases (A1, A3, A5, A7, A11, B5, C2) can run in parallel with gateway releases.
 
 ### Release details
 
@@ -70,50 +73,64 @@ Estimated effort (engineer-days): Track A 15–20, Track B 11–16, Track C 15�
 **A2 · Push tokens survive restarts** (`packages/gateway/src/channels/push.ts`)
 - Move token storage from the in-memory `Map` to an owner table `notification_push_tokens`. Keep the existing caps (16 per owner, 30-day TTL) as SQL: `ON CONFLICT (token) DO UPDATE`, and evict the oldest in the same transaction.
 - The route contract (`POST/DELETE /api/push/register`) does not change.
-- Add `handle` (the VPS's `MATRIX_HANDLE`) to the `data` of every push, so A1 can switch to the computer a push came from before A4's v1 payload exists.
+- Add `handle` (the VPS's `MATRIX_HANDLE`) to the `data` of every push, so A1 can switch to the computer a push came from before A6's v1 payload exists.
 - Done when: a token registered before a gateway restart still receives a push after it, and every push's `data` carries `handle`. Evidence: N/A (no UI change; reason recorded in the PR).
 
 **A3 · One native build** (`apps/mobile/app.json`, EAS credentials)
 - Android: create a Firebase project, set `android.googleServicesFile` (or an EAS file variable, OQ-9), upload the FCM V1 service-account key with `eas credentials`, and declare `POST_NOTIFICATIONS`.
 - Create the channels at startup, before any token request: `replies` (default importance) and `attention` (high). Android 13+ only prompts once a channel exists.
-- Add `expo-task-manager` and `enableBackgroundRemoteNotifications: true` in the `expo-notifications` plugin config. A8b needs them.
-- iOS: add the Time Sensitive Notifications capability (`com.apple.developer.usernotifications.time-sensitive`). Confirm `aps-environment` is `production` in release builds.
+- Add `expo-task-manager` and `enableBackgroundRemoteNotifications: true` in the `expo-notifications` plugin config. A11 needs them.
+- iOS: add the Time Sensitive Notifications capability (`com.apple.developer.usernotifications.time-sensitive`). It is used only for owners who turn Time Sensitive on (A5). Confirm `aps-environment` is `production` in release builds.
 - No JS behaviour change beyond channel creation.
 - Done when: an internal Android build and a TestFlight build both receive a test push. Evidence: Native Mobile (iOS and Android).
 
-**A4 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
+**A4 · Notification preferences API** (gateway, `packages/contracts`)
+- `NotificationPreferencesSchema`, `~/system/notifications.json`, and `GET/PUT /api/notifications/preferences` (see Settings and defaults).
+- Migration: the first read seeds `events.*` from today's `attentionPush` preferences, so existing choices carry over. The legacy route stays as a projection.
+- Previews and Time Sensitive delivery start off for every owner, including migrated ones.
+- The legacy coding-agent bridge reads its kinds from the new store, so the A5 switches also govern today's pushes.
+- Done when: an owner with legacy preferences reads the same choices back, and a `PUT` with a stale `revision` gets 409. Evidence: N/A (API only).
+
+**A5 · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): kinds, phone timing, previews and Time Sensitive (iOS only). It reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
+
+**A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
 - Compose `router.onChatEvent` into `onCommittedEvent` (see Integration wiring). Route `run.activity` rows that contain `approval.requested`, `input.requested` or `interaction.requested`.
-- Fold `coding-agents/attention-notifications.ts` in as a thread-store sink, so Codex, Pi and OpenCode runs inside canonical chats notify once and never twice. The legacy bridge only runs when the kill switch is off.
+- **Crash recovery:** pending requests are already durable in the chat store, where the "Needs you" lane reads them (628). At startup and every 30 s, a reconciler finds pending, unexpired approvals and questions that have no `notification_events` row and inserts one with `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`. A crash between the chat commit and the router enqueue therefore still notifies, once. Only requests created after the A6 schema version was applied are considered, so the first deploy does not push old requests.
+- **Coding-agent threads stay on the legacy bridge until A9.** While the router is on, the bridge skips threads bound to a canonical run, so a Codex, Pi or OpenCode run inside a canonical chat notifies once, through the router.
 - Interim rule: wait 15 s, then push only if the approval or question is still pending.
-- Use the existing `attentionPush` preferences until A7a.
-- Done when: an approval in a Claude chat pushes once after 15 s, an approval answered within 15 s pushes nothing, and a Codex approval pushes once. Evidence: Native Mobile.
+- Kinds and content come from the A4 preferences.
+- Done when: an approval in a Claude chat pushes once after 15 s, an approval answered within 15 s pushes nothing, a Codex approval inside a canonical chat pushes once, and a gateway killed between the chat commit and the enqueue still pushes exactly once after restart. Evidence: Native Mobile.
 
-**A5 · Reading on the phone counts as read** (`apps/mobile/components/chat/*`)
+**A7 · Reading on the phone counts as read** (`apps/mobile/components/chat/*`)
 - When a chat is on screen with the app in the foreground, call `PATCH /api/chats/:chatId/read-state` with `{ type: "mark_read", throughSeq, baseVersion }`. Follow spec 123: advance only through committed assistant messages delivered to the view, debounce to one call per 2 s, and never override a manual unread mark during the visit.
 - Done when: reading on the phone clears the unread state shown on Electron and web. Evidence: Native Mobile plus one Electron Desktop capture of the cleared state.
 
-**A6 · Replies and failures, only if still unread** (gateway)
+**A8 · Replies and failures, only if still unread** (gateway)
 - Route `run.completed` and `run.failed`.
-- Add the durable scheduler (`phone_send_after`) and resolution from the read cursor (`chat_user_state.read_through_seq`), `approval.resolved`, `input.resolved`, terminal runs and expiry.
+- Add the durable scheduler (`phone_send_after`) and resolution from the read cursor (`chat_user_state.read_through_seq`), `approval.resolved`, `input.resolved`, finished runs (completed, failed or aborted) and expiry.
 - Interim rule: wait `replyDelaySeconds` (default 60 s), then push only if still unread.
+- Replies and failures are not reconciled after a crash (see Failure modes).
 - Done when: a reply read on any surface within 60 s pushes nothing, an unread reply pushes once, and a gateway restart during the wait neither drops nor repeats the push. Evidence: Native Mobile.
 
-**A7a · Notification preferences API** (gateway, `packages/contracts`): `NotificationPreferencesSchema`, `~/system/notifications.json`, `GET/PUT /api/notifications/preferences`, migration from `attentionPush`, and the legacy route kept as a projection. Evidence: N/A (API only).
+**A9 · Coding-agent threads join the router** (gateway)
+- Fold `coding-agents/attention-notifications.ts` in as a thread-store sink, so Codex, Pi and OpenCode threads, including those bound to Terminal tabs, get the same waits, preferences and dedupe as chats.
+- The thread sink ignores threads bound to a canonical run, which keeps one notification per request.
+- The reconciler also reads pending approvals and inputs from the thread store's attention list.
+- The legacy bridge only runs when the kill switch is off.
+- Done when: a standalone Codex thread approval pushes once after 15 s, and a Codex run inside a canonical chat still pushes once. Evidence: Native Mobile.
 
-**A7b · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
+**A10 · Resolve and dismiss events** (gateway): on resolution, send a silent `dismiss` push with the resolved ids, and include a `badge` count in every push. Delete the legacy coding-agent bridge and its kill-switch branch. Evidence: N/A.
 
-**A8a · Resolve and dismiss events** (gateway): on resolution, send a silent `dismiss` push with the resolved ids, and include a `badge` count in every push. Delete the legacy coding-agent bridge and its kill-switch branch. Evidence: N/A.
-
-**A8b · Clear and badge on the phone** (`apps/mobile/lib/notifications/`): a background task (`Notifications.registerTaskAsync`) handles `dismiss` with `dismissNotificationAsync`. On every foreground, reconcile `getPresentedNotificationsAsync()` against `GET /api/notifications?state=open` and call `setBadgeCountAsync`. Evidence: Native Mobile.
+**A11 · Clear and badge on the phone** (`apps/mobile/lib/notifications/`): a background task (`Notifications.registerTaskAsync`) handles `dismiss` with `dismissNotificationAsync`. On every foreground, reconcile `getPresentedNotificationsAsync()` against `GET /api/notifications?state=open` and call `setBadgeCountAsync`. Evidence: Native Mobile.
 
 **B1 · Presence socket** (gateway): `WS /ws/notifications`, the presence registry, the `notification_devices` table, and frame schemas. The router reads presence only in B2. Evidence: N/A.
 
 **B2 · Electron reports activity and shows banners**
 - Electron main process: socket client, `powerMonitor` idle and lock reporting, `show`/`ack`/`resolve` handling, and click routing to the exact chat. `handleDeepLink` honours `matrixos://chat/<id>`.
 - The legacy kernel trigger in `kernel-wiring.ts` moves behind the router.
-- Gateway: router steps 1 and 2 (inline and banner with ack), plus the "away" skip of the grace.
-- Done when: AC-1, AC-2 and AC-3 pass on Electron. Evidence: Electron Desktop plus Native Mobile (the phone stays quiet).
+- Gateway: router steps 1 and 2 (inline and banner with ack), the "away" skip of the grace, and the escalation delay for approvals and questions.
+- Done when: AC-1, AC-2, AC-3 and AC-16 pass on Electron. Evidence: Electron Desktop plus Native Mobile (the phone stays quiet).
 
 **B3 · Web reports activity and shows banners** (`shell/`): the `useNotificationClient` hook at the shell root, `notificationclick` in `shell/public/service-worker.js` (bump `VERSION`), the Electron embed marker, in-app cards when OS permission is missing, and the title badge. Evidence: Web Desktop, Web Canvas, Web Mobile.
 
@@ -155,7 +172,7 @@ Out of scope:
 
 End state (after Track B):
 1. **Watching the chat** (on screen in a visible, focused window): no notification. The chat updates live.
-2. **At a computer:** a banner on the surface in use only. The phone stays quiet.
+2. **At a computer:** a banner on the surface in use only. For replies and failures the phone stays quiet. An approval or question still reaches the phone after the escalation delay unless the owner opens or answers it first.
 3. **Away** (3 min without input, or 1 min after the screen locks; OQ-1): approvals and questions go to the phone immediately. Replies and failures go after `replyDelaySeconds` if still unread.
 4. **Nothing open:** approvals and questions go to the phone after the 15 s grace. Replies and failures go after `replyDelaySeconds` if still unread.
 5. **Banner can't be shown:** blocked permission, or no ack within 5 s, falls through to the phone path.
@@ -174,29 +191,30 @@ The router evaluates each event once. The first matching step decides. The Relea
 
 | Step | Condition | Outcome | Release |
 | --- | --- | --- | --- |
-| 0 | Kind off in preferences; a reply or failure in a muted chat (OQ-8); a reply shorter than `minReplySeconds`; or kill switch off | `suppressed` (badge only) | A4, A6 |
-| 0b | Dedupe key already exists | Ignored | A4 |
+| 0 | Kind off in preferences; a reply or failure in a muted chat (OQ-8); a reply shorter than `minReplySeconds`; or kill switch off | `suppressed` (badge only) | A6, A8 |
+| 0b | Dedupe key already exists | Ignored | A6 |
 | 1 | A fresh, attended presence record that is `visible` and `focused`, with `viewingChatId` equal to the event's chat. A hidden tab or an unfocused window does not count. | `inline` | B2 |
-| 2 | One or more attended, enabled devices that can show the alert and have not been tried for this event | Send `show` to the most recently active one and wait up to 5 s for an ack. `displayed` or `inline` → `delivered`. `unavailable` or timeout → the next untried surface. At most 2 banner attempts per event in total, counted from `notification_attempts` across re-checks. | B2 |
-| 3 | No surface took it, and `phone.mode != "never"` | Set `phone_send_after = now + wait`. Approvals and questions: 0 s if a fresh presence record says away (idle or locked), otherwise the fixed 15 s grace. Replies and failures: `replyDelaySeconds`. | A4, A6 |
-| 4 | The scheduler finds a due event still unresolved | From B2, re-check from step 1: the owner is watching the chat now → `inline`; an attended device not yet tried, with banner attempts left → step 2. Otherwise claim it as `sending` and call the transport. Success → `pushed`. Failure → retry with backoff. A device that already failed for this event never delays the phone again. | A4, B2 |
+| 2 | One or more attended, enabled devices that can show the alert and have not been tried for this event | Send `show` to the most recently active one and wait up to 5 s for an ack. `inline` or `displayed` → `delivered`; an approval or question displayed this way keeps a phone send at the escalation delay (step 3). `unavailable` or timeout → the next untried surface. At most 2 banner attempts per event in total, counted from `notification_attempts` across re-checks. | B2 |
+| 3 | No surface took it, or a banner displayed an approval or question, and `phone.mode != "never"` | Set `phone_send_after = now + wait`. Approvals and questions: 0 s if a fresh presence record says away (idle or locked), otherwise the fixed 15 s grace; after a displayed banner, the escalation delay instead. Replies and failures: `replyDelaySeconds`. | A6, A8, B2 |
+| 4 | The scheduler finds a due event still unresolved | From B2, re-check from step 1: the owner is watching the chat now → `inline`; an attended device not yet tried, with banner attempts left and no banner displayed yet → step 2. Otherwise claim it as `sending` and call the transport. Success → `pushed`. Failure → retry with backoff. A device that already failed for this event never delays the phone again. | A6, B2 |
 
 - `phone.mode = "always"` runs step 2 and pushes immediately in parallel (fan-out as an opt-in).
 - `phone.mode = "never"` stops after step 2. The event stays open for badges and the in-app attention lane.
 - Only one surface shows a banner per event. Other attended surfaces get `badge` only.
+- **Escalation delay (B2):** 2 min after the banner was displayed, or half the time left before `expires_at` if that is shorter (OQ-11). Opening the request cancels the phone send: a `clicked` frame, `POST /api/notifications/:id/opened`, or a presence frame showing the owner watching the event's chat (step 1's rule) resolves the event. Answering, expiry and cancellation resolve it as usual. A displayed banner alone does not.
 - **Startup grace:** for 30 s after the gateway starts, presence is unknown, and replies and failures hold their phone send until it ends.
 
 ## Event sources and resolution
 
 | Source | Notify on | Resolve on | Dedupe key |
 | --- | --- | --- | --- |
-| Canonical chat outbox (all harnesses, bots) | `run.activity` with `approval.requested` or `input.requested`, and `interaction.requested` (A4). `run.completed` and `run.failed` (A6). | Approval: `approval.resolved` or a terminal run. Question: `input.resolved` or a terminal run. Bot: `interaction.resolved`. Reply and failure: `read_through_seq` at or past the event's message seq. | `approval:<id>`, `input:<id>`, `interaction:<id>`, `run:<runId>:<outcome>` |
-| Coding-agent thread store (A4) | Approval and input requests, `thread.completed`, `thread.error` | Matching decision, answer or terminal events | `thread:<threadId>:<kind>:<eventSeq>` |
-| Any | n/a | A `clicked` frame, `POST /api/notifications/:id/opened`, or `expires_at` passing | n/a |
+| Canonical chat outbox (all harnesses, bots) | `run.activity` with `approval.requested` or `input.requested`, and `interaction.requested` (A6). `run.completed` and `run.failed` (A8). | Approval: `approval.resolved` or a finished run (completed, failed or aborted). Question: `input.resolved` or a finished run. Bot: `interaction.resolved`. Reply and failure: `read_through_seq` at or past the event's message seq. | `approval:<id>`, `input:<id>`, `interaction:<id>`, `run:<runId>:<outcome>` |
+| Coding-agent thread store (A9): Codex, Pi and OpenCode threads, including those bound to Terminal tabs | Approval and input requests, `thread.completed`, `thread.error` | Matching decision, answer, or the thread finishing | `thread:<threadId>:<kind>:<eventSeq>` |
+| Any | n/a | A `clicked` frame, `POST /api/notifications/:id/opened`, a presence frame showing the owner watching the event's chat (from B2), or `expires_at` passing | n/a |
 
 Rules:
 - **Committed events only.** `run.activity` payloads carry `{runId, activityIds, removedActivityIds}`. The router loads at most 50 activity rows by id after commit, outside the writing transaction. Only live commits are routed; replay, reconnect and `Last-Event-ID` resume never reach the sink (523).
-- **No double notify.** Codex, Pi and OpenCode runs inside canonical chats produce both canonical activities and thread events. The canonical event wins. The thread sink ignores threads bound to a canonical run, so each request notifies once.
+- **No double notify.** Codex, Pi and OpenCode runs inside canonical chats produce both canonical activities and thread events. The canonical event wins: until A9 the legacy bridge skips threads bound to a canonical run while the router is on, and from A9 the thread sink ignores them, so each request notifies once.
 - **Never notifies:** a manual "Mark as unread" (123), and `run.aborted` (Stop or shutdown).
 - **Reply length** comes from `chat_runs.started_at`.
 - **Expiry** uses each request's own `expiresAt`. Nothing is hardcoded: 628 approvals expire in 10 min, 633 questions in 30 min, Claude integrations in 5 min, Pi dialogs in at most 240 s, and bots in 24 h.
@@ -212,7 +230,7 @@ Each client computes `attended` locally with one shared pure helper in `packages
 | Native Mobile | `AppState` is `active` | `AppState`. On `background` the app sends `attended:false` and closes the socket. |
 
 - **Watching a chat:** `viewingChatId` names the chat on screen, or null. `visible` and `focused` describe the window or tab: Electron `BrowserWindow.isVisible()` and `isFocused()`, web `document.visibilityState` and `document.hasFocus()`, Native Mobile `AppState` `active`. Only a record that is attended, visible and focused counts as watching (routing step 1), the same rule spec 123 uses for marking read.
-- **Blind spots:** web pages cannot see input in other apps, and no surface can see macOS Focus or OS Do Not Disturb. A banner hidden by Focus counts as `displayed`.
+- **Blind spots:** web pages cannot see input in other apps, and no surface can see macOS Focus or OS Do Not Disturb. A banner hidden by Focus counts as `displayed`; for approvals and questions the escalation still reaches the phone.
 - **Embedded hosted shell:** Electron shows the Next.js shell in a WebContentsView on the Home tab. That embed must not start the web client. Electron loads it with an `embed=electron` marker that the shell reads once at boot. Without this, Electron would show two banners.
 
 ## Settings and defaults
@@ -236,23 +254,24 @@ export const NotificationPreferencesSchema = z.object({
     replyDelaySeconds: z.union([z.literal(0), z.literal(30), z.literal(60), z.literal(120), z.literal(300)]),   // default 60 (OQ-10)
   }).strict(),
   content: z.object({
-    showPreview: z.boolean(),         // default true (OQ-3)
+    showPreview: z.boolean(),         // default false: generic lock-screen text (OQ-3)
     sound: z.boolean(),               // default true
+    timeSensitive: z.boolean(),       // default false; iOS only (OQ-3)
   }).strict(),
 }).strict();
 ```
 
-- The 15 s attention grace and the 60 s lock rule are fixed constants in v1, not settings.
+- The 15 s attention grace, the 60 s lock rule and the escalation delay are fixed constants in v1, not settings.
 - **Missing file:** use the defaults. **Corrupt or unreadable file:** fail closed for push and log on the server, as the attention preferences do today.
-- **Migration (A7a):** the first read seeds `events.*` from `~/system/coding-agents/notification-preferences/<owner>.json`. The legacy `GET/PUT /api/coding-agents/notification-preferences` route stays as a projection until B4.
-- **Before A7a,** the router uses `attentionPush` for kinds and the defaults above for everything else.
+- **Migration (A4):** the first read seeds `events.*` from `~/system/coding-agents/notification-preferences/<owner>.json`. The legacy `GET/PUT /api/coding-agents/notification-preferences` route stays as a projection until B4.
+- **Readers:** the router reads this document from its first release (A6). Until A9 the legacy coding-agent bridge reads its kinds from the same store (A4).
 - **Native Mobile** reads and writes through the gateway client and keeps no local copy. Per `docs/dev/coding-agent-shells.md`, it never uses AsyncStorage for these preferences.
 - **Electron Desktop** uses main-process IPC (`notifications:get-preferences`, `notifications:update-preferences`) validated in `desktop/src/shared/ipc-contract.ts`. The renderer never holds the bearer.
 - **Devices (B1)** live in the owner table `notification_devices`, not this file. `PATCH /api/notifications/devices/:deviceId` changes `enabled` or `label`.
 - **Settings UI:**
   - Notify me when: four toggles, plus the reply-length select.
   - Phone: mode, away-after (from B2), and "Send replies if still unread after".
-  - Content: preview and sound.
+  - Content: preview, sound and Time Sensitive (iOS only).
   - Your devices (from B4): per-device toggle, permission state, and "Send a test notification".
 
 ## Protocol: `WS /ws/notifications` (B1)
@@ -310,14 +329,16 @@ export const NotificationViewSchema = z.object({
 
 | Field | Value | From |
 | --- | --- | --- |
-| `title`, `body` | Same safe copy as `show` | A4 |
-| `data` | `{ v: 1, notificationId, handle, target }` only, under 1 KiB | A4 (A1 also accepts the old shape) |
-| `channelId` (Android) | `replies` or `attention` | A4, needs A3 |
-| `interruptionLevel` (iOS) | `time-sensitive` for approvals and questions, `active` otherwise | A4, needs A3 |
-| `collapseId` | The chat or thread id for replies; the event id for approvals and questions | A4 |
-| `ttl` | Seconds until `expires_at`, or 24 h for replies | A4 |
-| `badge` | Unread canonical chat count (the Dock badge rule; OQ-7) | A8a |
+| `title`, `body` | Same safe copy as `show` | A6 |
+| `data` | `{ v: 1, notificationId, handle, target }` only, under 1 KiB | A6 (A1 also accepts the old shape) |
+| `channelId` (Android) | `replies` or `attention` | A6, needs A3 |
+| `interruptionLevel` (iOS) | `time-sensitive` for approvals and questions when `content.timeSensitive` is on; `active` otherwise | A6, needs A3 |
+| `collapseId` | The chat or thread id for replies; the event id for approvals and questions | A6 |
+| `ttl` | Seconds until `expires_at`, or 24 h for replies | A6 |
+| `badge` | Unread canonical chat count (the Dock badge rule; OQ-7) | A10 |
 | `categoryId` | `reply`, `approval` or `question` | C6 |
+
+Android has no Time Sensitive switch: the `attention` channel's high importance shows a heads-up banner but does not bypass Do Not Disturb, and owners can change a channel's importance in system settings.
 
 ## Persistence
 
@@ -333,7 +354,7 @@ CREATE TABLE IF NOT EXISTS notification_push_tokens (
   last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 
--- A4
+-- A6
 CREATE TABLE IF NOT EXISTS notification_events (
   id               uuid PRIMARY KEY,
   owner_id         text NOT NULL,
@@ -385,8 +406,8 @@ CREATE TABLE IF NOT EXISTS notification_devices (
 );
 ```
 
-- **Inserts:** an event insert is `ON CONFLICT (owner_id, dedupe_key) DO NOTHING RETURNING id`. The event and its first attempt are written in one transaction.
-- **State changes:** every change is one conditional `UPDATE … WHERE id = :id AND state = :expected`. Resolution uses `WHERE state IN ('open','delivered','sending','pushed','inline')`. A send that completes after its row was resolved matches nothing, and the router sends `dismiss` (from A8a).
+- **Inserts:** an event insert is `ON CONFLICT (owner_id, dedupe_key) DO NOTHING RETURNING id`. The event and its first attempt are written in one transaction. The reconciler (A6) and the queue-overflow path use the same insert.
+- **State changes:** every change is one conditional `UPDATE … WHERE id = :id AND state = :expected`. Resolution uses `WHERE state IN ('open','delivered','sending','pushed','inline')`. A send that completes after its row was resolved matches nothing, and the router sends `dismiss` (from A10).
 - **Scheduler claim:** one transaction with `SET LOCAL statement_timeout = '5s'` selects `WHERE state IN ('open','delivered') AND phone_send_after <= now() ORDER BY phone_send_after LIMIT 50 FOR UPDATE SKIP LOCKED`, sets `sending` and `claimed_at = now()`, and commits.
 - **Push outcome:** the transport call runs after commit, never inside the transaction. Success sets `pushed`. A retryable failure returns the row to `open` with `push_attempts + 1` and a backed-off `phone_send_after`. After 3 attempts, or once past `expires_at`, it becomes `failed`.
 - **Reclaim:** a `sending` row with `claimed_at` older than 60 s is reclaimed by the next tick. With the direct transport, a crash mid-send can repeat one push. From C4, the relay's `UNIQUE (event_id, device_id)` makes the repeat a no-op.
@@ -445,11 +466,11 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
-| `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A5 | Native Mobile | Owner principal | Existing |
-| `GET /api/notifications` | A8a | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
-| `POST /api/notifications/:id/opened` | A8a | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |
-| `GET/PUT /api/notifications/preferences` | A7a | Owner clients | Owner principal | `bodyLimit` 16 KiB, strict full-replace schema with base `revision`, 409 on mismatch |
-| `GET/PUT /api/coding-agents/notification-preferences` | existing; projection from A7a; removed in B4 | Electron | Unchanged | Unchanged |
+| `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
+| `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
+| `POST /api/notifications/:id/opened` | A10 | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |
+| `GET/PUT /api/notifications/preferences` | A4 | Owner clients | Owner principal | `bodyLimit` 16 KiB, strict full-replace schema with base `revision`, 409 on mismatch |
+| `GET/PUT /api/coding-agents/notification-preferences` | existing; projection from A4; removed in B4 | Electron | Unchanged | Unchanged |
 | `WS /ws/notifications` | B1 | Shell, Electron main, Native Mobile | Owner principal; query token allowed for browsers | Frame schemas, 4 KiB, 10 frames/s, 64 sockets per owner (oldest evicted) |
 | `GET /api/notifications/devices`, `PATCH /api/notifications/devices/:deviceId` | B1 | Settings | Owner principal | `bodyLimit` 1 KiB; device id regex; strict `{ enabled?, label? }` |
 | `POST /api/notifications/test` | B4 | Settings | Owner principal | `bodyLimit` 1 KiB; 3 per minute per owner; returns `{ delivered, channel }` only |
@@ -486,10 +507,10 @@ There are no inbound webhooks. Expo receipts are polled.
 
 | Recipient | Data | When |
 | --- | --- | --- |
-| Expo, then Apple or Google | Title, body, and `data` (`notificationId`, `handle`, target id) | Phone pushes (`handle` from A2, the v1 payload from A4) |
+| Expo, then Apple or Google | Title, body, and `data` (`notificationId`, `handle`, target id) | Phone pushes (`handle` from A2, the v1 payload from A6) |
 | Browser push services | Ciphertext only, plus endpoint metadata | C7 |
 | OS notification centres | Title and body | Local banners (B2 on) |
-| PostHog | Counts only: `notification_routed {kind, outcome, channel}`, with no content or ids | A4 on |
+| PostHog | Counts only: `notification_routed {kind, outcome, channel}`, with no content or ids | A6 on |
 
 With `showPreview: false`, no chat content leaves the VPS.
 
@@ -497,18 +518,18 @@ With `showPreview: false`, no chat content leaves the VPS.
 
 ### Gateway
 
-New directory `packages/gateway/src/notifications/`: `router.ts`, `scheduler.ts`, `repository.ts`, `copy.ts`, `preferences-store.ts` (A7a), `presence-registry.ts` and `ws-route.ts` (B1), `routes.ts`, and `transports/{expo-direct,platform-relay}.ts`. `server.ts` only wires them.
+New directory `packages/gateway/src/notifications/`: `router.ts`, `scheduler.ts`, `repository.ts`, `copy.ts`, `preferences-store.ts` (A4), `presence-registry.ts` and `ws-route.ts` (B1), `routes.ts`, and `transports/{expo-direct,platform-relay}.ts`. `server.ts` only wires them.
 
 Startup order:
 1. Once the owner database is ready, run the notifications schema bootstrap.
-2. Resolve the transport. A4 uses `expo-direct`, which wraps the existing push channel. From C4, `MATRIX_NOTIFICATIONS_TRANSPORT=relay` with `PLATFORM_INTERNAL_URL` set selects the relay. An unresolved transport fails startup rather than failing at call time.
+2. Resolve the transport. A6 uses `expo-direct`, which wraps the existing push channel. From C4, `MATRIX_NOTIFICATIONS_TRANSPORT=relay` with `PLATFORM_INTERNAL_URL` set selects the relay. An unresolved transport fails startup rather than failing at call time.
 3. Create `NotificationRouter({ db, preferences, presence, transport, clock, logger })`. Before B1, `presence` is a null registry that always reports "unknown". Record `startedAt` for the 30 s grace.
 4. In `createGatewayChatEventStream` (`chat/gateway-event-stream.ts`), pass `onCommittedEvent: composeSinks(createChatFailureRecorder(options), router.onChatEvent)`. `ChatOutboxDelivery` allows one sink, so compose the functions rather than register a second sink. `composeSinks` calls each sink in its own try/catch and logs failures, so a router error never breaks telemetry or chat delivery. The router sink is synchronous and only enqueues.
-5. Register `router.onThreadEvent` with the thread store's `registerEventSink`. When the kill switch is on (router off), register the legacy attention bridge instead. This branch is removed in A8a.
-6. Mount routes as each release adds them. Start the scheduler (2 s tick) and the hourly retention sweep.
+5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips threads bound to a canonical run. This branch is removed in A10.
+6. Mount routes as each release adds them. Start the scheduler (2 s tick), the reconciler (once at startup, then every 30 s) and the hourly retention sweep.
 
 Shutdown:
-1. Stop the scheduler and sweep timers.
+1. Stop the scheduler, reconciler and sweep timers.
 2. Stop accepting router work and give the queue up to 2 s to drain.
 3. Send `closing` to sockets and close them.
 4. Clear the presence registry and ack waiters.
@@ -523,7 +544,7 @@ Shutdown:
 
 ### Clients
 
-- **Native Mobile:** `lib/notifications/` holds the payload parser and tap routing (A1), read marking (A5), the background dismiss task (A8b), the socket client (B5) and platform registration (C2). Listeners start with the active computer's `GatewayClient` in `app/_layout.tsx` and are keyed per computer. Sign-out unregisters the device (gateway, plus the platform from C2) before tokens are cleared, and removes listeners and the background task.
+- **Native Mobile:** `lib/notifications/` holds the payload parser and tap routing (A1), read marking (A7), the background dismiss task (A11), the socket client (B5) and platform registration (C2). Listeners start with the active computer's `GatewayClient` in `app/_layout.tsx` and are keyed per computer. Sign-out unregisters the device (gateway, plus the platform from C2) before tokens are cleared, and removes listeners and the background task.
 - **Electron Desktop (B2):** the main process creates the client once auth is ready, keyed by runtime slot and auth generation. A runtime switch, sign-out or quit closes the socket, clears the `powerMonitor` poll and the notification Map, and drops late frames by generation check. The renderer talks to it through validated IPC: `notification:clicked` is widened to `{ target }`, a new `notifications:*` invoke channel is added, and the existing `badge:set` is reused.
 - **Web (B3):** `useNotificationClient` mounts once inside the authenticated shell provider tree, above the Desktop, Canvas and Mobile presentation switch, so changing presentation never reconnects it. It is skipped in the Electron embed. The permission prompt is only requested from a click.
 - **No shared globals:** no `globalThis`; dependency injection only. The kernel and IPC tools are not involved.
@@ -532,7 +553,7 @@ Shutdown:
 
 | Setting | Source | Consumer | Release |
 | --- | --- | --- | --- |
-| `MATRIX_NOTIFICATIONS_ROUTER` (`on`/`off`, default `on`) | `host.env` | Router kill switch | A4 to A8a |
+| `MATRIX_NOTIFICATIONS_ROUTER` (`on`/`off`, default `on`) | `host.env` | Router kill switch | A6 to A10 |
 | `MATRIX_NOTIFICATIONS_TRANSPORT` (`direct`/`relay`) | `host.env`, shipped default | Transport selection | C4 |
 | `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE` | `host.env` (existing) | Relay transport | C4 |
 | `EXPO_ACCESS_TOKEN` | Platform secret manager | Relay | C5 |
@@ -545,13 +566,14 @@ Shutdown:
 | --- | --- |
 | Expo or relay slow or failing | `AbortSignal.timeout(10_000)`. Retry 3 times with 2 s, 8 s and 30 s backoff while before `expires_at`, then `failed`. Logged; the owner sees no error. |
 | Gateway restart during a wait | The scheduler resumes from `phone_send_after`. `open` events never evaluated (`evaluated_at IS NULL`) and older than 15 s run the ladder once, through the scheduler's per-tick pickup. The dedupe key prevents a second event. |
-| Crash between commit and enqueue | Accepted loss: that one event does not notify. No duplicate is possible. |
+| Crash between commit and enqueue | Approvals and questions: the reconciler finds the pending request at startup, or within 30 s, and inserts its event; the dedupe key keeps it to one push. Replies and failures: accepted loss, so that one event does not notify. |
 | Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. An approval or question evicts the oldest queued reply. If no queued reply is left to evict, it is written straight to `notification_events` as `open` with the generic copy for its kind (as with `showPreview: false`) and `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`, instead of being queued. The scheduler's per-tick pickup then runs the ladder for it. Memory stays capped at 1,000 items, and no approval or question is dropped. |
 | Concurrent resolve and push | Conditional updates. A push for a resolved row is skipped, and a resolve after a push triggers `dismiss`. |
 | Two gateway processes overlap during a restart | `FOR UPDATE SKIP LOCKED` plus conditional updates |
 | Interim false push (Track A) | The owner is at their desk in another app and does not read within the wait. Accepted until B2. Owners can raise `replyDelaySeconds` or turn replies off. |
-| Mobile read marking fails (A5) | The read cursor does not advance, so a reply may still push. The failure is logged and retried on the next view. |
+| Mobile read marking fails (A7) | The read cursor does not advance, so a reply may still push. The failure is logged and retried on the next view. |
 | Ack never arrives (B2+) | `timeout` after 5 s, then the next surface or the phone. A rare double alert is cleaned up by `resolve`. |
+| Banner displayed but not seen (B2+) | Replies and failures stop at the banner. Approvals and questions push to the phone after the escalation delay unless the owner opens or answers them first. |
 | Half-open socket (laptop lid closed) | Electron reports on `suspend` as a best effort. Otherwise the 60 s staleness drops the record. |
 | Preferences file corrupt | Fail closed for push and log. Settings shows a "couldn't load" notice and blocks saving until a reload succeeds. |
 | Two Settings windows save at once | The second `PUT` gets a 409 on the stale `revision`, and the client reloads. |
@@ -568,18 +590,19 @@ Shutdown:
 
 | Resource | Limit and eviction | Release |
 | --- | --- | --- |
-| Router queue | 1,000 items with priority eviction. Approvals and questions that do not fit go to the owner table, not memory. One worker, at most 4 concurrent evaluations. | A4 |
-| Scheduler | 50 due events per tick, a tick every 2 s, at most 3 push attempts per event. Each tick also picks up at most 50 never-evaluated `open` rows older than 15 s and runs the ladder for them once. | A4 |
-| Owner tables | Hourly sweep deletes events and attempts older than 30 days, tokens unseen for 30 days, and devices unseen for 90 days | A2, A4, B1 |
-| Mobile read marking | One in-flight request per chat, debounced 2 s | A5 |
+| Router queue | 1,000 items with priority eviction. Approvals and questions that do not fit go to the owner table, not memory. One worker, at most 4 concurrent evaluations. | A6 |
+| Scheduler | 50 due events per tick, a tick every 2 s, at most 3 push attempts per event. Each tick also picks up at most 50 never-evaluated `open` rows older than 15 s and runs the ladder for them once. | A6 |
+| Reconciler | Once at startup, then every 30 s. At most 50 pending requests per pass, and only those created after the A6 schema version was applied. | A6 |
+| Owner tables | Hourly sweep deletes events and attempts older than 30 days, tokens unseen for 30 days, and devices unseen for 90 days | A2, A6, B1 |
+| Mobile read marking | One in-flight request per chat, debounced 2 s | A7 |
 | Presence registry | 64 sockets per owner (oldest evicted); a 30 s sweep removes records stale for over 60 s; cleared on shutdown | B1 |
-| Ack waiters | One per in-flight `show`, at most 64, each with a 5 s timer cleared on every terminal path | B2 |
+| Ack waiters | One per in-flight `show`, at most 64, each with a 5 s timer cleared on every exit path | B2 |
 | Electron | Notification Map capped at 50; one `powerMonitor` poll (15 s) and one heartbeat (25 s), cleared on close, sign-out, runtime switch and quit | B2 |
 | Web client | In-memory throttles only; all listeners and timers removed on unmount | B3 |
 | Platform tables | `push_sends` kept 7 days; rate windows 2 h; devices disabled for 30 days are deleted; devices unseen for 120 days are disabled | C1, C3 |
-| Copy and frames | Title ≤ 80, body ≤ 180, `data` < 1 KiB, push < 4 KiB, frames ≤ 4 KiB, 10 frames/s, 5 s `hello` deadline | A4, B1 |
+| Copy and frames | Title ≤ 80, body ≤ 180, `data` < 1 KiB, push < 4 KiB, frames ≤ 4 KiB, 10 frames/s, 5 s `hello` deadline | A6, B1 |
 
-No temp files are created. Every timer is cleared on its terminal paths and on shutdown.
+No temp files are created. Every timer is cleared on every exit path and on shutdown.
 
 ## Acceptance checks
 
@@ -589,28 +612,33 @@ No temp files are created. Every timer is cleared on its terminal paths and on s
 | AC-2 | Owner viewing the chat in a focused window → no banner and no push. The event is `inline`. | B2 |
 | AC-3 | Electron idle past `awayAfterSeconds`, or locked for 60 s → an approval pushes within 5 s of commit | B2 |
 | AC-4 | Web notifications denied while the tab is hidden → `unavailable`, then the phone push | B3 |
-| AC-5 | Approving on a computer after the phone buzzed → the phone notification is removed or reconciled on next foreground, and badges update | A8b |
+| AC-5 | Approving on a computer after the phone buzzed → the phone notification is removed or reconciled on next foreground, and badges update | A11 |
 | AC-6 | Two attended surfaces → exactly one banner, on the most recently active one | B3 |
-| AC-7 | Replay, reconnect and gateway restart never produce a second notification for the same dedupe key | A4, A6 |
+| AC-7 | Replay, reconnect and gateway restart never produce a second notification for the same dedupe key | A6, A8 |
 | AC-8 | A warm or cold tap opens the exact chat or thread on the right computer | A1 |
 | AC-9 | The Electron Home-tab hosted shell never shows its own banner | B3 |
-| AC-10 | With `showPreview: false`, push payloads contain no chat title or text | A7a |
+| AC-10 | With `showPreview: false` (the default), push payloads contain no chat title or text | A6 |
 | AC-11 | A VPS relay call can never reach another owner's devices (forged ids and tokens in the body) | C3 |
 | AC-12 | Settings shows the same options, values and errors on every surface | B4 |
-| AC-13 | Interim: an approval answered within 15 s, or a reply read within 60 s on any surface, never pushes | A4, A6 |
-| AC-14 | A Codex approval inside a canonical chat pushes exactly once | A4 |
-| AC-15 | Android receives pushes on the `attention` and `replies` channels | A3, A4 |
+| AC-13 | Interim: an approval answered within 15 s, or a reply read within 60 s on any surface, never pushes | A6, A8 |
+| AC-14 | A Codex approval inside a canonical chat pushes exactly once | A6, A9 |
+| AC-15 | Android receives pushes on the `attention` and `replies` channels | A3, A6 |
+| AC-16 | An approval banner displays on Electron and the owner neither opens nor answers it → one phone push after the escalation delay. Opening the banner or the chat first → no push. | B2 |
+| AC-17 | A gateway killed between committing an approval and enqueueing it → exactly one push after restart | A6 |
+| AC-18 | With `timeSensitive` off (the default), iOS approvals and questions arrive as `active` | A6 |
 
 ### Tests per release
 
 - **Every release:** `bun run test`, `bun run typecheck` and `bun run check:patterns`. React releases also run react-doctor on the touched project. Mobile releases also run the mobile Jest (`--maxWorkers=4`, and the run must exit without `--forceExit`) and `tsc` gates.
-- **A4 and A6 integration test:** start the real wiring (event stream with composed sinks, router, scheduler, fake transport) against a test owner database.
+- **A6 and A8 integration test:** start the real wiring (event stream with composed sinks, router, scheduler, fake transport) against a test owner database.
   - Commit `approval.requested`: one transport call after 15 s.
   - Commit `approval.resolved` first: no call.
   - Kill the scheduler between claim and send: the reclaim produces exactly one call.
+  - Commit an approval and kill the gateway before the router enqueues it: after restart the reconciler inserts it, and the transport is called once.
   - Throw inside the router: failure telemetry still records `run.failed`.
   - Fill the router queue with 1,000 approvals, then commit one more: it is stored, not dropped, and the per-tick pickup pushes it exactly once.
-- **B2 integration test:** a fake attended Electron socket receives one `show`, acks, and the transport is not called. With no ack, the transport is called once after 5 s.
+- **B2 integration test:** a fake attended Electron socket receives one `show` for a reply, acks `displayed`, and the transport is not called. With no ack, the transport is called once after 5 s.
+  - An approval acked `displayed` calls the transport once after the escalation delay. A `clicked` frame before then means no call.
   - A socket that acks `unavailable` and stays attended is not tried again at the due re-check: the transport is called once.
   - A chat selected in a hidden tab (`visible: false`) does not count as watching: the event goes to the banner step.
 - **C3 and C4 integration test:**
@@ -626,12 +654,12 @@ No temp files are created. Every timer is cleared on its terminal paths and on s
 - **094-electron-macos-shell:** FR-035 (notify when unfocused, deep link, coalescing) is met by B2's ladder. The 2 s target is kept. The legacy kernel trigger moves behind the router in B2.
 - **105-coding-agent-shells and `docs/dev/coding-agent-shells.md` (Attention Notifications):**
   - Notifications stay gateway-owned, and the payload-safety and fail-closed preference rules are kept.
-  - Delivery stops being "cross-device by policy" and becomes delayed-if-unseen (A4), then presence-routed (B2). `phone.mode = "always"` keeps fan-out as an option.
-  - The doc's section is updated in A4.
-- **123-chat-unread:** read state in `chat_user_state` stays the only authority. A5 brings Native Mobile under its rules. Manual unread marks never notify.
+  - Delivery stops being "cross-device by policy" and becomes delayed-if-unseen (A6), then presence-routed (B2). `phone.mode = "always"` keeps fan-out as an option.
+  - The doc's section is updated in A9.
+- **123-chat-unread:** read state in `chat_user_state` stays the only authority. A7 brings Native Mobile under its rules. Manual unread marks never notify.
 - **523-chat-background-runtime:** only live commits are routed, and stable request identities give stable dedupe keys.
 - **`chat-dock-badge.md`:** the phone badge uses the Dock badge rule (OQ-7).
-- **628-supervised-tool-approval:** "Needs you" stays the one attention lane. C6 actions use the same Platform proof.
+- **628-supervised-tool-approval:** "Needs you" stays the one attention lane, and the A6 reconciler reads the same pending requests. C6 actions use the same Platform proof.
 - **633-agent-waiting-policy:** the router reads each request's own `expiresAt`, so 633's TTLs apply automatically.
 
 ## Open questions
@@ -640,27 +668,29 @@ No temp files are created. Every timer is cleared on its terminal paths and on s
 | --- | --- | --- |
 | OQ-1 | When does the owner count as away? | 3 min with no input, or 1 min after lock (Slack: 10 min and 1 min). Applies from B2. |
 | OQ-2 | Do finished replies reach the phone by default? | Yes, for replies longer than 10 s and still unread after the wait. Approvals and questions always. |
-| OQ-3 | Are lock-screen previews on by default? | On, with a switch. Encrypted previews later. |
+| OQ-3 | Are lock-screen previews and Time Sensitive delivery on by default? | No. Both are opt-in switches on the Notifications screen (A5); with previews off the lock screen shows generic text. Existing choices carry over. Encrypted previews later. |
 | OQ-4 | May the platform store device push tokens? | Yes. Track C needs it to keep the Expo key off customer VPSes. |
 | OQ-5 | Is Web Push for closed tabs needed? | Optional (C7). Skipping it saves about a week. |
-| OQ-6 | Should the A4 and A6 interim waits be 15 s and 60 s? | Yes. Shorter waits push owners who are reading at their desk. Longer waits make the phone feel late. |
+| OQ-6 | Should the A6 and A8 interim waits be 15 s and 60 s? | Yes. Shorter waits push owners who are reading at their desk. Longer waits make the phone feel late. |
 | OQ-7 | Should pending approvals and questions count toward the Dock and phone badges? | No, to keep `chat-dock-badge.md` parity. Revisit with design. |
 | OQ-8 | Do approvals and questions in muted chats still notify? | Yes, because the run is blocked on the owner. Replies and failures stay muted. |
 | OQ-9 | Is `google-services.json` committed or provided as an EAS file variable? | Decide in A3. |
 | OQ-10 | Should the default reply wait stay 60 s after Track B? | Yes. It costs little for replies and covers the web blind spot. Owners can choose 0. |
+| OQ-11 | How long after a displayed banner does an approval or question go to the phone? | 2 min, or half the time left before it expires if that is shorter. A fixed constant in v1. |
 
 ## Risks
 
 - **The interim rule pushes owners at their desk.** Track A's "unread after a wait" pushes owners who are at their desk but in another app. B2 removes this for Electron and B3 for web. Until then, the reply wait setting softens it.
-- **Mobile read marking is new.** If A5 marks too eagerly (for example, while the app is backgrounded with the chat on screen), owners lose unread state. A5 must follow spec 123's focused-and-visible rule.
+- **Mobile read marking is new.** If A7 marks too eagerly (for example, while the app is backgrounded with the chat on screen), owners lose unread state. A7 must follow spec 123's focused-and-visible rule.
 - **Tokens without an access token (until C5).** Anyone holding a device's Expo token could push to it. Tokens are only on the owner's VPS and never returned by an API.
 - **Phone dismissal is best effort.** iOS throttles silent pushes, so foreground reconciliation is the backstop.
 - **Web presence is tab-only.** Chromium's IdleDetector could narrow this later, at the cost of a permission prompt.
+- **Escalation can alert twice.** An owner who saw a banner but did not open it also gets a phone push. Accepted, because the agent is blocked until they act.
 - **Gateway file size.** New behaviour lives in `notifications/`, with only wiring in `server.ts` and the chat files.
 
 ## Process
 
-- Native Mobile releases (A1, A3, A5, A7b, A8b, B5, C2) are in the requester's area. Gateway, platform, web shell and Electron releases need those owners to agree, or the requester's explicit go-ahead to take them on.
+- Native Mobile releases (A1, A3, A5, A7, A11, B5, C2) are in the requester's area. Gateway, platform, web shell and Electron releases need those owners to agree, or the requester's explicit go-ahead to take them on.
 - Suggest review by the chat and harness owners (router and sinks), the Electron Desktop owner, the platform owner (relay, secrets, deploy) and design (Settings copy and parity).
 - Every user-visible PR includes the surface matrix and live captures for the surfaces named in its release above. Other surfaces get `N/A` with the reason "not touched by this release". Slack `#tech` posts are waived for the requester's PRs.
-- Owner-facing documentation goes in a separate `FinnaAI/matrix-os-site` PR under `content/docs/`, once A6 ships. Done when that PR is merged and linked from this spec, and updated again when B4 brings the settings to computers.
+- Owner-facing documentation goes in a separate `FinnaAI/matrix-os-site` PR under `content/docs/`, once A8 ships. Done when that PR is merged and linked from this spec, and updated again when B4 brings the settings to computers.
