@@ -102,6 +102,10 @@ export const shellInterruptCommand = verb(
   {},
   async ({ client, ref }) => {
     const result = await client.interrupt(ref);
-    return { data: result, text: `Pressed ${result.pressed}.` };
+    const observed = result.observed;
+    const seen = observed === null ? "nothing changed within 5 s"
+      : "exited" in observed ? `the program exited${observed.exitCode === undefined ? "" : ` (code ${observed.exitCode})`}`
+      : `status is now ${observed.status}`;
+    return { data: result, text: `Pressed ${result.pressed}; ${seen}.` };
   },
 );
