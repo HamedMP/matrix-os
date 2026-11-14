@@ -87,7 +87,10 @@ export interface TerminalRuntimeSocketServerOptions {
   socketPath: string;
   runtime: TerminalRuntimeControlApi;
   /** Per-tab agent status reported from inside panes; absent means none is reported. */
-  agentStatus?: { list(): Promise<unknown[]> };
+  agentStatus?: {
+    list(): Promise<unknown[]>;
+    resolvePane?(sessionName: string, paneId: string): Promise<unknown>;
+  };
   maxConnections?: number;
   idleTimeoutMs?: number;
 }
@@ -412,6 +415,7 @@ export class TerminalRuntimeSocketServer {
       }
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
       case "ListAgentStatuses": return this.options.agentStatus?.list() ?? [];
+      case "ResolvePane": return (await this.options.agentStatus?.resolvePane?.(request.input.sessionName, request.input.paneId)) ?? null;
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);

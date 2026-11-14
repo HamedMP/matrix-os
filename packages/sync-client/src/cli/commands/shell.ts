@@ -8,7 +8,7 @@ import { requireCliAuthToken } from "../auth-state.js";
 const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
 const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
 const PROJECT_ID = /^proj_[0-9a-f]{16,64}$/;
-const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt|wait [--project <project>] [--tab <tab>]";
+const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|run|get|read|send|keys|interrupt|wait|wait-children|label|report|templates [--project <project>] [--tab <tab>]";
 
 export const commonArgs = {
   profile: { type: "string", required: false },
@@ -237,6 +237,11 @@ export const shellCommand = defineCommand({
     keys: () => import("./shell-agent.js").then((module) => module.shellKeysCommand),
     interrupt: () => import("./shell-agent.js").then((module) => module.shellInterruptCommand),
     wait: () => import("./shell-agent.js").then((module) => module.shellWaitCommand),
+    run: () => import("./shell-orchestration.js").then((module) => module.shellRunCommand),
+    templates: () => import("./shell-orchestration.js").then((module) => module.shellTemplatesCommand),
+    label: () => import("./shell-orchestration.js").then((module) => module.shellLabelCommand),
+    report: () => import("./shell-orchestration.js").then((module) => module.shellReportCommand),
+    "wait-children": () => import("./shell-orchestration.js").then((module) => module.shellWaitChildrenCommand),
   },
   run: ({ rawArgs }) => {
     if (!rawArgs?.length) console.log(SHELL_USAGE);

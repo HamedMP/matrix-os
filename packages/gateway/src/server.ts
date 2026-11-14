@@ -270,6 +270,9 @@ import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
+import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
+import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
@@ -336,6 +339,11 @@ export async function createGateway(config: GatewayConfig) {
     socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
+  // Assigned once collaboration is known (project fences); a startup failure before
+  // then must still be able to run shutdown.
+  let terminalAgentServices: TerminalAgentServices | null = null;
+  // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
+  let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
@@ -884,6 +892,23 @@ export async function createGateway(config: GatewayConfig) {
   canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
+  // After collaboration, so kernel terminal tools pass the same project fences as HTTP.
+  const terminalAgents = createTerminalAgentServices({
+    runtime: terminalWorkspaceRuntime,
+    homePath,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: createTerminalWorkspaceProjectAdmission({
+      runtime: terminalWorkspaceRuntime,
+      ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
+    }),
+  });
+  terminalAgentServices = terminalAgents;
+  try {
+    localTerminalAgentToken = await createLocalTerminalAgentToken({ homePath });
+  } catch (error) {
+    // In-terminal calls then fail with local_gateway_unavailable; everything else is unaffected.
+    console.warn("[terminal-agent] local terminal token unavailable:", error instanceof Error ? error.name : "unknown_error");
+  }
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
@@ -912,6 +937,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    terminalTools: terminalAgents.kernelTools,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1261,6 +1287,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+    localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
@@ -1695,9 +1722,9 @@ export async function createGateway(config: GatewayConfig) {
   });
   retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
-  const { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity, terminalWaiter, terminalEventHub,
+  const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
-    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
+    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission, terminalAgentServices: terminalAgents,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
@@ -1705,13 +1732,13 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalWebSocketRoutes({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent,
+    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent,
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });
 
   registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalEventHub,
+    app, upgradeWebSocket, hub: terminalAgents.events,
     getPrincipal: requireRequestPrincipal,
     terminalOwnerIds: terminalRuntimeOwnerIds,
   });
@@ -1934,8 +1961,8 @@ export async function createGateway(config: GatewayConfig) {
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
       // Drain terminal event subscribers and waiters before the runtime client goes.
-      terminalEventHub.shutdown();
-      terminalWaiter.shutdown();
+      await terminalAgentServices?.close();
+      await localTerminalAgentToken?.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();

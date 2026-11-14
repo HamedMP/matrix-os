@@ -58,6 +58,11 @@ export class TerminalRuntimeSocketClient {
     }));
   }
 
+  /** The live tab a pane belongs to, from zellij's `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID`. */
+  async resolvePane(input: { sessionName: string; paneId: string }): Promise<{ workspaceId: string; tabId: string } | null> {
+    return TerminalRefSchema.nullable().parse(await this.call("ResolvePane", input));
+  }
+
   async ensureWorkspace(input: { projectId?: string } = {}): Promise<TerminalWorkspace> {
     return TerminalWorkspaceSchema.parse(await this.call("EnsureWorkspace", input));
   }

@@ -173,4 +173,23 @@ describe("terminal agent status", () => {
     await expect(writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "9", status: "idle", source: "reporter" })).rejects.toThrow();
     expect((await readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
+
+  // Fault detected: a helper started from a terminal records the wrong parent, so
+  // its report lands in another agent's input.
+  it("resolves a pane to exactly its live tab", async () => {
+    const index = createTerminalAgentStatusIndex({
+      homePath: await home(),
+      store: storeWith([
+        { id: tabId, zellijPaneId: "terminal_7" },
+        { id: otherTabId, zellijPaneId: "terminal_8", status: "exited" },
+      ]),
+    });
+    await expect(index.resolvePane(session, "7")).resolves.toEqual({ workspaceId, tabId });
+    await expect(index.resolvePane(session, "8")).resolves.toBeUndefined();
+    await expect(index.resolvePane(session, "70")).resolves.toBeUndefined();
+    await expect(index.resolvePane(`matrix-w-${"b".repeat(32)}`, "7")).resolves.toBeUndefined();
+    await expect(index.resolvePane(session, "../7")).resolves.toBeUndefined();
+    // A pane on a customer VPS sees the workspace's physical session name.
+    await expect(index.resolvePane(`matrix-${workspaceRuntimeId(session)}`, "7")).resolves.toEqual({ workspaceId, tabId });
+  });
 });

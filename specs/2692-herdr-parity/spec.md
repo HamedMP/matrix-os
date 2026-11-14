@@ -42,7 +42,7 @@ equivalent with a deliberate difference; **later** = follow-on stack.
 | 6 | `keys` by name, encoded for the program's keyboard mode | raw bytes | gap: named-key encoder (normal + application cursor mode) | 2 |
 | 7 | `interrupt`: Esc for status-reporting agents, else Ctrl+C; reports what was observed | gap | gap | 2 |
 | 8 | Status words `idle working done blocked error` | hooks give running/waiting/finished/idle for 4 agents; per zellij session, not per tab | gap: per-tab status in Herdr words from hooks + status reporter | 3 |
-| 9 | OSC 7501 status from any program | gap; zellij drops it (spike S1) | adapt: `matrix-status` reporter + opt-in OSC tap for launched agents | 3 |
+| 9 | OSC 7501 status from any program | gap; zellij drops it (spike S1) | adapt: `matrix-status` reporter and per-pane agent hooks (layer 3); the opt-in OSC tap for raw OSC 7501 programs comes in the follow-on stack | 3 / later |
 | 10 | `wait`: until not working, exit, output match, children any/all, timeout | gap | gap | 3 |
 | 11 | `events`: snapshot, ordered facts, heartbeat, `missed` + resnapshot | polling | gap: `/ws/terminal/events` | 3 |
 | 12 | Labels `k=v`, list filter by labels | gap | gap | 4 |
@@ -56,7 +56,7 @@ equivalent with a deliberate difference; **later** = follow-on stack.
 | 20 | Agents list, pin, next/prev agent, peek a sub-agent | gap | gap | 5 |
 | 21 | Per-terminal find (screen + scrollback) | have (xterm search addon, Web) | Electron: gap | 6 |
 | 22 | `put` file beside terminal; paste image | have (paste assets, Web/CLI) | Electron local: gap | 6 |
-| 23 | `keep`: lost program becomes a shell in its folder | have for gateway restart; no shell-on-loss | gap | 4 |
+| 23 | `keep`: lost program becomes a shell in its folder | have for gateway and runtime restart; no shell-on-loss | later: needs a terminal runtime change and its own spike | — |
 | 24 | Worktree spaces nested under repo | partial (projects/worktrees exist) | later | — |
 | 25 | Remote machines (`--on`), `exec`, `file read/write/edit` | MCP `run_command`, read, upload; no edit; SSH not started | later stack (see 651 J5 and the Herdr-sessions brief) | — |
 | 26 | Layouts, themes, keys.json, JS mods, gallery | Matrix themes, apps | adapt: Matrix apps are the extension model; not ported | — |
@@ -138,12 +138,46 @@ shows the final screen until the tab is closed.
 
 ### Parent/child (layer 4)
 
-Tabs gain `parentRef?: TerminalRef`, `outliveParent: boolean`. A tab started
-with `MATRIX_TERMINAL_REF` in its environment (exported per pane at creation)
-records that tab as parent by default. Ending a parent ends non-outliving
-children. Child exit, `blocked` or `error` posts a note to the parent with
-`send` semantics, tagged `<matrix from="<tabId> <name>">…</matrix>`. A child
-report is plain `matrix shell send $MATRIX_TERMINAL_REF "…"`.
+Agent facts live beside each tab in `~/system/terminal-agents.json`, owned by
+the gateway: labels, parent, `outliveParent`, template and `firstMessage {sent,
+reason}`. The file is written atomically, capped at 1 024 records, and pruned
+to existing tabs. The public `TerminalTab` contract stays the same, so older
+Electron builds that parse it strictly keep working. `matrix shell run` started inside a
+Matrix terminal sends its pane identity (`ZELLIJ_SESSION_NAME` +
+`ZELLIJ_PANE_ID`). The runtime's `ResolvePane` maps that identity to the
+calling tab, which becomes the parent unless `--no-parent` is given. A
+supervisor pass runs every 5 s. It ends children of an ended parent unless they
+outlive it. When a child turns `blocked` or `error`, or exits, it sends the
+parent one note, tagged `<matrix from="<tabId> <name>">…</matrix>`; a note the
+parent refuses (blocked, busy) is retried on the next pass. The first message
+of a child is wrapped with `reach="matrix shell report when done or stuck"`,
+and `matrix shell report "…"` delivers the child's result to its parent.
+`matrix shell wait-children any|all` matches `hc wait --children`.
+
+**Calls from inside a terminal.** Agents call the gateway from their own
+terminal, as `hc` does in Herdr, without a cloud login:
+
+- The host bundle ships `matrix` in `/opt/matrix/bin`, which is already on the
+  terminal PATH (as `matrix-status` is). It runs the CLI of the installed release.
+- At start the gateway writes a fresh local token (32 random bytes) to
+  `~/.cache/matrix/terminal-agent.token`: owner-only (file 0600, directory
+  0700), written atomically, replaced on every start and removed on shutdown.
+  `.cache` is never synced.
+- Inside a Matrix pane (`ZELLIJ_SESSION_NAME` is `matrix-w-…` or
+  `matrix-rt_…`) and with no `--profile`, `--gateway`, `--token` or `--dev`,
+  the terminal-agent commands (`get`, `read`, `send`, `keys`, `interrupt`,
+  `wait`, `run`, `templates`, `label`, `report`, `wait-children`) call
+  `http://127.0.0.1:${PORT:-4000}` with that token instead of a profile.
+- The gateway accepts the token only from a direct loopback caller (no proxy or
+  platform headers) and only on the routes those commands use: the project
+  list, workspace list and ensure, tab get/read/send/keys/interrupt/wait,
+  agent facts and labels, `agents/*` and templates. It treats the caller as the
+  owner. Everything in a Matrix terminal already runs as the owner, so the token
+  adds no authority; it keeps `MATRIX_AUTH_TOKEN` out of panes and limits what
+  these calls reach.
+
+Global flags before the command (`matrix --profile x shell run -- cmd`) stay
+ahead of `--`; they never become part of the program's arguments.
 
 ### Shell surfaces (layer 5)
 
@@ -190,8 +224,9 @@ through the existing local-terminals IPC allowlist, with Zod-validated payloads.
 | `WS /ws/terminal/events` | Same principal; query-token allowlist entry for browsers | Filters out chat-bound tabs the principal cannot see |
 | `matrix-status` file writes | Unix permissions: owner home, mode 0600 | Gateway treats contents as untrusted input |
 | Kernel IPC tools | Kernel process principal = owner | Same service, same validation |
+| Terminal-agent routes with the local token | Direct loopback caller (no proxy or platform headers), constant-time match; principal = owner | The token on any other route, or from any other caller, is rejected as an invalid bearer |
 
-No route is public. No new credentials.
+No route is public. The only new credential is the local terminal-agent token: owner-only, loopback-only, replaced on every start.
 
 ### Input validation
 
@@ -204,8 +239,7 @@ No route is public. No new credentials.
   stripped of control/escape sequences (reuse `agent-session-state`
   sanitizer), symlinks refused (`lstat`), session/pane from the path
   regex-checked.
-- Template files: frontmatter Zod schema, `command` an argv array (no shell
-  string), name `SAFE_SLUG`, ≤ 64 KiB, at most 200 templates.
+- Template files: frontmatter checked by a Zod schema. `command` is a command line, as in Herdr's own templates, run as `sh -lc <command>` in the new tab. Templates are owner-written files in the owner's home, so this is equivalent to the owner typing it. The task text is never part of the command. Name `SAFE_SLUG`, ≤ 64 KiB, at most 200 templates.
 
 ### Errors
 
@@ -238,6 +272,8 @@ error), `terminal_capacity_reached`. No paths, zellij output or stack traces.
 | Event subscriber slow | Bounded queue (512); overflow → `missed` + resnapshot |
 | Partition skips WS close | Stale subscriber sweep by `lastTouched` (60 s) |
 | Program exits while no viewer is attached | Exit sweep marks the tab `exited` with `exit_status` within about 2 s |
+| Local token missing, malformed or not owner-only inside a pane | CLI fails with `local_gateway_unavailable` and suggests `--profile`; it never falls back to a cloud call |
+| Local token write fails at gateway start | Logged; in-terminal calls fail as above, everything else is unaffected |
 
 ## Resource Management
 

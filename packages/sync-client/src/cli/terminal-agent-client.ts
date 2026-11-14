@@ -21,7 +21,21 @@ export interface TerminalAgentClient {
   keys(ref: TerminalRef, keys: string[]): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef): Promise<TerminalInterruptOutput>;
   /** One server-side wait of at most 90 s; callers loop for longer waits. */
-  wait(ref: TerminalRef, input: { output?: string; timeoutMs: number }): Promise<TerminalWaitOutput>;
+  wait(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number }): Promise<TerminalWaitOutput>;
+  templates(): Promise<Array<{ name: string; description: string }>>;
+  run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  label(ref: TerminalRef, input: { set?: Record<string, string>; remove?: string[] }): Promise<Record<string, unknown>>;
+  report(input: { caller: TerminalCaller; text: string }): Promise<Record<string, unknown>>;
+  waitChildren(input: { caller: TerminalCaller; mode: "any" | "all"; timeoutMs: number; cursor?: string }): Promise<TerminalWaitOutput>;
+}
+
+export interface TerminalCaller { sessionName: string; paneId: string }
+
+/** The Matrix terminal this process runs in, from zellij's pane environment. */
+export function terminalCallerFromEnv(env: NodeJS.ProcessEnv = process.env): TerminalCaller | undefined {
+  const sessionName = env.ZELLIJ_SESSION_NAME ?? "";
+  const paneId = env.ZELLIJ_PANE_ID ?? "";
+  return /^matrix-(?:w-|rt_)[0-9a-f]{32}$/.test(sessionName) && /^[0-9]{1,9}$/.test(paneId) ? { sessionName, paneId } : undefined;
 }
 
 /** What changed within five seconds of the stop key; null when nothing did. */
@@ -46,6 +60,15 @@ export interface TerminalWaitOutput {
   reason: string;
   status?: string;
   exitCode?: number | null;
+  child?: TerminalRef;
+  /** The helper this result names exited, or was removed. */
+  exited?: boolean;
+  /** The helper this result names sent its parent a report. */
+  reported?: boolean;
+  /** How often the awaited output had appeared; passed back so one wait keeps one baseline. */
+  seen?: number;
+  /** Names the children's starting states on the server; passed back on the next check-in. */
+  cursor?: string;
 }
 
 export const TERMINAL_WAIT_REQUEST_MAX_MS = 90_000;
@@ -124,12 +147,42 @@ export function createTerminalAgentClient(options: {
       const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);
       const payload = await request(`${tabPath(ref)}/wait`, {
         method: "POST",
-        body: { timeoutMs, ...(input.output ? { output: input.output } : {}) },
+        body: { timeoutMs, ...(input.output ? { output: input.output } : {}), ...(input.seen !== undefined ? { seen: input.seen } : {}) },
       }, timeoutMs + 15_000);
       return {
         reason: typeof payload.reason === "string" ? payload.reason : "unknown",
         ...(typeof payload.status === "string" ? { status: payload.status } : {}),
         ...(typeof payload.exitCode === "number" || payload.exitCode === null ? { exitCode: payload.exitCode as number | null } : {}),
+        ...(typeof payload.seen === "number" ? { seen: payload.seen } : {}),
+      };
+    },
+    async templates() {
+      const payload = await request("/api/terminal/templates");
+      const templates = Array.isArray(payload.templates) ? payload.templates : [];
+      return templates.flatMap((entry: unknown) => {
+        if (!entry || typeof entry !== "object") return [];
+        const record = entry as Record<string, unknown>;
+        return typeof record.name === "string"
+          ? [{ name: record.name, description: typeof record.description === "string" ? record.description : "" }]
+          : [];
+      });
+    },
+    // Template launches wait up to 60 s for the agent to be ready for its first message.
+    run: (input) => request("/api/terminal/agents/run", { method: "POST", body: input }, SEND_TIMEOUT_MS),
+    label: (ref, input) => request(`${tabPath(ref)}/labels`, { method: "PATCH", body: input }),
+    report: (input) => request("/api/terminal/agents/report", { method: "POST", body: input }, SEND_TIMEOUT_MS),
+    async waitChildren(input) {
+      const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);
+      const payload = await request("/api/terminal/agents/wait-children", {
+        method: "POST", body: { caller: input.caller, mode: input.mode, timeoutMs, ...(input.cursor ? { cursor: input.cursor } : {}) },
+      }, timeoutMs + 15_000);
+      return {
+        reason: typeof payload.reason === "string" ? payload.reason : "unknown",
+        ...(typeof payload.status === "string" ? { status: payload.status } : {}),
+        ...(payload.child && typeof payload.child === "object" ? { child: payload.child as TerminalRef } : {}),
+        ...(payload.exited === true ? { exited: true } : {}),
+        ...(payload.reported === true ? { reported: true } : {}),
+        ...(typeof payload.cursor === "string" && /^wc_[0-9a-f]{32}$/.test(payload.cursor) ? { cursor: payload.cursor } : {}),
       };
     },
     async interrupt(ref) {

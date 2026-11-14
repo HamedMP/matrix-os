@@ -75,6 +75,8 @@ export interface TerminalAgentVerbs {
     maxHoldMs?: number;
     /** The caller went away: a held send is dropped instead of typed later. */
     signal?: AbortSignal;
+    /** A background note: if a person is still typing when the hold ends, refuse (`cancelled`) instead of typing into the draft. */
+    deferWhileTyping?: boolean;
   }): Promise<{ sent: true; heldMs: number }>;
   keys(ref: TerminalRef, input: { keys: string[] }): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef, input?: {
@@ -102,6 +104,8 @@ export function createTerminalAgentVerbs(options: {
   runtime: TerminalAgentVerbRuntime;
   inputActivity: TerminalInputActivity;
   agentStatus?: (ref: TerminalRef, tab: TerminalTab) => TerminalAgentStatus | undefined | Promise<TerminalAgentStatus | undefined>;
+  /** Told after every successful send, so a following wait waits for the new turn. */
+  onSent?: (ref: TerminalRef) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   quietMs?: number;
@@ -180,6 +184,10 @@ export function createTerminalAgentVerbs(options: {
       }
       const limitMs = Math.min(draftWaitMs, z.number().int().min(0).max(DEFAULT_DRAFT_WAIT_MS).parse(input.maxHoldMs ?? draftWaitMs));
       const heldMs = await holdForDraft(ref, limitMs, input.signal);
+      if (input.deferWhileTyping) {
+        const lastInput = options.inputActivity.lastInputAt(ref);
+        if (lastInput !== undefined && now() - lastInput < quietMs) throw new TerminalAgentVerbError("cancelled");
+      }
       const current = await requireLiveTab(ref);
       if (current.incarnation !== tab.incarnation) throw new TerminalAgentVerbError("not_found");
       // The agent may have asked for permission while the send waited for a draft.
@@ -190,6 +198,7 @@ export function createTerminalAgentVerbs(options: {
       // Newlines would submit line by line and tabs would trigger completion, so both paste.
       const paste = text.includes("\n") || text.includes("\t");
       await write(ref, current, `${paste ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text}\r`);
+      options.onSent?.(ref);
       return { sent: true, heldMs };
     },
 

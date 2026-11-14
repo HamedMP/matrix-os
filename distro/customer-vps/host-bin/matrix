@@ -1,0 +1,7 @@
+#!/bin/sh
+# `matrix` inside this machine's terminals: the CLI bundled with this release, so agents
+# can run, report to and wait on helpers (specs/2692-herdr-parity, "Calls from inside a
+# terminal"). Inside a Matrix pane it calls the local gateway with the local token.
+set -eu
+APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+exec "${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}" "$APP_DIR/packages/sync-client/bin/matrix.mjs" "$@"

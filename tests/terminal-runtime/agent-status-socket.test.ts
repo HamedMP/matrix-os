@@ -56,4 +56,11 @@ describe("terminal runtime agent status over the socket", () => {
     const client = await serve({ list: async () => [{ ...entry, status: "dancing" }] });
     await expect(client.listAgentStatuses()).rejects.toThrow();
   });
+
+  it("resolves a pane through the runtime and validates the identity first", async () => {
+    const ref = { workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` };
+    const client = await serve({ list: async () => [], resolvePane: async () => ref } as never);
+    await expect(client.resolvePane({ sessionName: `matrix-w-${"a".repeat(32)}`, paneId: "4" })).resolves.toEqual(ref);
+    await expect(client.resolvePane({ sessionName: "evil", paneId: "4" })).rejects.toThrow();
+  });
 });

@@ -53,6 +53,18 @@ describe("matrix-status reporter", () => {
     expect((await readdir(join(home, "system", "terminal-status", session))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  // Fault detected (#3298 review): whole-second timestamps cannot tell a result from the
+  // previous task apart from one for a task sent later in the same second.
+  it("records the report time in milliseconds", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-status-"));
+    roots.push(home);
+    await report(home, ["working"]);
+    const [entry] = await index(home).list();
+    const raw = JSON.parse(await readFile(join(home, "system", "terminal-status", session, "terminal_5.json"), "utf8"));
+    expect(raw.reportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(entry?.reportedAt).toBe(raw.reportedAt);
+  });
+
   it("rejects unknown words with usage and writes nothing", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-status-"));
     roots.push(home);
