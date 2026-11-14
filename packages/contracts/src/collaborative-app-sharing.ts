@@ -133,8 +133,6 @@ export function sniffCollaborativeAppArtworkContentType(bytes: Uint8Array): Coll
   return isInertSvg(bytes) ? "image/svg+xml" : null;
 }
 
-/** An `<svg>` root, optionally after an XML declaration, comments, or a doctype. */
-const SVG_ROOT = /^\uFEFF?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE\s+svg[^>[]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>/]/i;
 /** Anything that could run script, embed documents, or expand entities disqualifies the file. */
 const SVG_ACTIVE_CONTENT = /<\s*(?:script|foreignObject|iframe|embed|object|handler|listener)\b|\son[a-z]+\s*=|javascript:|<!ENTITY/i;
 
@@ -146,7 +144,40 @@ function isInertSvg(bytes: Uint8Array): boolean {
     if (error instanceof TypeError) return false;
     throw error;
   }
-  return SVG_ROOT.test(text) && !SVG_ACTIVE_CONTENT.test(text);
+  return hasSvgRoot(text) && !SVG_ACTIVE_CONTENT.test(text);
+}
+
+/**
+ * An `<svg>` root, optionally after an XML declaration, comments, and a doctype without an
+ * internal subset. A forward-only scan: every step advances, so hostile input stays linear.
+ */
+function hasSvgRoot(text: string): boolean {
+  let index = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const skipWhitespace = () => {
+    while (index < text.length && /\s/.test(text[index]!)) index += 1;
+  };
+  skipWhitespace();
+  if (text.startsWith("<?xml", index)) {
+    const end = text.indexOf("?>", index + 5);
+    if (end < 0) return false;
+    index = end + 2;
+    skipWhitespace();
+  }
+  while (index < text.length) {
+    if (text.startsWith("<!--", index)) {
+      const end = text.indexOf("-->", index + 4);
+      if (end < 0) return false;
+      index = end + 3;
+    } else if (/^<!DOCTYPE\s+svg\b/i.test(text.slice(index, index + 16))) {
+      const end = text.indexOf(">", index);
+      if (end < 0 || text.slice(index, end).includes("[")) return false;
+      index = end + 1;
+    } else {
+      break;
+    }
+    skipWhitespace();
+  }
+  return /^<svg[\s>/]/i.test(text.slice(index, index + 5));
 }
 
 /** Owner home -> platform: the display name and artwork digest the owner's own launcher shows. */

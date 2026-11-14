@@ -344,6 +344,22 @@ describe("shared app presentation contract", () => {
     }
   });
 
+  it("rejects comment-heavy non-SVG input in linear time", () => {
+    for (const hostile of [
+      `${"<!---->".repeat(25)}x`,
+      `${"<!-- -->".repeat(40_000)}x`,
+      `${"<!--".repeat(40_000)}x`,
+      `<?xml version="1.0"?>${"<!-- a --> ".repeat(40_000)}<html/>`,
+    ]) {
+      const started = performance.now();
+      expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode(hostile))).toBeNull();
+      expect(performance.now() - started).toBeLessThan(250);
+    }
+    expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode(
+      `${"<!-- c -->\n".repeat(1_000)}<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    ))).toBe("image/svg+xml");
+  });
+
   it("recognizes PNG, WebP, JPEG, and inert SVG artwork by its bytes", () => {
     const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
     const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
