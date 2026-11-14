@@ -189,7 +189,7 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
   }
   const retained = binding.sourceRuns ? await saveHostedSourceRun({ origin, sourceIdentity: binding.sourceIdentity,
     runtime: binding.runtime, worktree: binding.worktree }) : undefined;
-  if (retained) console.error(`DevStack runId: ${retained.runId}\nRecover with: matrix devstack result --hosted --run-id ${retained.runId}`);
+  if (retained) console.error(`DevStack runId: ${retained.runId}\nIf interrupted, recover with: matrix devstack result --hosted --run-id ${retained.runId}`);
   let response;
   try {
     response = await post(origin, "source", delta, 125_000, bearer, retained ? {
@@ -202,6 +202,13 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
   if (retained) {
     if (response.status !== 202) {
       await response.body?.cancel();
+      // These ingress responses reject admission. A 5xx or unknown outcome
+      // may have followed a committed admission and must retain its run ID.
+      if ([400, 401, 403, 404, 409, 413, 429].includes(response.status)) {
+        throw cliError('devstack_source_run_rejected', response.status === 429
+          ? 'DevStack did not accept this upload. Wait briefly, then run sync again.'
+          : 'DevStack did not accept this upload. Check the selected worktree and approval, then run sync again.');
+      }
       throw interruptedSourceRun(retained.runId);
     }
     const admitted = await readSourceRunResponse(response, retained.runId);

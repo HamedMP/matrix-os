@@ -53,7 +53,10 @@ contains no uploaded delta, Clerk token or grant. Bound retention/count and
 symlink-safe cleanup apply. `matrix devstack result --hosted --run-id <uuid>`
 loads it from the same checkout context, obtains current approval and reads the
 result. Sync prints the UUID before network submission and reports that same UUID
-on uncertain transport failure. It never retries a source POST automatically.
+on uncertain transport failure. Explicit ingress admission rejections (including
+capacity/rate limits) report that no upload was accepted and advise a new sync;
+5xx, unknown responses and incomplete accepted responses retain the original-run
+recovery command. It never retries a source POST automatically.
 
 ## Verification and activation
 

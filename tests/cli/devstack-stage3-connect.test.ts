@@ -50,6 +50,7 @@ beforeEach(async () => {
         });
       }
       if (pathname === "/devstack/cli/source") {
+        if (process.env.DEVSTACK_TEST_SOURCE_STATUS) return new Response(null, {status:Number(process.env.DEVSTACK_TEST_SOURCE_STATUS)});
         const revision = "e".repeat(64);
         const receipt = { revision, files: 1, updated: 1, removed: 0,
           test: { revision, exitCode: 0, log: "4 tests passed" } };
@@ -91,6 +92,28 @@ async function requests() {
 }
 
 describe("hosted matrix devstack", () => {
+  it.each([401, 409, 429])('reports an explicit admission rejection (%i) without suggesting a missing result', async status => {
+    await exec('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'Baseline']);
+    const result = await run(repo, ['sync', '--hosted'], {DEVSTACK_TEST_RECOVERY:'1', DEVSTACK_TEST_SOURCE_STATUS:String(status)})
+      .catch((error:unknown)=>error) as {code:number;stderr:string};
+    expect(result.code).toBe(1);
+    const error = JSON.parse(result.stderr.trim().split('\n').at(-1)!).error;
+    expect(error).toMatchObject({code:'devstack_source_run_rejected', message:expect.stringContaining('did not accept this upload')});
+    expect(error.message).toContain('run sync again');
+    expect(error.message).not.toContain('result --hosted');
+    const calls = await requests();
+    expect(calls.filter(request => request.pathname === '/devstack/cli/source')).toHaveLength(1);
+    expect(calls.some(request => request.pathname.startsWith('/devstack/cli/source/'))).toBe(false);
+    await expect(readFile(join(home, 'server-run.json'))).rejects.toMatchObject({code:'ENOENT'});
+  });
+  it('preserves original-run recovery for a server failure whose admission outcome is uncertain', async () => {
+    await exec('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'Baseline']);
+    const result = await run(repo, ['sync', '--hosted'], {DEVSTACK_TEST_RECOVERY:'1', DEVSTACK_TEST_SOURCE_STATUS:'503'})
+      .catch((error:unknown)=>error) as {code:number;stderr:string};
+    expect(result).toMatchObject({code:1,stderr:expect.stringContaining('devstack_source_run_pending')});
+    expect(result.stderr).toContain('result --hosted --run-id ');
+    expect((await requests()).filter(request => request.pathname === '/devstack/cli/source')).toHaveLength(1);
+  });
   it('keeps the original runId recovery guidance when an accepted response body is incomplete', async () => {
     await exec('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'Baseline']);
     const result = await run(repo, ['sync', '--hosted'], {DEVSTACK_TEST_RECOVERY:'1',DEVSTACK_TEST_SOURCE_TRUNCATED:'1'})
