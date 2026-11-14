@@ -3,7 +3,7 @@ import { FlatList, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 import { SidePanelSkeletonRows } from "@/components/shell/SidePanelRows";
-import { Button, ChatIcon, EmptyState, IconTile, ItemRow } from "@/components/ui";
+import { Button, ChatIcon, EmptyState, IconTile, ItemRow, StatusDot } from "@/components/ui";
 import { withRefreshTap } from "@/lib/haptics";
 
 import type { ProjectChatRow } from "./project-rows";
@@ -86,11 +86,13 @@ export function ProjectChatList({
       renderItem={({ item: row }) => (
         <ItemRow
           testID={`project-chat-${row.id}`}
-          accessibilityLabel={[row.title, row.preview, row.time].filter(Boolean).join(", ")}
+          accessibilityLabel={[row.title, row.status?.label, row.preview, row.time].filter(Boolean).join(", ")}
           density="compact"
           leading={<IconTile icon={ChatIcon} size={40} shape="circle" tone="subtle" />}
           title={row.title}
-          subtitle={row.preview}
+          titleAccessory={row.status ? <StatusDot testID="project-chat-status-dot" tone={row.status.tone} /> : undefined}
+          // As on Desktop, a chat's status takes the line under its title.
+          subtitle={row.status?.label ?? row.preview}
           meta={row.time}
           onPress={() => onOpenChat(row.id)}
         />

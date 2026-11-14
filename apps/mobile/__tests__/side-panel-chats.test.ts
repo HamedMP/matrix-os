@@ -1,3 +1,5 @@
+import type { CanonicalChatRecord } from "@matrix-os/contracts";
+
 import {
   agentChatIds,
   chatNeedsUser,
@@ -11,6 +13,18 @@ import { C2_CHATS, chatRecord, ids } from "./side-panel-test-utils";
 describe("chatNeedsUser", () => {
   it.each(["approval_required", "input_required", "failed"] as const)("is true for %s", (attention) => {
     expect(chatNeedsUser(chatRecord({ id: "chat-1", attention }))).toBe(true);
+  });
+
+  it("is true while the chat's run waits for an approval the chat itself does not show yet", () => {
+    const waiting = { ...chatRecord({ id: "chat-1" }), activeRun: { runId: "run_1", turnId: "turn_1", status: "waiting_for_approval" } };
+
+    expect(chatNeedsUser(waiting as CanonicalChatRecord)).toBe(true);
+  });
+
+  it("is false while the chat's run is simply working", () => {
+    const working = { ...chatRecord({ id: "chat-1" }), activeRun: { runId: "run_1", turnId: "turn_1", status: "running" } };
+
+    expect(chatNeedsUser(working as CanonicalChatRecord)).toBe(false);
   });
 
   it("is false when the chat asks for nothing", () => {

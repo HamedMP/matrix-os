@@ -18,7 +18,7 @@ import {
 import { PRESSED_OPACITY } from "@/components/ui/pressable-state";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { chatActivityAt } from "@/lib/requests/canonical-chat";
-import { chatNeedsUser } from "@/lib/side-panel-chats";
+import { chatStatus } from "@/lib/chat-status";
 
 const CHAT_TILE_SIZE = 40 satisfies IconTileSize;
 const SKELETON_TEXT_WIDTHS = ["72%", "58%", "66%"] as const;
@@ -30,13 +30,16 @@ interface SidePanelChatRowProps {
   onSelect: (chatId: string) => void;
 }
 
-/** One chat: its title, last message and last activity. A long press opens the chat menu. */
+/**
+ * One chat: its title, its status or else its last message, and its last
+ * activity. A long press opens the chat menu.
+ */
 export function SidePanelChatRow({ record, now, onSelect }: SidePanelChatRowProps) {
   const { chat } = record;
   const title = chat.title.trim() || "New chat";
   const preview = chat.lastMessagePreview?.replace(/\s+/g, " ").trim() || undefined;
   const time = formatRelativeTime(chatActivityAt(record), now) || undefined;
-  const needsUser = chatNeedsUser(record);
+  const status = chatStatus(record);
 
   return (
     <ChatContextMenu chatId={chat.id}>
@@ -45,10 +48,11 @@ export function SidePanelChatRow({ record, now, onSelect }: SidePanelChatRowProp
         density="compact"
         leading={<IconTile icon={ChatIcon} size={CHAT_TILE_SIZE} shape="circle" tone="subtle" />}
         title={title}
-        titleAccessory={needsUser ? <StatusDot testID="side-panel-waiting-dot" tone="waiting" /> : undefined}
-        subtitle={preview}
+        titleAccessory={status ? <StatusDot testID="side-panel-status-dot" tone={status.tone} /> : undefined}
+        // As on Desktop, a chat's status takes the line under its title.
+        subtitle={status?.label ?? preview}
         meta={time}
-        accessibilityLabel={[title, needsUser ? "needs you" : undefined, preview, time].filter(Boolean).join(", ")}
+        accessibilityLabel={[title, status?.label, preview, time].filter(Boolean).join(", ")}
         onPress={() => onSelect(chat.id)}
       />
     </ChatContextMenu>

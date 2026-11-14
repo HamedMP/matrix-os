@@ -58,12 +58,36 @@ describe("SidePanel chats", () => {
       expect(within(screen.getByTestId("side-panel-chat-a")).getByText("First line second line")).toBeTruthy();
     });
 
-    it("marks only the chats that need the person with a waiting dot", () => {
+    it("marks only the chats that have a status, with an amber dot and the status in place of the last message", () => {
       renderPanel();
 
-      const dot = within(screen.getByTestId("side-panel-chat-chat-weekly-title-line")).getByTestId("side-panel-waiting-dot");
+      const row = screen.getByTestId("side-panel-chat-chat-weekly");
+      const dot = within(screen.getByTestId("side-panel-chat-chat-weekly-title-line")).getByTestId("side-panel-status-dot");
       expect(flat(dot)).toMatchObject({ width: 8, height: 8, backgroundColor: "#E0AA52" });
-      expect(screen.getAllByTestId("side-panel-waiting-dot")).toHaveLength(1);
+      expect(screen.getAllByTestId("side-panel-status-dot")).toHaveLength(1);
+      expect(within(row).getAllByText(/./).map((node) => node.props.children)).toEqual([
+        "Weekly report", "Approval required", "1h",
+      ]);
+    });
+
+    it("shows a working chat with a green dot and Working…, and an unread finished one as Completed", () => {
+      const working = { ...chatRecord({ id: "a", title: "Alpha", lastMessagePreview: "Reading files" }),
+        activeRun: { runId: "run_1", turnId: "turn_1", status: "running" as const } };
+      const finished = { ...chatRecord({ id: "b", title: "Beta", lastMessagePreview: "All done" }),
+        readState: { unread: true, markedUnread: false, version: 1, readThroughSeq: 1, latestIncomingSeq: 2 } };
+      renderPanel({ chats: [working, finished] });
+
+      const workingRow = screen.getByTestId("side-panel-chat-a");
+      expect(within(workingRow).getByText("Working…")).toBeTruthy();
+      expect(within(workingRow).queryByText("Reading files")).toBeNull();
+      expect(flat(within(workingRow).getByTestId("side-panel-status-dot")).backgroundColor).toBe("#288A5B");
+      expect(workingRow.props.accessibilityLabel).toBe("Alpha, Working…, Reading files, Jan 1");
+
+      const finishedRow = screen.getByTestId("side-panel-chat-b");
+      expect(within(finishedRow).getByText("Completed")).toBeTruthy();
+      expect(flat(within(finishedRow).getByTestId("side-panel-status-dot")).backgroundColor).toBe("#242323");
+      // Neither waits on the person, so both stay under Recent.
+      expect(screen.queryByTestId("side-panel-needs-you")).toBeNull();
     });
 
     it("leads each row with a 40pt round chat tile in the subtle tone", () => {
