@@ -23,6 +23,8 @@ export const OrganizationManagementMemberSchema = z.object({
   actorId: z.string().regex(/^user_[A-Za-z0-9_-]{1,123}$/),
   displayName: z.string().trim().min(1).max(200),
   emailAddress: z.email().max(320).optional(),
+  /** Present only when the client opts in with `include=imageUrl`; older clients parse this schema strictly. */
+  imageUrl: z.url({ protocol: /^https$/ }).max(2_048).optional(),
   role: OrganizationManagementRoleSchema,
   joinedAt: z.iso.datetime(),
 }).strict();

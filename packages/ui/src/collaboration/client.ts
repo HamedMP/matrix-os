@@ -109,11 +109,14 @@ const ORGANIZATION_MEMBER_PATH = /^\/api\/organizations\/([^/]+)\/members\/([^/]
 const ORGANIZATION_INVITATION_PATH = /^\/api\/organizations\/([^/]+)\/invitations\/([^/]+)$/;
 const ORGANIZATION_INVITATION_RESEND_PATH = /^\/api\/organizations\/([^/]+)\/invitations\/([^/]+)\/resend$/;
 const ACTOR_ID = /^user_[A-Za-z0-9_-]{1,123}$/;
+const MEMBER_PAGE_QUERY_KEYS = new Set(["cursor", "limit", "include"]);
+const MEMBER_PAGE_LIMIT = /^(?:[1-9]\d?|100)$/;
 const INVITATION_ID = /^[A-Za-z0-9_:-]{1,128}$/;
 
 /**
  * Organization directory reads made on the platform: the caller's organizations,
- * one page of members, and the admin-only pending invitation list. The URL is
+ * one page of members (optional cursor, page size up to 100, and opt-in photos), and
+ * the admin-only pending invitation list. The URL is
  * rebuilt from validated parts, so nothing else under `/api/organizations` is
  * reachable through this client.
  */
@@ -150,11 +153,23 @@ function organizationManagementUrl(baseUrl: URL, path: string, method: "GET" | "
   const organizationId = ORGANIZATION_MEMBERS_PATH.exec(requested.pathname)?.[1];
   if (method !== "GET" || !organizationId || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) return null;
   const url = new URL(`/api/organizations/${organizationId}/members`, baseUrl);
-  const keys = [...requested.searchParams.keys()];
-  if (keys.length === 0) return url;
-  const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
-  if (keys.length !== 1 || keys[0] !== "cursor" || !cursor.success) return null;
-  url.searchParams.set("cursor", cursor.data);
+  const query = requested.searchParams;
+  const keys = [...query.keys()];
+  if (new Set(keys).size !== keys.length || keys.some((key) => !MEMBER_PAGE_QUERY_KEYS.has(key))) return null;
+  if (query.has("cursor")) {
+    const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(query.get("cursor"));
+    if (!cursor.success) return null;
+    url.searchParams.set("cursor", cursor.data);
+  }
+  if (query.has("limit")) {
+    // The platform's page size bound; anything else is refused rather than clamped.
+    if (!MEMBER_PAGE_LIMIT.test(query.get("limit")!)) return null;
+    url.searchParams.set("limit", query.get("limit")!);
+  }
+  if (query.has("include")) {
+    if (query.get("include") !== "imageUrl") return null;
+    url.searchParams.set("include", "imageUrl");
+  }
   return url;
 }
 

@@ -42,7 +42,8 @@ it("keeps Web sharing inside a maximized app window", async () => {
   render(<div style={{ position:"fixed",zIndex:SHELL_Z_INDEX.fullscreenWindow }}><ContainedTrigger Component={AppSiteButton} /></div>);
   fireEvent.click(screen.getByRole("button",{name:"Publish app"}));
   const dialog=await screen.findByRole("dialog",{name:"Share app"});
-  expect(within(dialog).getByText("Create a one-time invite link, or publish at a stable URL.")).toBeTruthy();
+  // Web offers organization sharing in the same popover as invite and publication.
+  expect(within(dialog).getByText("Invite by link, publish at a URL, or share with your organization.")).toBeTruthy();
   expect(within(dialog).queryByText("Create a one-time invite link, or publish the app at a stable URL.")).toBeNull();
   expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
   expect(Number(getComputedStyle(dialog).zIndex)).toBeGreaterThan(SHELL_Z_INDEX.fullscreenWindow);

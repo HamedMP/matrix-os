@@ -7,15 +7,12 @@ import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import {
-  CollaborativeAppShareButton,
-  ReadinessSummary,
   SharedAppViewer,
   createSharedAppTransport,
-  useCollaborativeAppSharing,
 } from "@matrix-os/ui/collaborative-app-sharing";
 import { shellApi } from "@/api/http";
-import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { useOwnerCollaborationParticipant } from "@/lib/owner-collaboration-participant";
+import { notifyOwnerAppSharing, subscribeOwnerAppSharing } from "@/lib/owner-app-sharing-events";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -50,7 +47,6 @@ import {
 } from "./app-viewer-helpers";
 
 const GATEWAY_URL = getGatewayUrl();
-const COLLABORATION_API = shellApi;
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 const OwnerCollaborationRequestSchema = z.discriminatedUnion("kind", [
@@ -65,8 +61,6 @@ interface AppViewerProps {
   active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
-  onShareApp?: (appId: string) => void;
-  visible?: boolean;
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -220,14 +214,13 @@ function SharedAppWebViewer({ target }: { target: CollaborativeAppDirectoryItem 
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- Legacy app-viewer orchestration remains one surface, while collaboration policy and transport are extracted into focused modules; this change only wires those bounded adapters.
-function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = true }: AppViewerProps) {
+function SandboxedAppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   const browserOrigin = useBrowserOrigin();
   const ownerParticipant = useOwnerCollaborationParticipant();
-  const collaborationOrganization = useCollaborationOrganization();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appIdentityFromPath(path);
   const slug = extractSlug(path);
@@ -263,6 +256,25 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
       setRefreshKey((k) => k + 1);
     }
   });
+
+  // Sharing lives in the window's Publish app popover: it re-reads readiness after this app
+  // reloads, and confirmed share changes refresh the collaboration context the app was given.
+  useEffect(() => {
+    if (slug && refreshKey > 0) notifyOwnerAppSharing(slug, "build-changed");
+  }, [slug, refreshKey]);
+  useEffect(() => {
+    if (!slug) return;
+    return subscribeOwnerAppSharing(slug, "share-changed", () => {
+      void (async () => {
+        try {
+          const participant = await ownerCollaborationRef.current?.refreshShare() ?? ownerParticipant;
+          iframeRef.current?.contentWindow?.postMessage({ type: "os:collaboration-context", participant }, "*");
+        } catch (error: unknown) {
+          console.warn("[app-viewer] owner collaboration context update unavailable", error instanceof Error ? error.name : "UnknownError");
+        }
+      })();
+    });
+  }, [slug, ownerParticipant]);
 
   // Legacy file paths can only receive the bridge when same-origin DOM access is
   // available. Runtime apps use srcdoc injection below so the sandbox can omit
@@ -554,17 +566,6 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
 
   return (
     <div className="relative isolate flex h-full w-full flex-col overflow-hidden">
-      {slug && visible && (onShareApp || (collaborationOrganization.status === "member" && collaborationOrganization.organizationId)) ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
-        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} />
-          : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} onShareChanged={async () => {
-            const participant = await ownerCollaborationRef.current?.refreshShare() ?? ownerParticipant;
-            try {
-              iframeRef.current?.contentWindow?.postMessage({ type: "os:collaboration-context", participant }, "*");
-            } catch (error: unknown) {
-              console.warn("[app-viewer] owner collaboration context update unavailable", error instanceof Error ? error.name : "UnknownError");
-            }
-          }} />}
-      </div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}
@@ -576,41 +577,4 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
       />
     </div>
   );
-}
-
-function OwnerCollaborativeAppSharingControls({ appId, buildEpoch, onShareChanged }: {
-  appId: string;
-  buildEpoch: number;
-  onShareChanged(): Promise<void>;
-}) {
-  const organization = useCollaborationOrganization();
-  if (organization.status !== "member" || !organization.organizationId) return null;
-  return <CollaborativeAppShareButton appId={appId} api={COLLABORATION_API} buildEpoch={buildEpoch}
-    onShareChanged={onShareChanged}
-    organizationId={organization.organizationId}
-    organizationName={organization.organizationName ?? "your organization"} />;
-}
-
-function CollaborativeAppReadinessControls({ appId, buildEpoch, onShareApp }: {
-  appId: string;
-  buildEpoch: number;
-  onShareApp(appId: string): void;
-}) {
-  const sharing = useCollaborativeAppSharing({ appId, api: COLLABORATION_API, buildEpoch });
-  return <div className="flex items-start gap-2">
-    {sharing.readiness
-      ? <ReadinessSummary readiness={sharing.readiness} compact />
-      : <span role="status" className="py-1 text-xs text-muted-foreground">
-        {sharing.state === "loading" ? "Checking collaboration…"
-          : sharing.safeMessage ?? "Collaboration has not been checked."}
-      </span>}
-    <button
-      type="button"
-      className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={!sharing.canShare}
-      onClick={() => { if (sharing.canShare) onShareApp(appId); }}
-    >
-      Share app
-    </button>
-  </div>;
 }

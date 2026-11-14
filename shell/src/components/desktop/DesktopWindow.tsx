@@ -272,7 +272,7 @@ export function DesktopWindow({
           <ActivityMonitorApp />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
-            sharedAppTarget={win.sharedAppTarget} onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
+            sharedAppTarget={win.sharedAppTarget} onOpenApp={onAppOpen} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />
