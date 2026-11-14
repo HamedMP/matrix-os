@@ -17,6 +17,7 @@ describe("AppLauncher", () => {
       platformHost: "https://platform.test",
       runtimeSlot: "primary",
       api: null,
+      userId: null, organizationStatus: "none", organizationId: null,
     });
     clearDesktopApps();
     seedDesktopApps([
@@ -31,6 +32,64 @@ describe("AppLauncher", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens an organization app as an app tab with a shared badge", async () => {
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    render(<AppLauncher presentation="launchpad" />);
+    const tile = await screen.findByRole("button", { name: "Shared tasks lab" });
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    fireEvent.click(tile);
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "app", slug: "shared-tasks-lab", sharedAppTarget: target }),
+    ]));
+  });
+
+  it.each(["loading", "offline"])("opens shared apps while the installed catalog is %s", async (status) => {
+    clearDesktopApps();
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member",
+      api: { get: vi.fn(() => status === "loading" ? new Promise(() => undefined) : Promise.reject(new Error("offline"))) } as never });
+    const target = { scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001", readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    render(<AppLauncher />);
+    fireEvent.click(await screen.findByRole("button", { name: "Shared tasks lab" }));
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ sharedAppTarget: target })]));
+  });
+
+  it("distinguishes loading shared discovery from an empty directory", async () => {
+    clearDesktopApps();seedDesktopApps([]);
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
+    render(<AppLauncher />);
+    expect(await screen.findByText("Loading shared apps…")).toBeTruthy();
+  });
+
+  it("offers shared discovery Retry when there are no installed apps", async () => {
+    clearDesktopApps();seedDesktopApps([]);
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    render(<AppLauncher />);
+    expect(await screen.findByText("Shared apps are unavailable.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   it("falls back to slug names and skips invalid app rows", async () => {

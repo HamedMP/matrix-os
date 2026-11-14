@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
+import { createClaudeNativeSessionPool } from "../../packages/gateway/src/chat/claude-native-session.js";
+import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
@@ -17,6 +19,8 @@ describe("company drive canonical execution lifecycle", () => {
     let orchestrator: CanonicalChatOrchestrator;
     let permitted: boolean;
     let failed: boolean;
+    let recovered: boolean;
+    let driveAuthorizations: number;
     let release: (() => void) | undefined;
     let hold: Promise<void> | undefined;
     let calls: CanonicalProviderRunInput[];
@@ -26,6 +30,8 @@ describe("company drive canonical execution lifecycle", () => {
         await repository.create(owner, { id: "chat_drive", clientRequestId: "req_create", title: "Company plans", currentSelection: selection });
         permitted = true;
         failed = false;
+        recovered = false;
+        driveAuthorizations = 0;
         hold = undefined;
         release = undefined;
         calls = [];
@@ -38,16 +44,21 @@ describe("company drive canonical execution lifecycle", () => {
             expect((await repository.getDetailPage(owner, input.chatId, { limit: 10 }))?.runs.some(run => run.id === input.runId)).toBe(true);
             if (hold)
                 await hold;
-            yield { type: "state.updated" as const, state: { sessionId: "session_drive" } };
+            yield { type: "state.updated" as const, state: { sessionId: "session_drive",
+                ...(recovered && !input.context?.drives?.length ? { canonicalHistoryRequired: true } : {}) } };
             yield { type: "run.completed" as const, outcome: failed ? "failed" as const : "completed" as const };
         };
-        const adapter: CanonicalChatProviderAdapter = { driverKind: "claude_code", stateSchemaVersion: 1, parseState: value => value, serializeState: value => value, start: execute, resume: execute };
+        const nativeSessions = createClaudeNativeSessionPool();
+        vi.spyOn(nativeSessions, "hasProtectedSession").mockImplementation(({ sessionId }) => recovered && sessionId === "session_drive");
+        const claude = createClaudeChatProviderAdapter({ homePath: "/owner", nativeSessions });
+        const adapter: CanonicalChatProviderAdapter = { ...claude, start: execute, resume: execute };
         const context = new ChatAgentContext({ repository, agents: { get: async () => null }, enabled: () => true, drives: { async authorize(actor, chatId, references) {
                     expect(actor).toEqual(owner);
                     expect(chatId).toBe("chat_drive");
                     expect(references).toEqual([drive]);
                     if (!permitted)
                         throw new Error("Membership revoked");
+                    driveAuthorizations += 1;
                 } } });
         orchestrator = new CanonicalChatOrchestrator({ repository, catalog: { getCatalog: async () => catalog }, adapters: new CanonicalChatProviderRegistry([adapter]), agentContext: context });
     });
@@ -65,6 +76,18 @@ describe("company drive canonical execution lifecycle", () => {
         permitted = false;
         await expect(orchestrator.retryTurn(principal, owner, "chat_drive", admitted.turn.id, { clientRequestId: "req_retry", baseRevision: (await repository.get(owner, "chat_drive"))!.chat.revision })).rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
         expect(calls).toHaveLength(1);
+    });
+    it("starts fresh with canonical history and authorized Drive scope after a protected Claude turn", async () => {
+        recovered = true;
+        await orchestrator.admitTurn(principal, owner, "chat_drive", await request("req_protected", false));
+        await orchestrator.drain();
+        const followUp = await orchestrator.admitTurn(principal, owner, "chat_drive", await request("req_protected_drive"));
+        await orchestrator.drain();
+        expect(calls[1]?.resumeState).toBeUndefined();
+        expect(calls[1]?.context).toMatchObject({ drives: [drive],
+            history: { throughSeq: followUp.run.historyBoundarySeq, text: expect.stringContaining("Summarize the plan") } });
+        expect(calls[1]?.prompt).toContain("search_company_drive");
+        expect(driveAuthorizations).toBeGreaterThan(0);
     });
     it("groups a pending queued drive turn atomically and rejects changing its admitted context",async()=>{
         hold=new Promise<void>(resolve=>{release=resolve;});

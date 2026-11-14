@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
@@ -114,6 +115,7 @@ describe("project collaboration app adapter", () => {
   });
 
   function adapter(mode: "scoped" | "unavailable" = "scoped") {
+    let eventSequence = 91;
     return createProjectAppAdapter({
       db: fixture.db,
       authority,
@@ -124,7 +126,7 @@ describe("project collaboration app adapter", () => {
           : null),
       },
       now: () => NOW,
-      createEventId: () => "40000000-0000-4000-8000-000000000091",
+      createEventId: () => `40000000-0000-4000-8000-${String(eventSequence++).padStart(12, "0")}`,
     });
   }
 
@@ -159,7 +161,7 @@ describe("project collaboration app adapter", () => {
     expect(bridgeCalls.every((call) => call.transactional === true)).toBe(true);
   });
 
-  it("allows conditional writes only through the mutation envelope for an authorized editor", async () => {
+  it("allows conditional writes only through the mutation envelope for any active organization member", async () => {
     bridge.execute = vi.fn(async () => ({ ok: false }));
     const apps = adapter();
     const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "mutate_project" });
@@ -167,13 +169,12 @@ describe("project collaboration app adapter", () => {
     const action = { app: "board", table: "cards", action: "compareAndSwap", id: "row-id", expectedPayload: { title: "Original" }, data: { payload: { title: "Changed" } } };
     await expect(apps.query(editor, { appId: APP_ID, action })).rejects.toMatchObject({ code: "invalid_action" });
     const envelope = { appId: APP_ID, clientRequestId: "50000000-0000-4000-8000-000000000095", expectedRevision: 2, action };
-    await expect(apps.mutate(viewer, envelope)).rejects.toMatchObject({ code: "forbidden" });
-    expect(bridge.execute).not.toHaveBeenCalled();
+    await expect(apps.mutate(viewer, envelope)).resolves.toMatchObject({ result: { ok: false } });
     await expect(apps.mutate(editor, envelope)).resolves.toMatchObject({ result: { ok: false } });
     expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ actorId: EDITOR_ID, storageSchema: "board", transaction: expect.anything(), action: expect.objectContaining({ action: "compareAndSwap", expectedPayload: action.expectedPayload }) }));
   });
 
-  it("keeps viewer access read-only at the adapter boundary", async () => {
+  it("ignores a historical viewer row and allows organization-wide app mutation", async () => {
     const viewer = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,
       actorId: VIEWER_ID,
@@ -188,8 +189,8 @@ describe("project collaboration app adapter", () => {
       clientRequestId: "50000000-0000-4000-8000-000000000092",
       expectedRevision: 2,
       action: { app: "board", table: "cards", action: "insert", data: { title: "Denied" } },
-    })).rejects.toMatchObject({ code: "forbidden" });
-    expect(rows).toEqual([]);
+    })).resolves.toMatchObject({ result: { id: "row_1" }, revision: 3 });
+    expect(rows).toEqual([{ id: "row_1", title: "Denied" }]);
   });
 
   it("allows concurrent read queries without exclusive collaboration locks", async () => {
@@ -246,6 +247,18 @@ describe("project collaboration app adapter", () => {
     expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ transaction: expect.anything() }));
   });
 
+  it("returns timestamp-bearing project rows read by Postgres in the locked transaction", async () => {
+    await sql`CREATE TABLE board_cards (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)`.execute(fixture.db);
+    await sql`INSERT INTO board_cards VALUES ('row_1', 'Dated', '2026-11-12T13:44:05.123Z')`.execute(fixture.db);
+    bridge.execute = vi.fn(async (input) => (await sql`SELECT * FROM board_cards`.execute(input.transaction!)).rows);
+    const owner = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: OWNER_ID, action: "read" });
+    const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "read" });
+    const action = { appId: APP_ID, action: { app: "board", table: "cards", action: "find" } };
+    const expected = { result: [{ id: "row_1", title: "Dated", created_at: "2026-11-12T13:44:05.123Z" }], revision: 2 };
+    await expect(adapter().queryWithRevision(owner, action)).resolves.toEqual(expected);
+    await expect(adapter().queryWithRevision(editor, action)).resolves.toEqual(expected);
+  });
+
   it("rejects owner credentials and cannot route an action to another app", async () => {
     const editor = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,
@@ -284,7 +297,7 @@ describe("project collaboration app adapter", () => {
     expect(bridgeCalls).toEqual([]);
   });
 
-  it("reauthorizes mutations and replays the same actor request exactly once", async () => {
+  it("replays once and ignores legacy project-member revocation while organization membership remains active", async () => {
     const projectApps = adapter();
     const editor = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,
@@ -311,13 +324,13 @@ describe("project collaboration app adapter", () => {
     await expect(projectApps.query(stale, {
       appId: APP_ID,
       action: { app: "board", table: "cards", action: "find" },
-    })).rejects.toMatchObject({ code: "not_found" });
+    })).resolves.toEqual([{ id: "row_1", title: "Once" }]);
     await expect(projectApps.mutate(stale, {
       appId: APP_ID,
       clientRequestId: "50000000-0000-4000-8000-000000000095",
       expectedRevision: 3,
       action: { app: "board", table: "cards", action: "insert", data: { title: "Denied" } },
-    })).rejects.toBeInstanceOf(ProjectAppAdapterError);
-    expect(rows).toHaveLength(1);
+    })).resolves.toMatchObject({ result: { id: "row_2" }, revision: 4 });
+    expect(rows).toHaveLength(2);
   });
 });

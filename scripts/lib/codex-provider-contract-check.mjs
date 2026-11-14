@@ -31,6 +31,10 @@ export function codexProtocolMethodDigest(schema, definitionName, method) {
   const variant = variants.find((candidate) => candidate?.properties?.method?.enum?.includes(method));
   if (!variant) throw new Error(`Codex app-server method is unavailable: ${method}`);
 
+  return protocolPayloadDigest(schema, variant);
+}
+
+function protocolPayloadDigest(schema, variant) {
   const references = new Map();
   const visit = (value) => {
     if (Array.isArray(value)) {
@@ -51,6 +55,10 @@ export function codexProtocolMethodDigest(schema, definitionName, method) {
     [...references.entries()].sort(([left], [right]) => left.localeCompare(right)),
   );
   return sha256(Buffer.from(JSON.stringify(stableJson({ variant, referencedSchemas }))));
+}
+
+export function codexProtocolDefinitionDigest(schema, definition) {
+  return protocolPayloadDigest(schema, resolveLocalRef(schema, "#/definitions/" + definition));
 }
 
 function sortedVersions(contract) {
@@ -132,6 +140,15 @@ export function verifyCodexProviderContracts({
       : verification?.schemaSha256ByTarget?.[runtimeTarget] ?? verification?.schemaSha256;
     if (actualDigest !== expectedDigest) {
       semanticMismatches.push(`${method}: received ${actualDigest}`);
+    }
+  }
+  const routine = appServerContract.routineProtocolsByVersion?.[version];
+  if (routine) {
+    for (const [method, digest] of Object.entries(routine.client ?? {})) {
+      if (codexProtocolMethodDigest(appServerSchema, "ClientRequest", method) !== digest) throw new Error(`Codex routine protocol changed for ${method}`);
+    }
+    for (const [definition, digest] of Object.entries(routine.definitions ?? {})) {
+      if (codexProtocolDefinitionDigest(appServerSchema, definition) !== digest) throw new Error(`Codex routine protocol changed for ${definition}`);
     }
   }
   if (semanticMismatches.length > 0) {

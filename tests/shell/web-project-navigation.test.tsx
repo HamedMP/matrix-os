@@ -411,7 +411,7 @@ it("does not bring back a project Chat deleted while its project is open", async
   expect(await within(nav).findByText("No chats in this project yet.")).toBeTruthy();
 });
 
-it("narrows the Web sidebar to a selected project until the owner goes back, as on Electron Desktop", async () => {
+it("opens project configuration in the main pane and keeps project chat navigation in the rail", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
@@ -421,13 +421,24 @@ it("narrows the Web sidebar to a selected project until the owner goes back, as 
   const pinned = projectConversation(2);
   pinned.canonicalRecord!.chat.userState = { pinned: true } as NonNullable<typeof pinned.canonicalRecord>["chat"]["userState"];
   const select = vi.fn();
-  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
-    conversations={[projectConversation(1), pinned, { id: "chat_loose", title: "Loose chat", preview: "", messageCount: 1, updatedAt: 1 }]}
-    onNewChat={vi.fn()} onSwitchConversation={select} onSubmit={vi.fn()} authorityKey="owner/main" /></OrganizationStateProvider>);
+  const newChat = vi.fn();
+  function App({ sessionId }: { sessionId?: string }) {
+    return <OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+      sessionId={sessionId} activeConversationTitle={sessionId ? "Older project chat" : undefined}
+      conversations={[projectConversation(1), pinned, { id: "chat_loose", title: "Loose chat", preview: "", messageCount: 1, updatedAt: 1 }]}
+      onNewChat={newChat} onSwitchConversation={select} onSubmit={vi.fn()} authorityKey="owner/main" /></OrganizationStateProvider>;
+  }
+  const view = render(<App />);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "France" }));
 
-  expect(screen.getByRole("heading", { name: "France" })).toBeTruthy();
+  const main = screen.getByRole("main");
+  const rail = screen.getByRole("complementary");
+  expect(within(main).getByRole("heading", { name: "France" })).toBeTruthy();
+  expect(within(main).getByRole("button", { name: "Agent configuration" })).toBeTruthy();
+  expect(within(main).queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+  expect(within(rail).queryByRole("button", { name: "Agent configuration" })).toBeNull();
+  expect(newChat).toHaveBeenCalledWith("proj_france");
   expect(screen.queryByRole("navigation", { name: "Projects" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Loose chat" })).toBeNull();
   expect(within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", { name: "Chat 2" })).toBeTruthy();
@@ -436,6 +447,11 @@ it("narrows the Web sidebar to a selected project until the owner goes back, as 
   expect(within(older).queryByRole("button", { name: "Chat 1" })).toBeNull();
   fireEvent.click(within(older).getByRole("button", { name: "Older project chat" }));
   expect(select).toHaveBeenCalledWith("chat_old");
+  view.rerender(<App sessionId="chat_old" />);
+  expect(within(main).queryByRole("button", { name: "Agent configuration" })).toBeNull();
+  fireEvent.click(within(rail).getByRole("button", { name: "Open France project home" }));
+  view.rerender(<App />);
+  expect(within(main).getByRole("button", { name: "Agent configuration" })).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: "Back to all chats" }));
   expect(screen.queryByRole("heading", { name: "France" })).toBeNull();
@@ -469,6 +485,7 @@ it("reloads a focused project's older chats when the Unread filter changes", asy
       : Response.json({ items: [{ chat: { id: "chat_read_old", title: "Read older chat" } }], nextCursor: null }), { mobile: true });
   fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
   await screen.findByRole("button", { name: "Read older chat" });
+  expect(screen.queryByRole("button", { name: "Agent configuration" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Unread" }));
   expect(await screen.findByRole("button", { name: "Unread older chat" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Read older chat" })).toBeNull();

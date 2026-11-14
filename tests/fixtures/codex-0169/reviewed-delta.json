@@ -1,0 +1,226 @@
+[
+  {
+    "path": "/definitions/ClientRequest/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/AccountSecuritySetupAction",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/AccountSecuritySetupNotice",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/AgentMessageDisplay",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/AgentMessageModeration",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/BedrockProviderId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayAuth",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthLoginParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthPrompt",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthReadParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GcpProviderId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GetAccountSecuritySetupResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderConfigWriteParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderConfigWriteResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderListParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderListResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderSummary",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/NullableGatewayOAuthLoginParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/NullableGatewayOAuthReadParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ProviderSettings",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ProviderSettingsPatch",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadItemOutputDeferral",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadPrepareApprovedPlanParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadPrepareApprovedPlanResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/WebSearchProvider",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/CodexErrorInfo/anyOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/Config/properties/client_search_provider",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/FunctionCallOutputContentItem/oneOf/2/anyOf",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/FunctionCallOutputContentItem/oneOf/2/description",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/FunctionCallOutputContentItem/oneOf/2/properties/audio_url",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/FunctionCallOutputContentItem/oneOf/2/required",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthChangedNotification/properties/loginId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthLoginResponse/properties",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GatewayOAuthReadResponse/properties/supportsDeviceAuth",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/GetAccountResponse/properties/userId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ItemCompletedNotification/properties/contentTokenCount",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpResourceReadParams/properties/_meta",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelListParams/properties/modelProvider",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/PluginInterface/properties/defaultPrompt/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/QueuedSubmission/properties/responsesapiClientMetadata",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/Thread/properties/attachedToThreadId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadGuardianReviewResponse/properties/assessment/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadItem/oneOf/2/properties/moderation",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadItemEntry/properties/outputDeferred",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadItemsListParams/properties/deferOutput",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadListParams/properties/currentAccountOnly",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadListParams/properties/includeAttachedThreads",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadQueueAddParams/properties/responsesapiClientMetadata",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadQueueUpdateParams/properties/responsesapiClientMetadata",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSampleParams/properties/allowInProgressTurn",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSampleParams/properties/expectedTurnId/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchParams/properties/currentAccountOnly",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchParams/properties/includeAttachedThreads",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSettings/properties/environments",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSettingsUpdateParams/properties/environments",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/TurnSettingsUpdateParams/properties/environments",
+    "operation": "remove"
+  }
+]

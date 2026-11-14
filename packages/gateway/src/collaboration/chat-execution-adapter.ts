@@ -59,7 +59,7 @@ export class CollaborationChatExecutionAdapter {
     resolveCanonicalProviderAuthority?(
       scopeId: string,
       ownerId: string,
-      selection: CollaborationAiRequest["selection"],
+      selection: CollaborationAiRequest["selection"] | null,
       boundDriverKind: CanonicalProviderDriverKind | null,
     ): Promise<CanonicalSharedProviderAuthority | null>;
     /** Trusted server resolver; no request payload may select a shared execution root. */
@@ -295,14 +295,15 @@ export class CollaborationChatExecutionAdapter {
       ownerFor(context),
       { chatId: context.resourceId, scopeId: context.scopeId, actorId: context.actorId },
     );
-    if (capability.status !== "available" && capability.status !== "owner_binding_required") {
+    const inheritedProject = context.membershipScopeId !== context.scopeId;
+    if (!inheritedProject && capability.status !== "available" && capability.status !== "owner_binding_required") {
       return { capability };
     }
     // Owner terms and source selection gate the capability itself, not only
     // dispatch: a participant without acknowledged terms, and any actor on a
     // scope without an owner-selected source, sees it as unavailable, so no
     // request is accepted that could never run.
-    if (context.actorId !== context.ownerId) {
+    if (!inheritedProject && context.actorId !== context.ownerId) {
       const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
       if (mode !== "members") return { capability: { ...capability, status: "unavailable" } };
     }
@@ -312,13 +313,13 @@ export class CollaborationChatExecutionAdapter {
     }
 
     let canonicalProviderAuthority: CanonicalSharedProviderAuthority | undefined;
-    if (capability.effectiveSelection && this.options.resolveCanonicalProviderAuthority) {
+    if ((inheritedProject || capability.effectiveSelection) && this.options.resolveCanonicalProviderAuthority) {
       try {
         canonicalProviderAuthority = await this.options.resolveCanonicalProviderAuthority(
           context.scopeId,
           context.ownerId,
-          capability.effectiveSelection,
-          boundDriverKind ?? null,
+          capability.effectiveSelection ?? null,
+          inheritedProject ? null : boundDriverKind ?? null,
         ) ?? undefined;
       } catch (error: unknown) {
         console.warn("[collaboration] canonical shared Provider authority unavailable",
@@ -331,13 +332,15 @@ export class CollaborationChatExecutionAdapter {
 
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
     try {
-      // Readiness follows the server-validated owner policy selection. For a
-      // bound Chat the immutable driver/Instance still constrains that authority.
-      readiness = await this.options.resolveProviderReadiness?.(
-        context.ownerId,
-        canonicalProviderAuthority?.selection ?? capability.effectiveSelection ?? null,
-        canonicalProviderAuthority?.driverKind ?? boundDriverKind ?? null,
-      ) ?? "ready";
+      // Provider Settings resolution already proves exact-route readiness. Other
+      // authorities (including Matrix bots) retain their dedicated readiness check.
+      readiness = canonicalProviderAuthority?.currentOwnerRoute === true
+        ? "ready"
+        : await this.options.resolveProviderReadiness?.(
+            context.ownerId,
+            canonicalProviderAuthority?.selection ?? capability.effectiveSelection ?? null,
+            canonicalProviderAuthority?.driverKind ?? boundDriverKind ?? null,
+          ) ?? "ready";
     } catch (error: unknown) {
       console.warn("[collaboration] shared AI Provider readiness unavailable",
         error instanceof Error ? error.name : "UnknownError");
@@ -356,7 +359,7 @@ export class CollaborationChatExecutionAdapter {
     const effectiveCapability = canonicalProviderAuthority
       ? { ...capability, status: "available" as const, effectiveSelection: canonicalProviderAuthority.selection }
       : capability;
-    if (capability.status === "available") {
+    if (capability.status === "available" || inheritedProject) {
       return { capability: effectiveCapability, ...(canonicalProviderAuthority ? { canonicalProviderAuthority } : {}) };
     }
     if (!capability.effectiveSelection || !canonicalProviderAuthority) {
@@ -370,7 +373,7 @@ export class CollaborationChatExecutionAdapter {
   }
 
   private async requireSubmitMode(context: AuthorizedCollaborationContext): Promise<void> {
-    if (context.actorId === context.ownerId) return;
+    if (context.actorId === context.ownerId || context.membershipScopeId !== context.scopeId) return;
     const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
     if (mode !== "members") {
       throw new CollaborationAuthorizationError("forbidden", "Member AI submission is unavailable");

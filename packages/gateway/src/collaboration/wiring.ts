@@ -66,7 +66,7 @@ import { CollaborationRunLossRepository, startControlLossWatchdog } from "./shar
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
-import { CollaborationRevocationEnforcer } from "./revocation-enforcer.js";
+import { CollaborationRevocationEnforcer, ProjectAccessRevocationEnforcer } from "./revocation-enforcer.js";
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
@@ -180,8 +180,19 @@ export async function createGatewayCollaboration(options: {
   const capabilities = new CollaborationCapabilityRepository(options.db, { now: () => new Date(), createId: randomUUID });
   const authority = new CollaborationAuthority(repository, { organizationPrecondition, capabilities });
   // S08: one owner-selected source per execution scope, resolved at construction.
-  const eligibility = options.providerSnapshotReader
-    ? new OwnerAccountEligibility({ snapshots: { getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot() } })
+  const ownerProviderSnapshots = options.providerSnapshotReader
+    ? {
+      getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot({
+        refresh: true,
+        suppressFundedProbes: true,
+        includeNativeAccountMetadata: false,
+        includeNativeAccountUsage: false,
+        signal: AbortSignal.timeout(10_000),
+      }),
+    }
+    : undefined;
+  const eligibility = ownerProviderSnapshots
+    ? new OwnerAccountEligibility({ snapshots: ownerProviderSnapshots })
     : undefined;
   // The organization's AI-submission enablement comes from the same fixed-deadline
   // membership evidence (S03 seam) unless a caller injects its own source.
@@ -198,8 +209,14 @@ export async function createGatewayCollaboration(options: {
   const runBindings = eligibility && executionPolicies
     ? new CollaborationRunBindingRepository(options.db, { eligibility })
     : undefined;
-  const ownerSource = eligibility && executionPolicies && runBindings
-    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, bindings: runBindings })
+  const ownerSource = eligibility && executionPolicies && runBindings && ownerProviderSnapshots
+    ? new SharedRunOwnerSource({
+      policies: executionPolicies,
+      eligibility,
+      bindings: runBindings,
+      db: options.db,
+      snapshots: ownerProviderSnapshots,
+    })
     : undefined;
   // S09: immutable loss reasons and run-control decisions; constructed here so the
   // shared AI runtime, its commands and the request projection share one store.
@@ -216,6 +233,7 @@ export async function createGatewayCollaboration(options: {
   const runtimeIdentity = await ensureRuntimeIdentity(options.db);
   const confirmationSecret = confirmationKeyFromRuntimeIdentity(runtimeIdentity, options.config.runtimeId);
   let controlClient: CollaborationControlClient | undefined;
+  let projectAccessRevocations: ProjectAccessRevocationEnforcer | undefined;
   const directVerifier = new DirectTicketVerifier({
     runtimeId: options.config.runtimeId,
     platformKeys: () => controlClient?.platformKeys() ?? [],
@@ -261,6 +279,7 @@ export async function createGatewayCollaboration(options: {
       // A pushed denial ends the actor's grants/activations and evicts their cached membership evidence.
       capabilities,
       ...(organizationMembershipSource && isMembershipEvidenceEvictor(organizationMembershipSource) ? { membership: organizationMembershipSource } : {}),
+      onMembershipEnded: (input) => projectAccessRevocations?.membershipEnded(input) ?? Promise.resolve(),
       ...(options.outboxFetch ? { fetchImpl: options.outboxFetch } : {}),
       startTimers: options.startTimers !== false,
     });
@@ -350,6 +369,17 @@ export async function createGatewayCollaboration(options: {
   let organizationDrive: OrganizationDriveService | undefined;
   let organizationDriveTimer: ReturnType<typeof setInterval> | undefined;
   let collaborativeAppReadiness: CollaborativeAppReadinessRouteDependencies | undefined;
+  projectAccessRevocations = new ProjectAccessRevocationEnforcer({
+    db: options.db,
+    sessions: directSessions,
+    drainScope: async (scopeId, actorId) => {
+      eventRegistry.notifyScopeRevoked(scopeId, actorId);
+      terminalEventRegistry?.notifyScopeRevoked(scopeId, actorId);
+      if (actorId === undefined) terminalControl?.invalidateScope(scopeId);
+      else terminalControl?.invalidateActor(scopeId, actorId);
+      if (sharedAiRuntime?.available) await sharedAiRuntime.revokeScope(scopeId, actorId);
+    },
+  });
   function closeResourceServices(): void {
     resourceServices?.uploads?.close();
     ownerResourceDriver?.close?.();
@@ -556,6 +586,9 @@ export async function createGatewayCollaboration(options: {
         ? { generation: sharedAiRuntime.executionGeneration, eligibility: sharedAiRuntime.eligibility }
         : undefined;
     },
+    async prepareOwnerAiRouteChange(): Promise<void> {
+      if (sharedAiRuntime?.available) await sharedAiRuntime.prepareOwnerRouteChange();
+    },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;
@@ -730,6 +763,7 @@ export async function createGatewayCollaboration(options: {
         transitions: projectTransitions,
         ...(input.projectName ? { projectName: input.projectName } : {}),
         onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),
+        onUnshared: (input, executor) => projectAccessRevocations!.unshared(input, executor),
         resolveDestination: async ({ scopeId, ownerId, projectId }) => {
           const scope = await options.db.selectFrom("collaboration_scopes")
             .select(["authority_runtime_id", "authority_generation"])
@@ -747,6 +781,16 @@ export async function createGatewayCollaboration(options: {
             authorityGeneration: Number(scope.authority_generation) + 1,
           };
         },
+      });
+      // The privacy fence is already durable, so retry cleanup beside serving;
+      // owner preview also joins/retries the same accepted operation on demand.
+      void projectSharing.recoverPendingUnshares().then((result) => {
+        if (result.failed > 0) {
+          console.warn("[collaboration-project] startup unshare cleanup deferred", { failed: result.failed });
+        }
+      }, (error: unknown) => {
+        console.warn("[collaboration-project] startup unshare recovery unavailable",
+          error instanceof Error ? error.name : "UnknownError");
       });
       return { available: true };
     },

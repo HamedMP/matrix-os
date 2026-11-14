@@ -41,6 +41,7 @@ import {
 } from "./chat-execution-adapter.js";
 import {
   parseCollaborationAiEligibility,
+  CODEX_SHARED_INSTANCE_ID,
   sharedAiAdapterFor,
   sharedAiEligibilitySupportsDriver,
   SHARED_MATRIX_BOT_ELIGIBILITY,
@@ -85,6 +86,7 @@ const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
+const CLAUDE_CHAT_INSTANCE_ID = "claude_code_default";
 /**
  * S07: the production profile pins the sandbox policy, so a supervisor that
  * does not advertise exactly this policy is an unsupported profile and no
@@ -347,8 +349,8 @@ export async function createSharedAiRuntime(options: {
               admit: (decision, modelId) => admitRun({
                 bindings: options.ownerSource.bindings, run, scopeId, chatId,
                 requestId: execution.queuedTurnId, requestingActorId: execution.requestingActorId,
-                policyRevision: decision.policyRevision, audienceGeneration: String(execution.authorityGeneration),
-                harness: decision.harness, modelId, rootFingerprint: run.executionRootFingerprint!,
+                decision: { ...decision, modelId }, audienceGeneration: String(execution.authorityGeneration),
+                rootFingerprint: run.executionRootFingerprint!,
               }),
             });
           }
@@ -364,6 +366,14 @@ export async function createSharedAiRuntime(options: {
             requestingActorId: execution.requestingActorId,
             driverKind: execution.driverKind,
           });
+          const executableSelection = executableChatSelectionForOwnerRoute(ownerDecision);
+          if (ownerDecision.authorityKind === "provider_settings_active"
+            && (executableSelection.instanceId !== execution.selection.instanceId
+              || executableSelection.model !== execution.selection.model
+              || ownerDecision.providerAccessSourceId !== execution.providerAccessSourceId
+              || ownerDecision.routeGeneration !== execution.routeGeneration)) {
+            throw new SharedChatRunPreparationError("unavailable");
+          }
           const providerIdentity = sharedProviderIdentityFor(execution.driverKind, ownerDecision);
           // S07 seam, S09 resolver: every shared run mounts exactly the authoritative root
           // through the manifest source (the S09 execution-root resolver by default); no
@@ -388,10 +398,8 @@ export async function createSharedAiRuntime(options: {
             chatId,
             requestId: execution.queuedTurnId,
             requestingActorId: execution.requestingActorId,
-            policyRevision: ownerDecision.policyRevision,
+            decision: ownerDecision,
             audienceGeneration: String(execution.authorityGeneration),
-            harness: ownerDecision.harness,
-            modelId: execution.selection.model,
             rootFingerprint: sandbox.worktree.fingerprint,
           });
           const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
@@ -404,6 +412,9 @@ export async function createSharedAiRuntime(options: {
               ownerId: context.ownerId,
               actorId: context.actorId,
               providerIdentity,
+              ...(ownerDecision.authorityKind === "provider_settings_active"
+                ? { ownerRoute: ownerDecision }
+                : {}),
             }),
             scopeId,
             executionGeneration: capability.executionGeneration,
@@ -434,6 +445,54 @@ export async function createSharedAiRuntime(options: {
       },
     );
   };
+
+  const resolveCanonicalProviderAuthority = async (
+    scopeId: string,
+    ownerId: string,
+    selection: CanonicalChatModelSelection | null,
+    boundDriverKind: CanonicalProviderDriverKind | null,
+  ) => {
+    const decision = await options.ownerSource.authority({ scopeId, ownerId });
+    if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
+      if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
+      if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
+        || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
+        || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
+      return { driverKind: "matrix_bot" as const, selection };
+    }
+    const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
+    if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
+    const currentSelection = canonicalChatSelectionForOwnerAuthority(decision, selection);
+    if (!currentSelection) return null;
+    if (!options.providerCatalog) return null;
+    const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+    const validated = validateChatProviderSelection({
+      catalog,
+      selection: catalogChatSelectionForOwnerAuthority(decision, currentSelection),
+      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+    });
+    if (!validated.ok || (validated.instance.driverKind !== driverKind
+      && !(driverKind === "claude_code" && validated.instance.driverKind === "kernel"))) return null;
+    // The owner's first binding may only name a driver this runtime can
+    // execute in isolation; the queue re-verifies the signed eligibility.
+    const adapterId = sharedAiAdapterFor(driverKind, currentSelection.instanceId);
+    if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
+      return null;
+    }
+    return {
+      driverKind,
+      selection: currentSelection,
+      ...(decision.authorityKind === "provider_settings_active" ? {
+        currentOwnerRoute: true as const,
+        providerAccessSourceId: decision.providerAccessSourceId,
+        routeGeneration: decision.routeGeneration,
+      } : {}),
+    };
+  };
+  options.repository.setSharedProviderAuthorityResolver(
+    ({ scopeId, ownerId, selection, driverKind }) =>
+      resolveCanonicalProviderAuthority(scopeId, ownerId, selection, driverKind),
+  );
 
   const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
     repository: options.repository,
@@ -501,36 +560,7 @@ export async function createSharedAiRuntime(options: {
       ...(options.providerCatalog ? { providerCatalog: options.providerCatalog } : {}),
     }, ownerId, selection, boundDriverKind),
     }),
-    resolveCanonicalProviderAuthority: async (scopeId, ownerId, selection, boundDriverKind) => {
-      const decision = await options.ownerSource.authority({ scopeId, ownerId });
-      if (selection.instanceId === MATRIX_BOT_INSTANCE_ID) {
-        if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
-        if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
-          || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
-          || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
-        return { driverKind: "matrix_bot" as const, selection };
-      }
-      const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
-      if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
-      const policySelection = { ...selection, model: decision.modelId };
-      if (boundDriverKind === null) {
-        if (!options.providerCatalog) return null;
-        const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-        const validated = validateChatProviderSelection({
-          catalog,
-          selection: policySelection,
-          requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
-        });
-        if (!validated.ok || validated.instance.driverKind !== driverKind) return null;
-      }
-      // The owner's first binding may only name a driver this runtime can
-      // execute in isolation; the queue re-verifies the signed eligibility.
-      const adapterId = sharedAiAdapterFor(driverKind, policySelection.instanceId);
-      if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
-        return null;
-      }
-      return { driverKind, selection: policySelection };
-    },
+    resolveCanonicalProviderAuthority,
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
     runLoss: options.runLoss,
@@ -552,6 +582,11 @@ export async function createSharedAiRuntime(options: {
         if (context.resourceId !== binding.chatId || context.ownerId !== binding.ownerId) {
           return { allowed: false };
         }
+        if (binding.ownerRoute && !await options.ownerSource.matchesCurrent({
+          scopeId: binding.scopeId,
+          ownerId: binding.ownerId,
+          expected: binding.ownerRoute,
+        })) return { allowed: false };
         return registry.authorize(request);
       } catch (error: unknown) {
         console.warn("[collaboration] shared AI broker reauthorization failed",
@@ -639,6 +674,30 @@ export async function createSharedAiRuntime(options: {
         loss: options.runLoss,
         reason,
         orchestrator: options.orchestrator,
+      });
+    },
+    /** Revoke broker authority synchronously, then drain every active shared run. */
+    async prepareOwnerRouteChange(): Promise<void> {
+      registry.shutdown();
+      await sandboxRuntimes.stopAll();
+      await interruptActiveSharedRuns({
+        db: options.db,
+        loss: options.runLoss,
+        reason: "run_unit_exit",
+        orchestrator: options.orchestrator,
+      });
+    },
+    async revokeScope(scopeId: string, actorId?: string): Promise<void> {
+      registry.releaseScope(scopeId, actorId);
+      if (actorId === undefined) await sandboxRuntimes.stopForScope(scopeId);
+      else await sandboxRuntimes.stopForActor(scopeId, actorId);
+      await interruptActiveSharedRuns({
+        db: options.db,
+        loss: options.runLoss,
+        reason: "run_unit_exit",
+        orchestrator: options.orchestrator,
+        scopeId,
+        ...(actorId === undefined ? {} : { requestingActorId: actorId }),
       });
     },
     async shutdown(): Promise<void> {
@@ -767,6 +826,46 @@ function sharedAdapterFor(
   return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
 }
 
+/**
+ * Provider Settings instance IDs identify saved route provenance, while the
+ * Chat catalog identifies executable harness instances. Keep the former on
+ * the immutable run binding and translate only the dispatch selection.
+ */
+export function executableChatSelectionForOwnerRoute(
+  decision: Pick<SharedRunOwnerSourceDecision, "harness" | "modelId">,
+): CanonicalChatModelSelection {
+  return CanonicalChatModelSelectionSchema.parse({
+    instanceId: decision.harness === "codex" ? CODEX_SHARED_INSTANCE_ID : CLAUDE_CHAT_INSTANCE_ID,
+    model: decision.modelId,
+  });
+}
+
+export function canonicalChatSelectionForOwnerAuthority(
+  decision: SharedRunOwnerSourceDecision,
+  selection: CanonicalChatModelSelection | null,
+): CanonicalChatModelSelection | null {
+  return decision.authorityKind === "provider_settings_active"
+    ? executableChatSelectionForOwnerRoute(decision)
+    : selection === null
+      ? null
+      : CanonicalChatModelSelectionSchema.parse({ ...selection, model: decision.modelId });
+}
+
+/**
+ * Standalone Chats retain their immutable shared-run binding, whose instance
+ * ID identifies the isolated adapter rather than a provider-catalog entry.
+ * Translate only the catalog lookup; the caller still returns and persists the
+ * original binding selection.
+ */
+export function catalogChatSelectionForOwnerAuthority(
+  decision: SharedRunOwnerSourceDecision,
+  selection: CanonicalChatModelSelection,
+): CanonicalChatModelSelection {
+  return decision.authorityKind === "standalone_policy"
+    ? executableChatSelectionForOwnerRoute(decision)
+    : selection;
+}
+
 export function sharedDispatchFenceMatches(
   current: {
     owner_id: string;
@@ -830,6 +929,7 @@ function scopedClient(input: {
   providerIdentity:
     | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
     | { driverKind: "codex"; instanceId: "codex_default" };
+  ownerRoute?: SharedRunOwnerSourceDecision;
 }) {
   return {
     capability: () => input.client.capability(),
@@ -844,6 +944,7 @@ function scopedClient(input: {
           actorId: input.actorId,
           executionGeneration: created.executionGeneration,
           providerIdentity: input.providerIdentity,
+          ...(input.ownerRoute ? { ownerRoute: input.ownerRoute } : {}),
         });
       } catch (error: unknown) {
         await input.client.stopRuntime({ runtimeHandle: created.runtimeHandle }).catch((stopError: unknown) => {
@@ -941,24 +1042,27 @@ async function admitRun(input: {
   chatId: string;
   requestId: string;
   requestingActorId: string;
-  policyRevision: string;
+  decision: SharedRunOwnerSourceDecision;
   audienceGeneration: string;
-  harness: "codex" | "claude_code";
-  modelId: string;
   rootFingerprint: string | null;
 }): Promise<void> {
   const executionRoot: CanonicalChatExecutionRootRef | null = input.run.executionRoot ?? null;
-  await input.bindings.admit({
+  const admission = {
     runId: input.run.id,
     requestId: input.requestId,
     scopeId: input.scopeId,
     requestingActorId: input.requestingActorId,
-    expectedPolicyRevision: input.policyRevision,
+    expectedPolicyRevision: input.decision.policyRevision,
     executionRoot,
     rootFingerprint: input.rootFingerprint
       ?? createHash("sha256").update(`no-root:${input.chatId}`).digest("hex"),
     audienceGeneration: input.audienceGeneration,
-    harness: input.harness,
-    modelId: input.modelId,
-  });
+    harness: input.decision.harness,
+    modelId: input.decision.modelId,
+  };
+  if (input.decision.authorityKind === "provider_settings_active") {
+    await input.bindings.admitCurrentRoute(admission, input.decision);
+  } else {
+    await input.bindings.admit(admission);
+  }
 }

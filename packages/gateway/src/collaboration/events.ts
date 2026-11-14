@@ -164,9 +164,13 @@ export class CollaborationEventRegistry {
   }
 
   notifyRevoked(scopeId: string, actorId: string): void {
+    this.notifyScopeRevoked(scopeId, actorId);
+  }
+
+  notifyScopeRevoked(scopeId: string, actorId?: string): void {
     const targets = [...this.connections.values()].filter(
       (connection) => (connection.scopeId === scopeId || connection.membershipScopeId === scopeId)
-        && connection.actorId === actorId,
+        && (actorId === undefined || connection.actorId === actorId),
     );
     for (const connection of targets) {
       this.sendBestEffort(connection, {

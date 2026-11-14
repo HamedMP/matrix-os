@@ -448,6 +448,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("GET", `${SCOPE}/project/inventory`, { response: "CollaborationProjectInventorySchema" }),
   home("GET", `${SCOPE}/project/access`, { response: "CollaborationProjectAccessPresentationSchema" }),
   home("POST", `${SCOPE}/project/confirm`, { request: "CollaborationProjectConfirmRequestSchema" }),
+  home("POST", `${SCOPE}/project/unshare`, { request: "CollaborationProjectUnshareRequestSchema", response: "CollaborationProjectUnshareResponseSchema" }),
   home("POST", `${SCOPE}/project/chats`),
   home("POST", `${SCOPE}/project/terminals`),
   home("GET", `${SCOPE}/project/git`, { response: "CollaborationGitOperationSchema[]" }),

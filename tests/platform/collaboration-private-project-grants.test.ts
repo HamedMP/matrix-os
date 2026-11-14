@@ -7,8 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationGrantSchema, CollaborationScopePreflightResponseSchema } from "@matrix-os/contracts";
-import { z } from "zod/v4";
+import { COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationScopePreflightResponseSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
@@ -41,7 +40,6 @@ const organizationId = "org_private_grants";
 const privateScopeId = "10000000-0000-4000-8000-00000000e901";
 const sharedScopeId = "10000000-0000-4000-8000-00000000e902";
 const platformKey = ed25519PrivateKeyFromSeed(Buffer.alloc(32, 29).toString("base64url"));
-const GrantListSchema = z.array(CollaborationGrantSchema);
 
 describe("choosing access on a private project before sharing it", () => {
   let fixture: CollaborationTestDatabase;
@@ -170,49 +168,28 @@ describe("choosing access on a private project before sharing it", () => {
     } finally { direct.close(); }
   });
 
-  it("lists, creates, changes and revokes grants with the owner setup key and publishes none of them", async () => {
+  it("rejects grant management on a private project through the owner setup key", async () => {
     const direct = client(ownerId);
     const grants = `/api/collaboration/scopes/${privateScopeId}/grants`;
-    expect(await direct.requestOwnerProject(runtimeId, organizationId, "GET", grants)).toEqual([]);
-    const created = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
+    await expect(direct.requestOwnerProject(runtimeId, organizationId, "GET", grants))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    await expect(direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
       clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
-    }));
-    expect(created).toMatchObject({ scopeId: privateScopeId, audience: { kind: "member", actorId: memberId }, state: "pending" });
-    const patched = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "PATCH", `${grants}/${created.id}`, {
-      clientRequestId: randomUUID(), expectedRevision: "2", expectedGrantRevision: "1", preset: "contributor",
-    }));
-    expect(patched).toMatchObject({ id: created.id, preset: "contributor" });
-    const organization = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
-      clientRequestId: randomUUID(), expectedRevision: "3", audience: { kind: "organization" }, preset: "viewer",
-    }));
-    const revoked = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "DELETE", `${grants}/${organization.id}`,
-      undefined, { clientRequestId: randomUUID(), expectedRevision: "4", expectedMemberRevision: "1" }));
-    expect(revoked).toMatchObject({ id: organization.id, state: "revoked" });
-    expect(GrantListSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "GET", grants))
-      .map((grant) => [grant.id, grant.state]).sort()).toEqual([[created.id, "pending"], [organization.id, "revoked"]].sort());
-    // Recorded and audited on the home, but the platform learns nothing until the project is shared.
+    })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id").execute()).toEqual([]);
     expect(await outboxRows()).toEqual([]);
-    expect(await fixture.db.selectFrom("collaboration_audit").select("action").where("scope_id", "=", privateScopeId)
-      .orderBy("id").execute()).toEqual([
-      { action: "grant.created" }, { action: "grant.preset_changed" }, { action: "grant.created" }, { action: "grant.revoked" },
-    ]);
+    expect(await fixture.db.selectFrom("collaboration_audit").select("action").where("scope_id", "=", privateScopeId).execute()).toEqual([]);
   });
 
-  it("expires a pre-share member grant without publishing the private project", async () => {
+  it("does not create an expiring pre-share member grant", async () => {
     const direct = client(ownerId);
     const grants = `/api/collaboration/scopes/${privateScopeId}/grants`;
-    const created = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
+    await expect(direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
       clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-    }));
+    })).rejects.toMatchObject({ code: "invalid_request" });
     expect(await outboxRows()).toEqual([]);
-
-    const hourLater = () => new Date(now.getTime() + 3_600_000);
-    const later = new CollaborationCapabilityRepository(fixture.db, { now: hourLater, createId: randomUUID });
-    expect(await later.expireGrants()).toBe(1);
-    expect(await later.getGrant(created.id)).toMatchObject({ state: "expired" });
-    // Expiry changes only the private home state; the platform still must not learn the project.
-    expect(await outboxRows()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id").execute()).toEqual([]);
   });
 
   it("never manages grants of a shared project with the owner setup key", async () => {

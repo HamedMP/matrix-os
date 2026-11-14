@@ -453,7 +453,7 @@ There are two release channels. `development` exists only for dev clients.
 
 | Channel | Builds on it | How updates arrive |
 | --- | --- | --- |
-| `preview` | Internal builds from `eas build --profile preview` | Automatically, on every push to `main` that touches the mobile app |
+| `preview` | Internal builds from `eas build --profile preview` | Only when someone publishes by hand (`action: publish-preview`); merging to `main` publishes nothing |
 | `production` | Store builds from `eas build --profile production` | Only by promoting a preview update by hand |
 
 Both profiles set `"environment": "production"`. A preview update is promoted to
@@ -486,8 +486,11 @@ update, then fully close and reopen the app and wait for the download.
 `.github/workflows/mobile-ota-update.yml` owns all three. Do not publish from a
 laptop except for break-glass recovery.
 
-1. **Preview**: merge to `main`. The workflow runs the mobile tests, publishes to
-   `preview`, and writes the update group id to the run summary.
+1. **Preview**: run the workflow manually on `main` with `action: publish-preview`
+   (Actions, "Mobile OTA Update", "Run workflow"). It runs the mobile tests and
+   the native guard, publishes the current `main` to `preview`, and writes the
+   update group id to the run summary. Merging to `main` publishes nothing, so
+   several merges can go out together in one update.
 2. **Promote**: once the preview build looks right, run the workflow manually
    with `action: promote-production`. It republishes that exact update group to
    `production`. Leave `group_id` empty to take the latest preview group for the
@@ -511,9 +514,10 @@ app version, or was not published from a commit on `main`.
 `version` in `app.json`, so a release that changes native code (new native
 module, plugin, or SDK bump) **must** bump `version`. Otherwise the update is
 delivered to builds whose native code no longer matches the JS, which crashes at
-runtime. Because pushes to `main` publish automatically, bump `version` in the
-same PR as the native change, then ship new `preview` and store builds; installs
-on the old version stop receiving updates until they take the new build.
+runtime. Because the next preview publish ships whatever is on `main`, bump
+`version` in the same PR as the native change, then ship new `preview` and
+store builds; installs on the old version stop receiving updates until they take
+the new build.
 
 CI enforces this. `scripts/ci/mobile-ota-native-guard.mjs` runs on mobile and
 lockfile pull requests and again before every publish. It finds the commit that

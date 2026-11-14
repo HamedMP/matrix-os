@@ -12,6 +12,7 @@ import { z } from "zod/v4";
 import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, type CollaborationAuthority } from "./authority.js";
+import { BridgeJsonError, toBridgeJson } from "./bridge-json.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   ProjectAppAdapterError,
@@ -63,11 +64,13 @@ function standaloneNamespace(scopeId: string, appId: string): string {
 }
 
 function jsonValue(value: unknown): unknown {
-  const parsed = z.json().safeParse(value);
-  if (!parsed.success || Buffer.byteLength(JSON.stringify(parsed.data), "utf8") > MAX_RESULT_BYTES) {
+  try {
+    return toBridgeJson(value, MAX_RESULT_BYTES);
+  } catch (error: unknown) {
+    if (!(error instanceof BridgeJsonError)) throw error;
+    console.warn("[collaboration-app-instance] bridge result rejected", error.reason);
     throw new ProjectAppAdapterError("unavailable");
   }
-  return parsed.data;
 }
 
 function jsonb(value: unknown) {

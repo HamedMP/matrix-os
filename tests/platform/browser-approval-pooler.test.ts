@@ -17,13 +17,13 @@ describe("browser approval transaction pool compatibility", () => {
 
   it("bounds the exact owner lookup inside one read-only transaction", async () => {
     const query = vi.fn(async (text: string, _parameters?: string[]) => ({ rows: text.startsWith("SELECT")
-      ? [{ clerk_user_id: "owner", runtime_slot: "pr-1234", status: "running" }] : [] }));
+      ? [{ clerk_user_id: "owner", runtime_slot: "pr-1234", status: "running", provisioning_class: "preview" }] : [] }));
     const release = vi.fn();
     const lookup = new BrowserApprovalMachineLookup({ databaseUrl: "postgresql://synthetic.invalid/platform", poolFactory: (() => ({
       connect: async () => ({ query, release }), end: async () => {}, on: vi.fn(),
     })) as never });
     try {
-      expect(await lookup.resolveMachine("pr-1234", "pr-1234")).toEqual({ clerkUserId: "owner", runtimeSlot: "pr-1234", status: "running" });
+      expect(await lookup.resolveMachine("pr-1234", "pr-1234")).toEqual({ clerkUserId: "owner", runtimeSlot: "pr-1234", status: "running", provisioningClass: "preview" });
       expect(query.mock.calls.map(([sql]) => sql)).toEqual([
         "BEGIN READ ONLY", "SET LOCAL statement_timeout = '5s'", "SET LOCAL lock_timeout = '3s'",
         "SET LOCAL idle_in_transaction_session_timeout = '5s'",

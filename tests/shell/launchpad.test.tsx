@@ -14,6 +14,17 @@ import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 import { appKeys } from "../../shell/src/api/apps.js";
 import { WebDesktopSurface } from "../../shell/src/components/desktop/WebDesktopSurface.js";
 import { getGatewayUrl } from "../../shell/src/lib/gateway.js";
+import { OwnerCollaborationParticipantProvider } from "../../shell/src/lib/owner-collaboration-participant.js";
+
+const sharedTarget = {
+  scopeId: "10000000-0000-4000-8000-000000000001",
+  runtimeId: "vps:20000000-0000-4000-8000-000000000001",
+  organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+  catalogId: "30000000-0000-4000-8000-000000000001",
+  readinessId: "40000000-0000-4000-8000-000000000001",
+  registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+  owner: { actorId: "user_owner", displayName: "Owner" },
+};
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -37,7 +48,7 @@ const defaultApps: TestApp[] = [
  * MissionControl only mounts its content on the `open` rising edge
  * (false -> true), so the harness renders closed first, then opens.
  */
-async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
+async function renderLauncher(opts: { apps?: TestApp[]; actorId?: string } = {}) {
   const handlers = {
     onOpenApp: vi.fn(),
     onClose: vi.fn(),
@@ -60,7 +71,9 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
   await act(async () => {
     result = render(
       <QueryClientProvider client={queryClient}>
-        <MissionControl open={false} {...props} />
+        <OwnerCollaborationParticipantProvider actorId={opts.actorId}>
+          <MissionControl open={false} {...props} />
+        </OwnerCollaborationParticipantProvider>
       </QueryClientProvider>,
     );
     await Promise.resolve();
@@ -68,7 +81,9 @@ async function renderLauncher(opts: { apps?: TestApp[] } = {}) {
   await act(async () => {
     result.rerender(
       <QueryClientProvider client={queryClient}>
-        <MissionControl open {...props} />
+        <OwnerCollaborationParticipantProvider actorId={opts.actorId}>
+          <MissionControl open {...props} />
+        </OwnerCollaborationParticipantProvider>
       </QueryClientProvider>,
     );
     await Promise.resolve();
@@ -86,6 +101,23 @@ function setViewport(width: number, height: number) {
 }
 
 describe("Launchpad (macos-glass launcher)", () => {
+  it.each(["flat", "macos-glass"])("opens an organization app beside installed apps with a shared badge in %s", async (style) => {
+    setDesign(style);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [sharedTarget] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    act(() => useWindowManager.setState({ windows: [] }));
+    const { handlers } = await renderLauncher({ actorId: "user_member" });
+    const tile = await screen.findByRole("button", { name: "Shared tasks lab" });
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
+    fireEvent.click(tile);
+    expect(useWindowManager.getState().windows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: `__shared-app__:${sharedTarget.scopeId}`, sharedAppTarget: sharedTarget }),
+    ]));
+    expect(handlers.onOpenApp).not.toHaveBeenCalled();
+    expect(handlers.onClose).toHaveBeenCalled();
+  });
   // Reset before (not after) each test: removing the attribute while a
   // launcher is still mounted would fire useThemeStyle's MutationObserver
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.

@@ -12,7 +12,7 @@ import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type Na
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
@@ -43,6 +43,7 @@ import {
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import {
   applyProviderConfigurationMutation,
+  providerSettingsMutationChangesExecutionAuthority,
   type ProviderConfigurationMutation,
 } from "./provider-settings-mutations.js";
 import { projectProviderSettings } from "./provider-settings-projector.js";
@@ -74,6 +75,168 @@ const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
 const DEFAULT_PROJECTION_AGE_MS = 5 * 60_000;
 const SECRET_MAX_CHARS = 64 * 1024;
+const NO_ACTIVE_PROVIDER_ROUTE: AiProviderSnapshotV3["active"] = {
+  providerInstanceId: null,
+  accessSourceId: null,
+  modelId: null,
+};
+
+/** Project collaboration follows saved Settings intent, never the inventory's credential priority. */
+function savedCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
+): AiProviderSnapshotV3["active"] {
+  const enabledNative = config.harnesses.filter((harness) =>
+    harness.enabled && (harness.harness === "codex" || harness.harness === "claude"));
+  const ownerConfigured = enabledNative.filter((harness) => harness.enablementOrigin === "owner_configuration");
+  const inventoryActive = canonical.instances.find((instance) => instance.id === canonical.active.providerInstanceId);
+  const activeHarness = inventoryActive?.driverId === "codex"
+    ? "codex" as const
+    : inventoryActive?.driverId === "kernel" || inventoryActive?.driverId === "claude_code"
+      ? "claude" as const
+      : null;
+  const harness = enabledNative.length === 1
+    ? enabledNative[0]
+    : ownerConfigured.length === 1
+      ? ownerConfigured[0]
+      : activeHarness === null
+        ? undefined
+        : enabledNative.filter((candidate) => candidate.harness === activeHarness).length === 1
+          ? enabledNative.find((candidate) => candidate.harness === activeHarness)
+          : undefined;
+  if (!harness) return NO_ACTIVE_PROVIDER_ROUTE;
+  if (harness.accessSourceId === null) return NO_ACTIVE_PROVIDER_ROUTE;
+  const source = canonical.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+  const model = canonical.models.find((candidate) => candidate.id === harness.route.modelId);
+  if (!source || !model || source.vendor !== harness.route.providerId
+    || !source.eligibleModelIds.includes(model.id) || !model.eligibleAccessSourceIds.includes(source.id)) {
+    return NO_ACTIVE_PROVIDER_ROUTE;
+  }
+  const compatible = canonical.instances.filter((instance) => instance.accessSourceId === source.id
+    && instance.accountId === harness.selectedAccountId && instance.modelIds.includes(model.id)
+    && (harness.harness === "codex" ? instance.driverId === "codex"
+      : instance.driverId === "claude_code" || instance.driverId === "kernel"));
+  const exact = compatible.filter((instance) => instance.driverId === harness.driverId);
+  const instance = exact.length === 1 ? exact[0] : exact.length === 0 && compatible.length === 1 ? compatible[0] : undefined;
+  const nativeCodexSubscription = harness.harness === "codex"
+    && source.id === "owner_openai_profile" && source.fundingKind === "owner_account";
+  const projectedHarness = nativeCodexSubscription
+    ? projected?.harnesses.find((candidate) => candidate.id === harness.id && candidate.harness === "codex")
+    : undefined;
+  const projectedSource = nativeCodexSubscription
+    ? projected?.accessSources.find((candidate) => candidate.id === source.id)
+    : undefined;
+  const ready = nativeCodexSubscription
+    ? projectedHarness?.enabled === true && projectedHarness.authState === "authenticated"
+      && projectedHarness.accessSourceId === source.id
+      && projectedHarness.selectedAccountId === harness.selectedAccountId
+      && projectedHarness.route.providerId === harness.route.providerId
+      && projectedHarness.route.modelId === harness.route.modelId
+      && projectedSource?.readiness.state === "ready"
+    : instance?.readiness.state === "ready" && source.state === "ready";
+  return instance && ready
+    ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id }
+    : NO_ACTIVE_PROVIDER_ROUTE;
+}
+
+/** Promote only the exact consent-bound native Codex route into canonical execution truth. */
+function qualifyNativeCodexCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
+): AiProviderSnapshotV3 {
+  const saved = config.harnesses.find((harness) => harness.harness === "codex" && harness.enabled
+    && harness.accessSourceId === "owner_openai_profile" && harness.selectedAccountId !== null);
+  if (!saved) return canonical;
+  const source = canonical.accessSources.find((candidate) => candidate.id === saved.accessSourceId
+    && candidate.fundingKind === "owner_account");
+  const harness = projected?.harnesses.find((candidate) => candidate.id === saved.id && candidate.harness === "codex");
+  const projectedSource = projected?.accessSources.find((candidate) => candidate.id === saved.accessSourceId);
+  const candidates = canonical.instances.filter((instance) => instance.driverId === saved.driverId
+    && instance.accessSourceId === saved.accessSourceId && instance.accountId === saved.selectedAccountId
+    && instance.modelIds.includes(saved.route.modelId));
+  if (!source || candidates.length !== 1 || harness?.enabled !== true || harness.authState !== "authenticated"
+    || harness.accessSourceId !== saved.accessSourceId || harness.selectedAccountId !== saved.selectedAccountId
+    || harness.route.providerId !== saved.route.providerId || harness.route.modelId !== saved.route.modelId
+    || projectedSource?.readiness.state !== "ready" || !saved.nativeAccountGeneration
+    || saved.nativeAccountConsentRevision === undefined) return canonical;
+  const readiness = projectedSource.readiness;
+  // The canonical IDs remain stable when one native Codex principal replaces
+  // another. Bind that consented principal generation into execution authority
+  // without exposing the saved fingerprint or treating cosmetic revisions as a
+  // route change.
+  const nativeAuthorityVersion = createHash("sha256")
+    .update(`${source.policyVersion}\0${saved.nativeAccountGeneration}`)
+    .digest("hex");
+  return {
+    ...canonical,
+    accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id ? {
+      ...candidate,
+      policyVersion: nativeAuthorityVersion,
+      state: readiness.state,
+      checkedAt: readiness.checkedAt,
+      staleAfter: readiness.staleAfter,
+      action: readiness.action,
+      safeReason: readiness.safeReason,
+    } : candidate),
+    instances: canonical.instances.map((instance) => instance.id === candidates[0]!.id ? {
+      ...instance,
+      readiness,
+      defaultModelId: saved.route.modelId,
+    } : instance),
+  };
+}
+
+/** Promote only the exact saved Claude subscription backed by a fresh native principal proof. */
+function qualifyNativeClaudeCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
+  metadata?: ClaudeNativeAccountMetadata | null,
+): AiProviderSnapshotV3 {
+  const saved = config.harnesses.find((harness) => harness.harness === "claude" && harness.enabled
+    && harness.accessSourceId === "owner_claude_profile" && harness.selectedAccountId !== null);
+  if (!saved || !metadata) return canonical;
+  const source = canonical.accessSources.find((candidate) => candidate.id === saved.accessSourceId
+    && candidate.vendor === "anthropic" && candidate.fundingKind === "owner_account");
+  const harness = projected?.harnesses.find((candidate) => candidate.id === saved.id && candidate.harness === "claude");
+  const candidates = canonical.instances.filter((instance) => instance.driverId === saved.driverId
+    && instance.vendor === "anthropic" && instance.accessSourceId === saved.accessSourceId
+    && instance.accountId === saved.selectedAccountId && instance.modelIds.includes(saved.route.modelId));
+  const nativeAccountGeneration = nativeAccountPrincipalFingerprint(metadata);
+  if (!source || candidates.length !== 1 || harness?.enabled !== true || harness.authState !== "authenticated"
+    || harness.accessSourceId !== saved.accessSourceId || harness.selectedAccountId !== saved.selectedAccountId
+    || harness.route.providerId !== saved.route.providerId || harness.route.modelId !== saved.route.modelId
+    || !nativeAccountGeneration) return canonical;
+  const readiness = {
+    state: "ready" as const,
+    checkedAt: metadata.checkedAt,
+    staleAfter: metadata.staleAfter,
+    action: "none" as const,
+    safeReason: null,
+  };
+  const nativeAuthorityVersion = createHash("sha256")
+    .update(`${source.policyVersion}\0${nativeAccountGeneration}`)
+    .digest("hex");
+  return {
+    ...canonical,
+    accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id ? {
+      ...candidate,
+      policyVersion: nativeAuthorityVersion,
+      state: readiness.state,
+      checkedAt: readiness.checkedAt,
+      staleAfter: readiness.staleAfter,
+      action: readiness.action,
+      safeReason: readiness.safeReason,
+    } : candidate),
+    instances: canonical.instances.map((instance) => instance.id === candidates[0]!.id ? {
+      ...instance,
+      readiness,
+      defaultModelId: saved.route.modelId,
+    } : instance),
+  };
+}
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
   CanonicalProviderSnapshotReader,
@@ -94,6 +257,8 @@ export interface ProviderSettingsStoreWriter {
 interface ProviderSettingsStoreOptions {
   observationScope?: () => "canonical_matrix" | undefined;
   prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  /** Drains shared project AI before a mutation can invalidate its current owner route. */
+  prepareSharedAiRouteChange?: () => Promise<void>;
   claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
   codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -117,6 +282,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #observationScope?: ProviderSettingsStoreOptions["observationScope"];
   readonly #reader: CanonicalProviderSnapshotReader;
   readonly #prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  readonly #prepareSharedAiRouteChange?: () => Promise<void>;
   readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
   readonly #nativeAccountMetadata?: CodexNativeAccountMetadataReader;
   readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -150,6 +316,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     this.#claudeAccountMetadata = options.claudeNativeAccountMetadataReader;
     this.#nativeAccountMetadata = options.codexNativeAccountMetadataReader;
     this.#prepareNativeCodexRevocation = options.prepareNativeCodexRevocation;
+    this.#prepareSharedAiRouteChange = options.prepareSharedAiRouteChange;
     this.#hermesAccountMetadata = options.hermesNativeAccountMetadataReader;
     this.#dependencies = options.dependencyCoordinator;
     this.#lifecycle = options.accountLifecycle;
@@ -455,6 +622,80 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }
 
+  /**
+   * Canonical route inventory fenced by the saved Provider Settings revision.
+   * Collaboration persists that revision as route provenance instead of the
+   * raw provider service's inventory revision.
+   */
+  async getCanonicalCollaborationSnapshot(
+    options: ProviderSnapshotReadOptions = {},
+  ): Promise<AiProviderSnapshotV3> {
+    if (this.#observationScope?.() === "canonical_matrix") {
+      options = { ...options, admissionScope: "canonical_matrix" };
+    }
+    await this.#serialize(() => this.#readRuntimeRecovery(options.refresh === true));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const generation = await this.#serialize(async () => this.#mutationGeneration);
+      const canonical = await this.#canonical({ ...options, refresh: options.refresh === true && attempt === 0 });
+      const config = await this.#serialize(async () => generation === this.#mutationGeneration
+        ? this.#configuration(canonical)
+        : null);
+      if (!config) continue;
+      const nativeCodexSubscription = config.harnesses.some((harness) => harness.harness === "codex"
+        && harness.enabled && harness.accessSourceId === "owner_openai_profile");
+      const nativeClaudeSubscription = config.harnesses.some((harness) => harness.harness === "claude"
+        && harness.enabled && harness.accessSourceId === "owner_claude_profile");
+      let projected: ProviderSettingsSnapshot | undefined;
+      let codexMetadata: CodexNativeAccountMetadata | null = null;
+      let claudeMetadata: ClaudeNativeAccountMetadata | null = null;
+      if (nativeCodexSubscription || nativeClaudeSubscription) {
+        try {
+          if (nativeCodexSubscription) {
+            codexMetadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.());
+          }
+          if (nativeClaudeSubscription) {
+            claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.());
+          }
+        } catch (error: unknown) {
+          console.warn("[provider-settings] Native collaboration route unavailable:",
+            error instanceof Error ? error.name : "UnknownError");
+        }
+        try {
+          // Owner-paid native readiness is independent of Matrix funding and
+          // generic catalogs. This hot admission path must honor suppressed
+          // funded probes and project only canonical inventory + saved consent.
+          projected = await projectProviderSettings({
+            canonical,
+            config,
+            claudeNativeAccountMetadata: claudeMetadata,
+            codexNativeAccountMetadata: codexMetadata,
+            now: this.#now(),
+            supportedActions: [],
+          });
+        } catch (error: unknown) {
+          console.warn("[provider-settings] Native collaboration projection unavailable:",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("projection_unavailable", 503);
+        }
+      }
+      const codexQualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
+      const qualified = qualifyNativeClaudeCollaborationRoute(codexQualified, config, projected, claudeMetadata);
+      const accepted = await this.#serialize(async () => {
+        options.signal?.throwIfAborted();
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return generation === this.#mutationGeneration && saved?.revision === config.revision;
+      });
+      if (accepted) {
+        return AiProviderSnapshotV3Schema.parse({
+          ...qualified,
+          revision: config.revision,
+          active: savedCollaborationRoute(qualified, config, projected),
+        });
+      }
+    }
+    throw new ProviderSettingsStoreError("projection_unavailable", 503);
+  }
+
   async setAccountSecret(accountId: string, value: string): Promise<void> {
     await this.#serialize(async () => {
       this.#mutationGeneration += 1;
@@ -694,6 +935,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         id: this.#id,
         now: this.#now(),
       });
+      if (providerSettingsMutationChangesExecutionAuthority(mutation)) {
+        try {
+          await this.#prepareSharedAiRouteChange?.();
+        } catch (error: unknown) {
+          console.warn("[provider-settings] shared AI route revocation failed",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+      }
       if (codexNativeCompletion) {
         const generation = codexMetadata && nativeAccountPrincipalFingerprint(codexMetadata);
         const target = config.harnesses.find(row => "harnessInstanceId" in mutation && row.id === mutation.harnessInstanceId);

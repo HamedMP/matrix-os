@@ -13,6 +13,7 @@ const AGENT_STATUS_TIMEOUT_MS = 10_000;
 const UNKNOWN_AGENT_STATUSES: Record<TerminalAgentId, TerminalAgentInstallState> = {
   claude: "unknown",
   codex: "unknown",
+  hermes: "unknown",
   opencode: "unknown",
   pi: "unknown",
 };

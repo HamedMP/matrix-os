@@ -144,6 +144,9 @@ export const CollaborationRunBindingSchema = z.object({
   payerActorId: CollaborationActorIdSchema,
   source: CollaborationRunSourceSchema,
   policyRevision: CollaborationRevisionSchema,
+  /** Present for project runs governed by the owner's Provider Settings V3 active route. */
+  providerSettingsRevision: CollaborationRevisionSchema.optional(),
+  routeGeneration: z.string().regex(HEX_DIGEST).optional(),
   audienceGeneration: CollaborationRevisionSchema,
   /** Null for a standalone Chat without an execution root; the fingerprint then digests the Chat identity. */
   executionRoot: CanonicalChatExecutionRootRefSchema.nullable(),

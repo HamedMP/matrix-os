@@ -12,6 +12,19 @@ type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | str
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 type JsonValue = ColumnType<unknown, unknown, unknown>;
 
+/** Host-owned receipts. A released generation can be claimed only after a confirmed process exit. */
+export interface ClaudeNativeRecoveryTable {
+  chat_id: string;
+  owner_id: string;
+  session_id: string;
+  source_run_id: string;
+  source_fingerprint: string;
+  deadline_at: Timestamp;
+  jobs: JsonValue;
+  generation: number;
+  status: "active" | "released" | "invalid";
+}
+
 export interface ChatsTable {
   id: string;
   owner_type: "personal" | "organization";
@@ -150,6 +163,8 @@ export interface ChatQueuedTurnsTable {
   accepted_auth_epoch: ColumnType<number | null, number | null | undefined, number | null>;
   accepted_execution_generation: ColumnType<number | null, number | null | undefined, number | null>;
   accepted_execution_eligibility: ColumnType<unknown | null, unknown | null | undefined, unknown | null>;
+  accepted_provider_access_source_id: ColumnType<string | null, string | null | undefined, string | null>;
+  accepted_provider_route_generation: ColumnType<string | null, string | null | undefined, string | null>;
   retry_of_queued_turn_id: ColumnType<string | null, string | null | undefined, string | null>;
   position: number;
   status: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
@@ -289,6 +304,7 @@ export interface ChatDatabase extends ChatImportDatabase {
   chat_approval_outcomes: ChatApprovalOutcomesTable;
   chat_terminal_bindings: ChatTerminalBindingsTable;
   chat_run_adapter_state: ChatRunAdapterStateTable;
+  chat_claude_native_recovery: ClaudeNativeRecoveryTable;
   chat_outbox: ChatOutboxTable;
   chat_deletions: ChatDeletionsTable;
   chat_legacy_imports: ChatLegacyImportsTable;
@@ -479,6 +495,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       accepted_auth_epoch BIGINT,
       accepted_execution_generation BIGINT,
       accepted_execution_eligibility JSONB,
+      accepted_provider_access_source_id TEXT,
+      accepted_provider_route_generation TEXT,
       retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL,
       position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 32),
       status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled', 'interrupted', 'unauthorized', 'unavailable')),
@@ -509,6 +527,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_generation BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_eligibility JSONB`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_provider_access_source_id TEXT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_provider_route_generation TEXT`.execute(db);
   await sql`
     ALTER TABLE chat_queued_turns
     ADD COLUMN IF NOT EXISTS retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL
@@ -666,6 +686,25 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       byte_count INTEGER NOT NULL CHECK (byte_count >= 0 AND byte_count <= 65536),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_claude_native_recovery (
+      chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+      owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 160),
+      session_id UUID NOT NULL,
+      source_run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      source_fingerprint TEXT NOT NULL CHECK (source_fingerprint ~ '^[0-9a-f]{64}$'),
+      deadline_at TIMESTAMPTZ NOT NULL,
+      jobs JSONB NOT NULL CHECK (jsonb_typeof(jobs) = 'array' AND jsonb_array_length(jobs) <= 50
+        AND octet_length(jobs::text) <= 32768),
+      generation INTEGER NOT NULL CHECK (generation > 0),
+      status TEXT NOT NULL CHECK (status IN ('active', 'released', 'invalid')),
+      CHECK ((status = 'invalid') = (jsonb_array_length(jobs) = 0))
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_claude_native_recovery_released
+    ON chat_claude_native_recovery(owner_id, deadline_at, chat_id) WHERE status = 'released'
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_outbox (

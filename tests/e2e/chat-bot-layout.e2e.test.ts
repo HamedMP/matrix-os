@@ -49,7 +49,20 @@ async function fixture(width: number, surface = "electron"): Promise<Page> {
   await page.waitForFunction(() => document.querySelector('[data-slot="bot-composer-model-trigger"]')?.textContent?.includes("Synthetic attachment"));
   return page;
 }
-it.each([320, 480, 900])("keeps every composer control aligned and contained at column width %i", async width => {
+async function expectPreviewQuotaAboveToolbar(page: Page) {
+  const composer = page.locator("#composer .prompt-card");
+  const quota = await composer.getByText(/^Preview dictation: 25 of 25 requests remaining until /).boundingBox();
+  const toolbar = await composer.locator('[data-slot="prompt-input-toolbar"]').boundingBox();
+  const card = await composer.boundingBox();
+  expect(quota).not.toBeNull();
+  expect(toolbar).not.toBeNull();
+  expect(card).not.toBeNull();
+  expect(quota!.x).toBeGreaterThanOrEqual(card!.x);
+  expect(quota!.x + quota!.width).toBeLessThanOrEqual(card!.x + card!.width);
+  expect(quota!.y + quota!.height).toBeLessThanOrEqual(toolbar!.y + 1);
+}
+
+it.each([320, 480, 720, 900])("keeps every composer control aligned and contained at column width %i", async width => {
   const page = await fixture(width);
   try {
     const geometry = await page.locator('[data-slot="prompt-input-toolbar"]').evaluate(row => {
@@ -60,6 +73,7 @@ it.each([320, 480, 900])("keeps every composer control aligned and contained at 
     await page.screenshot({ path: join(output, `composer-${width}.png`) });
     await writeFile(join(output, `composer-${width}.json`), JSON.stringify(geometry, null, 2));
     expect(geometry.overflow).toBe(false);
+    await expectPreviewQuotaAboveToolbar(page);
     expect(Math.max(...geometry.buttons.map(button => button.y)) - Math.min(...geometry.buttons.map(button => button.y))).toBeLessThanOrEqual(1);
     for (const button of geometry.buttons) { expect(button.x).toBeGreaterThanOrEqual(geometry.x); expect(button.right).toBeLessThanOrEqual(geometry.right + 1); }
     const model = page.getByRole("button", { name: "Choose bot agent and model" });
@@ -72,10 +86,11 @@ it.each([320, 480, 900])("keeps every composer control aligned and contained at 
     for (const [label, action] of [["Attach files", "attach"], ["Choose folder", "folder"], ["Microphone", "microphone"], ["Stop", "stop"]]) { await page.getByRole("button", { name: label, exact: true }).click(); expect(await page.locator("#fixture-action").textContent()).toBe(action); }
   } finally { await page.close(); }
 });
-it.each([320, 480, 900])("keeps the shared Web Desktop/Web Canvas composer responsive at width %i", async width => {
+it.each([320, 480, 720, 900])("keeps the shared Web Desktop/Web Canvas composer responsive at width %i", async width => {
   const page = await fixture(width, "web");
   try {
     await page.getByRole("button", { name: "Start voice input", exact: true }).waitFor();
+    await expectPreviewQuotaAboveToolbar(page);
     const model = page.getByRole("button", { name: "Choose bot agent and model" });
     const compact = await model.evaluate(button => ({ width: button.getBoundingClientRect().width,
       labelVisible: getComputedStyle(button.querySelector('[data-slot="bot-composer-model-label"]')!).display !== "none" }));

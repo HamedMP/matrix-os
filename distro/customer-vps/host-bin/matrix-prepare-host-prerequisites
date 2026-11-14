@@ -182,6 +182,25 @@ prepare_sites_nginx() {
     "$helper_dir/matrix-configure-sites-nginx" --root "$root"
 }
 
+prepare_claude_native_recovery_helper() {
+  # Predecessor updaters already call this replacement helper after bundle verification.
+  # A first rollback can leave the root-owned 0644 file behind. Its only service
+  # caller ships in the new Gateway. Subsequent updaters track the file in rollback.
+  local source="$matrix_dir/bin/matrix-claude-native-recovery.py"
+  local destination="${root%/}/usr/local/libexec/matrix-claude-native-recovery/launch.py"
+  local directory="${destination%/*}" incoming
+  [ ! -L "$source" ] || return 1
+  [ -f "$source" ] || return 0
+  [ ! -L "$directory" ] && [ ! -L "$destination" ] || return 1
+  install -d -o root -g root -m 0755 -- "$directory" || return 1
+  incoming="$(mktemp "$directory/.launch.XXXXXX")" || return 1
+  if ! install -o root -g root -m 0644 -- "$source" "$incoming" \
+    || ! mv -Tf -- "$incoming" "$destination"; then
+    rm -f -- "$incoming"
+    return 1
+  fi
+}
+
 if [ "$mode" = --certify-only ]; then
   certify_prerequisites
   prepare_sites_nginx
@@ -189,6 +208,7 @@ if [ "$mode" = --certify-only ]; then
 fi
 
 if prerequisites_ready; then
+  prepare_claude_native_recovery_helper
   prepare_sites_nginx
   exit 0
 fi
@@ -250,4 +270,5 @@ if ! command -v aws >/dev/null 2>&1; then
 fi
 
 certify_prerequisites
+prepare_claude_native_recovery_helper
 prepare_sites_nginx

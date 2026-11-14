@@ -210,6 +210,9 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
       if (Buffer.byteLength(JSON.stringify(value)) > 192 * 1024) return unavailable(c);
       return c.json(value, 200, { "Cache-Control": "no-store" });
     } catch (error) {
+      if (error instanceof SharedBrowserError && error.code === "approval_unavailable" && !error.dispatched) {
+        return c.json({ success: false, content: error.message }, 200, { "Cache-Control": "no-store" });
+      }
       if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy", "tab_limit"].includes(error.code)) {
         return c.json({ success: false, content: error.message, automation: options.sharedBrowser.broker.status() }, 200, { "Cache-Control": "no-store" });
       }

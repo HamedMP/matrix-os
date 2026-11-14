@@ -1,14 +1,15 @@
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
-import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources, chatSlashStatusMessage, filterCanonicalSlashEntries, matchChatSlashToken } from "@matrix-os/ui";
+import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources, chatSlashStatusMessage, filterCanonicalSlashEntries, matchChatSlashToken, ProjectSkillDraftChips, useProjectChatSlashSkills, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { ChatComposerAttachButton, ChatComposerOptionControls, chatPermissionModeLabel, type ChatComposerOptionControl } from "@matrix-os/ui";
+import { ChatComposerAttachButton, ChatComposerOptionControls, ChatSpeechInputButton, ChatSpeechQuotaStatus, chatPermissionModeLabel, platformSpeechControlState, type ChatComposerOptionControl } from "@matrix-os/ui";
+import * as Popover from "@radix-ui/react-popover";
 import { Box, SquareTerminal } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ResourceRows } from "./ComposerResourceRows";
@@ -24,7 +25,8 @@ import {
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
-import { ConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
+import { useConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -44,27 +46,51 @@ function selectedOptionValue(
 function SuggestionMenu({
   label,
   menuSide,
-  menuRef,
+  anchorRef,
   children,
 }: {
   label: string;
   menuSide: "top" | "bottom";
-  menuRef?: Ref<HTMLDivElement>;
+  anchorRef: RefObject<HTMLDivElement | null>;
   children: ReactNode;
 }) {
   return (
-    <div
-      ref={menuRef}
-      role="listbox"
-      aria-label={label}
-      data-preferred-side={menuSide}
-      className={`absolute left-0 right-0 z-30 max-h-80 overflow-y-auto rounded-xl border p-2 shadow-xl ${
-        menuSide === "bottom" ? "top-[calc(100%+8px)]" : "bottom-[calc(100%+8px)]"
-      }`}
-      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-    >
-      {children}
-    </div>
+    <Popover.Portal>
+      <Popover.Content
+        role="listbox"
+        aria-label={label}
+        data-preferred-side={menuSide}
+        side={menuSide}
+        align="start"
+        sideOffset={8}
+        collisionPadding={8}
+        hideWhenDetached
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onFocusOutside={(event) => {
+          const target = event.target;
+          const editor = target instanceof Element && target.closest('[data-slot="prompt-input-content"]');
+          if (editor && anchorRef.current?.contains(editor)) event.preventDefault();
+        }}
+        onMouseDown={(event) => {
+          // Keep the editor's selection while the pointer activates an option.
+          if (event.button === 0 && event.target instanceof Element && event.target.closest('[role="option"]')) {
+            event.preventDefault();
+          }
+        }}
+        className="matrix-chat-composer-menu overflow-y-auto rounded-xl border p-2 shadow-xl"
+        style={{
+          zIndex: DESKTOP_Z_INDEX.popover,
+          width: "var(--radix-popover-trigger-width)",
+          maxWidth: "var(--radix-popover-content-available-width)",
+          maxHeight: "min(20rem, var(--radix-popover-content-available-height))",
+          borderColor: "var(--border-default)",
+          background: "var(--bg-overlay)",
+        }}
+      >
+        {children}
+      </Popover.Content>
+    </Popover.Portal>
   );
 }
 
@@ -73,6 +99,8 @@ export function SharedChatComposer({
   value,
   onChange,
   draftScopeKey,
+  projectSlashScope,
+  projectSkillSubmitEnabled = true,
   referenceTokens = [],
   onReferenceTokensChange,
   onAgentMention,
@@ -112,6 +140,8 @@ export function SharedChatComposer({
   value: string;
   onChange: (value: string) => void;
   draftScopeKey?: string;
+  projectSlashScope?: ProjectChatSlashScope;
+  projectSkillSubmitEnabled?: boolean;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
   onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
@@ -152,10 +182,11 @@ export function SharedChatComposer({
   speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
-  const suggestionMenuRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
-  const [speechActive, setSpeechActive] = useState(false);
+  const speechDraft = useConnectedDesktopSpeechInput(speech);
+  const speechActive = speechDraft ? platformSpeechControlState(speechDraft).active : false;
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
   useEffect(() => {
@@ -172,8 +203,10 @@ export function SharedChatComposer({
   const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
   const slashQuery = slashMatch?.query ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
+  const skillBinding = JSON.stringify([draftScopeKey, projectSlashScope?.scope, projectSlashScope?.projectId, Boolean(projectSlashScope?.read), instance?.id]);
+  const projectSkillDraft = useProjectSkillDraft(skillBinding);
   const suggestionKey = slashQuery !== null
-    ? `slash:${draftScopeKey ?? ""}:${selection?.instanceId ?? ""}:${slashMatch?.start ?? 0}:${slashMatch?.token ?? ""}`
+    ? `slash:${skillBinding}:${slashMatch?.start ?? 0}:${slashMatch?.token ?? ""}`
     : resourceQuery !== null
       ? `resource:${resourceMatch?.index ?? 0}:${resourceMatch?.[0] ?? ""}`
       : null;
@@ -183,7 +216,11 @@ export function SharedChatComposer({
   useEffect(() => {
     if (suggestionKey === null) setDismissedSuggestionKey(null);
   }, [suggestionKey]);
-  const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
+  const projectSkills = useProjectChatSlashSkills(projectSlashScope, slashMenuOpen);
+  const slashLoading = providerCatalogLoading || projectSkills.loading;
+  const slashEntries = listCanonicalSlashEntries(instance, projectSkills.catalog);
+  const draftCanSubmit = canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0);
+  const canSendProjectSkill = Boolean(projectSkillSubmitEnabled && projectSkillDraft.paths.length && projectSlashScope?.read);
   const canAttach = Boolean(onAttach && (attachmentsEnabled ?? supportsNativeFileAttachments(instance)));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
@@ -203,7 +240,7 @@ export function SharedChatComposer({
     });
     return () => { cancelled = true; };
   }, [resourceMenuOpen, resourceQuery, resourceSearch]);
-  const filteredSlashEntries = slashQuery === null || providerCatalogLoading ? [] : filterCanonicalSlashEntries(slashEntries, slashQuery);
+  const filteredSlashEntries = slashQuery === null || slashLoading ? [] : filterCanonicalSlashEntries(slashEntries, slashQuery);
   const availableResources = orderChatResources([...resources, ...remoteResources])
     .filter((resource, index, all) => all.findIndex((candidate) => (
       chatResourceKey(candidate) === chatResourceKey(resource)
@@ -221,18 +258,29 @@ export function SharedChatComposer({
   useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery, selection?.instanceId, draftScopeKey]);
   const currentSubmission = () => {
     const editorValue = editorRef.current?.readValue();
-    return buildSharedChatComposerSubmission(
+    const submission = buildSharedChatComposerSubmission(
       editorValue?.value ?? value,
       editorValue?.tokens ?? referenceTokens,
     );
+    if (!canSendProjectSkill || !projectSlashScope) return submission;
+    const prompt = projectSkillDraft.prompt(submission.text);
+    return {
+      ...submission, text: prompt, agentPrompt: prompt,
+      projectSkill: { projectId: projectSlashScope.projectId, isCurrent: projectSkillDraft.isCurrent, onAccepted: projectSkillDraft.clear },
+    };
   };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
       const entry = filteredSlashEntries[index];
       if (entry) {
-        // Dismiss synchronously. Lexical publishes the rewritten value on its
-        // update listener, so without this guard an immediate second Enter can
-        // still see the stale slash query and be swallowed by the old menu.
+        if (entry.kind === "project_skill") {
+          if (!slashMatch || !projectSkillDraft.select(entry.path)) return;
+          const suffix = value.slice(slashMatch.end).match(/^[a-z0-9_.-]*/i)?.[0] ?? "";
+          setDismissedSuggestionKey(suggestionKey);
+          editorRef.current?.removeTrigger(slashMatch.token + suffix, cursor + suffix.length);
+          return;
+        }
+        // Dismiss synchronously before Lexical publishes its rewritten value.
         setDismissedSuggestionKey(suggestionKey);
         editorRef.current?.insertToken({
           type: "invocation",
@@ -279,7 +327,7 @@ export function SharedChatComposer({
           && !disabled
           && !speechActive
           && !blockedDriveContext
-          && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
+          && (draftCanSubmit || canSendProjectSkill)
         ) {
           if (!providerCatalogLoading) onSubmit(currentSubmission());
         }
@@ -327,24 +375,50 @@ export function SharedChatComposer({
       onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
     },
   ] : [];
-  useEffect(() => {
-    if (!slashMenuOpen && !resourceMenuOpen) return;
-    const dismissOutside = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && suggestionMenuRef.current?.contains(target)) return;
-      setDismissedSuggestionKey(suggestionKey);
+  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
+  const suggestionMenuOpen = slashMenuOpen || showResourceSuggestions;
+  const suggestionSessionOpen = slashMenuOpen || resourceMenuOpen;
+  const dismissSuggestion = useEffectEvent(() => setDismissedSuggestionKey(suggestionKey));
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!suggestionSessionOpen || !anchor) return;
+
+    // A retained desktop surface can become inert before a pending search has rows.
+    const dismissIfInactive = () => {
+      if (anchor.closest('[inert], [hidden], [aria-hidden="true"]')) dismissSuggestion();
     };
-    document.addEventListener("pointerdown", dismissOutside);
-    return () => document.removeEventListener("pointerdown", dismissOutside);
-  }, [resourceMenuOpen, slashMenuOpen, suggestionKey]);
-  return (
-    <div className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
+    const observer = new MutationObserver(dismissIfInactive);
+    for (let ancestor: HTMLElement | null = anchor; ancestor; ancestor = ancestor.parentElement) {
+      observer.observe(ancestor, { attributes: true, attributeFilter: ["inert", "hidden", "aria-hidden"] });
+    }
+    dismissIfInactive();
+    return () => observer.disconnect();
+  }, [suggestionSessionOpen]);
+  const searchingWithoutMenu = Boolean(resourceSearch) && resourceMenuOpen && !suggestionMenuOpen;
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!searchingWithoutMenu || !anchor) return;
+
+    // While the menu has no rows, Radix has no layer to dismiss.
+    const dismissOutside = (event: Event) => {
+      if (event.target instanceof Node && !anchor.contains(event.target)) dismissSuggestion();
+    };
+    const document = anchor.ownerDocument;
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("focusin", dismissOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("focusin", dismissOutside, true);
+    };
+  }, [searchingWithoutMenu]);
+  const composer = (
+    <Popover.Anchor ref={anchorRef} className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
       {slashMenuOpen ? (
-        <SuggestionMenu label="Skills and commands" menuSide={menuSide} menuRef={suggestionMenuRef}>
+        <SuggestionMenu label="Skills and commands" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
-            Skills &amp; commands
+            {projectSkills.catalog ? "Project skills & commands" : "Skills & commands"}
           </p>
-          {!filteredSlashEntries.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:providerCatalogLoading,instance,entryCount:slashEntries.length})}</p> : null}
+          {!filteredSlashEntries.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:slashLoading,instance,entryCount:slashEntries.length,projectSkills:projectSkills.catalog})}</p> : null}
           {filteredSlashEntries.map((entry, index) => (
             <button
               key={`${entry.kind}:${entry.id}`}
@@ -355,15 +429,15 @@ export function SharedChatComposer({
               onClick={() => applySuggestion(index)}
             >
               <span data-slot="skill-command-icon" className="flex items-center justify-center" style={{ color: "var(--text-tertiary)" }}>
-                {entry.kind === "skill" ? <Box size={15} aria-hidden /> : <SquareTerminal size={15} aria-hidden />}
+                {entry.kind !== "command" ? <Box size={15} aria-hidden /> : <SquareTerminal size={15} aria-hidden />}
               </span>
               <span data-slot="skill-command-name" className="truncate whitespace-nowrap font-medium" style={{ color: "var(--text-primary)" }}>{entry.invocation}</span>
               <span className="truncate text-sm" style={{ color: "var(--text-tertiary)" }}>{entry.description}</span>
             </button>
           ))}
         </SuggestionMenu>
-      ) : resourceMenuOpen && (canAttach || filteredResources.length > 0) ? (
-        <SuggestionMenu label="Add" menuSide={menuSide} menuRef={suggestionMenuRef}>
+      ) : showResourceSuggestions ? (
+        <SuggestionMenu label="Add" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
           <ResourceRows
             role="option"
@@ -389,7 +463,7 @@ export function SharedChatComposer({
         busy={busy}
         submitWhileBusy={submitWhileBusy}
         disabled={disabled}
-        canSubmit={!providerCatalogLoading && !blockedDriveContext && !speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
+        canSubmit={!providerCatalogLoading && !blockedDriveContext && !speechActive && !disabled && (draftCanSubmit || canSendProjectSkill)}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         layout={layout}
@@ -416,13 +490,14 @@ export function SharedChatComposer({
             focusRequestId={focusRequestId}
           />
         )}
-        attachments={attachments ? (
-          <ComposerReferenceTokenRow
-            tokens={[]}
-            attachments={attachments}
-          />
+        attachments={attachments || projectSkillDraft.paths.length ? (
+          <>
+            <ProjectSkillDraftChips paths={projectSkillDraft.paths} onRemove={projectSkillDraft.remove} />
+            {attachments ? <ComposerReferenceTokenRow tokens={[]} attachments={attachments} /> : null}
+          </>
         ) : null}
         footer={footer}
+        status={speechDraft ? <ChatSpeechQuotaStatus speech={speechDraft} /> : undefined}
         controls={(
           <>
             {canAttach ? <ChatComposerAttachButton disabled={disabled} onClick={() => onAttach?.()} /> : null}
@@ -431,14 +506,7 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
-            {speech ? (
-              <ConnectedDesktopSpeechInput
-                scopeKey={speech.scopeKey}
-                onDraft={speech.onDraft}
-                disabled={disabled || busy}
-                onActiveChange={setSpeechActive}
-              />
-            ) : null}
+            {speechDraft ? <ChatSpeechInputButton speech={speechDraft} disabled={disabled || busy} /> : null}
             {runActions}
             {automaticRouting ? botControls : <ProviderModelPicker
               catalog={catalog}
@@ -456,6 +524,13 @@ export function SharedChatComposer({
           </>
         )}
       />
-    </div>
+    </Popover.Anchor>
+  );
+  return (
+    <Popover.Root open={suggestionMenuOpen} onOpenChange={(open) => {
+      if (!open) setDismissedSuggestionKey(suggestionKey);
+    }}>
+      {composer}
+    </Popover.Root>
   );
 }

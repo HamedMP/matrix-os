@@ -1,3 +1,5 @@
+import { ROUTINE_DESTINATION_PATH, RoutineDestinationViewSchema, RoutineCliRememberTargetSchema, RoutineCliResetTargetSchema } from "@matrix-os/contracts/routine-destination";
+import type { RoutineDestinationClient } from "../../routine-destination/use-routine-destination.js";
 import { CreateManagedCustomBotRequestSchema, RecoverManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
 import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
@@ -16,7 +18,7 @@ import { botCreationFailureReason, type BotCreationFailureReason } from "../crea
 
 import { createBotRoutineClient, type BotRoutineClient } from "./routine-client.js";
 
-type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown) => Promise<unknown>;
+type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>;
 
 const safeMessages: Record<number, string> = {
   400: "The request is invalid.",
@@ -45,6 +47,7 @@ function safeError(error: unknown): BotClientError {
 
 export interface BotClient extends Partial<BotConnectionClient> {
   routines?: BotRoutineClient;
+  routineDestination?: RoutineDestinationClient;
   ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
@@ -62,9 +65,9 @@ export interface BotClient extends Partial<BotConnectionClient> {
 
 /** All responses are parsed and all failures become fixed, client-safe copy. */
 export function createBotClient(request: BotRequest): BotClient {
-  const call = async <T>(path: string, method: "GET" | "POST" | "DELETE", schema: z.ZodType<T>, body?: unknown): Promise<T> => {
+  const call = async <T>(path: string, method: "GET" | "POST" | "DELETE", schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal): Promise<T> => {
     try {
-      return schema.parse(await request(path, method, body));
+      return schema.parse(await (signal ? request(path, method, body, { signal }) : request(path, method, body)));
     } catch (error: unknown) {
       throw safeError(error);
     }
@@ -72,6 +75,11 @@ export function createBotClient(request: BotRequest): BotClient {
   const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
+    routineDestination: {
+      get: signal => call(ROUTINE_DESTINATION_PATH, "GET", RoutineDestinationViewSchema, undefined, signal),
+      remember: (input, signal) => call(ROUTINE_DESTINATION_PATH, "POST", RoutineDestinationViewSchema, RoutineCliRememberTargetSchema.parse(input), signal),
+      reset: (input, signal) => call(`${ROUTINE_DESTINATION_PATH}/reset`, "POST", RoutineDestinationViewSchema, RoutineCliResetTargetSchema.parse(input), signal),
+    },
     ...createBotConnectionClient((path, method, body) => request(path, method, body)),
     routines: createBotRoutineClient((path, method, body) => call(path, method, z.unknown(), body)),
     ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,

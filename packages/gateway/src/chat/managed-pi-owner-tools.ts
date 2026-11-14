@@ -188,7 +188,14 @@ export function createManagedPiOwnerTools(deps: {
           if (!deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
           if (current.permissionMode === "supervised") {
             if (!deps.sharedBrowser.authorizeAction) throw new BotBrokerActionError("not_granted");
-            deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            // The trial may expire after capability discovery but before setup.
+            if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+            try {
+              deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+            } catch (error: unknown) {
+              if (!deps.sharedBrowser.allowsSupervisedRun(binding)) return;
+              throw error;
+            }
           } else {
             deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
           }

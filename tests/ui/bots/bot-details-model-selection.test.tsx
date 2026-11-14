@@ -38,7 +38,7 @@ function fixture() {
   return { enabled: true, agents: [agent] };
  });
  const client = createChatAgentClient(request);
- client.bots = { interactions: vi.fn(async () => []), tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ grants: [], connections: [], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
+ client.bots = { routineDestination: { get: vi.fn(async () => ({ preference: { revision: 0, target: null, updatedAt: null }, availability: "unset" })), remember: vi.fn(async () => { throw new Error("Unexpected destination write"); }), reset: vi.fn(async () => { throw new Error("Unexpected destination write"); }) }, interactions: vi.fn(async () => []), tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ grants: [], connections: [], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
  const update = vi.spyOn(client, "update");
  return { client, request, update, failNextPatch: () => { failPatch = true; }, agent: () => agent, replace: (next: ChatAgent) => { agent = next; } };
 }

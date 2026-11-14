@@ -11,6 +11,8 @@ import { FUNDED_CONSERVATIVE_FENCE_REVISION } from "./funded-conservative-fence-
 import { migratePlatformSchema } from './migrate.js';
 import { migrateFundedProbeCache } from "./funded-probe-cache-migration.js";
 import { FUNDED_PROBE_CACHE_REVISION } from "./funded-probe-cache-revision.js";
+import { migrateAiFundedPricing } from './funded-pricing-review-migration.js';
+import { FUNDED_PRICING_REVIEW_REVISION } from './funded-pricing-review-revision.js';
 import { migrateWhatsApp } from './migrations/whatsapp.js';
 import { WHATSAPP_SCHEMA_REVISION } from './whatsapp-migration-revision.js';
 
@@ -23,6 +25,9 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   });
   // Always inspect the actual binding/body, including when its marker skips DDL.
   await assertFundedConservativeFence(db);
+  await runPlatformMigration(db, migrateAiFundedPricing, {
+    scope: 'funded-pricing-review', revision: FUNDED_PRICING_REVIEW_REVISION, deadlockAttempts: 12,
+  });
   await runPlatformMigration(db, migrateFundedProbeCache, {
     scope: 'funded-probe-cache', revision: FUNDED_PROBE_CACHE_REVISION, deadlockAttempts: 12,
   });

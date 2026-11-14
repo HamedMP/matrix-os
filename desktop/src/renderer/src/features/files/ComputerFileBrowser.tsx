@@ -81,6 +81,7 @@ export default function ComputerFileBrowser({
   onPathChange,
   onOpenFolderInNewTab,
   onRequestCreateFolder,
+  onRequestCreateFile,
   refreshRevision = 0,
 }: {
   compact?: boolean;
@@ -105,6 +106,7 @@ export default function ComputerFileBrowser({
   onPathChange?: (path: string) => void;
   onOpenFolderInNewTab?: (path: string, name: string) => void;
   onRequestCreateFolder?: (parentPath: string) => void;
+  onRequestCreateFile?: (parentPath: string) => void;
   refreshRevision?: number;
 }) {
   const api = useConnection((state) => state.api);
@@ -484,6 +486,9 @@ export default function ComputerFileBrowser({
       );
   }
 
+  const canCreateInFolder = mode === "browse" && api && viewStatus === "ready"
+    && !isProtectedFolderCreationParentPath(viewCurrentPath);
+
   return (
     <div
       className={`flex min-h-0 flex-1 flex-col overflow-hidden${framed ? " rounded-lg border" : ""}`}
@@ -507,6 +512,8 @@ export default function ComputerFileBrowser({
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
         onUpload={mode === "browse" && !viewReadOnly ? () => fileInputRef.current?.click() : undefined}
+        onCreateFolder={canCreateInFolder && onRequestCreateFolder ? () => onRequestCreateFolder(viewCurrentPath) : undefined}
+        onCreateFile={canCreateInFolder && onRequestCreateFile ? () => onRequestCreateFile(viewCurrentPath) : undefined}
         searchOpen={searchOpen}
         searchQuery={searchQuery}
         onSearchOpen={() => setSearchOpen(true)}

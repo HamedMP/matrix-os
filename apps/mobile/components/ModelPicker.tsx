@@ -11,7 +11,7 @@ import {
   modelTrigger,
   selectionCanBeChosen,
 } from "@/components/chat/model-choices";
-import { modelOptionGroups, selectionWithOption } from "@/components/chat/model-options";
+import { modelOptionGroups, selectionKeepingOptions, selectionWithOption } from "@/components/chat/model-options";
 import { ModelSheet, type ModelSheetProps } from "@/components/chat/ModelSheet";
 import { MODEL_TRIGGER_ICON_SIZE, ModelTrigger } from "@/components/chat/ModelTrigger";
 import { Sheet } from "@/components/ui";
@@ -57,7 +57,7 @@ export function ModelPicker({
     if (!kept) {
       const next = chosenSelection(catalog, key);
       if (!next) return;
-      onSelectionChange(next);
+      onSelectionChange(selectionKeepingOptions(catalog, selection, next));
     }
     closeSheet();
   }

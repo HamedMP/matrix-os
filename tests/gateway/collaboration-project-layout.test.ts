@@ -175,7 +175,7 @@ describe("project collaboration layout adapter", () => {
     expect(current.layout.nodeRevisions).toEqual({ node_app: 1, node_chat: 1 });
   });
 
-  it("rejects stale same-node writes and keeps viewer layout mutation read-only", async () => {
+  it("rejects stale same-node writes but ignores a historical viewer row for organization members", async () => {
     const projectLayout = adapter();
     const editor = await context(EDITOR_ID, "mutate_project");
     const mutation = {
@@ -196,7 +196,7 @@ describe("project collaboration layout adapter", () => {
       ...mutation,
       clientRequestId: "50000000-0000-4000-8000-000000000105",
       expectedNodeRevision: 1,
-    })).rejects.toMatchObject({ code: "forbidden" });
+    })).resolves.toMatchObject({ nodeRevision: 2, replayed: false });
   });
 
   it("stores viewport, selection, and focus only for the current member", async () => {
@@ -235,19 +235,19 @@ describe("project collaboration layout adapter", () => {
     })).rejects.toMatchObject({ code: "invalid" });
   });
 
-  it("reauthorizes reads and private-state writes after revocation", async () => {
+  it("ignores legacy project-member revocation while organization membership remains active", async () => {
     const projectLayout = adapter();
     const stale = await context(EDITOR_ID);
     await fixture.db.updateTable("collaboration_members").set({ status: "revoked", revision: 2 })
       .where("scope_id", "=", PROJECT_SCOPE_ID).where("actor_id", "=", EDITOR_ID).execute();
 
     await expect(projectLayout.get(stale, { canvasId: CANVAS_ID }))
-      .rejects.toBeInstanceOf(ProjectLayoutAdapterError);
+      .resolves.toMatchObject({ layout: { canvasId: CANVAS_ID } });
     await expect(projectLayout.putViewState(stale, {
       canvasId: CANVAS_ID,
       expectedRevision: 0,
       clientRequestId: "50000000-0000-4000-8000-000000000108",
       state: { viewport: { x: 0, y: 0, zoom: 1 }, selection: [], filters: {}, groups: [] },
-    })).rejects.toMatchObject({ code: "not_found" });
+    })).resolves.toMatchObject({ revision: 1 });
   });
 });

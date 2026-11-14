@@ -10,6 +10,7 @@ const ProviderModelReferenceSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
   .refine((value) => !value.includes(".."));
 export const RunnerConfigSchema = z.object({
+  routinePrivate: z.literal(true).optional(),
   nativeSubscription: z.literal(true).optional(),
   expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { cleanup, fireEvent, screen, within } from "@testing-library/react-native";
 
-import { engines, openSheet, renderPicker } from "./model-picker-test-utils";
-import { GPT, REASONING, SONNET, catalogOf, codexInstance, matrixInstance } from "./model-test-catalog";
+import { OPUS, engines, models, openSheet, renderPicker } from "./model-picker-test-utils";
+import { GPT, REASONING, SONNET, catalogOf, codexInstance, matrixInstance, type Instance } from "./model-test-catalog";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -102,6 +102,54 @@ describe("the selected model's option in the sheet", () => {
     fireEvent.press(screen.getByRole("button", { name: "High" }));
 
     expect(change).not.toHaveBeenCalled();
+  });
+});
+
+describe("the option when another model is chosen", () => {
+  const twoModels = (overrides: Partial<Instance> = {}) => matrixInstance(
+    [[SONNET.model, "Sonnet 5"], [OPUS.model, "Opus 5"]],
+    { options: [REASONING], ...overrides },
+  );
+  const highEffort = { ...SONNET, options: [{ id: "effort", value: "high" }] };
+
+  function choose(name: string) {
+    openSheet();
+    fireEvent.press(models().getByRole("button", { name }));
+  }
+
+  it("keeps the value chosen for the model it replaces on the same engine", () => {
+    const change = renderPicker(catalogOf(twoModels()), highEffort);
+
+    choose("Opus 5, Matrix AI");
+
+    expect(change).toHaveBeenCalledWith({ ...OPUS, options: [{ id: "effort", value: "high" }] });
+  });
+
+  it("keeps the person's value over the one the engine names for its default model", () => {
+    const preset = { defaultSelection: { ...OPUS, options: [{ id: "effort", value: "low" }] } };
+    const change = renderPicker(catalogOf(twoModels(preset)), highEffort);
+
+    choose("Opus 5, Matrix AI");
+
+    expect(change).toHaveBeenCalledWith({ ...OPUS, options: [{ id: "effort", value: "high" }] });
+  });
+
+  it("takes the engine's default when the value is no longer offered", () => {
+    const change = renderPicker(catalogOf(twoModels()), { ...SONNET, options: [{ id: "effort", value: "max" }] });
+
+    choose("Opus 5, Matrix AI");
+
+    expect(change).toHaveBeenCalledWith({ ...OPUS, options: [{ id: "effort", value: "medium" }] });
+  });
+
+  it("takes the new engine's default rather than a value chosen on another engine", () => {
+    const change = renderPicker(catalogOf(twoModels(), codexInstance(undefined, { options: [REASONING] })), highEffort);
+
+    openSheet();
+    fireEvent.press(engines().getByRole("button", { name: "Codex" }));
+    fireEvent.press(models().getByRole("button", { name: "GPT-5.6-Sol, Codex" }));
+
+    expect(change).toHaveBeenCalledWith({ ...GPT, options: [{ id: "effort", value: "medium" }] });
   });
 });
 

@@ -1,6 +1,31 @@
 import { z } from "zod/v4";
 
 const Ref = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const SupervisedBrowserDevScopeSchema = z.strictObject({
+  handle: z.string().regex(/^(?!(?:pr|pv)-)[a-z][a-z0-9-]{0,62}$/),
+  machineId: z.uuid().regex(/^[a-f0-9-]+$/),
+  ownerId: z.string().regex(/^user_[A-Za-z0-9]{1,123}$/),
+  runtimeSlot: z.literal("dev"),
+  chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,123}$/),
+  expiresAt: z.iso.datetime().regex(/:\d{2}(?:\.\d{1,3})?Z$/),
+});
+export type SupervisedBrowserDevScope = Omit<z.infer<typeof SupervisedBrowserDevScopeSchema>, "expiresAt"> & { expiresAt: number };
+
+/** Absent and invalid scopes differ so bad operator config cannot enable the global policy. */
+export function parseSupervisedBrowserDevScope(raw: string | undefined, now = Date.now()):
+  { kind: "absent" } | { kind: "invalid" } | { kind: "scoped"; scope: SupervisedBrowserDevScope } {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw.length > 1024) return { kind: "invalid" };
+  let value: unknown;
+  try { value = JSON.parse(raw); }
+  catch (error: unknown) { if (error instanceof SyntaxError) return { kind: "invalid" }; throw error; }
+  const parsed = SupervisedBrowserDevScopeSchema.safeParse(value);
+  if (!parsed.success) return { kind: "invalid" };
+  const expiresAt = Date.parse(parsed.data.expiresAt);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt - now > 2 * 60 * 60_000) return { kind: "invalid" };
+  return { kind: "scoped", scope: { ...parsed.data, expiresAt } };
+}
+
 export const BrowserActionDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const BrowserDecisionSchema = z.enum(["allow_once", "allow_in_chat", "not_now", "cancel"]);
 export const BrowserApprovalIntentSchema = z.strictObject({
