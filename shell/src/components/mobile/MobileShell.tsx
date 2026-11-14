@@ -54,6 +54,7 @@ import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetai
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
+import { MobileAppPublishButton } from "./MobileAppPublishButton";
 import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
@@ -463,22 +464,25 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         style={{ height: 28, color: "var(--muted-foreground)" }}
       >
         <span data-testid="mobile-shell-clock" style={{ fontWeight: 600 }}>{time}</span>
-        <span style={{ opacity: 0.7 }}>{view === "app" && top ? top.app.name : "Matrix OS"}</span>
-        <button
-          type="button"
-          aria-label="Command palette"
-          onClick={() => onOpenCommandPalette?.()}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "inherit",
-            fontSize: 16,
-            opacity: 0.7,
-            padding: 0,
-          }}
-        >
-          ⌘
-        </button>
+        <span className="min-w-0 truncate px-2" style={{ opacity: 0.7 }}>{view === "app" && top ? top.app.name : "Matrix OS"}</span>
+        <div className="flex shrink-0 items-center gap-3">
+          {view === "app" && top ? <MobileAppPublishButton key={top.id} path={top.app.path} shared={Boolean(top.sharedAppTarget)} /> : null}
+          <button
+            type="button"
+            aria-label="Command palette"
+            onClick={() => onOpenCommandPalette?.()}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              fontSize: 16,
+              opacity: 0.7,
+              padding: 0,
+            }}
+          >
+            ⌘
+          </button>
+        </div>
       </header>
 
       <main className="relative flex-1 overflow-hidden">
