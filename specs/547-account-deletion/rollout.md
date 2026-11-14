@@ -56,8 +56,9 @@ supply `PLATFORM_DATABASE_URL` and `CLERK_SECRET_KEY` in the environment. The
 command opens an explicitly read-only transaction and never starts platform
 migrations. It checks up to 1,000 distinct owners of non-ended subscriptions,
 using five concurrent, timed Clerk lookups. A larger inventory fails rather than
-reporting partial success. Confirm that the database and Clerk credentials belong
-to the same environment before using the results.
+reporting partial success. Stored terminal statuses (`canceled`, `ended`, and
+legacy `incomplete_expired`) are excluded. Confirm that the database and Clerk
+credentials belong to the same environment before using the results.
 
 The Billing Owner Audit workflow runs every thirty minutes and supports manual
 dispatch. It emits aggregate counts only and fails for confirmed missing owners,

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import pg from 'pg';
-import { auditBillingOwners, MAX_BILLING_AUDIT_OWNERS } from '../../packages/platform/src/account-deletion/orphaned-billing-audit.js';
+import { auditBillingOwners, loadBillingAuditOwners } from '../../packages/platform/src/account-deletion/orphaned-billing-audit.js';
 
 // No platform bootstrap: this command must never run startup migrations.
 async function main(): Promise<void> {
@@ -23,11 +23,7 @@ async function main(): Promise<void> {
   try {
     await client.connect();
     await client.query('BEGIN READ ONLY');
-    const result = await client.query<{ clerk_user_id: string }>(
-      `SELECT DISTINCT clerk_user_id FROM billing_subscriptions
-       WHERE status NOT IN ('canceled', 'incomplete_expired')
-       ORDER BY clerk_user_id LIMIT $1`, [MAX_BILLING_AUDIT_OWNERS + 1]);
-    owners = result.rows.map(row => row.clerk_user_id);
+    owners = await loadBillingAuditOwners((sql, values) => client.query<{ clerk_user_id: string }>(sql, values));
     await client.query('ROLLBACK');
   } finally {
     await client.end();

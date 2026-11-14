@@ -5,6 +5,16 @@ const Owners = z.array(z.string().regex(/^user_[A-Za-z0-9_-]{1,150}$/)).max(MAX_
 const MissingIdentity = z.object({ errors: z.array(z.object({ code: z.string() })).max(100) });
 const Identity = z.object({ id: z.string() });
 
+export async function loadBillingAuditOwners(query: (
+  sql: string, values: number[],
+) => Promise<{ rows: Array<{ clerk_user_id: string }> }>): Promise<string[]> {
+  const result = await query(
+    `SELECT DISTINCT clerk_user_id FROM billing_subscriptions
+     WHERE status NOT IN ('canceled', 'ended', 'incomplete_expired')
+     ORDER BY clerk_user_id LIMIT $1`, [MAX_BILLING_AUDIT_OWNERS + 1]);
+  return result.rows.map(row => row.clerk_user_id);
+}
+
 /** Read-only evidence: never use an inconclusive lookup to authorize cancellation. */
 export async function auditBillingOwners(owners: string[], options: {
   clerkSecretKey: string;
