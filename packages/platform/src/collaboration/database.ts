@@ -111,7 +111,7 @@ export interface CollaborationAppPresentationsTable {
   app_id: string;
   name: string;
   artwork_sha256: string | null;
-  artwork_content_type: "image/png" | "image/webp" | "image/jpeg" | null;
+  artwork_content_type: "image/png" | "image/webp" | "image/jpeg" | "image/svg+xml" | null;
   artwork_byte_length: number | null;
   /** Null until the owner uploads bytes matching the declared digest, type, and length. */
   artwork_bytes: Uint8Array | null;
@@ -301,7 +301,7 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
       name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120 AND octet_length(name) <= 512),
       artwork_sha256 TEXT CHECK (artwork_sha256 IS NULL OR artwork_sha256 ~ '^[a-f0-9]{64}$'),
       artwork_content_type TEXT CHECK (artwork_content_type IS NULL
-        OR artwork_content_type IN ('image/png', 'image/webp', 'image/jpeg')),
+        OR artwork_content_type IN ('image/png', 'image/webp', 'image/jpeg', 'image/svg+xml')),
       artwork_byte_length INTEGER CHECK (artwork_byte_length IS NULL OR artwork_byte_length BETWEEN 1 AND 4194304),
       artwork_bytes BYTEA,
       updated_at TIMESTAMPTZ NOT NULL,

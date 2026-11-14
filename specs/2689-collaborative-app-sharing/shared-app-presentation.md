@@ -22,13 +22,16 @@ serve. Shared launch targets also used `appId` as the `name`.
 
 1. **Owner source of truth.** The owner home resolves presentation from the same
    app catalog its own launcher uses (`listAppCatalog`): the display name and
-   the selected `~/system/icons/<stem>.png`. Only the confined icon filename the
+   the selected `~/system/icons/<stem>.png` or `.svg`. Only the confined icon filename the
    catalog resolved is read. `system` and `system/icons` must be real
    directories. The file is opened with `O_NOFOLLOW | O_NONBLOCK`, must be a
    regular file, and must still be the inode at the confined real path, so
    symlinked parents, symlinks, and FIFOs are refused.
-   Bundled fallbacks (`game-center.png`, `game.svg`), SVG, and files larger than
-   4 MiB are never published. Bytes must sniff as PNG, WebP, or JPEG.
+   Bundled fallbacks (`game-center.png`, `game.svg`) and files larger than
+   4 MiB are never published. Bytes must sniff as PNG, WebP, or JPEG, or as an
+   `<svg>` root without active content (script, foreignObject, embedded
+   documents, `on*` handlers, `javascript:`, or entity declarations). Inert
+   SVG is required because owner icons such as Shared Tasks Lab's are SVG.
 2. **Separate publication.** A `CollaborativeAppPresentationPublisher` on the
    owner home sends a snapshot for each active app binding, every 30 seconds
    and right after start. This is separate from the strict directory event, so
@@ -62,7 +65,10 @@ serve. Shared launch targets also used `appId` as the `name`.
    `/api/collaboration/shared-apps/:scopeId/artwork/:sha256`. The digest in the
    path is the cache key: a new icon gets a new URL, and an older digest returns
    404. Responses use `Cache-Control: private, no-cache` with a strong ETag, so
-   every view revalidates membership. A 304 avoids the bytes.
+   every view revalidates membership. A 304 avoids the bytes. SVG is served as
+   `image/svg+xml` with `nosniff` and `default-src 'none'; sandbox`, so even
+   direct navigation cannot run script or fetch resources. Clients render all
+   artwork only through `<img>`.
 6. **Launch.** The shared launch target uses the presentation name and
    `iconUrl`. Both fields were already in the strict launch schema.
 7. **Clients.** Shared presentation derivation lives in
@@ -77,7 +83,7 @@ serve. Shared launch targets also used `appId` as the `name`.
 | Route | Caller and auth | Checks | Limits and response |
 | --- | --- | --- | --- |
 | `PUT /internal/collaboration/shared-apps/:scopeId/presentation` | Owner runtime: `x-matrix-runtime-id` + runtime bearer | UUID scope; strict body; directory row is an active `current_membership` app whose owner, runtime, and `app_id` match | 96 KiB body; 200 `{ artworkRequired }`; 404 when not shared; generic errors |
-| `PUT /internal/collaboration/shared-apps/:scopeId/artwork/:sha256` | Owner runtime: same | Hex digest; allowlisted `content-type`; byte SHA-256 = path digest; sniffed type and length = declared presentation; share still active | 4 MiB `bodyLimit`; 204; 409 on mismatch or stale; 413 when too large; 415 for non-raster types |
+| `PUT /internal/collaboration/shared-apps/:scopeId/artwork/:sha256` | Owner runtime: same | Hex digest; allowlisted `content-type`; byte SHA-256 = path digest; sniffed type and length = declared presentation; share still active | 4 MiB `bodyLimit`; 204; 409 on mismatch, stale, or scriptable SVG; 413 when too large; 415 for other types |
 | `GET /api/collaboration/shared-apps/:scopeId/artwork/:sha256` | Signed-in actor (platform cookie or bearer) | UUID scope, hex digest; fresh current membership of the share's organization; share active; digest is current and bytes are stored | Per-actor rate limit; `private, no-cache`, ETag/304, `nosniff`, `default-src 'none'; sandbox` CSP; 404 for every unauthorized or stale case |
 | `GET /api/collaboration/shared-apps[/:scopeId]?presentation=1` | Existing signed-in actor | Existing checks, unchanged | Adds the optional `presentation` field only when requested |
 

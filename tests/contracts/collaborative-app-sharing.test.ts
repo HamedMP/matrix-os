@@ -331,7 +331,7 @@ describe("shared app presentation contract", () => {
     expect(CollaborativeAppPresentationPublishSchema.parse({ ...publication, artwork: null }))
       .toEqual({ ...publication, artwork: null });
     for (const invalid of [
-      { ...publication, artwork: { ...publication.artwork, contentType: "image/svg+xml" } },
+      { ...publication, artwork: { ...publication.artwork, contentType: "image/gif" } },
       { ...publication, artwork: { ...publication.artwork, byteLength: COLLABORATIVE_APP_ARTWORK_MAX_BYTES + 1 } },
       { ...publication, artwork: { ...publication.artwork, byteLength: 0 } },
       { ...publication, artwork: { ...publication.artwork, sha256: "F".repeat(64) } },
@@ -344,14 +344,27 @@ describe("shared app presentation contract", () => {
     }
   });
 
-  it("recognizes only PNG, WebP, and JPEG artwork by its bytes", () => {
+  it("recognizes PNG, WebP, JPEG, and inert SVG artwork by its bytes", () => {
     const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
     const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
     const webp = new TextEncoder().encode("RIFF\u0000\u0000\u0000\u0000WEBPVP8 ");
     expect(sniffCollaborativeAppArtworkContentType(png)).toBe("image/png");
     expect(sniffCollaborativeAppArtworkContentType(jpeg)).toBe("image/jpeg");
     expect(sniffCollaborativeAppArtworkContentType(webp)).toBe("image/webp");
-    expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"/>"))).toBeNull();
+    const svg = (text: string) => new TextEncoder().encode(text);
+    // Owner artwork such as Shared Tasks Lab's gradient tile is inert SVG with internal references.
+    expect(sniffCollaborativeAppArtworkContentType(svg(
+      '<?xml version="1.0"?>\n<!-- tile -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><linearGradient id="t"/></defs><rect fill="url(#t)"/></svg>',
+    ))).toBe("image/svg+xml");
+    for (const active of [
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><div/></foreignObject></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><rect/></a></svg>',
+      '<!DOCTYPE svg [<!ENTITY x "y">]><svg xmlns="http://www.w3.org/2000/svg">&x;</svg>',
+      '<html><svg xmlns="http://www.w3.org/2000/svg"/></html>',
+    ]) expect(sniffCollaborativeAppArtworkContentType(svg(active))).toBeNull();
+    expect(sniffCollaborativeAppArtworkContentType(Uint8Array.from([0x3c, 0x73, 0x76, 0x67, 0xff, 0xfe]))).toBeNull();
     expect(sniffCollaborativeAppArtworkContentType(new TextEncoder().encode("<html><script>alert(1)</script>"))).toBeNull();
     expect(sniffCollaborativeAppArtworkContentType(png.slice(0, 4))).toBeNull();
   });

@@ -115,9 +115,12 @@ const SameOriginPathSchema = z.string().min(1).max(1_024).refine((value) => {
   return path.split("/").every((segment) => segment !== "." && segment !== "..");
 }, "Expected a confined same-origin path");
 
-/** Owner artwork is raster only: SVG can carry script and is never published to recipients. */
+/**
+ * Owner artwork: raster images, or SVG without active content. SVG is additionally served
+ * sandboxed with `nosniff` and rendered by clients only through <img>.
+ */
 export const COLLABORATIVE_APP_ARTWORK_MAX_BYTES = 4 * 1024 * 1024;
-export const CollaborativeAppArtworkContentTypeSchema = z.enum(["image/png", "image/webp", "image/jpeg"]);
+export const CollaborativeAppArtworkContentTypeSchema = z.enum(["image/png", "image/webp", "image/jpeg", "image/svg+xml"]);
 export type CollaborativeAppArtworkContentType = z.infer<typeof CollaborativeAppArtworkContentTypeSchema>;
 
 /** The content type proven by the bytes themselves; never trust a filename or a declared header. */
@@ -127,7 +130,23 @@ export function sniffCollaborativeAppArtworkContentType(bytes: Uint8Array): Coll
   if (startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
   if (startsWith([0xff, 0xd8, 0xff])) return "image/jpeg";
   if (startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)) return "image/webp";
-  return null;
+  return isInertSvg(bytes) ? "image/svg+xml" : null;
+}
+
+/** An `<svg>` root, optionally after an XML declaration, comments, or a doctype. */
+const SVG_ROOT = /^\uFEFF?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE\s+svg[^>[]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>/]/i;
+/** Anything that could run script, embed documents, or expand entities disqualifies the file. */
+const SVG_ACTIVE_CONTENT = /<\s*(?:script|foreignObject|iframe|embed|object|handler|listener)\b|\son[a-z]+\s*=|javascript:|<!ENTITY/i;
+
+function isInertSvg(bytes: Uint8Array): boolean {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+  return SVG_ROOT.test(text) && !SVG_ACTIVE_CONTENT.test(text);
 }
 
 /** Owner home -> platform: the display name and artwork digest the owner's own launcher shows. */

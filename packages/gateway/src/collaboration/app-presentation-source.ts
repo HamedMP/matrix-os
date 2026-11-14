@@ -10,8 +10,8 @@ import {
 } from "@matrix-os/contracts";
 import { appIconStem, listApps, type AppEntry } from "../apps.js";
 
-/** Matches the versioned `/icons/<stem>.png` URL the owner's own catalog resolved. */
-const OWNER_ICON_URL = /^\/icons\/([A-Za-z0-9_-]{1,64})\.png(?:\?[^#]*)?$/;
+/** Matches the versioned `/icons/<stem>.<png|svg>` URL the owner's own catalog resolved. */
+const OWNER_ICON_URL = /^\/icons\/([A-Za-z0-9_-]{1,64})\.(png|svg)(?:\?[^#]*)?$/;
 const MAX_CACHED_ICONS = 500;
 
 export interface OwnerAppArtwork {
@@ -35,8 +35,8 @@ export interface OwnerAppPresentationSource {
 
 /**
  * Presentation exactly as the owner's own launcher derives it: the catalog name and the icon
- * file the catalog selected. Bundled fallbacks, symlinks, SVG, and oversize files are never
- * described, so recipients fall back to the letter tile instead of the wrong artwork.
+ * file the catalog selected. Bundled fallbacks, symlinks, scriptable SVG, and oversize files are
+ * never described, so recipients fall back to the letter tile instead of the wrong artwork.
  */
 export function createOwnerAppPresentationSource(
   homePath: string,
@@ -49,8 +49,8 @@ export function createOwnerAppPresentationSource(
   async function describeArtwork(app: AppEntry): Promise<OwnerAppArtwork | null> {
     const stem = appIconStem(app);
     const match = app.iconUrl ? OWNER_ICON_URL.exec(app.iconUrl) : null;
-    if (!stem || match?.[1] !== stem) return null;
-    const file = `${stem}.png`;
+    if (!stem || !match || match[1] !== stem) return null;
+    const file = `${stem}.${match[2]}`;
     const read = await readConfinedIcon(homePath, file, (key) => described.get(file)?.key === key);
     if (read === "unchanged") return described.get(file)!.artwork;
     if (!read) return null;

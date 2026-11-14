@@ -187,6 +187,22 @@ describe("owner app presentation reaches the recipient launcher", () => {
     expect(platformFetch).not.toHaveBeenCalled();
   });
 
+  it("publishes the owner's inert SVG icon, as Shared Tasks Lab uses", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><linearGradient id="tile"><stop stop-color="#5476bd"/></linearGradient></defs><rect width="110" height="110" rx="27" fill="url(#tile)"/></svg>';
+    await writeApp("Shared Tasks Lab", "shared-tasks-lab");
+    await writeIcon(svg, "shared-tasks-lab.svg");
+    expect(await publisher.runOnce()).toBe(1);
+    const presentation = (await launcher())[0]!.presentation!;
+    const bytes = new TextEncoder().encode(svg);
+    expect(presentation).toEqual({
+      name: "Shared Tasks Lab",
+      iconUrl: `/api/collaboration/shared-apps/${scopeId}/artwork/${sha256(bytes)}`,
+    });
+    const served = await artwork(presentation.iconUrl!);
+    expect(served.headers.get("content-type")).toBe("image/svg+xml");
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(bytes);
+  });
+
   it("follows owner renames and icon changes, retiring the previous artwork URL", async () => {
     await writeApp("Sprint Board");
     await writeIcon(png(1));

@@ -165,6 +165,20 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     expect(await revalidated.text()).toBe("");
   });
 
+  it("serves inert SVG artwork sandboxed with its own type", async () => {
+    const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#5476bd"/></svg>');
+    expect((await publish({
+      appId: app.appId, name: "Shared Tasks Lab", artwork: { sha256: sha256(svg), contentType: "image/svg+xml", byteLength: svg.byteLength },
+    })).status).toBe(200);
+    expect((await upload(svg, sha256(svg), "image/svg+xml")).status).toBe(204);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    const served = await routes.request(iconUrl, { headers: { "x-test-actor": member } });
+    expect(served.headers.get("content-type")).toBe("image/svg+xml");
+    expect(served.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(served.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(svg);
+  });
+
   it("uses the owner's name and artwork for the shared launch target", async () => {
     const icon = png(9);
     await publishArtwork(icon);
@@ -267,8 +281,10 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     const undeclared = png(10);
     expect((await upload(undeclared)).status).toBe(409);
     const svg = new TextEncoder().encode("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>");
-    expect((await upload(svg, sha256(svg), "image/svg+xml")).status).toBe(415);
+    // Scriptable SVG is never stored, whichever type it claims; unsupported types are refused outright.
+    expect((await upload(svg, sha256(svg), "image/svg+xml")).status).toBe(409);
     expect((await upload(svg, sha256(svg), "image/png")).status).toBe(409);
+    expect((await upload(icon, sha256(icon), "image/gif")).status).toBe(415);
     expect((await upload(icon, sha256(icon), "image/jpeg")).status).toBe(409);
     const oversized = png(1, 4 * 1024 * 1024 + 1);
     expect((await upload(oversized)).status).toBe(413);
