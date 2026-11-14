@@ -55,7 +55,11 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
 
   const outboundQueue = createOutboundQueue(homePath);
 
-  const pushAdapter = createPushAdapter({ tokens: pushTokens, handle: process.env.MATRIX_HANDLE });
+  const pushAdapter = createPushAdapter({
+    tokens: pushTokens,
+    handle: process.env.MATRIX_HANDLE,
+    ownerId: process.env.MATRIX_USER_ID || process.env.MATRIX_CLERK_USER_ID,
+  });
 
   const channelSessions = createSessionStore(join(homePath, "system", "sessions.json"));
 

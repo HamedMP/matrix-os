@@ -18,8 +18,8 @@ export interface PushTokenStore {
   remove(input: { token: string; ownerId: string }): Promise<void>;
   /** Removes tokens Expo reported as no longer registered, whoever owns them. */
   removeDeviceTokens(tokens: readonly string[]): Promise<void>;
-  /** Newest tokens seen since `seenSince`; every owner's when `ownerId` is undefined. */
-  listRecent(input: { ownerId?: string; seenSince: Date; limit: number }): Promise<string[]>;
+  /** The owner's newest tokens seen since `seenSince`. There is no query across owners. */
+  listRecent(input: { ownerId: string; seenSince: Date; limit: number }): Promise<string[]>;
   /** Deletes tokens last seen before `cutoff` and returns how many. */
   deleteUnseenBefore(cutoff: Date): Promise<number>;
 }
@@ -55,10 +55,10 @@ export function createPushTokenStore(db: Kysely<NotificationDatabase>): PushToke
     },
 
     async listRecent({ ownerId, seenSince, limit }) {
-      let query = db.selectFrom("notification_push_tokens").select("token")
-        .where("last_seen_at", ">=", seenSince);
-      if (ownerId !== undefined) query = query.where("owner_id", "=", ownerId);
-      const rows = await query.orderBy("last_seen_at", "desc").orderBy("token", "desc").limit(limit).execute();
+      const rows = await db.selectFrom("notification_push_tokens").select("token")
+        .where("owner_id", "=", ownerId)
+        .where("last_seen_at", ">=", seenSince)
+        .orderBy("last_seen_at", "desc").orderBy("token", "desc").limit(limit).execute();
       return rows.map((row) => row.token);
     },
 

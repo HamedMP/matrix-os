@@ -51,7 +51,6 @@ import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
 import { authMiddleware } from "./auth.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
-import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
 import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
@@ -116,6 +115,7 @@ import {
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
 import { saveSummary, summarizeConversation } from "./conversation-summary.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { createCronChannelTrigger } from "./cron/channel-trigger.js";
 import { createCronService, type CronService } from "./cron/service.js";
 import { createCronStore } from "./cron/store.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
@@ -1128,16 +1128,7 @@ export async function createGateway(config: GatewayConfig) {
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
   const cronService: CronService = createCronService({
     store: cronStore,
-    onTrigger: (job) => {
-      if (job.target?.channel && job.target?.chatId) {
-        const formatted = formatForChannel(job.target.channel, job.message);
-        channelManager.send({
-          channelId: job.target.channel,
-          chatId: job.target.chatId,
-          text: formatted,
-        });
-      }
-    },
+    onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
   });
   cronService.start();
 

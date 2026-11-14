@@ -259,6 +259,33 @@ describe("push adapter with owner Postgres tokens", () => {
     expect(sentMessages(fetchSpy).map((message) => message.to)).toEqual(["ExponentPushToken[three]", "ExponentPushToken[two]"]);
   });
 
+  it("sends a push that names no owner only to this computer owner's tokens", async () => {
+    const push = adapter({ ownerId: "owner_a" });
+    await push.registerToken("ExponentPushToken[owner-a]", "ios", "owner_a");
+    await push.registerToken("ExponentPushToken[owner-b]", "ios", "owner_b");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => expoOk());
+
+    await push.send({ channelId: "push", chatId: "daily-summary", text: "Your daily summary is ready." });
+
+    expect(sentMessages(fetchSpy).map((message) => message.to)).toEqual(["ExponentPushToken[owner-a]"]);
+  });
+
+  it.each([
+    ["is not configured", undefined],
+    ["is not a valid user id", "owner a/../b"],
+  ])("sends a push that names no owner to nobody when this computer's owner %s", async (_case, ownerId) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const push = adapter({ ownerId });
+    await push.registerToken("ExponentPushToken[owner-a]", "ios", "owner_a");
+    await push.registerToken("ExponentPushToken[owner-b]", "ios", "owner_b");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await push.send({ channelId: "push", chatId: "daily-summary", text: "Your daily summary is ready." });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("names no owner"));
+  });
+
   it("calls the Expo Push API with a timeout and truncates long bodies", async () => {
     const push = adapter();
     await push.registerToken("ExponentPushToken[test]", "ios", "owner_a");

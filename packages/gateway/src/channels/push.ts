@@ -2,6 +2,7 @@ import type { ChannelAdapter, ChannelConfig, ChannelMessage, ChannelReply } from
 import { z } from "zod/v4";
 import { MatrixComputerHandleSchema } from "@matrix-os/contracts";
 import type { PushTokenStore } from "../notifications/push-tokens.js";
+import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -11,6 +12,8 @@ const DEFAULT_MAX_REGISTERED_TOKENS = 16;
 const DEFAULT_MAX_FANOUT_TOKENS = 32;
 const DEFAULT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+// notification_push_tokens.owner_id holds at most 128 characters.
+const MAX_OWNER_ID_LENGTH = 128;
 
 /** The owner database was missing at startup: a server misconfiguration, not "no devices". */
 export class PushTokenStorageUnavailableError extends Error {
@@ -25,6 +28,11 @@ export interface PushAdapterOptions {
   tokens: PushTokenStore | null;
   /** This computer's MATRIX_HANDLE. Every push names it so the phone can switch to this computer. */
   handle?: string;
+  /**
+   * This computer's owner (MATRIX_USER_ID, else MATRIX_CLERK_USER_ID). A push that names no owner,
+   * such as a scheduled message, goes only to this owner's tokens, and to nobody when it is unset.
+   */
+  ownerId?: string;
   now?: () => number;
   maxRegisteredTokens?: number;
   maxFanoutTokens?: number;
@@ -73,6 +81,13 @@ function resolvePushHandle(value: string | undefined): string | undefined {
   return undefined;
 }
 
+function resolvePushOwner(value: string | undefined): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (SAFE_PRINCIPAL_USER_ID.test(value) && value.length <= MAX_OWNER_ID_LENGTH) return value;
+  console.warn("[push] This computer's owner is not a valid user id; pushes that name no owner will not be sent");
+  return undefined;
+}
+
 function safePushData(reply: ChannelReply, handle: string | undefined): Record<string, unknown> {
   const parsed = PushMetadataSchema.safeParse(reply.metadata ?? {});
   const metadata = parsed.success
@@ -89,6 +104,7 @@ function safePushData(reply: ChannelReply, handle: string | undefined): Record<s
 export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
   const tokens = options.tokens;
   const handle = resolvePushHandle(options.handle);
+  const computerOwnerId = resolvePushOwner(options.ownerId);
   const sendTimestamps: number[] = [];
   let messageHandler: (msg: ChannelMessage) => void = () => {};
   const now = options.now ?? (() => Date.now());
@@ -208,11 +224,16 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
         console.error("[push] Owner database unavailable; push not sent");
         return;
       }
+      const ownerId = reply.ownerId ?? computerOwnerId;
+      if (ownerId === undefined) {
+        console.warn("[push] Push names no owner and this computer's owner is unknown; push not sent");
+        return;
+      }
       if (isRateLimited()) return;
 
       sendTimestamps.push(now());
 
-      const recipients = await tokens.listRecent({ ownerId: reply.ownerId, seenSince: tokenCutoff(), limit: maxFanoutTokens });
+      const recipients = await tokens.listRecent({ ownerId, seenSince: tokenCutoff(), limit: maxFanoutTokens });
       if (recipients.length === 0) return;
 
       await sendPush(tokens, recipients, reply.text, safePushData(reply, handle));
