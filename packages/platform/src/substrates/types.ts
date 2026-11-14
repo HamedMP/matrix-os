@@ -43,7 +43,14 @@ export type EnsureRunningResult =
   | { state: 'running' }
   | { state: 'starting' }
   | { state: 'busy' }
-  | { state: 'failed'; code: EnsureRunningFailureCode };
+  | { state: 'failed'; code: EnsureRunningFailureCode }
+  /** The owner's monthly compute cap is reached; no start until `resetsAt`. */
+  | { state: 'limit_reached'; limit: 'compute'; resetsAt: string };
+
+export interface EnsureRunningOptions {
+  /** A platform-verified owner export request, which may start an export-only unit at the compute cap. */
+  exportIntent?: boolean;
+}
 
 export interface RuntimeSubstrate {
   readonly kind: SubstrateKind;
@@ -51,7 +58,7 @@ export interface RuntimeSubstrate {
   readonly startsOnDemand: boolean;
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
-  ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;
+  ensureRunning(ref: RuntimeRef, signal: AbortSignal, options?: EnsureRunningOptions): Promise<EnsureRunningResult>;
   /**
    * Makes an already-running runtime routable from this instance without
    * starting or changing anything; for callers who may not wake it.

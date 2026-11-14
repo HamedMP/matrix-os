@@ -17,6 +17,7 @@ import { migratePreviewDrive } from './migrations/preview-drive.js';
 import { migrateContainerOwnerDatabases } from './migrations/container-owner-databases.js';
 import { migrateFreeTier } from './migrations/free-tier.js';
 import { migrateContainerLimits } from './migrations/container-limits.js';
+import { migrateRuntimeCompute } from './migrations/runtime-compute.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -48,6 +49,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'container-owner-databases', run: migrateContainerOwnerDatabases },
   { name: 'free-tier', run: migrateFreeTier },
   { name: 'container-limits', run: migrateContainerLimits },
+  { name: 'runtime-compute', run: migrateRuntimeCompute },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

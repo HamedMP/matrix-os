@@ -82,6 +82,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     privateAddress: row.private_address,
     lastActivityAt: toIsoTimestamp(row.last_activity_at),
     startedAt: toIsoTimestamp(row.started_at),
+    ...(row.substrate === 'container' ? { computeMode: row.compute_mode === 'export_only' ? 'export_only' as const : 'full' as const } : {}),
   };
 }
 

@@ -125,9 +125,9 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
       };
     },
 
-    async ensureRunning(ref, signal): Promise<EnsureRunningResult> {
+    async ensureRunning(ref, signal, options): Promise<EnsureRunningResult> {
       signal.throwIfAborted();
-      const result = await lifecycle.ensureStarted(ref.machineId);
+      const result = await lifecycle.ensureStarted(ref.machineId, options);
       if (result.state !== 'running') return result;
       const machine = await deps.loadMachine(ref.machineId);
       const unitId = machine?.substrateRef;
@@ -141,7 +141,7 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
         if (machine.generation !== undefined && await unitEnded(unitId, error, signal)) {
           credentials.delete(unitId);
           await lifecycle.markComputeLost(ref.machineId, machine.generation, unitId);
-          return lifecycle.ensureStarted(ref.machineId);
+          return lifecycle.ensureStarted(ref.machineId, options);
         }
         return { state: 'failed', code: 'provider_unavailable' };
       }
