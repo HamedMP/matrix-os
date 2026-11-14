@@ -26,7 +26,8 @@ export async function resolveClaudeSessionSource(options: {
   cwd: string;
   args: string[];
   env: Record<string, string>;
-  input: CanonicalProviderRunInput;
+  input: Pick<CanonicalProviderRunInput,
+    "owner" | "chatId" | "selection" | "permissionMode" | "interactionMode" | "executionRoot" | "sharedScopeId" | "context">;
   readNativeMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
 }): Promise<ClaudeSessionSource> {
   const { input, env } = options;

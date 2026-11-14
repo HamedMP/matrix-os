@@ -103,6 +103,38 @@ Closing a terminal/browser, ending a native process, restarting Gateway and
 rebooting a machine are distinct actions. The control above proves an owned
 native process can fire after its initial interaction completes and stops after
 explicit cancellation/EOF. Repaired Chat-view closure and later display are verified above. Process-kill,
-explicit Gateway restart and machine-reboot recovery remain unverified. Package
-update restarts do not qualify active-job recovery. No automatic recovery is
-promised from transcript persistence alone.
+abrupt restart, machine reboot and deployed bundle update with an active job
+remain unverified. Graceful Gateway restart evidence follows below.
+
+An isolated Linux arm64 probe on Claude Code 2.1.317
+(`563a0d60ad0c223d9415768210997acb0f7134ea51dc3c238e88bc2e18ddeefa`)
+used a loopback synthetic backend with external networking disabled. It created
+a recurring native job, terminated the creating child and launched the same
+session with `--resume` plus the native initialize request. The replacement
+emitted a due callback with no foreground prompt. The probe denied the callback
+before inference and later found the original job ID in CronList. The callback
+contained a session ID and a prompt ID, but no native job ID. This proves
+idle native resume is possible for that job before Gateway integration.
+
+## Isolated Gateway restart acceptance
+
+Two Linux processes ran the production Chat repository, orchestrator, Claude
+adapter, recovery coordinator and protected launcher against the same isolated
+PostgreSQL 16 database. The executable was the pinned Linux arm64 Claude Code
+2.1.317 build above. The only model endpoint was a synthetic loopback server.
+The fixture supplied container-scoped process observation in place of the
+customer systemd user scope.
+
+The first process created one recurring job in the original Chat and persisted
+a released generation after its Claude child closed. The second process
+claimed the receipt and armed the same native session before making a model
+request. Its future native callback produced a new completed canonical run in
+the original Chat without a new user message. The model request included the
+prior committed user and assistant context and the original native transcript
+was byte-identical. A separate pinned probe observed that the protected launch
+excluded an independent project-wide job created before or after startup.
+A third process, with no retained protected child, answered a foreground
+follow-up using the new scheduled result from canonical Chat history. A
+separate restart with a changed fixture credential stayed idle, left the
+receipt released, and made zero model requests. Live subscription and a
+deployed customer systemd scope still require separate qualification.

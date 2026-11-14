@@ -10,6 +10,7 @@ import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orche
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
+  type CanonicalProviderRunInput,
 } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 
@@ -299,6 +300,49 @@ describe("CanonicalChatOrchestrator", () => {
 
     releaseProvider();
     await orchestrator.drain();
+  });
+
+  it("prepares private Claude steering history from the active Turn and already committed input", async () => {
+    const chatId = "chat_protected_steer";
+    await repository.create(owner, { id: chatId, clientRequestId: "req_create_protected_steer", title: "Protected Steer" });
+    let prepareContext: CanonicalProviderRunInput["prepareSteeringContext"];
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const prepare = vi.fn(async () => prepareContext!());
+    const provider = { ...adapter(async function* (input) {
+      prepareContext = input.prepareSteeringContext;
+      await held;
+      yield { type: "run.completed", outcome: "completed" };
+    }), driverKind: "claude_code" as const, steer: vi.fn(async ({ prompt }: { prompt: string }) => {
+      if (prompt === "latest direction") await prepare();
+    }) };
+    const orchestrator = new CanonicalChatOrchestrator({ repository, adapters: new CanonicalChatProviderRegistry([provider]),
+      catalog: { getCatalog: async () => {
+        const initial = catalog();
+        return { ...initial, drivers: initial.drivers.map(driver => ({ ...driver, kind: "claude_code" as const })),
+          instances: initial.instances.map(instance => ({ ...instance, driverKind: "claude_code" as const })) };
+      } } });
+    try {
+      const admitted = await orchestrator.admitTurn(principal, owner, chatId, {
+        clientRequestId: "req_protected_input", baseRevision: 0, parts: [{ type: "text", text: "original owner task" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised",
+      });
+      await vi.waitFor(() => expect(prepareContext).toBeTypeOf("function"));
+      const readPage = vi.spyOn(repository, "getDetailPage");
+      const steer = (key: string, text: string) => orchestrator.steerRun(owner, chatId, admitted.run.id, {
+        clientRequestId: key, expectedTurnId: admitted.turn.id, parts: [{ type: "text", text }],
+      });
+      const prior = await steer("req_earlier_direction", "earlier accepted direction");
+      expect(prepare).not.toHaveBeenCalled();
+      await steer("req_latest_direction", "latest direction");
+      expect(readPage).toHaveBeenCalledExactlyOnceWith(owner, chatId, { limit: 40 });
+      await expect(prepare.mock.results[0]!.value).resolves.toMatchObject({ history: {
+        chatId, throughSeq: prior.message.seq, text: "User: original owner task\n\nUser: earlier accepted direction",
+      } });
+    } finally {
+      release();
+      await orchestrator.drain();
+    }
   });
 
   it("retries durable steering finalization after the Provider has accepted", async () => {

@@ -9,7 +9,9 @@ describe("OpenClaw canonical Chat production wiring", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
     const gatewayComposition = readFileSync(join(process.cwd(), "packages/gateway/src/server/canonical-chat-adapters.ts"), "utf8");
     const adapterComposition = readFileSync(join(process.cwd(), "packages/gateway/src/server/initial-chat-adapters.ts"), "utf8");
-    const importAdapterComposition = source.indexOf('import { createGatewayChatAdapters, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js"');
+    const importAdapterComposition = source.search(
+      /^import\s*\{[^}]*\bcreateGatewayChatAdapters\b[^}]*\}\s*from "\.\/server\/canonical-chat-adapters\.js";/m,
+    );
     const executableKinds = source.indexOf("const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore))");
     const adapterList = source.indexOf("const chatAdapters = createGatewayChatAdapters({", executableKinds);
     const registry = source.indexOf("new CanonicalChatProviderRegistry(chatAdapters.adapters.map(adapter => withAsyncChatInput(adapter)))", adapterList);

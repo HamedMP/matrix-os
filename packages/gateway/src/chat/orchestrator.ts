@@ -7,11 +7,11 @@ import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-sub
 import { QueuedChatRecovery } from "./queue-recovery.js";
 import { BotEntryError } from "../bots/custom-direct-chat.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
-import { contextForChatSession } from "./session-history.js";
+import { contextForChatSession, SESSION_HISTORY_MESSAGE_LIMIT, withChatSessionHistory } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn } from "./turn-admission.js";
-import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
+import { chatContextRequestHash, contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -519,8 +519,8 @@ export class CanonicalChatOrchestrator {
             }
           }
           resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+            ...claimed.run,
             repository: this.options.repository, owner, chatId, adapter,
-            instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
           });
@@ -609,6 +609,20 @@ export class CanonicalChatOrchestrator {
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         ...(nativeScheduled ? { nativeScheduled } : {}),
+        ...(run.driverKind === "claude_code" && owner.type === "personal" && !sharedScopeId ? {
+          prepareSteeringContext: async () => {
+            const detail = await this.options.repository.getDetailPage(owner, run.chatId, { limit: SESSION_HISTORY_MESSAGE_LIMIT });
+            if (!detail || detail.record.chat.lifecycle !== "active" || detail.record.chat.collaboration
+              || detail.record.activeRun?.runId !== run.id || detail.record.activeRun.turnId !== run.turnId) throw new Error("Steering context unavailable");
+            // Include the original admitted input and only committed steering from this Turn.
+            const messages = [message, ...detail.messages.filter(item => item.seq < message.seq
+              || (item.seq > message.seq && item.turnId === run.turnId && item.role === "user" && item.state === "committed"))]
+              .sort((left, right) => left.seq - right.seq);
+            return withChatSessionHistory({ chatId: run.chatId, title: detail.record.chat.title,
+              throughSeq: messages.at(-1)!.seq, messages, truncated: detail.nextBeforeSeq !== undefined,
+              requestHash: run.context?.requestHash ?? chatContextRequestHash({ ...run, parts: message.parts }), context: run.context });
+          },
+        } : {}),
         signal: controller.signal,
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },

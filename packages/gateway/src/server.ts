@@ -53,7 +53,7 @@ import { authMiddleware } from "./auth.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
-import { createGatewayChatAdapters, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
+import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
 import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
@@ -830,6 +830,7 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let nativeClaudeChatRuntime: GatewayNativeClaudeChatRuntime | null = null;
+  let nativeClaudeRecovery: Parameters<typeof startGatewayClaudeNativeRecovery>[0] | undefined;
   let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1657,6 +1658,16 @@ export async function createGateway(config: GatewayConfig) {
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
+    if (nativeClaudeChatRuntime) {
+      const collaborationGuard = canonicalChatCollaborationGuard;
+      nativeClaudeRecovery = {
+        runtime: nativeClaudeChatRuntime, configuredOwnerIds: codingAgentOwnerIds,
+        repository: chatRepository, credentialKey: toolOutputKey,
+        catalog: canonicalChatProviderCatalog, executionRoots: canonicalChatExecutionRoots,
+        assertPersonalExecutionAllowed: collaborationGuard
+          ? (owner, chatId) => collaborationGuard.assertPersonalExecutionAllowed(owner, chatId) : undefined,
+      };
+    }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
       const bridge = codexEventBridge;
@@ -1814,6 +1825,12 @@ export async function createGateway(config: GatewayConfig) {
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
   configureEdgeRequestDeadlines(server);
   injectWebSocket(server);
+  if (nativeClaudeRecovery) server.once("listening", () => {
+    if (!nativeClaudeRecovery) return;
+    void startGatewayClaudeNativeRecovery(nativeClaudeRecovery).catch((error: unknown) => {
+      logBestEffortFailure("Claude native recovery startup failed", error);
+    });
+  });
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
     onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
@@ -1839,6 +1856,8 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      nativeClaudeRecovery = undefined;
+      nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();

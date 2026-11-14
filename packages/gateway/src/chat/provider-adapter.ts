@@ -155,6 +155,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   continuationId?: string;
   /** An already-held native prompt. The adapter must not submit it again. */
   nativeScheduled?: NativeScheduledPhaseIdentity;
+  /** Lazily read the owner-scoped canonical prefix before closing a protected session for Steer. */
+  prepareSteeringContext?: () => Promise<import("@matrix-os/contracts").ChatRunContext>;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
@@ -170,6 +172,8 @@ export class CanonicalProviderRunRecoveryPendingError extends Error {
   }
 }
 
+export type ChatResumeSettings = Pick<CanonicalProviderRunInput, "selection" | "interactionMode" | "permissionMode" | "context">;
+
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
@@ -177,6 +181,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
+  /** Some checkpoints can continue only on a live, owned provider process. */
+  selectResumeCheckpoint?(input: { owner: CanonicalOwnerScope; chatId: string; state: State;
+    settings: ChatResumeSettings; previousSettings: ChatResumeSettings }): State | undefined;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
   isBackingRunActive?(input: { owner: CanonicalOwnerScope; state: State; signal: AbortSignal }): Promise<boolean>;
   /** A failed or timed-out recovery cannot safely establish this Run's outcome. */

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import type { KyselyPGlite } from "kysely-pglite";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatTurn } from "@matrix-os/contracts";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { ChatRepository, ChatBusyError, ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src/chat/repository.js";
 import { nativeScheduledRequestHash, nativeScheduledRequestId } from "../../packages/gateway/src/chat/native-scheduled-admission.js";
+import { createClaudeNativeRecoveryStore } from "../../packages/gateway/src/chat/claude-native-recovery-store.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_native_cron" };
 const sessionId = "66a1f859-6832-494b-850b-de12ba965416";
@@ -63,6 +65,23 @@ describe("private native scheduled phase admission", () => {
     expect(exported!.messages.at(-1)).toMatchObject({ role: "assistant", parts: [{ type: "text", text: "Native result" }] });
     expect(exported!.runs).toHaveLength(2);
   });
+  it("reads a bounded same-Chat history at the exact latest recovery checkpoint", async () => {
+    const due = await tick();
+    await repository.markRunRunning(owner, { chatId: "chat_native", runId: due.run.id, startedAt: timestamp });
+    await repository.appendAssistantDelta(owner, { chatId: "chat_native", runId: due.run.id,
+      messageId: "msg_recovery_history", delta: "Previous scheduled result", createdAt: timestamp });
+    await repository.updateAdapterState(owner, { chatId: "chat_native", runId: due.run.id, driverKind: "claude_code",
+      instanceId: selection.instanceId, schemaVersion: 1, state: { sessionId } });
+    await repository.finishRun(owner, { chatId: "chat_native", runId: due.run.id, outcome: "completed", completedAt: timestamp });
+    const latest = { sourceRunId: due.run.id, sessionId };
+    const recovered = await repository.getClaudeNativeRecoveryCheckpoint(owner, "chat_native", latest, { includeHistory: true });
+    expect(recovered?.history).toMatchObject({ chatId: "chat_native", throughSeq: 3, messages: [
+      { id: "msg_source", role: "user", seq: 1 },
+      { id: "msg_recovery_history", role: "assistant", seq: 3, parts: [{ type: "text", text: "Previous scheduled result" }] },
+    ] });
+    expect(await repository.getClaudeNativeRecoveryCheckpoint(owner, "chat_native", latest)).not.toHaveProperty("history");
+    expect(await repository.getClaudeNativeRecoveryCheckpoint({ ...owner, ownerId: "foreign" }, "chat_native", latest, { includeHistory: true })).toBeNull();
+  });
   it("replays one native occurrence without a second turn, run or system message", async () => {
     const first = await tick();
     const repeated = await tick("different_generated_ids");
@@ -83,6 +102,68 @@ describe("private native scheduled phase admission", () => {
     const input = admission("chat_native", 2, "forged", "system");
     input.baseRevision = (await repository.get(owner, "chat_native"))!.chat.revision;
     await expect(repository.admitTurn(owner, input)).rejects.toBeInstanceOf(ChatConflictError);
+  });
+  it("rejects a recovered callback whose active generation no longer exists before any scheduled writes", async () => {
+    const input = admission("chat_native", 2, "stale_recovery", "system");
+    input.baseRevision = (await repository.get(owner, "chat_native"))!.chat.revision;
+    await expect(repository.admitNativeScheduledTurn(owner, input, source, {
+      ownerId: owner.ownerId, chatId: input.chatId, sourceRunId: source.sourceRunId, sessionId,
+      sourceFingerprint: "a".repeat(64), generation: 1, jobId: "a13b9c4d",
+      promptSha256: createHash("sha256").update(source.prompt).digest("hex"),
+    })).rejects.toBeInstanceOf(ChatConflictError);
+    expect((await repository.exportChat(owner, "chat_native"))!.runs).toHaveLength(1);
+  });
+  it("admits a recovered callback only with the active generation and attested job", async () => {
+    const store = createClaudeNativeRecoveryStore(repository.kysely);
+    const job = { id: "a13b9c4d", cron: "* * * * *", recurring: true,
+      promptSha256: createHash("sha256").update(source.prompt).digest("hex"),
+      assistantUuid: "88c0e9e2-d6fb-484b-b3ed-a248e428a2d8", receiptUuid: "61985789-4035-434f-9142-8142a8f35d15" };
+    const identity = { ownerId: owner.ownerId, chatId: "chat_native", sourceRunId: source.sourceRunId, sessionId,
+      sourceFingerprint: "a".repeat(64) };
+    const active = await store.saveActive({ ...identity, jobs: [job], deadlineAt: new Date(Date.now() + 60_000).toISOString() });
+    expect(active).not.toBeNull();
+    const released = await store.release(active!);
+    expect(released).not.toBeNull();
+    const claimed = await store.claim(released!);
+    expect(claimed).not.toBeNull();
+    const input = admission("chat_native", 2, "valid_recovery", "system");
+    input.baseRevision = (await repository.get(owner, "chat_native"))!.chat.revision;
+    const fence = { ...identity, generation: claimed!.generation, jobId: job.id, promptSha256: job.promptSha256 };
+    await expect(repository.admitNativeScheduledTurn(owner, input, source, { ...fence, generation: active!.generation }))
+      .rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.admitNativeScheduledTurn(owner, input, source, { ...fence, jobId: "deadbeef" }))
+      .rejects.toBeInstanceOf(ChatConflictError);
+    await expect(repository.admitNativeScheduledTurn(owner, input, source, fence)).resolves.toMatchObject({
+      alreadyAccepted: false, run: { id: input.run.id },
+    });
+  });
+  it("rejects an old recovery source after a newer run completes in the same native session", async () => {
+    const store = createClaudeNativeRecoveryStore(repository.kysely);
+    const job = { id: "a13b9c4d", cron: "* * * * *", recurring: true,
+      promptSha256: createHash("sha256").update(source.prompt).digest("hex"),
+      assistantUuid: "88c0e9e2-d6fb-484b-b3ed-a248e428a2d8", receiptUuid: "61985789-4035-434f-9142-8142a8f35d15" };
+    const identity = { ownerId: owner.ownerId, chatId: "chat_native", sourceRunId: source.sourceRunId, sessionId,
+      sourceFingerprint: "a".repeat(64) };
+    const active = await store.saveActive({ ...identity, jobs: [job], deadlineAt: new Date(Date.now() + 60_000).toISOString() });
+    expect(active).not.toBeNull();
+    const checkpoint = { sourceRunId: source.sourceRunId, sessionId };
+    await expect(repository.getClaudeNativeRecoveryCheckpoint(owner, identity.chatId, checkpoint)).resolves.toMatchObject({
+      run: { id: source.sourceRunId }, adapterState: { state: { sessionId } },
+    });
+    await expect(repository.getClaudeNativeRecoveryCheckpoint({ ...owner, ownerId: "foreign" }, identity.chatId, checkpoint))
+      .resolves.toBeNull();
+    const newer = admission("chat_native", 2, "newer_source", "user");
+    newer.baseRevision = (await repository.get(owner, "chat_native"))!.chat.revision;
+    await repository.admitTurn(owner, newer);
+    await repository.updateAdapterState(owner, { chatId: newer.chatId, runId: newer.run.id, driverKind: "claude_code",
+      instanceId: selection.instanceId, schemaVersion: 1, state: { sessionId } });
+    await repository.finishRun(owner, { chatId: newer.chatId, runId: newer.run.id, outcome: "completed", completedAt: timestamp });
+    await expect(repository.getClaudeNativeRecoveryCheckpoint(owner, identity.chatId, checkpoint)).rejects.toBeInstanceOf(ChatConflictError);
+    const due = admission("chat_native", 3, "old_recovery_source", "system");
+    due.baseRevision = (await repository.get(owner, "chat_native"))!.chat.revision;
+    await expect(repository.admitNativeScheduledTurn(owner, due, source, { ...identity, generation: active!.generation,
+      jobId: job.id, promptSha256: job.promptSha256 })).rejects.toBeInstanceOf(ChatConflictError);
+    expect((await repository.exportChat(owner, "chat_native"))!.runs).toHaveLength(2);
   });
   it.each(["wrong_session", "missing_source", "changed_prompt", "changed_instance"])("rejects %s before any scheduled writes", async mode => {
     const record = (await repository.get(owner, "chat_native"))!;

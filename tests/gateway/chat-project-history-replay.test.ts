@@ -166,6 +166,61 @@ it.each(['missing', 'schema', 'root'] as const)('hydrates committed history for 
   expect(replay(nativeInputs[1]).text).toContain('COMMITTED_CONTEXT');
 });
 
+it('starts with canonical history when a protected checkpoint has no surviving child', async () => {
+  const original = await turn('CONTEXT_LIVES_IN_CANONICAL_CHAT');
+  await repository.kysely.updateTable('chat_run_adapter_state')
+    .set({ state: JSON.stringify({ sessionId: 'native_1', canonicalHistoryRequired: true }) })
+    .where('run_id', '=', original.run.id).execute();
+  await turn('Continue after the protected process exited');
+  expect(replay(nativeInputs[1]).text).toContain('CONTEXT_LIVES_IN_CANONICAL_CHAT');
+  expect(replay(nativeInputs[1]).text).toContain('Assistant: TOKEN_1');
+  await turn('Continue the fresh native session');
+  expect(nativeInputs[2]).toMatchObject({ resume: 'native_2', prompt: 'Continue the fresh native session' });
+});
+
+it('uses canonical history when claiming a queued turn with an expired protected checkpoint', async () => {
+  const original = await turn('PROTECTED_QUEUE_PREFIX');
+  await repository.kysely.updateTable('chat_run_adapter_state')
+    .set({ state: JSON.stringify({ sessionId: 'native_1', canonicalHistoryRequired: true }) })
+    .where('run_id', '=', original.run.id).execute();
+  holdNext = true; omitSessionNext = true;
+  const record = (await repository.get(owner, chatId))!.chat;
+  await orchestrator.admitTurn(principal, owner, chatId, {
+    baseRevision: record.revision, clientRequestId: 'req_held_protected',
+    parts: [{ type: 'text', text: 'HELD_WHILE_QUEUING' }],
+    selection, interactionMode: 'default', permissionMode: 'supervised',
+  });
+  await vi.waitFor(() => expect(nativeInputs).toHaveLength(2));
+  const active = (await repository.get(owner, chatId))!.chat;
+  await orchestrator.enqueueQueuedTurn(principal, owner, chatId, {
+    baseRevision: active.revision, clientRequestId: 'req_queued_protected',
+    parts: [{ type: 'text', text: 'QUEUED_AFTER_PROTECTED' }],
+    selection, interactionMode: 'default', permissionMode: 'supervised',
+  });
+  releaseNative!();
+  await orchestrator.drain();
+  const history = replay(nativeInputs[2]);
+  expect(history.text).toContain('PROTECTED_QUEUE_PREFIX');
+  expect(history.text).toContain('HELD_WHILE_QUEUING');
+  expect(history.text).not.toContain('QUEUED_AFTER_PROTECTED');
+});
+
+it('retries with the original canonical history boundary after the protected child exits', async () => {
+  const original = await turn('CANONICAL_RETRY_PREFIX');
+  failNext = true;
+  const failed = await turn('RETRY_WITH_CANONICAL_HISTORY');
+  await repository.kysely.updateTable('chat_run_adapter_state')
+    .set({ state: JSON.stringify({ sessionId: 'native_1', canonicalHistoryRequired: true }) })
+    .where('run_id', '=', original.run.id).execute();
+  const record = (await repository.get(owner, chatId))!.chat;
+  await orchestrator.retryTurn(principal, owner, chatId, failed.turn.id, { baseRevision: record.revision, clientRequestId: 'req_protected_retry' });
+  await orchestrator.drain();
+  const history = replay(nativeInputs[2]);
+  expect(history.text).toContain('CANONICAL_RETRY_PREFIX');
+  expect(history.text).not.toContain('Temporary failure');
+  expect(nativeInputs[2].prompt.match(/RETRY_WITH_CANONICAL_HISTORY/g)).toHaveLength(1);
+});
+
 it('Retry retains the admitted replay snapshot, excludes its failed partial reply, and does not include the retried question twice', async () => {
   await turn('BEFORE_MOVE'); await move(projectRef.projectId);
   failNext = true;

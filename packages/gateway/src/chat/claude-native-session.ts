@@ -3,8 +3,10 @@ import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-
 import { createBoundedCliLines } from "./bounded-cli-lines.js";
 import { CanonicalCliError, type CanonicalCliProcess, type runCanonicalCli } from "./cli-process.js";
 import type { CanonicalProviderRunInput } from "./provider-adapter.js";
+import type { ClaudeNativeRecoveryInput } from "./claude-native-recovery-store.js";
 import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
-import { createClaudeNativeJobs, nativeRecord, nativeRef, type NativeRecord } from "./claude-native-session-jobs.js";
+import { createClaudeNativeJobs, nativeRecord, nativeRef, parseClaudeNativeRestoreJobs,
+  type ClaudeNativeScheduleEvidence, type ClaudeNativeScheduleJob, type NativeRecord } from "./claude-native-session-jobs.js";
 import { createClaudeNativeSessionControl, nativePhaseMcpServers, type NativeSessionControl } from "./claude-native-session-control.js";
 
 export type ClaudeNativeSessionTurnOptions = Parameters<typeof runCanonicalCli>[0] & {
@@ -12,8 +14,25 @@ export type ClaudeNativeSessionTurnOptions = Parameters<typeof runCanonicalCli>[
   /** Current account/source/root/model/permission fingerprint; never a scoped Run token. */
   sourceFingerprint: string;
   schedulingAllowed?: boolean;
+  requireProtectedSession?: boolean;
+  onProtectedSession?: (sessionId: string) => void;
 };
 type ScheduledHandler = (request: NativeScheduledPhaseRequest) => Promise<void>;
+type NativeSessionSource = Pick<CanonicalProviderRunInput,
+  "owner" | "chatId" | "runId" | "interactionMode" | "sharedScopeId" | "context" | "onCleanupConfirmed" | "onCleanupUnconfirmed">;
+export interface ClaudeNativeIdleRestoreOptions {
+  input: NativeSessionSource;
+  sourceFingerprint: string;
+  sessionId: string;
+  deadlineMs: number;
+  jobs: readonly ClaudeNativeScheduleJob[];
+  evidence?: readonly ClaudeNativeScheduleEvidence[];
+  /** A host-owned, attested launcher. Never launch from a mutable user transcript. */
+  launchProtected(): CanonicalCliProcess;
+  /** Fence the recovery claim and perform canonical admission before binding the due phase. */
+  admitRecoveredPhase(request: NativeScheduledPhaseRequest, job: ClaudeNativeScheduleJob, checkpoint?: ClaudeNativeRecoveryInput): Promise<void>;
+}
+type ConfirmedHandoff = (checkpoint: ClaudeNativeRecoveryInput) => Promise<void>;
 interface PoolOptions {
   protocolQualified?: boolean;
   onScheduledPhase?: ScheduledHandler;
@@ -39,6 +58,8 @@ interface Phase {
 interface HeldPrompt { id: string; promptId: string; prompt: string; timer: ReturnType<typeof setTimeout> }
 const MAX_SESSION_MS = 7 * 24 * 60 * 60_000;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+const RestoredSessionId = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+const RestoredPromptId = z.uuid();
 const PromptInput = z.object({ hook_event_name: z.literal("UserPromptSubmit"), session_id: nativeRef, prompt_id: nativeRef,
   prompt: z.string().min(1).max(128 * 1024), agent_id: z.undefined().optional() }).passthrough();
 const ToolInput = z.object({ hook_event_name: z.literal("PreToolUse"), session_id: nativeRef, prompt_id: nativeRef,
@@ -49,7 +70,7 @@ const ScheduledCompletionStatus = z.object({ type: z.literal("command_lifecycle"
   state: z.literal("completed"), uuid: z.uuid(), session_id: nativeRef }).strict();
 type NativeFailureOperation = "Native session operation unavailable" | "Native output unavailable" | "Native output drain unavailable"
   | "Native input unavailable" | "Native process unavailable" | "Startup observer unavailable"
-  | "Stderr observer unavailable" | "Phase settlement unavailable" | "Process signal unavailable";
+  | "Stderr observer unavailable" | "Phase settlement unavailable" | "Process signal unavailable" | "Cleanup observer unavailable";
 function reportNativeSessionFailure(error: unknown, operation: NativeFailureOperation = "Native session operation unavailable") {
   // Error names, messages and stacks can contain provider output or callback secrets.
   let kind = "UnknownError";
@@ -65,32 +86,39 @@ function reportNativeSessionFailure(error: unknown, operation: NativeFailureOper
   console.warn(`[claude-native] ${operation}`, kind);
 }
 const sessionKey = (input: Pick<CanonicalProviderRunInput, "owner" | "chatId">) => JSON.stringify([input.owner.type, input.owner.ownerId, input.chatId]);
+const ownerKeyOf = (owner: CanonicalProviderRunInput["owner"]) => JSON.stringify([owner.type, owner.ownerId]);
+const privateNativeChat = (input: NativeSessionSource) => input.owner.type === "personal"
+  && input.interactionMode === "default" && !input.sharedScopeId && !input.context?.agent;
 
 /** Owns a physical native child separately from each canonical Run. It never schedules a prompt. */
 export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
   const sessions = new Map<string, Session>(); // Max160 physical children; actual close removes. Live children are never evicted.
+  const restoring = new Map<string, string>(); // Constructor reservations share the same caps as live children.
   const maxSessions = options.maxSessions ?? 32, perOwner = options.maxSessionsPerOwner ?? 8;
   const lifetime = options.maxSessionMs ?? MAX_SESSION_MS, controlMs = options.controlTimeoutMs ?? 10_000;
   for (const [value, maximum] of [[maxSessions, 128], [perOwner, 128], [lifetime, MAX_SESSION_MS], [controlMs, 30_000]]) {
     if (!Number.isInteger(value) || value! < 1 || value! > maximum!) throw new RangeError("Invalid native session limit");
   }
   let handler = options.onScheduledPhase, closing = false;
-  const capacity = (candidate: Session) => {
-    const retained = [...sessions.values()].filter(s => s !== candidate && (s.jobs.size > 0 || s.reserved));
-    return retained.length < maxSessions && retained.filter(s => s.ownerKey === candidate.ownerKey).length < perOwner;
+  const capacity = (ownerKey: string, candidate?: Session) => {
+    const retained = [...sessions.values()].filter(s => s !== candidate && (s.jobs.size > 0 || s.reserved)).map(s => s.ownerKey);
+    retained.push(...restoring.values());
+    return retained.length < maxSessions && retained.filter(owner => owner === ownerKey).length < perOwner;
   };
 
   class Session {
     readonly ownerKey: string;
-    readonly jobs = createClaudeNativeJobs();
+    readonly jobs: ReturnType<typeof createClaudeNativeJobs>;
     readonly child: CanonicalCliProcess;
     readonly key: string;
     readonly fingerprint: string;
     readonly control: NativeSessionControl;
     readonly closed: Promise<void>;
     phase?: Phase;
-    lastInput: CanonicalProviderRunInput;
+    lastInput: NativeSessionSource;
     private lastSchedulingAllowed: boolean;
+    private readonly recoveredAdmission?: ClaudeNativeIdleRestoreOptions["admitRecoveredPhase"];
+    qualifyingRecovery: boolean;
     sessionId?: string;
     private scheduledCommandId?: string; // One observed native wakeup, cleared on its completion; never authorizes a Run.
     initFrame?: NativeRecord;
@@ -108,19 +136,31 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     private pendingPrompt?: HeldPrompt;
     private readonly prompts = new Set<string>(); // Max4096/native child; saturation stops the child instead of evicting replay evidence.
     private readonly wireIds = new Set<string>(); // Max4096 callback IDs; saturation stops the child.
-    constructor(readonly initial: ClaudeNativeSessionTurnOptions) {
-      this.key = sessionKey(initial.input); this.ownerKey = JSON.stringify(initial.input.owner);
-      this.fingerprint = initial.sourceFingerprint; this.lastInput = initial.input; this.lastSchedulingAllowed = initial.schedulingAllowed !== false;
-      this.deadline = Date.now() + Math.min(lifetime, initial.timeoutMs ?? lifetime);
+    constructor(initial: ClaudeNativeSessionTurnOptions | ClaudeNativeIdleRestoreOptions) {
+      this.key = sessionKey(initial.input); this.ownerKey = ownerKeyOf(initial.input.owner);
+      this.fingerprint = initial.sourceFingerprint; this.lastInput = initial.input;
+      this.jobs = "launchProtected" in initial
+        ? createClaudeNativeJobs(initial.jobs, initial.evidence)
+        : createClaudeNativeJobs();
+      this.qualifyingRecovery = "launchProtected" in initial;
+      this.lastSchedulingAllowed = "launchProtected" in initial || initial.schedulingAllowed !== false;
+      this.deadline = "launchProtected" in initial ? initial.deadlineMs : Date.now() + Math.min(lifetime, initial.timeoutMs ?? lifetime);
       this.closed = new Promise<void>((resolve, reject) => { this.resolveClosed = resolve; this.rejectClosed = reject; });
       void this.closed.catch(reportNativeSessionFailure);
-      const spawnArgs = initial.args.filter((_arg, index, args) => args[index] !== "--mcp-config" && args[index - 1] !== "--mcp-config");
-      this.child = (initial.spawnFn ?? ((command, args, spawnOptions) => spawnIsolatedProviderProcess(command, args, spawnOptions)))(initial.command, spawnArgs, {
-        cwd: initial.cwd, env: initial.replaceEnv ? initial.env : { ...process.env, ...initial.env } as Record<string, string>, stdio: ["pipe", "pipe", "pipe"],
-      });
+      if ("launchProtected" in initial) {
+        this.sessionId = initial.sessionId;
+        this.recoveredAdmission = initial.admitRecoveredPhase;
+        this.child = initial.launchProtected();
+      } else {
+        const spawnArgs = initial.args.filter((_arg, index, args) => args[index] !== "--mcp-config" && args[index - 1] !== "--mcp-config");
+        this.child = (initial.spawnFn ?? ((command, args, spawnOptions) => spawnIsolatedProviderProcess(command, args, spawnOptions)))(initial.command, spawnArgs, {
+          cwd: initial.cwd, env: initial.replaceEnv ? initial.env : { ...process.env, ...initial.env } as Record<string, string>, stdio: ["pipe", "pipe", "pipe"],
+        });
+      }
       this.control = createClaudeNativeSessionControl({ send: frame => this.send(frame), emit: frame => this.deliver(frame), timeoutMs: controlMs });
       this.child.stdin?.on?.("error", (error: unknown) => { reportNativeSessionFailure(error, "Native input unavailable"); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
-      const lines = createBoundedCliLines(Math.min(MAX_FRAME_BYTES, initial.maxStdoutBytes), raw => {
+      const maxFrame = "launchProtected" in initial ? MAX_FRAME_BYTES : Math.min(MAX_FRAME_BYTES, initial.maxStdoutBytes);
+      const lines = createBoundedCliLines(maxFrame, raw => {
         const frame = nativeRecord(JSON.parse(raw)); if (!frame || typeof frame.type !== "string") throw new Error("Native frame unavailable");
         this.frame(frame);
       });
@@ -143,15 +183,38 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         this.stopped = true; this.clearTimers(); this.control.close();
         if (sessions.get(this.key) === this) sessions.delete(this.key);
         this.finishPhase(this.termination ?? exitError);
-        this.lastInput.onCleanupConfirmed?.(); this.resolveClosed();
+        try { this.lastInput.onCleanupConfirmed?.(); }
+        catch (error: unknown) { reportNativeSessionFailure(error, "Cleanup observer unavailable"); }
+        this.resolveClosed();
       });
       this.resetDeadline();
     }
     eligible() {
       const input = this.phase?.options.input ?? this.lastInput;
-      return options.protocolQualified === true && !!handler && this.control.qualified
-        && (this.phase ? this.phase.options.schedulingAllowed !== false : this.lastSchedulingAllowed) && input.owner.type === "personal"
-        && input.interactionMode === "default" && !input.sharedScopeId && !input.context?.agent;
+      return !this.qualifyingRecovery && (!this.recoveredAdmission || Date.now() < this.deadline)
+        && options.protocolQualified === true && !!(this.recoveredAdmission ?? handler) && this.control.qualified
+        && (this.phase ? this.phase.options.schedulingAllowed !== false : this.lastSchedulingAllowed) && privateNativeChat(input);
+    }
+    recoveryCheckpoint(liveOccurrence = false): ClaudeNativeRecoveryInput | undefined {
+      if (this.stopped || this.phase || this.pendingPrompt || (this.scheduledCommandId && !liveOccurrence)
+        || !this.eligible() || !this.sessionId || Date.now() >= this.deadline) return;
+      const verified = this.jobs.verifiedSnapshot();
+      if (verified.length !== this.jobs.size) return;
+      // One-shot receipts can authorize a live callback, but cannot recreate a job after restart.
+      const jobs = liveOccurrence ? verified : verified.filter(job => job.recurring);
+      if (!jobs.length) return;
+      return { ownerId: this.lastInput.owner.ownerId, chatId: this.lastInput.chatId, sourceRunId: this.lastInput.runId,
+        sourceFingerprint: this.fingerprint, sessionId: this.sessionId, deadlineAt: new Date(this.deadline).toISOString(), jobs };
+    }
+    async stopForHandoff(onHandoff?: ConfirmedHandoff) {
+      const checkpoint = onHandoff ? this.recoveryCheckpoint() : undefined;
+      await this.stop();
+      if (checkpoint && onHandoff && await this.child.confirmScopeClosed?.()) await onHandoff(checkpoint);
+    }
+    async qualifyRecovery() {
+      await this.control.prepareIdle();
+      if (this.stopped || !this.control.qualified || Date.now() >= this.deadline) throw new Error("Native idle recovery unavailable");
+      this.qualifyingRecovery = false;
     }
     private resetDeadline() {
       clearTimeout(this.absoluteTimer);
@@ -194,11 +257,20 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     }
     private endPhase() {
       const phase = this.phase; if (!phase || phase.ending) return; phase.ending = true;
-      if (phase.result && this.jobs.size > 0 && this.eligible() && capacity(this)) { this.reserved = true; this.finishPhase(); return; }
+      if (phase.result && this.jobs.size > 0 && this.eligible() && capacity(this.ownerKey, this)) { this.reserved = true; this.finishPhase(); return; }
       this.child.stdin?.end?.();
     }
-    bind(turn: ClaudeNativeSessionTurnOptions): Promise<void> {
+    hasProtectedSession(sessionId: string | undefined): boolean {
+      return !!this.recoveredAdmission && sessionId !== undefined && this.sessionId === sessionId && !this.stopped && !this.qualifyingRecovery
+        && this.control.qualified && Date.now() < this.deadline;
+    }
+    async bind(turn: ClaudeNativeSessionTurnOptions): Promise<void> {
       if (this.phase || this.stopped) throw new Error("Native session busy");
+      if (this.recoveredAdmission && (!this.hasProtectedSession(this.sessionId)
+        || turn.schedulingAllowed === false || !privateNativeChat(turn.input) || turn.input.context?.drives?.length)) {
+        await this.stop();
+        throw new Error("Native protected session unavailable");
+      }
       const scheduled = turn.input.nativeScheduled;
       if (scheduled && (!this.pendingPrompt || scheduled.promptId !== this.pendingPrompt.promptId || scheduled.sessionId !== this.sessionId
         || scheduled.sourceRunId !== this.lastInput.runId)) throw new Error("Native scheduled phase unavailable");
@@ -211,8 +283,15 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         turn.signal.addEventListener("abort", phase.abort, { once: true }); if (turn.signal.aborted) { phase.abort(); return; }
         this.touch(phase);
         if (turn.startupTimeoutMs !== undefined) { phase.startupTimer = setTimeout(() => { void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); }, turn.startupTimeoutMs); phase.startupTimer.unref?.(); }
-        // This is the actual immutable init observation from this same held native child, not a new process proof.
-        if (this.initFrame) this.deliver(this.initFrame);
+        try {
+          if (this.recoveredAdmission && this.sessionId) turn.onProtectedSession?.(this.sessionId);
+          // Deliver the original immutable init observation from this same native child.
+          if (this.initFrame) this.deliver(this.initFrame);
+        } catch (error: unknown) {
+          reportNativeSessionFailure(error, "Startup observer unavailable");
+          void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure);
+          return;
+        }
         const prepare = () => phase.prepare ??= this.control.prepare(nativePhaseMcpServers(turn.args, turn.env));
         const write = async (raw: string) => {
           const frame = nativeRecord(JSON.parse(raw)); if (!frame || this.phase !== phase || this.stopped) throw new Error("Native phase transport unavailable");
@@ -243,9 +322,10 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       this.control.observeInit(frame); if (this.control.handle(frame)) return;
       if (frame.type === "system" && frame.subtype === "init") {
         if (typeof frame.session_id !== "string" || this.sessionId && this.sessionId !== frame.session_id) throw new Error("Native session changed");
+        if (this.recoveredAdmission && frame.claude_code_version !== undefined && frame.claude_code_version !== "2.1.317") throw new Error("Native idle protocol unavailable");
         this.sessionId = frame.session_id; this.initFrame = frame;
       }
-      if (frame.type === "command_lifecycle" && this.control.qualified) {
+      if (frame.type === "command_lifecycle" && (this.control.qualified || this.qualifyingRecovery)) {
         const started = ScheduledWakeupStatus.safeParse(frame);
         if (!this.phase && !this.scheduledCommandId && started.success && started.data.session_id === this.sessionId) {
           this.scheduledCommandId = started.data.command_uuid; return;
@@ -293,24 +373,42 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     private prompt(frame: NativeRecord, id: string) {
       const parsed = PromptInput.safeParse(nativeRecord(frame.request)?.input);
       const block = () => this.control.respond(id, { decision: "block", reason: "Native scheduled phase unavailable." });
+      if (this.recoveredAdmission && (!parsed.success || parsed.data.session_id !== this.sessionId
+        || (!this.phase && !RestoredPromptId.safeParse(parsed.data.prompt_id).success))) {
+        void block().finally(() => this.stop(new CanonicalCliError("aborted"))).catch(reportNativeSessionFailure); return;
+      }
       if (!parsed.success || this.sessionId && parsed.data.session_id !== this.sessionId || this.prompts.has(parsed.data.prompt_id)) { void block().catch(reportNativeSessionFailure); return; }
       this.sessionId ??= parsed.data.session_id;
       if (this.prompts.size >= 4096) throw new Error("Native prompt limit exceeded"); this.prompts.add(parsed.data.prompt_id);
+      if (this.qualifyingRecovery) {
+        // Claude can wake while the host is still installing empty MCP. Skip this
+        // known occurrence before inference and leave later recurring wakes armed.
+        if (this.jobs.matches(parsed.data.prompt)?.recurring) void block().catch(reportNativeSessionFailure);
+        else void block().finally(() => this.stop(new CanonicalCliError("aborted"))).catch(reportNativeSessionFailure);
+        return;
+      }
       if (this.phase) {
         if (this.phase.expectedPrompt !== parsed.data.prompt || this.phase.promptId) { void block().catch(reportNativeSessionFailure); return; }
         this.phase.promptId = parsed.data.prompt_id; void this.control.respond(id, {}).catch((error: unknown) => { reportNativeSessionFailure(error); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); }); return;
       }
       const job = this.jobs.matches(parsed.data.prompt);
-      if (!job || !this.eligible() || this.pendingPrompt || !handler) {
+      const admit = this.recoveredAdmission ?? handler;
+      if (!job || !this.eligible() || this.pendingPrompt || !admit) {
         void block().finally(() => this.stop(new CanonicalCliError("aborted"))).catch(reportNativeSessionFailure); return;
       }
+      const checkpoint = this.recoveredAdmission ? this.recoveryCheckpoint(true) : undefined;
       this.jobs.consume(job);
       const held: HeldPrompt = { id, promptId: parsed.data.prompt_id, prompt: parsed.data.prompt, timer: setTimeout(() => {
         if (this.pendingPrompt !== held) return; this.pendingPrompt = undefined;
         void block().finally(() => this.stop(new CanonicalCliError("timeout"))).catch(reportNativeSessionFailure);
       }, Math.min(120_000, controlMs * 3)) }; held.timer.unref?.(); this.pendingPrompt = held;
       const source = this.lastInput;
-      void handler({ owner: source.owner, chatId: source.chatId, sourceRunId: source.runId, sessionId: this.sessionId!, promptId: held.promptId, prompt: held.prompt }).catch((error: unknown) => {
+      const request = { owner: source.owner, chatId: source.chatId, sourceRunId: source.runId,
+        sessionId: this.sessionId!, promptId: held.promptId, prompt: held.prompt };
+      const admission = this.recoveredAdmission
+        ? checkpoint ? this.recoveredAdmission(request, job, checkpoint) : this.recoveredAdmission(request, job)
+        : handler!(request);
+      void admission.catch((error: unknown) => {
         reportNativeSessionFailure(error);
         if (this.pendingPrompt !== held) return; clearTimeout(held.timer); this.pendingPrompt = undefined;
         void block().finally(() => this.stop(new CanonicalCliError("aborted"))).catch(reportNativeSessionFailure);
@@ -333,7 +431,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       if (parsed.data.agent_id !== undefined) { void deny().catch(reportNativeSessionFailure); return; }
       const tool = this.jobs.toolInput(parsed.data.tool_use_id);
       if (!tool || JSON.stringify(tool.input) !== JSON.stringify(parsed.data.tool_input)) { void deny().catch(reportNativeSessionFailure); return; }
-      if (parsed.data.tool_name === "CronCreate" && (!this.eligible() || !capacity(this) || !this.jobs.authorizeCreate(parsed.data.tool_use_id))) { void deny().catch(reportNativeSessionFailure); return; }
+      if (parsed.data.tool_name === "CronCreate" && (!this.eligible() || !capacity(this.ownerKey, this) || !this.jobs.authorizeCreate(parsed.data.tool_use_id))) { void deny().catch(reportNativeSessionFailure); return; }
       if (parsed.data.tool_name === "CronCreate") this.reserved = true;
       void this.control.respond(id, {}).catch((error: unknown) => { reportNativeSessionFailure(error); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
     }
@@ -358,10 +456,48 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
   }
   return {
     setScheduledHandler(value: ScheduledHandler) { if (closing) throw new Error("Native session pool closed"); handler = value; },
+    hasProtectedSession(input: Pick<CanonicalProviderRunInput, "owner" | "chatId"> & { sessionId: string }): boolean {
+      return !closing && sessions.get(sessionKey(input))?.hasProtectedSession(input.sessionId) === true;
+    },
+    async restoreIdle(restore: ClaudeNativeIdleRestoreOptions): Promise<void> {
+      const { input } = restore;
+      const now = Date.now(), key = sessionKey(input), ownerKey = ownerKeyOf(input.owner);
+      if (closing || options.protocolQualified !== true || typeof restore.launchProtected !== "function"
+        || typeof restore.admitRecoveredPhase !== "function" || !privateNativeChat(input) || !RestoredSessionId.safeParse(restore.sessionId).success
+        || !restore.sourceFingerprint || restore.sourceFingerprint.length > 512
+        || !Number.isSafeInteger(restore.deadlineMs) || restore.deadlineMs <= now || restore.deadlineMs > now + lifetime
+        || sessions.has(key) || restoring.has(key) || sessions.size + restoring.size >= 160 || !capacity(ownerKey)) {
+        throw new Error("Native idle recovery unavailable");
+      }
+      const { jobs, evidence } = parseClaudeNativeRestoreJobs(restore.jobs, restore.evidence);
+      restoring.set(key, ownerKey);
+      let session: Session;
+      try {
+        session = new Session({ ...restore, jobs, evidence });
+        sessions.set(key, session);
+      } finally {
+        restoring.delete(key);
+      }
+      try {
+        if (closing) throw new Error("Native session pool closed");
+        await session.qualifyRecovery();
+      } catch (error: unknown) {
+        await session.stop(new CanonicalCliError("startup"));
+        throw error;
+      }
+    },
     async runTurn(turn: ClaudeNativeSessionTurnOptions): Promise<void> {
       if (closing || !turn.sourceFingerprint || turn.sourceFingerprint.length > 512) throw new Error("Native session unavailable");
       const key = sessionKey(turn.input); let session = sessions.get(key);
+      if (restoring.has(key) || session?.qualifyingRecovery) throw new Error("Native session busy");
       const resume = nativeRecord(turn.input.resumeState)?.sessionId;
+      if (turn.requireProtectedSession) {
+        if (!session || typeof resume !== "string" || !session.hasProtectedSession(resume)) throw new Error("Native protected session unavailable");
+        if (session.fingerprint !== turn.sourceFingerprint) {
+          await session.stop();
+          throw new Error("Native protected session unavailable");
+        }
+      }
       if (session && (session.fingerprint !== turn.sourceFingerprint || !resume || resume !== session.sessionId)) {
         if (turn.input.nativeScheduled) {
           if (turn.input.nativeScheduled.sessionId === session.sessionId && turn.input.nativeScheduled.sourceRunId === session.lastInput.runId) await session.stop();
@@ -370,7 +506,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         await session.stop(); session = undefined;
       }
       if (!session) {
-        if (turn.input.nativeScheduled || sessions.size >= 160) throw new Error("Native session unavailable");
+        if (turn.input.nativeScheduled || sessions.size + restoring.size >= 160) throw new Error("Native session unavailable");
         session = new Session(turn); sessions.set(key, session);
       }
       await session.bind(turn);
@@ -381,14 +517,15 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     },
     async retireIdle(input: Pick<CanonicalProviderRunInput, "owner" | "chatId">) {
       if (closing) throw new Error("Native session pool closed");
-      const session = sessions.get(sessionKey(input));
-      if (session?.phase) throw new Error("Native session busy");
+      const key = sessionKey(input), session = sessions.get(key);
+      if (restoring.has(key) || session?.phase || session?.qualifyingRecovery) throw new Error("Native session busy");
       await session?.stop();
     },
-    async close() {
-      closing = true; const results = await Promise.allSettled([...sessions.values()].map(session => session.stop()));
+    async close(onHandoff?: ConfirmedHandoff) {
+      closing = true;
+      const results = await Promise.allSettled([...sessions.values()].map(session => session.stopForHandoff(onHandoff)));
       if (results.some(result => result.status === "rejected")) throw new Error("Native process cleanup unconfirmed");
     },
   };
 }
-export type ClaudeNativeSessionPool = ReturnType<typeof createClaudeNativeSessionPool>;
+export type ClaudeNativeSessionPool = Omit<ReturnType<typeof createClaudeNativeSessionPool>, "restoreIdle">;
