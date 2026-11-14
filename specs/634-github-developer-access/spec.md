@@ -142,6 +142,43 @@ available. Recheck status after returning from Terminal.
 Retry failed status, permission, or setup checks from the card. An unavailable
 Settings setup shows a recoverable error on the selected computer.
 
+## Native Mobile Settings parity (ENG-379)
+
+Settings → Connect Apps exposes **GitHub Developer**, which opens the native
+Settings detail screen. The direct developer-access route remains valid for
+existing navigation links. Setup stays inside Settings and uses the same
+owner-bound `/api/github/setup` operation as Web/Electron. No Terminal session
+is created. Readiness and operation payloads use the shared contract schemas.
+
+Show Connect or Finish setup only after valid status confirms GitHub CLI is
+installed. Loading, unavailable, and older-computer status must not offer a
+command that cannot run; show Refresh and update recovery. A valid identity
+label up to the shared schema limit must remain readable.
+
+Show a selectable one-time code, Copy, Open GitHub, waiting/finishing state,
+and Cancel. Open only the fixed GitHub device URL through native linking.
+Poll once per second with bounded requests, tolerate two transient polling
+failures, and stop within ten minutes. Refresh canonical readiness on app
+foreground and before failing a missing operation: completed operations may
+expire while GitHub is open. Refresh status after observed success. Failed,
+expired, or cancelled attempts clear the code and allow retry. Navigation,
+unmount, and computer switches discard late results and cancel known attempts
+against the original client, including late start responses. Codes remain
+transient; credentials and SSH keys stay on the selected computer.
+
+| Starting state | Action | Completion | Recovery | Surface / validation |
+| --- | --- | --- | --- | --- |
+| Owner, GitHub CLI installed, incomplete setup | Connect in Settings | Code, Copy, Open GitHub; successful authorization refreshes ready status | Cancel, expiry, polling failure, retry | Native Mobile component/client regressions; dev-client recording required |
+| Status loading, missing CLI, or old status | Open setup screen | No actionable Connect until usable status | Refresh/update copy | Native Mobile regressions; dev-client screenshot required |
+| Setup pending | Navigate away or change computer | No stale code/status or terminal handoff; cancel original attempt | Late start/poll responses ignored | Native Mobile lifecycle regressions |
+
+This delivery changes native mobile only. Existing Web Canvas, Web Desktop,
+Electron Desktop, and Web Mobile renderers keep their shipped ENG-378 flow.
+Their parity is architectural; captures from them do not qualify native mobile.
+Exact-head native dev-client screenshot/recording and PR/Slack evidence remain
+required before review readiness. Public docs remain a separate site-repository
+PR under ENG-380, including this Settings flow.
+
 ## Acceptance And Tests
 
 - Fake-executable tests cover exact login sequencing, cancellation, existing-key delegation, strict SSH verification, identity confirmation/editing, validation, and redaction.

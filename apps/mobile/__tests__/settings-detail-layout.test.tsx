@@ -32,7 +32,7 @@ describe("settings pages", () => {
 
   it("go back to Settings from a back arrow, as a page pushed from it", () => {
     render(<SettingsDetailLayout />);
-    const pages = ["system", "account", "app-settings", "billing", "help"];
+    const pages = ["system", "account", "app-settings", "connect-apps", "developer-access", "billing", "help"];
     const buttons = pages.map(headerButton);
     mockScreens.length = 0;
     render(<>{buttons}</>);
