@@ -35,6 +35,7 @@ import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleF
 import { issueSyncJwt } from './sync-jwt.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { shouldServeContainerPlansFromPlatform } from './substrates/container-plans-route.js';
 import { applyComputeModeHeader, applyUpstreamCredentials, prepareContainerUpstream, stripUpstreamCredentials } from './substrates/container-wake.js';
 import {
   buildPlatformVerificationToken,
@@ -900,6 +901,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
       applyNoStoreHeaders(c);
       return c.text('Matrix OS computer unavailable', 404);
+    }
+    if (shouldServeContainerPlansFromPlatform({ isAppDomain, method: c.req.method, rawUrl: c.req.url,
+      userId: identity.userId, identitySource: identity.source, machine: runningMachine })) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
     const entitlement = runningMachine
       ? await getRuntimeEntitlementDecisionForUser(
