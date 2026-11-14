@@ -3,6 +3,7 @@ import {
   MATRIX_BOT_SELECTION,
   type CanonicalChatDetailResponse,
   type CanonicalChatModelSelection,
+  type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
 import { createContext, use, useCallback, useEffect, type ReactNode } from "react";
 import { useAuth } from "@clerk/clerk-expo";
@@ -16,7 +17,11 @@ import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail"
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { composerChoiceScope, useRememberedComposerChoice } from "@/lib/remembered-composer-choice";
+import {
+  composerChoiceScope,
+  useRememberedComposerChoice,
+  type RememberedComposerChoice,
+} from "@/lib/remembered-composer-choice";
 import { useChatComposer } from "@/lib/use-chat-composer";
 
 import { activeChatRun } from "./chat-screen-state";
@@ -27,6 +32,32 @@ function savedChatExecutionControls(detail: CanonicalChatDetailResponse | null, 
   return canonicalChatExecutionControls({
     chatId: detail.record.chat.id, currentSelection: detail.record.chat.currentSelection, runs: detail.runs,
   });
+}
+
+interface ChatScreenSelectionSources {
+  directBot: boolean;
+  activeChatId: string | null;
+  selectionOverride: CanonicalChatModelSelection | null;
+  /** The model the open chat was last sent with. */
+  saved: CanonicalChatModelSelection | undefined;
+  catalog: CanonicalProviderCatalog | null;
+  remembered: { ready: boolean; choice: RememberedComposerChoice | null };
+}
+
+/**
+ * The model of the chat on screen, and whether it waits for the choice saved
+ * on this phone: a new chat starts on the model last chosen here, so its model
+ * is not known, and nothing is sent, until the phone's storage has been read.
+ */
+function chatScreenSelection({
+  directBot, activeChatId, selectionOverride, saved, catalog, remembered,
+}: ChatScreenSelectionSources): { selection: CanonicalChatModelSelection | null; rememberedPending: boolean } {
+  if (directBot) return { selection: MATRIX_BOT_SELECTION, rememberedPending: false };
+  const chosen = selectionOverride ?? saved;
+  if (chosen) return { selection: chosen, rememberedPending: false };
+  if (activeChatId !== null) return { selection: defaultCatalogSelection(catalog), rememberedPending: false };
+  if (!remembered.ready) return { selection: null, rememberedPending: true };
+  return { selection: newChatSelection(catalog, { remembered: remembered.choice?.selection }), rememberedPending: false };
 }
 
 function useActiveChatState() {
@@ -55,16 +86,11 @@ function useActiveChatState() {
   // Sending only waits when there is no catalog to choose a model from yet:
   // one that is merely being re-checked already gives the selection, and the
   // computer validates that selection when it admits the turn.
-  // A new chat starts on the model last chosen on this phone, so its model is
-  // not known, and nothing is sent, until the phone's storage has been read.
-  const rememberedPending = !directBot && activeChatId === null && selectionOverride === null && !remembered.ready;
+  const { selection, rememberedPending } = chatScreenSelection({
+    directBot, activeChatId, selectionOverride, saved: detail?.record.chat.currentSelection, catalog, remembered,
+  });
   const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending);
   const providerCatalogLoading = !directBot && (catalogPending || rememberedPending);
-  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
-    ?? detail?.record.chat.currentSelection
-    ?? (activeChatId !== null
-      ? defaultCatalogSelection(catalog)
-      : rememberedPending ? null : newChatSelection(catalog, { remembered: remembered.choice?.selection }));
   const { remember } = remembered;
   const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
     setSelectionOverride(chosen);
