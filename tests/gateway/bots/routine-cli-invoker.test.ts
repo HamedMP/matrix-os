@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { createFixedNativeRoutineCliInvoker } from "../../../packages/gateway/src/bots/routine-cli-invoker.js";
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(closers.splice(0).map(close => close())); });
@@ -142,4 +143,28 @@ it("keeps the actual fixed child alive during a host owner decision beyond two m
     expect(settled).toBe(false); expect(issued).toBe(0);
     release(); expect(await result).toHaveProperty("error.code", "permission_denied"); expect(issued).toBe(0);
   } finally { release(); vi.useRealTimers(); await invoker.close(); }
+});
+
+it("caps an unclassified native argv call once the actual child identifies it as a read", async () => {
+  const entered = Promise.withResolvers<AbortSignal>();
+  const reasons: string[] = [];
+  const invoker = createFixedNativeRoutineCliInvoker({ binPath: resolve("packages/sync-client/bin/matrix.mjs"),
+    endpoint: "http://127.0.0.1:1/api/routine-cli/execute", timeoutMs: 1_820_000,
+    authorize: ({ signal }) => new Promise<boolean>(resolve => {
+      signal.addEventListener("abort", () => resolve(false), { once: true });
+      entered.resolve(signal);
+    }),
+    issue: async () => { throw new Error("A stalled read cannot issue"); },
+    cancel: async ({ reason }) => { reasons.push(reason); } });
+  closers.push(invoker.close);
+  vi.useFakeTimers();
+  const now = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
+  const result = invoker.invoke({ args: ["list"] });
+  try {
+    const signal = await entered.promise;
+    await vi.advanceTimersByTimeAsync(37_999); expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(signal.aborted).toBe(true);
+    await expect(result).resolves.toMatchObject({ error: { code: "unavailable" } });
+    expect(reasons).toEqual(["timeout"]);
+  } finally { now.mockRestore(); vi.useRealTimers(); await invoker.close(); }
 });

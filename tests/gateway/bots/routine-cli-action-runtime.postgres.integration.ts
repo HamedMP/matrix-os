@@ -28,7 +28,17 @@ it("actual owner namespaces, source capability lookup, owner HTTP and shared can
     platform: { platformUrl: "https://platform.example.test", handle, machineId, runtimeSlot: "primary", token: buildPlatformVerificationToken(handle, secret) } });
   // The service's only remote operation is actual Platform verification; this fixture replaces network transport, not the verifier.
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => platform.request(new Request(url, init)));
-  runtime.bindCanonical(f.canonical); f.taskDependencies.routineProposals = runtime.proposals;
+  const releaseAdmission = Promise.withResolvers<void>();
+  let admissionStarted = false;
+  runtime.bindCanonical({
+    async admitTurn(...args) {
+      admissionStarted = true;
+      await releaseAdmission.promise;
+      return f.canonical.admitTurn(...args);
+    },
+    enqueueQueuedTurn: f.canonical.enqueueQueuedTurn.bind(f.canonical),
+  });
+  f.taskDependencies.routineProposals = runtime.proposals;
   const source = await runtime.register({ source: { ...context("runtime_actual_owner"), identity: { kind: "terminal_launch", sessionId: "real_fixture_terminal", incarnationId: "inc_1", launchId: "launch_1" },
     issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 240_000).toISOString() }, signal: new AbortController().signal,
     readPolicy: () => ({ live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "actual_fixture_policy" }), validateWithin: async () => true });
@@ -62,11 +72,22 @@ it("actual owner namespaces, source capability lookup, owner HTTP and shared can
   expect((await request(proof as string)).status).toBe(200); expect(await pending).toBe(true);
   const token = (await source.issue({ operation, invocationId: invocation(801), signal })).takeToken();
   expect((await request(proof as string, body, `RoutineCapability ${token}`)).status).toBe(401);
-  const result = await app.request("/api/routine-cli/execute", { method: "POST", headers: { authorization: `RoutineCapability ${token}`, "content-type": "application/json" }, body: JSON.stringify({ operation }) });
-  expect(result.status).toBe(200); expect(await result.json()).toMatchObject({ ok: true, data: { receipt: { disposition: "queued" } } });
-  await f.canonical.drain();
+  const receipt = app.request("/api/routine-cli/execute", { method: "POST", headers: { authorization: `RoutineCapability ${token}`, "content-type": "application/json" }, body: JSON.stringify({ operation }) });
+  try {
+    let response: Response | undefined;
+    void receipt.then(result => { response = result; }, () => {});
+    await expect.poll(() => response?.status, { timeout: 3000 }).toBe(200);
+    expect(await response!.json()).toMatchObject({ ok: true, data: { receipt: { disposition: "queued", requestId: operation.requestId } } });
+    await source.cancel({ invocationId: invocation(801), operation, reason: "finished" });
+    await expect.poll(() => admissionStarted, { timeout: 3000 }).toBe(true);
+    expect(await data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
+  } finally {
+    releaseAdmission.resolve();
+    await Promise.allSettled([receipt]);
+  }
   expect(await data.db.selectFrom("routine_cli_requests").select("owner_id").execute()).toEqual([{ owner_id: scope.ownerId }]);
-  expect(await data.db.selectFrom("bot_tasks").select(["owner_id", "status"]).execute()).toEqual([{ owner_id: scope.ownerId, status: "waiting_person" }]);
+  await expect.poll(() => data.db.selectFrom("bot_tasks").select(["owner_id", "status"]).execute(), { timeout: 3000 })
+    .toEqual([{ owner_id: scope.ownerId, status: "waiting_person" }]);
   expect(await data.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
   expect(await data.db.selectFrom("bot_routines").selectAll().execute()).toHaveLength(0);
   expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);

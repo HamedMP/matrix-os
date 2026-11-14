@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  isRoutineCliMutation, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS,
+  isRoutineCliMutation, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS,
   type RoutineCliOperation, type RoutineCliEnvelope,
 } from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
@@ -97,7 +97,7 @@ export function createRetainedTerminalBinding(options: {
     if (frame.type === "terminal.cancel") { pending.get(frame.actionId)?.controller.abort(); return; }
     if (seen.has(frame.actionId) || seen.size >= 256 || pending.size >= 8) { fence(); return; }
     seen.add(frame.actionId); const action = new AbortController();
-    const timeout = isRoutineCliMutation(frame.operation) ? ROUTINE_CLI_NATIVE_TIMEOUT_MS : ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+    const timeout = isRoutineCliMutation(frame.operation) ? ROUTINE_CLI_NATIVE_TIMEOUT_MS : ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS;
     const signal = AbortSignal.any([controller.signal, action.signal, AbortSignal.timeout(timeout)]);
     const done = dispatch(frame, signal).finally(() => pending.delete(frame.actionId));
     pending.set(frame.actionId, { controller: action, done }); observe(done);

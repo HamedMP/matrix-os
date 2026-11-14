@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { lstat, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
-  isRoutineCliMutation, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS,
+  isRoutineCliMutation, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS,
   RoutineCliOperationSchema, RoutineCliEnvelopeSchema, routineCliResultMatchesOperation,
   type RoutineCliOperation, type RoutineCliEnvelope,
 } from "@matrix-os/contracts/routine-cli";
@@ -44,12 +44,12 @@ export async function createTerminalWriterBroker(options: {
   async function dispatch(client: Client, bytes: string, writer: KernelWriter) {
     client.pending = true;
     const started = Date.now();
-    client.deadline = started + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+    client.deadline = started + 10_000;
     try {
       const operation = RoutineCliOperationSchema.parse(JSON.parse(bytes));
       const actual = await verifyTerminalDescendant(root, writer, options.readProcess);
       if (!actual || Date.now() >= client.deadline || client.controller.signal.aborted || options.signal.aborted) { retire(client); return; }
-      if (isRoutineCliMutation(operation)) client.deadline = started + ROUTINE_CLI_NATIVE_TIMEOUT_MS;
+      client.deadline = started + (isRoutineCliMutation(operation) ? ROUTINE_CLI_NATIVE_TIMEOUT_MS : ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS);
       const result = RoutineCliEnvelopeSchema.parse(await options.execute(operation, actual, client.controller.signal));
       if (client.retired || client.controller.signal.aborted || options.signal.aborted) return;
       if ("ok" in result && !routineCliResultMatchesOperation(operation, result.data)) throw new Error("Terminal result mismatch");

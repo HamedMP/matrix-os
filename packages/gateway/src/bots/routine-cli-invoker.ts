@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, basename } from "node:path";
 import { statSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { routineCliResultMatchesOperation, RoutineCliChildFrameSchema, RoutineCliOperationSchema, RoutineCliEnvelopeSchema, RoutineCliEndpointSchema, RoutineCliTokenSchema,
-  ROUTINE_CLI_REQUEST_TIMEOUT_MS, ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_FRAME_BYTES, ROUTINE_CLI_INPUT_BYTES, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS,
+  ROUTINE_CLI_READ_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_FRAME_BYTES, ROUTINE_CLI_INPUT_BYTES, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS,
   type RoutineCliEnvelope, type RoutineCliOperation, RoutineCliErrorCodeSchema } from "@matrix-os/contracts/routine-cli";
 type OwnerWaitObserver = (waiting: boolean) => void;
 
@@ -35,7 +36,8 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
   const homePath = deps.homePath ?? process.env.HOME;
   if (homePath !== undefined && !isAbsolute(homePath)) throw new Error("Routine CLI home directory unavailable");
   const binPath = deps.binPath, authorize = deps.authorize, issue = deps.issue, cancel = deps.cancel;
-  const timeoutMs = deps.timeoutMs ?? 15000;
+  const timeoutMs = deps.timeoutMs ?? 15_000;
+  const readTimeoutMs = Math.min(deps.timeoutMs ?? ROUTINE_CLI_READ_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_READ_INVOCATION_TIMEOUT_MS);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > ROUTINE_CLI_INVOCATION_TIMEOUT_MS) throw new Error("Routine CLI timeout invalid");
   let closed = false;
   const active = new Set<{ stop(reason: Reason): void; done: Promise<RoutineCliEnvelope> }>(); // Max8, per-child timeout, exit cleanup and explicit close drain.
@@ -53,10 +55,11 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
       let reason: Reason = "finished", stopping = false, finished = false, capabilitySent = false, requests = 0, stdoutBytes = 0, stderrBytes = 0;
       const stdout: Buffer[] = [];
       const args = input.args.includes("--json") ? input.args : [...input.args, "--json"];
+      const started = performance.now();
       const child = spawn(process.execPath, [binPath, "routines", ...args], { cwd, stdio: ["pipe", "pipe", "pipe", "ipc"], serialization: "json",
         env: { PATH: process.env.PATH, HOME: homePath, TMPDIR: process.env.TMPDIR, TZ: process.env.TZ, MATRIX_NO_TELEMETRY: "1" } });
       let termTimer: ReturnType<typeof setTimeout> | undefined, killTimer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = setTimeout(() => stop("timeout"), operation && !mutating(operation) ? Math.min(timeoutMs, ROUTINE_CLI_REQUEST_TIMEOUT_MS) : timeoutMs);
+      let deadline = setTimeout(() => stop("timeout"), operation && !mutating(operation) ? readTimeoutMs : timeoutMs);
       const aborted = () => stop("aborted"); input.signal?.addEventListener("abort", aborted, { once: true });
       const fallback = (): RoutineCliEnvelope => mutating(operation) ? { v: 1, ok: true, data: { kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true } } : failure("unavailable");
       stop = why => {
@@ -93,6 +96,14 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
         const parsed = RoutineCliChildFrameSchema.safeParse(value);
         if (!parsed.success || expected?.success && JSON.stringify(expected.data) !== JSON.stringify(parsed.data.operation)) { stop("protocol_error"); return; }
         operation = frozen(parsed.data.operation);
+        // Some native transports supply argv only. Apply their read deadline once
+        // the fixed child identifies a read, preserving time spent on startup.
+        if (!expected && !mutating(operation) && readTimeoutMs !== timeoutMs) {
+          clearTimeout(deadline);
+          const remaining = readTimeoutMs - (performance.now() - started);
+          if (remaining <= 0) { stop("timeout"); return; }
+          deadline = setTimeout(() => stop("timeout"), remaining);
+        }
         const request = Object.freeze({ operation, invocationId, signal: controller.signal });
         try {
           const allowed = await authorize(input.onOwnerWait ? Object.freeze({ ...request, onOwnerWait: input.onOwnerWait }) : request);

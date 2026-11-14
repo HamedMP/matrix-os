@@ -32,7 +32,7 @@ it.each(["success", "abort"])("source client works without AbortSignal.any on th
       requestId: "de000000-0000-4000-8000-000000000100" }, controller.signal)).resolves.toMatchObject({ kind: "unknown", requestId: "de000000-0000-4000-8000-000000000100" });
     else expect(await executeRoutineOperation(LIST, controller.signal)).toEqual(RESULT);
     expect(timeout).toHaveBeenCalledTimes(outcome === "abort" ? 2 : 1);
-    expect(timeout).toHaveBeenLastCalledWith(10_000);
+    expect(timeout).toHaveBeenLastCalledWith(outcome === "abort" ? 10_000 : 30_000);
     expect(getEventListeners(deadline.signal, "abort")).toHaveLength(0);
     expect(fetch).toHaveBeenCalledOnce(); expect(process.send).toHaveBeenCalledOnce();
     expect(process.listenerCount("message")).toBe(messages); expect(process.listenerCount("disconnect")).toBe(disconnects);
@@ -130,12 +130,14 @@ it("keeps a fresh ten-second HTTP deadline after a long owner wait", async () =>
   } finally { await cli.close(); }
 });
 
-it("does not give read operations an extra HTTP budget after a slow handoff", async () => {
+it("shares the 30-second read deadline between a slow handoff and HTTP", async () => {
   vi.useFakeTimers(); const cli = waitingClient(LIST, true);
   try {
     await vi.advanceTimersByTimeAsync(9_000); cli.frame(CAPABILITY); await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(20_999); expect(cli.settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
     await expect(cli.result).rejects.toHaveProperty("code", "unavailable"); expect(cli.fetch).toHaveBeenCalledOnce();
+    expect(cli.fetch.mock.calls[0]![1].signal!.aborted).toBe(true);
   } finally { await cli.close(); }
 });
 

@@ -5,9 +5,12 @@ const ref = z.string().min(1).max(512), rpcId = z.union([z.string().min(1).max(1
 const callSchema = z.object({ id: rpcId, method: z.literal("item/tool/call"), params: z.object({
   threadId: ref, turnId: ref, callId: ref, tool: z.literal("matrix_routines"), namespace: z.null().optional(), arguments: RoutineArgvSchema,
 }).strict() }).passthrough();
+// Standalone native resource. Match the read transport and native mutation limits in routine-cli-ipc.ts.
+const READ_TRANSPORT_TIMEOUT_MS = 50_000;
+const NATIVE_MUTATION_TIMEOUT_MS = 1_830_000;
 const unavailable = JSON.stringify({ v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } });
 export const CODEX_ROUTINE_TOOL = Object.freeze({ type: "function", name: "matrix_routines", deferLoading: false,
-  description: "Run the fixed Matrix routines CLI. Mutations require an explicit original request UUID. Reconcile unknown outcomes with request and the same UUID; never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
+  description: "Run the fixed Matrix routines CLI. Mutations require a request UUID. For a queued proposal, use request with that UUID while this turn is live to observe pending approval. Reconcile unknown outcomes by the same UUID and never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
   inputSchema: { type: "object", additionalProperties: false, required: ["args"], properties: {
     args: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 2048 } },
     stdin: { type: "string", maxLength: 32768 },
@@ -119,7 +122,7 @@ export function createCodexRoutineChannel(options) {
       if (calls.size >= 128 || [...calls.values()].filter(entry => !entry.done).length >= 8) { result(raw.id, unavailable); return true; }
       const mutation = ["propose", "pause", "resume", "archive"].includes(params.arguments.args[0]);
       const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], mutation, done: false };
-      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, mutation ? 1_830_000 : 10_000); entry.timer.unref();
+      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, mutation ? NATIVE_MUTATION_TIMEOUT_MS : READ_TRANSPORT_TIMEOUT_MS); entry.timer.unref();
       if (!send({ type: "shim.call", ...binding, callId: params.callId, actionId, intent: params.arguments })) complete(entry, routineUnknownResult(entry.intent));
       return true;
     },

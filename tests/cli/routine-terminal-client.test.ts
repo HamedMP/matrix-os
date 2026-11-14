@@ -67,7 +67,7 @@ describe("Terminal mutation uncertainty", () => {
     let settled = false; void result.then(() => { settled = true; }, () => { settled = true; });
     try {
       await entered;
-      await vi.advanceTimersByTimeAsync(kind === "list" ? 9_999 : 1_800_000);
+      await vi.advanceTimersByTimeAsync(kind === "list" ? 49_999 : 1_800_000);
       expect(settled).toBe(false); expect(b.requests).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(kind === "list" ? 1 : 30_000);
       if (kind === "list") await expect(result).rejects.toHaveProperty("code", "unavailable");

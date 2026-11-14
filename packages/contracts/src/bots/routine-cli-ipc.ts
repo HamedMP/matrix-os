@@ -1,16 +1,18 @@
 import { z } from "zod/v4";
 import { RoutineCliErrorCodeSchema, RoutineCliOperationSchema, RoutineCliResultSchema, type RoutineCliOperation, type RoutineCliResult } from "#bots/routine-cli";
-/** Human approval is a separate bounded phase; these are host constants, never CLI/env options.
- * The original source lease may end sooner. Keep API/read work at ten seconds. */
+/** The original source lease may end a human wait sooner. Transport headroom
+ * covers child startup and result/cancellation drain without resetting the read clock. */
 export const ROUTINE_CLI_OWNER_WAIT_MS = 30 * 60_000;
-export const ROUTINE_CLI_REQUEST_TIMEOUT_MS = 10_000;
-// Ten seconds for fixed-child startup plus ten for the post-capability request.
-export const ROUTINE_CLI_INVOCATION_TIMEOUT_MS = ROUTINE_CLI_OWNER_WAIT_MS + 2 * ROUTINE_CLI_REQUEST_TIMEOUT_MS;
-// Native callbacks additionally allow the existing bounded child/cancellation drain.
-export const ROUTINE_CLI_NATIVE_TIMEOUT_MS = ROUTINE_CLI_INVOCATION_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+export const ROUTINE_CLI_MUTATION_HTTP_TIMEOUT_MS = 10_000;
+export const ROUTINE_CLI_READ_TIMEOUT_MS = 30_000;
+const TRANSPORT_HEADROOM_MS = 10_000;
+export const ROUTINE_CLI_READ_INVOCATION_TIMEOUT_MS = ROUTINE_CLI_READ_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
+export const ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS = ROUTINE_CLI_READ_INVOCATION_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
+export const ROUTINE_CLI_INVOCATION_TIMEOUT_MS = ROUTINE_CLI_OWNER_WAIT_MS + ROUTINE_CLI_MUTATION_HTTP_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
+export const ROUTINE_CLI_NATIVE_TIMEOUT_MS = ROUTINE_CLI_INVOCATION_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
 // Bounded headroom for a managed mutation's broker checkpoint and socket reply.
-export const ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS = ROUTINE_CLI_NATIVE_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
-export const ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS = ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+export const ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS = ROUTINE_CLI_NATIVE_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
+export const ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS = ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS + TRANSPORT_HEADROOM_MS;
 export const ROUTINE_CLI_EXECUTION_PATH = "/api/routine-cli/execute";
 export const ROUTINE_CLI_AUTH_SCHEME = "RoutineCapability";
 export const ROUTINE_CLI_INPUT_BYTES = 24 * 1024;

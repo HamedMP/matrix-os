@@ -80,7 +80,7 @@ it("does not lend a human-wait budget to native read calls", async () => {
     const read = f.sent.find(frame => frame.type === "shim.call")!;
     f.parent.emit("message", { type: "host.owner_wait", admissionId: read.admissionId, actionId: read.actionId, waiting: true });
     expect(f.channel.isWaitingForOwner(read.callId, read.turnId)).toBe(false);
-    await vi.advanceTimersByTimeAsync(9_999); expect(f.native).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(49_999); expect(f.native).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1); expect(f.native).toHaveLength(1);
     expect(f.sent.filter(frame => frame.type === "shim.cancel")).toHaveLength(1);
     expect(f.native[0]!.result.success).toBe(false);

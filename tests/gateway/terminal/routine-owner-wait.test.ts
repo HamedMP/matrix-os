@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
-  ROUTINE_CLI_OWNER_WAIT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS, type RoutineCliEnvelope, type RoutineCliOperation,
+  ROUTINE_CLI_OWNER_WAIT_MS, type RoutineCliEnvelope, type RoutineCliOperation,
 } from "@matrix-os/contracts/routine-cli";
 import type { TerminalLaunchChannel } from "../../../packages/gateway/src/background-launch-channel.js";
 import type { FixedNativeRoutineCliDependencies } from "../../../packages/gateway/src/bots/routine-cli-invoker.js";
@@ -144,9 +144,9 @@ it("delivers a mutation receipt after an owner answer near the end of the 30-min
   expect(f.replies).toEqual([receipt]);
 }, 45_000);
 
-it("keeps a stalled read bounded by the short request budget", async () => {
+it("keeps a stalled read beyond 10 seconds and retires it at the transport bound", async () => {
   const f = await fixture({ operation: "list" });
-  await vi.advanceTimersByTimeAsync(ROUTINE_CLI_REQUEST_TIMEOUT_MS - 5);
+  await vi.advanceTimersByTimeAsync(49_995);
   expect(f.signal.aborted).toBe(false);
   await vi.advanceTimersByTimeAsync(10);
   expect(f.signal.aborted).toBe(true);

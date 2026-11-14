@@ -4,7 +4,6 @@ import { BOT_INPUT_MAX_ATTACHMENTS, type CanonicalChatMessagePart } from "@matri
 import { BotBrokerError } from "../../../packages/bot-runtime/src/broker-client.js";
 import { createConnection, Socket } from "node:net";
 import { sql } from "kysely";
-import { ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { ChatSteerDeliveryUnknownError } from "../../../packages/gateway/src/chat/steering-delivery.js";
 import { RoutineCliError } from "../../../packages/gateway/src/bots/routine-cli-errors.js";
 import { afterEach, expect, it, vi } from "vitest";
@@ -50,8 +49,8 @@ it("keeps an exact managed mutation pending beyond the old broker deadline witho
     await expect(f.approve(decision, chatId, admitted.run.id)).resolves.toBeDefined();
     await expect.poll(() => f!.result(), { timeout: 5000 }).toMatchObject({ ok: true, content: [{ text: expect.stringContaining(requestId) }] });
     await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute()).toEqual([{ chat_id: TARGET_A.chatId }]);
-    expect(deadlines).toHaveBeenCalledWith(ROUTINE_CLI_NATIVE_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS);
-    const replyBound = ROUTINE_CLI_NATIVE_TIMEOUT_MS + 2 * ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+    expect(deadlines).toHaveBeenCalledWith(1_840_000);
+    const replyBound = 1_850_000;
     expect(socketDeadlines.mock.calls.filter(([ms]) => ms === replyBound)).toHaveLength(2);
     deadlines.mockRestore();
     socketDeadlines.mockClear();
@@ -273,9 +272,17 @@ it.each(["tool completed", "parent ended"])("committed managed receipt survives 
     if (decision.type !== "approval.requested") throw new Error("Missing owner decision");
     await f.approve(decision, chatId, admitted.run.id);
     await expect.poll(() => entered, { timeout: 5000 }).toBe(true);
-    await expect.poll(() => f!.result(), { timeout: 5000 }).toMatchObject({ ok: true });
+    await expect.poll(() => {
+      const result = f!.result();
+      return result?.ok ? JSON.parse(result.content.map(part => part.text).join("")) : result;
+    }, { timeout: 5000 }).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+    expect(await f.data.db.selectFrom("bot_interactions").select("interaction_id").execute()).toEqual([]);
     expect((await f.data.db.selectFrom("routine_cli_requests").select("source_invocation").executeTakeFirstOrThrow()).source_invocation).not.toHaveProperty("accepted");
-    if (ending === "parent ended") { f.f.registry.cancelInference(f.bindings[0]!); expect(sourceSignal?.aborted).toBe(true); }
+    if (ending === "parent ended") {
+      // Terminate the registered source after the original receipt and before the target claim.
+      f.f.registry.cancelInference(f.bindings[0]!);
+      expect(sourceSignal?.aborted).toBe(true);
+    }
     release();
     if (ending === "tool completed") {
       await expect.poll(async () => await f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 5000 }).toEqual([{ chat_id: TARGET_A.chatId }]);
