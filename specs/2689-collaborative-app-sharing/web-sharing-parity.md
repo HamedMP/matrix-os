@@ -16,7 +16,7 @@ On web, an owner shares an app with their organization from the same **Publish a
   - Each shell supplies only its authenticated API, its organization source, its button, and its roster read. Electron keeps `useConnection` + `useDesktopOrganizations` + `useDesktopOrganizationDirectory`. Web uses `shellApi` + `useCollaborationOrganization` + `useShellOrganizations` (only under a Clerk organization state) + `useShellOrganizationDirectory`. No desktop store is imported by web.
 - **Navigation.** Web passes the same `organizationSharing: { summary, title, content }` to `AppSiteSharePanel`. Overview row, details view, focus, motion, and Escape behavior are therefore identical to Electron.
 - **Removed bar.** `AppViewer` no longer renders readiness or sharing controls. Two scoped window events (`owner-app-sharing-events.ts`, keyed by app slug) preserve its wiring:
-  - `build-changed`: the viewer reloaded the app (file change or session refresh). An open popover re-reads readiness (the former `buildEpoch`).
+  - `build-changed`: the viewer reloaded the app (file change or session refresh). An open popover re-reads readiness and the share (the former `buildEpoch`), so an active share that now needs a recheck stops showing green. A rebuild during a create or stop waits for the confirmed write, then re-reads; a failed write keeps its safe error.
   - `share-changed`: a create or stop was confirmed. The viewer refreshes the owner bridge's collaboration context without replacing the iframe.
 - **Scope.** The popover content is keyed by gateway URL (runtime), owner actor (account), and app slug. Any change remounts it with a fresh read. The shared hook's generation guards still drop late responses within one mount.
 - **Status distinctness.**
@@ -37,7 +37,7 @@ There are no new endpoints. The existing runtime-bound owner routes are unchange
 | Owner, private ready app | Details, Share with your org | Active status; preflight then create with current revisions | Blocked build: corrective action, button disabled | Preflight + token | Same |
 | Owner, needs recheck | Check collaboration | Recheck posted for the shared org | — | Revision-checked | Same |
 | Owner, shared | Stop sharing | "Sharing stopped"; viewer refreshes app context | Stop conflict: hook re-reads then asks to retry | Share + binding revisions | Same; `tests/shell/collaborative-app-viewer.test.tsx` |
-| Owner, popover open | App rebuilds | Readiness re-read | Other app's rebuild ignored | Slug-scoped event | `web-app-org-sharing`, `app-viewer-collaborative-readiness` |
+| Owner, popover open | App rebuilds | Readiness and share re-read; recheck offered when needed | Other app's rebuild ignored; a pending write keeps its result | Slug-scoped event; write-aware share read | `web-app-org-sharing`, `app-viewer-collaborative-readiness`, `collaborative-app-readiness` |
 | Owner | App/account changes mid-read | New app's state only | Late response discarded | Keyed remount + generations | `web-app-org-sharing` |
 | Owner, self-hosted (no Clerk) | Open Publish app | Invite/Publish work; org row explains no organization | — | No Clerk call | `web-app-org-sharing` |
 | Owner on phone | Tap Publish app in header | Same popover | — | — | Web Mobile: `web-app-org-sharing` |
