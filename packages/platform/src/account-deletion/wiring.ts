@@ -8,6 +8,8 @@ import { createAccountDeletionAdapters, type AccountDeletionAdapterOptions } fro
 import { createAccountDeletionObjectStore, type AccountDeletionObjectStore } from './storage.js';
 import { listAccountExportFiles, exportOwnerPlatformData } from './export.js';
 import { createAccountDeletionService } from './service.js';
+import { wrapPlatformDb } from '../database/transaction-scope.js';
+import { recordSiteRecipientLifecycle } from '../sites/account-lifecycle.js';
 import { registerNativeAppleAuthorization } from './native-apple.js';
 import { withAccountDeletionAdmission } from './admission.js';
 import { hashAccountDeletionOwner } from './repository.js';
@@ -53,7 +55,11 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  serviceId:env.APPLE_SERVICES_ID!,nativeClientId:env.APPLE_NATIVE_CLIENT_ID!}:undefined,
  twilio:env.TWILIO_ACCOUNT_SID&&env.TWILIO_AUTH_TOKEN?{accountSid:env.TWILIO_ACCOUNT_SID,authToken:env.TWILIO_AUTH_TOKEN,
  publicBaseUrl:env.PLATFORM_PUBLIC_URL??'https://app.matrix-os.com'}:undefined});
- const service=createAccountDeletionService({db:input.db.kysely,adapters,secret});
+ const service=createAccountDeletionService({db:input.db.kysely,adapters,secret,
+  recipientLifecycle: (transaction,event) => recordSiteRecipientLifecycle(
+   wrapPlatformDb(input.db.kysely,transaction,Promise.resolve(),async()=>undefined,true),
+   {...event,secret}),
+ });
  const worker=input.backgroundWorkersEnabled===false?undefined:startAccountDeletionWorker({service});
  return {service,
  async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor,sitesStore);return {

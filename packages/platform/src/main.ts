@@ -4,6 +4,8 @@ import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lo
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createPreviewPairRoutes, type PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
+import { recordSiteRecipientLifecycle } from './sites/account-lifecycle.js';
+import { terminateEmailClerkSessionForMatrixSignOut } from './sites/email-viewer-sessions.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
@@ -409,6 +411,12 @@ export function createApp(deps: {
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
     registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization,
+    recordRecipientLifecycle: appEnv.ACCOUNT_DELETION_SECRET
+      ? event => recordSiteRecipientLifecycle(db, { ...event, secret: appEnv.ACCOUNT_DELETION_SECRET })
+      : undefined,
+    recordSessionTermination: appEnv.ACCOUNT_DELETION_SECRET
+      ? sessionId => terminateEmailClerkSessionForMatrixSignOut(db, sessionId,
+        appEnv.ACCOUNT_DELETION_SECRET!) : undefined,
     newRequestsEnabled:appEnv.ACCOUNT_DELETION_ENABLED==='true'}));
 
   // Health check (unauthenticated)

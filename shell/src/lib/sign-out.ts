@@ -9,10 +9,6 @@ export function getSignInRedirectUrl(): string {
 }
 
 export async function clearMatrixAppSession(): Promise<void> {
-  clearChatNavigationScopes();
-  clearBrowserChatNavigationCache();
-  // S06 / T034: direct collaboration sessions end with the actor's app session.
-  closeShellCollaborationSessions();
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
@@ -23,12 +19,18 @@ export async function clearMatrixAppSession(): Promise<void> {
     });
     if (!response.ok) {
       console.warn("[auth] Matrix app session clear returned non-OK status", response.status);
+      throw new Error("Matrix app session clear failed");
     }
   } catch (error: unknown) {
     console.warn("[auth] Matrix app session clear failed", error instanceof Error ? error.name : typeof error);
+    throw new Error("Sign-out is temporarily unavailable. Try again.");
   } finally {
     window.clearTimeout(timeoutId);
   }
+  clearChatNavigationScopes();
+  clearBrowserChatNavigationCache();
+  // S06 / T034: direct collaboration sessions end with the actor's app session.
+  closeShellCollaborationSessions();
 }
 
 export function isTimeoutError(error: unknown): boolean {

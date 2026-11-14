@@ -1,5 +1,4 @@
 "use client";
-import { clearBrowserChatNavigationCache, clearChatNavigationScopes } from "@matrix-os/ui";
 
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
 import {
@@ -23,6 +22,7 @@ import { Settings } from "@/components/Settings";
 import type { ComputerSetupSelection } from "@/components/settings/sections/BillingPanel";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
+import { clearMatrixAppSession } from "@/lib/sign-out";
 import {
   ADD_COMPUTER_ONBOARDING_PATH,
   RUNTIME_MANAGER_PATH,
@@ -289,6 +289,7 @@ export function RuntimeManager({
   const [computerName, setComputerName] = useState(initialFlow.draft?.name ?? "");
   const [nameError, setNameError] = useState<string | null>(null);
   const [safeError, setSafeError] = useState<string | null>(null);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [journey, setJourney] = useState<JourneyState | null>(null);
   const [journeyRefresh, setJourneyRefresh] = useState(0);
   const errorRetryActionRef = useRef<ErrorRetryAction>("provision");
@@ -575,11 +576,13 @@ export function RuntimeManager({
   }
 
   async function handleSignOut(): Promise<void> {
-    clearChatNavigationScopes();clearBrowserChatNavigationCache();
+    setSignOutError(null);
     try {
-      await fetchJson("/api/auth/app-session", { method: "DELETE" });
+      await clearMatrixAppSession();
     } catch (error: unknown) {
       console.warn("[runtime-manager] app session cleanup failed", error instanceof Error ? error.name : typeof error);
+      setSignOutError("Sign-out is temporarily unavailable. Try again.");
+      return;
     }
     try {
       await signOut({ redirectUrl: "/sign-in" });
@@ -749,6 +752,7 @@ export function RuntimeManager({
             >
               <LogOutIcon className="size-3.5" aria-hidden="true" />
             </button>
+            {signOutError ? <p role="alert" className="max-w-48 text-xs text-destructive">{signOutError}</p> : null}
           </div>
         </section>
       </div>

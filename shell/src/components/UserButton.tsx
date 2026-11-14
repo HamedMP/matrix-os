@@ -157,6 +157,7 @@ function MountedUserButton({
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const { status: organizationStatus } = useCollaborationOrganization();
 
   if (!isLoaded || !isSignedIn) {
@@ -176,8 +177,16 @@ function MountedUserButton({
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutError(null);
     const redirectUrl = getSignInRedirectUrl();
-    await clearMatrixAppSession();
+    try {
+      await clearMatrixAppSession();
+    } catch (error: unknown) {
+      console.warn("[auth] Matrix app session sign-out failed", error instanceof Error ? error.name : typeof error);
+      setSigningOut(false);
+      setSignOutError("Sign-out is temporarily unavailable. Try again.");
+      return;
+    }
     try {
       await clerkSignOutWithTimeout(signOut, redirectUrl);
       window.location.replace(redirectUrl);
@@ -232,9 +241,9 @@ function MountedUserButton({
         >
           {isMenubar ? <TopBarAccountContent
             label={user?.username ? `@${user.username}` : displayName}
-            signingOut={signingOut} onSignOut={handleSignOut} onOpenSettings={onOpenSettings}
+            signingOut={signingOut} signOutError={signOutError} onSignOut={handleSignOut} onOpenSettings={onOpenSettings}
           /> : <LegacyAccountContent avatarUrl={avatarUrl} displayName={displayName}
-            secondary={secondary} signingOut={signingOut} onSignOut={handleSignOut}
+            secondary={secondary} signingOut={signingOut} signOutError={signOutError} onSignOut={handleSignOut}
             onOpenSettings={onOpenSettings} onManageAccount={() => clerk.openUserProfile()}
             showSharedWithMe={showSharedWithMe && organizationStatus !== "none"} />}
         </DropdownMenuPrimitive.Content>
@@ -243,8 +252,8 @@ function MountedUserButton({
   );
 }
 
-function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, onSignOut, onOpenSettings, onManageAccount, showSharedWithMe }: {
-  avatarUrl: string | null; displayName: string; secondary: string | null; signingOut: boolean;
+function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, signOutError, onSignOut, onOpenSettings, onManageAccount, showSharedWithMe }: {
+  avatarUrl: string | null; displayName: string; secondary: string | null; signingOut: boolean; signOutError: string | null;
   onSignOut(): Promise<void>; onManageAccount(): void; onOpenSettings?: (section: AccountSettingsSection) => void;
   showSharedWithMe: boolean;
 }) {
@@ -352,6 +361,7 @@ function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, o
             )}
             {signingOut ? "Signing out…" : "Sign out"}
           </DropdownMenuPrimitive.Item>
+          {signOutError ? <p role="alert" className="px-2.5 pt-1 text-xs text-destructive">{signOutError}</p> : null}
 
           <p className="px-2.5 pb-0.5 pt-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
             Secured by Clerk
@@ -359,8 +369,8 @@ function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, o
   </>;
 }
 
-function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: {
-  label: string; signingOut: boolean; onSignOut(): Promise<void>;
+function TopBarAccountContent({ label, signingOut, signOutError, onSignOut, onOpenSettings }: {
+  label: string; signingOut: boolean; signOutError: string | null; onSignOut(): Promise<void>;
   onOpenSettings?: (section: AccountSettingsSection) => void;
 }) {
   const row = "flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] outline-none data-[highlighted]:bg-foreground/5";
@@ -375,6 +385,7 @@ function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: 
     <DropdownMenuPrimitive.Item className={`${row} data-[disabled]:opacity-60`} disabled={signingOut} aria-busy={signingOut} onSelect={event => { event.preventDefault(); void onSignOut(); }}>
       {signingOut ? <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" /> : <LogOutIcon className="size-3.5" aria-hidden="true" />}{signingOut ? "Signing out…" : "Log out"}
     </DropdownMenuPrimitive.Item>
+    {signOutError ? <p role="alert" className="px-2 py-1 text-xs text-destructive">{signOutError}</p> : null}
   </>;
 }
 
