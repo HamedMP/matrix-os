@@ -36,7 +36,7 @@ The stack is 502 files, +61.8k/-5.1k against a merge-base 563 commits behind `ma
 
 ## Journey
 
-1. The owner presses the voice button (mini chat, Chat app, or dock) or an app calls the voice API. The client asks the gateway for a voice ticket for a Chat id. With no Chat id, the gateway uses the owner's most recent Matrix Pi Chat, or creates one on the `matrix_pi_default` route.
+1. The owner presses the voice button (mini chat, Chat app, or dock) or an app calls the voice API. The client asks the gateway for a voice ticket for a Chat id. With no Chat id, the gateway uses the owner's most recent generic Chat: not in any project (`project_id IS NULL`), not shared (`collaboration IS NULL`), on the Matrix Pi route. If none exists it creates one on the `matrix_pi_default` route.
 2. The client opens `/ws/voice/live?ticket=...`. The gateway opens Gemini Live through the platform relay, restores the last turns of that Chat as context, and streams audio both ways (16 kHz in, 24 kHz out).
 3. Each finished user utterance and each spoken reply is journaled as an ordinary message in that Chat, so typed chat, WhatsApp and the Chat list all see the same history.
 4. When the owner asks for work ("build an app", "open a terminal", "send Ali a message"), Gemini calls `delegate_task`. The Matrix Pi port submits a normal turn to the same Chat (or a linked child Chat for long tasks) through the canonical orchestrator. Matrix Pi runs it with its full owner tool set. Gemini keeps talking while it runs and reports completion from `check_task` / task events.
@@ -100,7 +100,7 @@ Each layer stays under 3,000 additions and 50 files. Tests come over with the co
 
 Voice onboarding (opt-in), an interview API any app can start, company employee interviews with group analysis (spec 120 US-11), Native Mobile and Web Mobile voice.
 
-## Open questions
+## Decisions
 
-- Default Chat when none is given: most recent Matrix Pi Chat (proposed) or always a fresh one?
-- Is a voice-specific narrower grant needed on top of Matrix Pi authority, or is confirmation on outward actions enough?
+- 2026-11-14 (requester): with no Chat id, voice joins the most recent generic Chat (not in any project), as specified in Journey step 1.
+- 2026-11-14 (requester): no voice-specific grant. Voice uses Matrix Pi authority as is; outward actions require the owner's confirmation.
