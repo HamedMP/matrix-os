@@ -116,9 +116,9 @@ Estimated effort (engineer-days): Track A 16–21, Track B 11–16, Track C 15�
 **A9 · Coding-agent threads join the router** (gateway)
 - Fold `coding-agents/attention-notifications.ts` in as a thread-store sink, so Codex, Pi and OpenCode threads, including those bound to Terminal tabs, get the same waits, preferences and dedupe as chats.
 - The thread sink ignores threads bound to a canonical run, which keeps one notification per request.
-- The reconciler also reads pending approvals and inputs from the thread store's attention list.
+- The reconciler also reads pending approvals and inputs from the thread store's attention list, with its own cutoff: only thread requests created after the A9 schema version was applied. The legacy bridge already pushed earlier ones without an event row, so they never alert twice.
 - The legacy bridge only runs when the kill switch is off.
-- Done when: a standalone Codex thread approval pushes once after 15 s, and a Codex run inside a canonical chat still pushes once. Evidence: Native Mobile.
+- Done when: a standalone Codex thread approval pushes once after 15 s, a Codex run inside a canonical chat still pushes once, and a thread approval the legacy bridge pushed before A9 is not pushed again after it. Evidence: Native Mobile.
 
 **A10 · Resolve and dismiss events** (gateway): on resolution, send a silent `dismiss` push with the resolved ids, and include a `badge` count in every push. Delete the legacy coding-agent bridge and its kill-switch branch. Evidence: N/A.
 
@@ -592,7 +592,7 @@ Shutdown:
 | --- | --- | --- |
 | Router queue | 1,000 items with priority eviction. Approvals and questions that do not fit go to the owner table, not memory. One worker, at most 4 concurrent evaluations. | A6 |
 | Scheduler | 50 due events per tick, a tick every 2 s, at most 3 push attempts per event. Each tick also picks up at most 50 never-evaluated `open` rows older than 15 s and runs the ladder for them once. | A6 |
-| Reconciler | Once at startup, then every 30 s. At most 50 pending requests per pass, and only those created after the A6 schema version was applied. | A6 |
+| Reconciler | Once at startup, then every 30 s. At most 50 pending requests per pass, and only those created after the A6 schema version was applied (A9 for coding-agent thread requests). | A6, A9 |
 | Owner tables | Hourly sweep deletes events and attempts older than 30 days, tokens unseen for 30 days, and devices unseen for 90 days | A2, A6, B1 |
 | Mobile read marking | One in-flight request per chat, debounced 2 s | A7 |
 | Presence registry | 64 sockets per owner (oldest evicted); a 30 s sweep removes records stale for over 60 s; cleared on shutdown | B1 |
