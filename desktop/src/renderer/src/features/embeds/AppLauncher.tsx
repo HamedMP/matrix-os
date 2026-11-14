@@ -1,5 +1,5 @@
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
-import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppDisplayName } from "@matrix-os/ui/collaborative-app-sharing";
+import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppPresentation } from "@matrix-os/ui/collaborative-app-sharing";
 import { useSharedLauncherApps } from "../collaboration/useSharedLauncherApps";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
@@ -26,15 +26,16 @@ type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
   | { type: "os-view"; key: string; name: string; mode: OsViewMode }
   | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
-  | { type: "shared"; key: string; name: string; target: CollaborativeAppDirectoryItem }
+  | { type: "shared"; key: string; name: string; iconUrl: string | null; target: CollaborativeAppDirectoryItem }
   | { type: "installed"; key: string; name: string; app: MatrixApp };
 
 function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
+  // Every URL change resets the failure, so a new digest -- or one that failed earlier -- loads again.
   const [failed, setFailed] = useState(false);
-  const prev = useRef<string | null>(null);
-  if (prev.current !== url) {
-    prev.current = url;
-    if (failed) setFailed(false);
+  const [previousUrl, setPreviousUrl] = useState(url);
+  if (url !== previousUrl) {
+    setPreviousUrl(url);
+    setFailed(false);
   }
   if (url && !failed) {
     return (
@@ -55,6 +56,11 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
       {name.charAt(0).toUpperCase()}
     </div>
   );
+}
+
+function sharedLauncherPresentation(target: CollaborativeAppDirectoryItem, platformHost: string) {
+  const { name, iconUrl } = sharedAppPresentation(target, platformHost || undefined);
+  return { name, iconUrl: platformHost ? iconUrl ?? null : null };
 }
 
 function BundledIcon({ url, fallback }: { url?: string; fallback: ReactNode }) {
@@ -184,13 +190,15 @@ export default function AppLauncher({
 
   const filtered = useMemo(() => {
     const allEntries: LauncherEntry[] = [...entries, ...shared.items.map((target) => ({
-      type: "shared" as const, key: `shared:${target.scopeId}`, name: sharedAppDisplayName(target.appId), target,
+      // The renderer is cross-origin; the trusted core authenticates artwork requests to the platform.
+      type: "shared" as const, key: `shared:${target.scopeId}`, target,
+      ...sharedLauncherPresentation(target, platformHost),
     }))];
     const q = query.trim().toLowerCase();
     if (!q) return allEntries;
     return allEntries.filter((entry) => entry.name.toLowerCase().includes(q)
       || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q)));
-  }, [entries, shared.items, query]);
+  }, [entries, shared.items, query, platformHost]);
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
@@ -350,7 +358,7 @@ export default function AppLauncher({
                   onClick={() => open(entry)}
                 >
                   {entry.type === "shared" ? <span className="relative inline-flex">
-                    <AppIcon url={null} name={entry.name} large={presentation === "launchpad"} /><SharedAppBadge />
+                    <AppIcon url={entry.iconUrl} name={entry.name} large={presentation === "launchpad"} /><SharedAppBadge />
                   </span> : entry.type === "create" ? (
                     <span
                       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
