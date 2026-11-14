@@ -38,12 +38,15 @@ const ConnectionsQuerySchema = z.object({
 const EmptyBodySchema = z.object({}).strict();
 const MAX_CONNECTIONS_PER_MEMBER = 100;
 /**
- * Serialized block ids per connections response. The shared client refuses
- * bodies over 2 MiB, and a full page (50 members x 500 blocks of up to 253
- * characters) can exceed that, so a page ends early, at a member boundary,
- * once its blocks pass this budget. One member at the cap (~128 KiB) always fits.
+ * Serialized member entries per connections response. The shared client
+ * refuses bodies over 2 MiB, and a full page (50 members x 500 blocks of up to
+ * 253 characters, plus connection metadata) can exceed that, so a page ends
+ * early, at a member boundary, once its members pass this budget. One member
+ * at the caps (~250 KiB) always fits. Saved server definitions ride on every
+ * page and are held under `ORG_MCP_MAX_POLICY_CHARS` (768 KiB) at write time,
+ * so members + definitions + envelope stay under 2 MiB.
  */
-const MAX_PAGE_BLOCK_CHARS = 1024 * 1024;
+const MAX_PAGE_MEMBER_CHARS = 1024 * 1024;
 
 type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 503;
 
@@ -69,13 +72,13 @@ function unavailable(c: Context, action: string, error?: unknown) {
   return safeJson(c, "Organization connections unavailable", 503);
 }
 
-/** The leading members whose blocks fit the budget; never fewer than one. */
-function fitMembersToBlockBudget<T extends { actorId: string }>(members: readonly T[], blocks: ReadonlyMap<string, readonly string[]>): T[] {
+/** The leading members whose serialized entries fit the budget; never fewer than one. */
+function fitMembersToPageBudget<T>(members: readonly T[]): T[] {
   let chars = 0;
   for (let index = 0; index < members.length; index++) {
-    // JSON cost of each id: the id plus its quotes and separator.
-    for (const id of blocks.get(members[index]!.actorId) ?? []) chars += id.length + 3;
-    if (chars > MAX_PAGE_BLOCK_CHARS && index > 0) return members.slice(0, index);
+    // JSON cost of each entry plus its array separator.
+    chars += JSON.stringify(members[index]).length + 1;
+    if (chars > MAX_PAGE_MEMBER_CHARS && index > 0) return members.slice(0, index);
   }
   return [...members];
 }
@@ -141,41 +144,41 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
       const page = await admin.organizations.repository.listMembers(admin.organizationId, {
         limit: query.data.limit, ...(afterActorId ? { afterActorId } : {}),
       });
-      const pageActorIds = page.members.map(member => member.actorId);
-      const blocks = await admin.repository.listMemberBlocks(admin.organizationId, pageActorIds);
-      const members = fitMembersToBlockBudget(page.members, blocks);
-      const nextActorId = members.length < page.members.length ? members[members.length - 1]!.actorId : page.nextActorId;
-      const actorIds = members.map(member => member.actorId);
-      const [connections, servers, profiles] = await Promise.all([
+      const actorIds = page.members.map(member => member.actorId);
+      const [blocks, connections, servers, profiles] = await Promise.all([
+        admin.repository.listMemberBlocks(admin.organizationId, actorIds),
         admin.repository.listConnections(actorIds),
         admin.repository.listServerDefinitions(admin.organizationId),
         options.profiles ? options.profiles.resolveMemberProfiles(actorIds) : Promise.resolve(new Map()),
       ]);
       const lastUsed = await admin.repository.lastUsedByConnection(admin.organizationId, connections.map(row => row.connectionId));
+      const entries = page.members.map(member => {
+        const profile = profiles.get(member.actorId);
+        const email = member.email ?? profile?.emailAddress;
+        return {
+          actorId: member.actorId,
+          displayName: (member.displayName ?? profile?.displayName ?? member.actorId).slice(0, 200),
+          ...(email ? { emailAddress: email } : {}),
+          connections: connections.filter(row => row.actorId === member.actorId).slice(0, MAX_CONNECTIONS_PER_MEMBER).map(row => {
+            const keys = orgMcpServerDefIdsForUrl(row.url);
+            return {
+              connectionId: row.connectionId,
+              name: row.name.slice(0, 200) || "MCP server",
+              host: keys.host ?? "unknown",
+              serverDefIds: keys.serverDefIds.slice(0, 8),
+              status: row.status,
+              enabled: row.enabled,
+              connectedAt: row.connectedAt.toISOString(),
+              lastUsedAt: lastUsed.get(row.connectionId)?.toISOString() ?? null,
+            };
+          }),
+          blockedServerDefIds: blocks.get(member.actorId) ?? [],
+        };
+      });
+      const members = fitMembersToPageBudget(entries);
+      const nextActorId = members.length < entries.length ? members[members.length - 1]!.actorId : page.nextActorId;
       const body = OrgMcpConnectionsPageSchema.parse({
-        members: members.map(member => {
-          const profile = profiles.get(member.actorId);
-          const email = member.email ?? profile?.emailAddress;
-          return {
-            actorId: member.actorId,
-            displayName: (member.displayName ?? profile?.displayName ?? member.actorId).slice(0, 200),
-            ...(email ? { emailAddress: email } : {}),
-            connections: connections.filter(row => row.actorId === member.actorId).slice(0, MAX_CONNECTIONS_PER_MEMBER).map(row => {
-              const keys = orgMcpServerDefIdsForUrl(row.url);
-              return {
-                connectionId: row.connectionId,
-                name: row.name.slice(0, 200) || "MCP server",
-                host: keys.host ?? "unknown",
-                serverDefIds: keys.serverDefIds.slice(0, 8),
-                status: row.status,
-                enabled: row.enabled,
-                connectedAt: row.connectedAt.toISOString(),
-                lastUsedAt: lastUsed.get(row.connectionId)?.toISOString() ?? null,
-              };
-            }),
-            blockedServerDefIds: blocks.get(member.actorId) ?? [],
-          };
-        }),
+        members,
         servers: servers.map(server => ({ ...server, updatedAt: server.updatedAt.toISOString() })),
         ...(nextActorId ? { nextCursor: encodeCursor(nextActorId) } : {}),
       });
@@ -219,6 +222,10 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
       if (saved === "saved") return mutationResult(c);
       if (saved === "mode_required") return safeJson(c, "Invalid request", 422);
       if (saved === "cap_reached") return safeJson(c, "Too many governed servers", 409);
+      if (saved === "policy_too_large") {
+        c.header("Cache-Control", "no-store");
+        return c.json({ error: "Organization server policies are too large", code: "policy_too_large" }, 409);
+      }
       return unavailable(c, "server policy update");
     } catch (error: unknown) {
       return unavailable(c, "server policy update", error);

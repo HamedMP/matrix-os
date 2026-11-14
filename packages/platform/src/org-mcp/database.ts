@@ -12,7 +12,10 @@
  * content-free usage tables.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
-import { ORG_MCP_CONNECTIONS_PAGE_LIMIT, ORG_MCP_MAX_MEMBER_BLOCKS, type OrgMcpServerMode, type OrgMcpToolPolicy } from "@matrix-os/contracts";
+import {
+  ORG_MCP_CONNECTIONS_PAGE_LIMIT, ORG_MCP_MAX_MEMBER_BLOCKS, ORG_MCP_MAX_POLICY_CHARS, orgMcpServerDefinitionChars,
+  type OrgMcpServerMode, type OrgMcpToolPolicy,
+} from "@matrix-os/contracts";
 import { runPlatformMigration } from "../migration-runner.js";
 import { MCP_USAGE_ROLLUP_SCOPE, type McpUsageDatabase } from "../mcp-usage/database.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
@@ -93,7 +96,7 @@ export interface OrgMcpPolicyRow {
 }
 
 export interface OrgMcpPolicyRows { rows: OrgMcpPolicyRow[]; truncated: boolean }
-export type OrgMcpPutResult = "saved" | "cap_reached" | "mode_required" | "organization_missing";
+export type OrgMcpPutResult = "saved" | "cap_reached" | "policy_too_large" | "mode_required" | "organization_missing";
 
 export interface OrgMcpConnectionRow {
   actorId: string; connectionId: string; name: string; url: string; status: string; enabled: boolean; connectedAt: Date;
@@ -175,8 +178,11 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
 
     /**
      * Partial upsert. The organization row is locked first, so concurrent
-     * creates in one org serialize and the 500-definition cap cannot be
-     * overshot; an existing definition keeps every field the input omits.
+     * writes in one org serialize and neither the 500-definition cap nor the
+     * serialized policy budget can be overshot; an existing definition keeps
+     * every field the input omits. A write that would grow the saved policies
+     * past `ORG_MCP_MAX_POLICY_CHARS` is refused, so every saved state still
+     * fits the connections response; a write that does not grow them always applies.
      */
     async putServerDefinition(input: {
       organizationId: string; serverDefId: string; mode?: OrgMcpServerMode; defaultToolPolicy?: OrgMcpToolPolicy;
@@ -186,9 +192,28 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
         const organization = await trx.selectFrom("organizations").select("organization_id")
           .where("organization_id", "=", input.organizationId).forUpdate().executeTakeFirst();
         if (!organization) return "organization_missing";
-        const existing = await trx.selectFrom("org_mcp_server_definitions").select("server_def_id")
-          .where("organization_id", "=", input.organizationId).where("server_def_id", "=", input.serverDefId)
-          .forUpdate().executeTakeFirst();
+        // Bounded by the definition cap and, for writes through this path, by the policy budget.
+        const rows = await trx.selectFrom("org_mcp_server_definitions")
+          .select(["server_def_id", "mode", "default_tool_policy", "tool_overrides"])
+          .where("organization_id", "=", input.organizationId).execute();
+        let otherChars = 0;
+        let existing: ReturnType<typeof definitionFromRow> | undefined;
+        for (const row of rows) {
+          const definition = definitionFromRow(row);
+          if (definition.serverDefId === input.serverDefId) existing = definition;
+          else otherChars += orgMcpServerDefinitionChars(definition);
+        }
+        if (!existing && !input.mode) return "mode_required";
+        if (!existing && rows.length >= MAX_SERVER_DEFINITIONS) return "cap_reached";
+        const next = {
+          serverDefId: input.serverDefId,
+          mode: input.mode ?? existing!.mode,
+          defaultToolPolicy: input.defaultToolPolicy ?? existing?.defaultToolPolicy ?? "allow",
+          toolOverrides: input.toolOverrides ?? existing?.toolOverrides ?? {},
+        };
+        const nextChars = otherChars + orgMcpServerDefinitionChars(next);
+        const currentChars = otherChars + (existing ? orgMcpServerDefinitionChars(existing) : 0);
+        if (nextChars > ORG_MCP_MAX_POLICY_CHARS && nextChars > currentChars) return "policy_too_large";
         if (existing) {
           await trx.updateTable("org_mcp_server_definitions").set({
             ...(input.mode ? { mode: input.mode } : {}),
@@ -198,14 +223,9 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
           }).where("organization_id", "=", input.organizationId).where("server_def_id", "=", input.serverDefId).execute();
           return "saved";
         }
-        if (!input.mode) return "mode_required";
-        const count = await trx.selectFrom("org_mcp_server_definitions").select(eb => eb.fn.countAll<number>().as("count"))
-          .where("organization_id", "=", input.organizationId).executeTakeFirstOrThrow();
-        if (Number(count.count) >= MAX_SERVER_DEFINITIONS) return "cap_reached";
         await trx.insertInto("org_mcp_server_definitions").values({
-          organization_id: input.organizationId, server_def_id: input.serverDefId, mode: input.mode,
-          default_tool_policy: input.defaultToolPolicy ?? "allow",
-          tool_overrides: JSON.stringify(input.toolOverrides ?? {}), updated_by: input.updatedBy,
+          organization_id: input.organizationId, server_def_id: input.serverDefId, mode: next.mode,
+          default_tool_policy: next.defaultToolPolicy, tool_overrides: JSON.stringify(next.toolOverrides), updated_by: input.updatedBy,
         }).execute();
         return "saved";
       });
