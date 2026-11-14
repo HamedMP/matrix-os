@@ -3,6 +3,7 @@ import { TextInput } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectRoute from "../app/(drawer)/(tabs)/(chats)/projects/[projectId]";
+import { composerChoices } from "@/lib/remembered-composer-choice";
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: async () => "session-token" }),
@@ -51,8 +52,9 @@ const input = () => screen.getByLabelText("Message Matrix");
 const sendButton = () => screen.getByRole("button", { name: "Send message" });
 
 describe("project route", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mockRoutes.resetProjectRoute();
+    await composerChoices.forget();
     jest.spyOn(console, "warn").mockImplementation(() => {});
   });
 
@@ -425,6 +427,44 @@ describe("project route", () => {
 
       await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(opus));
       expect(requests.createChat).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, expect.objectContaining({ currentSelection: opus }));
+    });
+
+    it("starts on the model of the project's most recently active chat, as last used on any device", async () => {
+      const usedOpus = { ...landing, chat: { ...landing.chat, currentSelection: opus, activityAt: new Date().toISOString() } };
+      requests.fetchProjectChats.mockResolvedValue({ items: [caseStudy, usedOpus] });
+      await mockRoutes.renderProjectRoute(<ProjectRoute />);
+
+      await waitFor(() => expect(modelPickerProps()?.selection).toEqual(opus));
+    });
+
+    it("holds the model and sends back until the project's chats have been read", async () => {
+      const read = pendingRequest<{ items: unknown[] }>();
+      requests.fetchProjectChats.mockReturnValue(read.promise);
+      await renderProject();
+      await waitFor(() => expect(modelPickerProps()?.catalog).toEqual(catalog));
+
+      expect(modelPickerProps()).toMatchObject({ catalogLoading: true, selection: null });
+      fireEvent.changeText(input(), "Draft the case study");
+      expect(sendButton().props.accessibilityState).toMatchObject({ disabled: true });
+
+      const usedOpus = { ...landing, chat: { ...landing.chat, currentSelection: opus } };
+      await act(async () => read.resolve({ items: [usedOpus] }));
+
+      await waitFor(() => expect(modelPickerProps()).toMatchObject({ catalogLoading: false, selection: opus }));
+      expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false });
+    });
+
+    it("remembers a model chosen here for the next new chat in a project with no chats", async () => {
+      const first = await renderPortfolio();
+      act(() => modelPickerProps().onSelectionChange(opus));
+      first.unmount();
+      shell.modelPicker.mockClear();
+
+      requests.fetchProjectChats.mockResolvedValue({ items: [] });
+      await mockRoutes.renderProjectRoute(<ProjectRoute />, { projectId: mockRoutes.admin.id });
+
+      await waitFor(() => expect(modelPickerProps()).toMatchObject({ catalogLoading: false, selection: opus }));
+      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(TOKEN, GATEWAY_URL, mockRoutes.admin.id, expect.anything());
     });
 
     it("leaves the person where they are when they left the project before the chat was started", async () => {

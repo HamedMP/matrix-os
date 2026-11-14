@@ -8,6 +8,7 @@ import { ActiveChatScreen } from "../components/chat/ActiveChatScreen";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
 import { MicIcon } from "../components/ui/icons";
+import { composerChoices } from "../lib/remembered-composer-choice";
 
 import { flat } from "./ui-test-utils";
 
@@ -69,6 +70,10 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   }),
 }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ chats: mockChats }) }));
+// The model sheet shows the Matrix credit balance, which is read from the server.
+jest.mock("@/lib/queries/use-matrix-credit-balance", () => ({
+  useMatrixCreditBalance: () => ({ label: null, isPending: false, isError: false }),
+}));
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
   useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: false, isFetching: false }),
 }));
@@ -176,6 +181,7 @@ afterEach(() => {
   mockRetryFailed = false;
   mockRetried = undefined;
   mockChatReadFailed = false;
+  void composerChoices.forget();
 });
 
 describe("chat screen: new chat", () => {
@@ -254,6 +260,31 @@ describe("chat screen: new chat", () => {
 
     expect(screen.getByText("Matrix AI · Sonnet 5")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add to message" })).toBeTruthy();
+  });
+
+  it("starts a new chat on the model and effort last chosen on this phone for this computer", () => {
+    composerChoices.remember("user_a:amin:primary", {
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    });
+    composerChoices.remember("user_a:other:primary", { selection: { instanceId: "matrix_pi_default", model: "retired" } });
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: null,
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    }), expect.anything());
+  });
+
+  it("remembers on this phone the model and effort chosen in the composer", () => {
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Model" }));
+    fireEvent.press(screen.getByRole("button", { name: "Low" }));
+
+    expect(composerChoices.choice("user_a:amin:primary")).toEqual({
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    });
   });
 
   it("sends a new chat with no project and the catalog's default modes", () => {
