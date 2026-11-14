@@ -81,6 +81,7 @@ import {
   findAppByName,
 } from "./desktop/desktop-app-routing";
 import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
+import { DockMinimizedWindows, DockSharedAppWindows } from "./desktop/DockWindowIcons";
 import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
 import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
@@ -1010,47 +1011,25 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
             );
           })()}
 
+          <DockSharedAppWindows
+            windows={windows}
+            apps={apps}
+            iconSize={dock.iconSize}
+            tooltipSide={tooltipSide}
+            isHorizontal={isHorizontal}
+            onActivate={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
+            onClose={wmCloseWindow}
+          />
+
           {/* Minimized windows — each gets its own dock icon with entrance animation */}
-          {(() => {
-            const minimizedWindows = windows.filter((w) => w.minimized);
-            if (minimizedWindows.length === 0) return null;
-            const appIconMap = new Map(apps.map((a) => [a.path, a.iconUrl]));
-            const getIconForWindow = (winPath: string) => {
-              const basePath = winPath.split(":")[0];
-              return appIconMap.get(basePath) ?? appIconMap.get(winPath);
-            };
-            return (
-              <div className={isHorizontal
-                ? "flex flex-row items-center gap-1"
-                : "flex flex-col items-center gap-1"
-              } style={{ order: 2 }}>
-                <div
-                  className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"}
-                  style={{ animation: "dock-sep-in 300ms ease-out both" }}
-                />
-                {minimizedWindows.map((win, i) => (
-                  <div
-                    key={`min-${win.id}`}
-                    style={{
-                      animation: `dock-icon-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1) ${100 + i * 60}ms both`,
-                    }}
-                  >
-                    <DockIcon
-                      name={win.title}
-                      active={false}
-                      onClick={() => {
-                        wmRestoreAndFocusWindow(win.id);
-                        focusCanvasWindow(win.id);
-                      }}
-                      iconSize={Math.round(dock.iconSize * 0.8)}
-                      tooltipSide={tooltipSide}
-                      iconUrl={getIconForWindow(win.path)}
-                    />
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+          <DockMinimizedWindows
+            windows={windows}
+            apps={apps}
+            iconSize={dock.iconSize}
+            tooltipSide={tooltipSide}
+            isHorizontal={isHorizontal}
+            onActivate={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
+          />
 
           {/* Bold divider between user apps / minimized and the system
               section below. This is the visible "main vs other apps"

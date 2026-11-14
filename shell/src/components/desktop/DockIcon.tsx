@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { SharedAppBadge } from "@matrix-os/ui/collaborative-app-sharing";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { useDockMagnification } from "./useDockMagnification";
@@ -28,9 +29,12 @@ export function DockIcon({
   onRename,
   onQuit,
   canQuit,
+  shared = false,
 }: {
   name: string;
   active: boolean;
+  /** An owner's shared app: marked with the launcher badge. */
+  shared?: boolean;
   onClick: () => void;
   iconSize?: number;
   tooltipSide?: "left" | "right" | "top" | "bottom";
@@ -53,6 +57,7 @@ export function DockIcon({
     <button
       ref={buttonRef}
       type="button"
+      aria-label={name}
       onClick={onClick}
       className={`relative flex items-center justify-center rounded-xl hover:scale-105 active:scale-95 transition-all ${dockArtworkClass(Boolean(showImage))}`}
       style={{ width: iconSize, height: iconSize }}
@@ -65,6 +70,7 @@ export function DockIcon({
           {initial}
         </span>
       )}
+      {shared ? <SharedAppBadge /> : null}
       {active && (
         <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
       )}
