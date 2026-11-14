@@ -102,12 +102,12 @@ screens and actions look, move and feel.
 
 ## Risks and limits
 
-- Layers 1 to 4 are JavaScript and can ship as an over-the-air update.
-  Layer 5 adds a native module, so it bumps the app version to 0.2.8, and
-  updates from then on reach only 0.2.8 builds. Merged together, all five
-  layers reach people with the 0.2.8 store build; merging layers 1 to 4
-  first lets them reach 0.2.7 installs over the air. A dark native splash
-  image also needs a store build and is not part of this.
+- Layers 1 to 4 were JavaScript and shipped over the air. Layer 5 adds a
+  native module (`react-native-keyboard-controller` 1.22.7, the version Expo
+  SDK 58 pins), so it moves the app version from 0.2.10 to 0.2.11, and
+  updates from then on reach only 0.2.11 builds. Layer 5 reaches people with
+  the 0.2.11 store build. A dark native splash image also needs a store build
+  and is not part of this.
 - Moving the agent chat and new-agent screens out of the tabs (so the tab bar
   leaves with them) changes navigation structure and is left for its own
   change.
