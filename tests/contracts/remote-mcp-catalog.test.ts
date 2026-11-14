@@ -6,6 +6,8 @@ import {
   remoteMcpCatalogEntry,
   remoteMcpCatalogTop,
   needsRegisteredOAuthClient,
+  isRemoteMcpCatalogEntryConnectable,
+  remoteMcpCatalogEntryForUrl,
 } from "@matrix-os/contracts/remote-mcp-catalog";
 import { validateCustomMcpUrl } from "../../packages/gateway/src/integrations/custom-mcp/security.js";
 import { GRANOLA_PRESET } from "../../packages/platform/src/granola-integration.js";
@@ -57,6 +59,47 @@ describe("remote MCP catalog", () => {
     expect(needsRegisteredOAuthClient(remoteMcpCatalogEntry("slack")!)).toBe(true);
     expect(needsRegisteredOAuthClient(remoteMcpCatalogEntry("linear")!)).toBe(false);
     expect(needsRegisteredOAuthClient(remoteMcpCatalogEntry("context7")!)).toBe(false);
+  });
+
+  // Fault: a registered-client preset without pinned endpoints lets vendor-advertised
+  // metadata redirect the code exchange (and the Matrix client secret) to another host.
+  it("pins broker-acceptable OAuth endpoints for every connectable registered-client entry", async () => {
+    for (const entry of REMOTE_MCP_CATALOG) {
+      if (entry.auth !== "oauth_registered_client") {
+        expect(entry.registeredOAuth, entry.id).toBeUndefined();
+        continue;
+      }
+      if (entry.deferred) continue;
+      const pinned = entry.registeredOAuth;
+      expect(pinned, entry.id).toBeDefined();
+      for (const endpoint of [pinned!.authorizationEndpoint, pinned!.tokenEndpoint, pinned!.resource, ...(pinned!.revocationEndpoint ? [pinned!.revocationEndpoint] : [])]) {
+        await expect(validateCustomMcpUrl(endpoint, resolvePublic), `${entry.id} ${endpoint}`).resolves.toBeDefined();
+      }
+      expect(new URL(pinned!.resource).origin, entry.id).toBe(new URL(entry.url).origin);
+    }
+  });
+
+  // Fault: a Google preset renders a Connect button although restricted-scope verification is pending.
+  it("hides deferred Google Workspace entries from the connect flow", () => {
+    for (const id of ["google_drive", "gmail", "google_calendar"]) {
+      expect(remoteMcpCatalogEntry(id)?.deferred, id).toBe(true);
+      expect(isRemoteMcpCatalogEntryConnectable(remoteMcpCatalogEntry(id)!, () => true), id).toBe(false);
+    }
+    expect(REMOTE_MCP_CATALOG.filter(entry => entry.deferred).map(entry => entry.id).sort()).toEqual(["gmail", "google_calendar", "google_drive"]);
+  });
+
+  it("offers a registered-client entry only when its Matrix app is configured", () => {
+    const github = remoteMcpCatalogEntry("github")!;
+    expect(isRemoteMcpCatalogEntryConnectable(github, () => false)).toBe(false);
+    expect(isRemoteMcpCatalogEntryConnectable(github, id => id === "github")).toBe(true);
+    expect(isRemoteMcpCatalogEntryConnectable(remoteMcpCatalogEntry("linear")!, () => false)).toBe(true);
+  });
+
+  // Fault: a pasted vendor URL that differs only by normalization misses its pinned OAuth app.
+  it("matches a pasted endpoint to its entry after URL normalization only", () => {
+    expect(remoteMcpCatalogEntryForUrl("https://MCP.box.com")?.id).toBe("box");
+    expect(remoteMcpCatalogEntryForUrl("https://mcp.box.com/other")).toBeUndefined();
+    expect(remoteMcpCatalogEntryForUrl("not a url")).toBeUndefined();
   });
 
   it("returns undefined for unknown or prototype ids", () => {

@@ -34,6 +34,17 @@ export {
   parseGithubDeveloperAccessStatus,
 } from "./integrations/GithubDeveloperAccess.js";
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
+export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
+export { McpConnectionInventory, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export {
+  REMOTE_MCP_DEPARTMENT_LABELS,
+  buildMcpConnectionInventory,
+  customMcpErrorMessage,
+  filterRemoteMcpPresets,
+  parseRemoteMcpCatalog,
+  type McpInventoryEntry,
+  type RemoteMcpPreset,
+} from "./integrations/remote-mcp-presets.js";
 export type {
   GithubDeveloperAccessClient,
   GithubDeveloperAccessStatus,

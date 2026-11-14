@@ -62,7 +62,7 @@ export function authorizationMetadataCandidates(issuer: string): string[] {
 
 /** Compare the live registration mode to the catalog; missing metadata is never a pass. */
 export async function evaluateRegistration(
-  entry: Pick<RemoteMcpCatalogEntry, "auth" | "url">,
+  entry: Pick<RemoteMcpCatalogEntry, "auth" | "url" | "registeredOAuth">,
   status: number,
   challenge: string | undefined,
   getJson: JsonGetter,
@@ -79,8 +79,15 @@ export async function evaluateRegistration(
     return { kind: "unverified", status, reason: "oauth_metadata_unavailable" };
   }
   const dcr = typeof (metadata as { registration_endpoint?: unknown }).registration_endpoint === "string";
-  if (dcr === (entry.auth === "oauth_dcr")) return { kind: "verified", status, dcr };
-  return { kind: "failed", status, reason: dcr ? "dcr_now_available" : "dcr_missing" };
+  if (dcr !== (entry.auth === "oauth_dcr")) return { kind: "failed", status, reason: dcr ? "dcr_now_available" : "dcr_missing" };
+  const pinned = entry.registeredOAuth;
+  if (pinned) {
+    const live = metadata as { authorization_endpoint?: unknown; token_endpoint?: unknown };
+    if (live.authorization_endpoint !== pinned.authorizationEndpoint || live.token_endpoint !== pinned.tokenEndpoint) {
+      return { kind: "failed", status, reason: "pinned_endpoint_drift" };
+    }
+  }
+  return { kind: "verified", status, dcr };
 }
 
 export async function probeEntry(

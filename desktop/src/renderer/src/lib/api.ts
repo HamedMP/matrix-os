@@ -127,7 +127,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         const body = (await response.clone().json()) as { error?: unknown; code?: unknown };
         const botPath = /^\/api\/chat-agents(?:[/?]|$)/.test(path);
         const err = body.error ?? (botPath ? body : undefined);
-        detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err);
+        // Some routes pair a human `error` string with a top-level safe `code` slug.
+        detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err) ?? safeErrorDetail(body.code);
         if (botPath) reason = botCreationFailureReason(body);
       } catch (error: unknown) {
         console.warn("[api] Error response metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
