@@ -63,7 +63,7 @@ test('uploaded tests cannot read operational secrets, write the mirror or contac
   }
 });
 
-test('candidate preview consumes its own read-only mirror and sees both edits without restarting', async () => {
+test('registered preview hostname reaches its read-only mirror and sees both edits without restarting', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'devstack-preview-ro-')));
   const network = 'devstack-' + randomUUID();
   const name = 'devstack-preview-' + randomUUID();
@@ -72,12 +72,15 @@ test('candidate preview consumes its own read-only mirror and sees both edits wi
     await writeFile(join(root, 'value.txt'), 'Baseline');
     await exec('docker', ['network', 'create', '--internal', network], { timeout: 10_000 });
     const { stdout } = await exec('docker', ['image', 'inspect', 'node:24-bookworm-slim', '--format', '{{index .RepoDigests 0}}'], { timeout: 10_000 });
-    const args = await buildStage3PreviewPlan({ mirror: root, identity: await identifyStage3Target(root), image: stdout.trim(), name, network,
+    const image = stdout.trim();
+    const config = { mirror: root, identity: await identifyStage3Target(root), image, name, network, handle: 'publisher-preview' };
+    const args = await buildStage3PreviewPlan({ ...config,
       command: ['node', '-e', `
         const fs = require('node:fs'), assert = require('node:assert/strict');
         assert.equal(process.env.PLATFORM_SECRET, undefined);
         assert.throws(() => fs.writeFileSync('/source/value.txt', 'bad'), { code: 'EROFS' });
         const processState = 73;
+        require('node:http').createServer((req, res) => res.end(processState + ' ' + fs.readFileSync('/source/value.txt', 'utf8'))).listen(3000, '0.0.0.0');
         fs.watch('/source', () => console.log(processState + ' ' + fs.readFileSync('/source/value.txt', 'utf8')));
         console.log('preview-ready');
       `] });
@@ -94,12 +97,23 @@ test('candidate preview consumes its own read-only mirror and sees both edits wi
       assert.fail('preview did not observe ' + expected + ': ' + output);
     };
     await observe('preview-ready');
+    // RegisteredRuntimeEndpoint.host is matrixos-<handle>, independent of the
+    // container's purpose-specific name. Exercise Docker DNS and HTTP itself.
+    const { stdout: response } = await exec('docker', ['run', '--rm', '--network', network,
+      '--read-only', '--user', `${process.getuid()}:${process.getgid()}`, '--cap-drop=ALL', '--security-opt=no-new-privileges',
+      '--entrypoint=/usr/bin/env', image, '-i', 'PATH=/usr/local/bin:/usr/bin:/bin',
+      'node', '-e', "fetch('http://matrixos-publisher-preview:3000/', {signal:AbortSignal.timeout(3000)}).then(async r => {if(!r.ok)process.exit(1); console.log(await r.text());}).catch(error => {console.error(error.cause?.code ?? error.name); process.exit(2);})"],
+    { timeout: 10_000, maxBuffer: 8192 });
+    assert.equal(response.trim(), '73 Baseline');
     for (const value of ['First', 'Second', 'Baseline']) {
       await writeFile(join(root, 'value.txt'), value);
       await observe('73 ' + value);
     }
     const { stdout: inspection } = await exec('docker', ['inspect', name, '--format', '{{json .Mounts}}'], { timeout: 5000 });
     assert.ok(JSON.parse(inspection).some(mount => mount.Destination === '/source' && mount.RW === false));
+    for (const handle of [undefined, 'a', 'bad.host', 'unsafe\nname']) {
+      await assert.rejects(buildStage3PreviewPlan({ ...config, handle, command: ['node', '-e', 'process.exit(0)'] }), /Invalid isolated/);
+    }
   } finally {
     await exec('docker', ['rm', '-f', name], { timeout: 10_000 }).catch(error => {
       if (!error.stderr?.includes('No such container')) throw error;

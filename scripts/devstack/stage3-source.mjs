@@ -29,12 +29,13 @@ export async function identifyStage3Target(path) {
 }
 
 export const identifyStage3Source = identifySourceWorktree;
+export const isStage3Handle = value => matches(handle, value);
 
 function validateBinding(binding) {
   if (!matches(ownerId, binding?.owner) || !matches(slug, binding.runtime) || !matches(slug, binding.worktree) ||
       !matches(digest, binding.generation) || !Number.isSafeInteger(binding.expiresAt) || binding.expiresAt <= 0 ||
       !matches(machineId, binding.source?.computerId) || !canonicalPath(binding.source.root) ||
-      !matches(digest, binding.source.identity) || !matches(handle, binding.target?.handle) ||
+      !matches(digest, binding.source.identity) || !isStage3Handle(binding.target?.handle) ||
       !canonicalPath(binding.target.root) || !matches(digest, binding.target.identity) ||
       !matches(digest, binding.target.containerId)) throw new Error('Invalid Stage 3 source enrollment.');
 }

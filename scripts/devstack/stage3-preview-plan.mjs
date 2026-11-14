@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { identifyStage3Target } from './stage3-source.mjs';
+import { identifyStage3Target, isStage3Handle } from './stage3-source.mjs';
 
 const exec = promisify(execFile);
 
@@ -8,12 +8,13 @@ const exec = promisify(execFile);
  * join the approved private network; no host port or operational mount exists.
  * The reviewed image owns dependency resolution and sends build output to /tmp.
  */
-export async function buildStage3PreviewPlan({ mirror, identity, image, name, network, command }) {
+export async function buildStage3PreviewPlan({ mirror, identity, image, name, network, handle, command }) {
   const invalid = () => new Error('Invalid isolated DevStack preview configuration.');
   if (typeof mirror !== 'string' || /[,\r\n]/.test(mirror) || await identifyStage3Target(mirror) !== identity
     || typeof image !== 'string' || !/^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(image)
     || typeof name !== 'string' || !/^devstack-preview-[a-z0-9-]{1,48}$/.test(name)
     || typeof network !== 'string' || !/^devstack-[a-z0-9-]{1,48}$/.test(network)
+    || !isStage3Handle(handle)
     || !Array.isArray(command) || !command.length || command.length > 57
     || command.some(arg => typeof arg !== 'string' || !arg || arg.length > 4096 || arg.includes('\0'))
     || process.getuid() === 0) throw invalid();
@@ -23,7 +24,7 @@ export async function buildStage3PreviewPlan({ mirror, identity, image, name, ne
   });
   if (stdout.trim() !== 'true') throw invalid();
   const uid = process.getuid(), gid = process.getgid();
-  return ['create', '--pull=never', '--name', name, '--network', network,
+  return ['create', '--pull=never', '--name', name, '--network', network, '--network-alias', `matrixos-${handle}`,
     '--read-only', '--user', `${uid}:${gid}`, '--cap-drop=ALL', '--security-opt=no-new-privileges',
     '--pids-limit=256', '--memory=2g', '--cpus=2', '--ulimit', 'core=0',
     '--mount', `type=bind,src=${mirror},dst=/source,readonly,bind-recursive=disabled`,

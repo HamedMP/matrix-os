@@ -76,7 +76,8 @@ deadline. Checks have a 10 s deadline. Disconnect aborts the test runner; shutdo
 closes clients, drains jobs, and removes only the owned socket. Tests run at most
 90 s with 2 GiB RAM, 2 CPUs, 128 PIDs, bounded logs, read-only root, and size-limited
 tmpfs. Always remove that exact disposable container after timeout/cancellation.
-No new database pool, public endpoint family, schema migration or stored grant.
+No new database pool or stored grant. Retained source results extend the existing
+run-store schema and add the protected result read described below.
 
 ## Acceptance
 
@@ -106,6 +107,10 @@ Rollback disables only the candidate publisher opt-in, stops its service and
 candidate containers, restores only its prior registration/config, and removes
 only approved new ingress/DNS/Clerk entries. Preserve journals and previous source
 for inspection. Do not change Main services, Fast CI, Stage 2 or existing Preview.
+
+Use the [operator activation and live acceptance procedure](publisher-activation.md)
+to prepare the private inventory, resolve image/cache and route prerequisites,
+identify the required operator roles, and retain exact verification/rollback.
 
 Retained source-content results use the existing Postgres run store as described
 in [source run recovery](source-run-recovery.md). The recovery-capable CLI saves a
