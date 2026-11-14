@@ -25,10 +25,11 @@ export interface TerminalAgentClient {
 /** What changed within five seconds of the stop key; null when nothing did. */
 export type TerminalInterruptObserved = { status: string } | { exited: true; exitCode?: number } | null;
 
-export interface TerminalInterruptOutput {
+// A type alias, so the CLI can print it as a plain record.
+export type TerminalInterruptOutput = {
   pressed: string;
   observed: TerminalInterruptObserved;
-}
+};
 
 function interruptObserved(value: unknown): TerminalInterruptObserved {
   if (!value || typeof value !== "object") return null;
