@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Context } from 'hono';
 import { COMPUTE_MODE_HEADER, type RuntimeState } from '@matrix-os/contracts';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
@@ -6,7 +7,8 @@ import type { SubstrateRegistry } from './registry.js';
 import type { RuntimeUpstream } from './types.js';
 import { computeModeOf, decideContainerWake } from './container-websocket.js';
 import { isMeaningfulOwnerRequest } from './idle-reaper.js';
-import type { ExportRequestLike } from './container-export-only.js';
+import { EXPORT_ROUTE, type ExportRequestLike } from './container-export-only.js';
+import { computeCapPageCsp, renderComputeCapPage } from './compute-cap-page.js';
 
 export { isExportOnlyRequest } from './container-export-only.js';
 
@@ -50,7 +52,8 @@ function stateResponse(input: ContainerWakeInput, state: RuntimeState, retryAfte
  * quota with a known end, not an outage (503 is what clients retry) and not
  * an access denial (403 means sign-in, entitlement, or waitlist to clients).
  * The body's `limit_reached` is a terminal state for the shared client
- * model, so it does not retry; the reset is days away in any case.
+ * model, so it does not retry; the reset is days away in any case. A browser
+ * navigation gets the platform's own cap page instead.
  */
 function limitResponse(input: ContainerWakeInput, resetsAt: string, retryAfterSeconds: number): Response {
   const { c } = input;
@@ -59,16 +62,31 @@ function limitResponse(input: ContainerWakeInput, resetsAt: string, retryAfterSe
   if (input.respondWithJson) {
     return c.json({ error: 'Matrix computer limit reached', runtimeState: 'limit_reached', limit: 'compute', resetsAt }, 429);
   }
-  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Monthly compute limit reached</title></head>
-<body><main role="status"><h1>Monthly compute limit reached</h1>
-<p>Your Matrix computer starts again on <time datetime="${resetsAt}">${resetsAt.slice(0, 10)}</time> (UTC).</p></main></body></html>`, 429);
+  const nonce = randomBytes(18).toString('base64url');
+  c.header('Content-Security-Policy', computeCapPageCsp(nonce));
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'no-referrer');
+  const exportPath = isOwner(input) ? `${explicitPrefix(input) ?? ''}${EXPORT_ROUTE}` : null;
+  return c.html(renderComputeCapPage({ resetsAt, exportPath, nonce }), 429);
 }
 
-/** The path the runtime would see: the explicit `/vm/<handle>` prefix is the platform's own. */
+function isOwner(input: ContainerWakeInput): boolean {
+  const { identity, machine } = input;
+  return identity.source === 'auth' && Boolean(identity.userId) && identity.userId === machine.clerkUserId;
+}
+
+/** The explicit `/vm/<handle>` prefix when this request used it; it is the platform's own. */
+function explicitPrefix(input: ContainerWakeInput): string | null {
+  const prefix = `/vm/${input.machine.handle}`;
+  const path = input.c.req.path;
+  return path === prefix || path.startsWith(`${prefix}/`) ? prefix : null;
+}
+
+/** The path the runtime would see. */
 function upstreamRequest(input: ContainerWakeInput): ExportRequestLike {
-  const { c, machine } = input;
-  const prefix = `/vm/${machine.handle}`;
-  const path = c.req.path === prefix ? '/' : c.req.path.startsWith(`${prefix}/`) ? c.req.path.slice(prefix.length) : c.req.path;
+  const { c } = input;
+  const prefix = explicitPrefix(input);
+  const path = prefix === null ? c.req.path : c.req.path.slice(prefix.length) || '/';
   return { method: c.req.method, path, header: name => c.req.header(name) };
 }
 
@@ -98,9 +116,8 @@ export async function prepareContainerUpstream(input: ContainerWakeInput): Promi
  * is quiescing can cancel it. Only the owner's own verified session counts.
  */
 function observeOwnerActivity(input: ContainerWakeInput): void {
-  const { machine, identity, c } = input;
-  if (machine.substrate !== 'container' || identity.source !== 'auth' || !identity.userId
-    || identity.userId !== machine.clerkUserId) return;
+  const { machine, c } = input;
+  if (machine.substrate !== 'container' || !isOwner(input)) return;
   if (!isMeaningfulOwnerRequest({ method: c.req.method, path: c.req.path, header: name => c.req.header(name) })) return;
   const lookup = input.substrates.get('container');
   if (lookup.ok) lookup.substrate.recordOwnerActivity?.(machine.machineId);
