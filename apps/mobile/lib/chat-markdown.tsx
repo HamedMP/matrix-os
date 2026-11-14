@@ -111,8 +111,9 @@ function inlineNodes(
       elements.push(
         <Text
           key={`${keyPrefix}-tok${match.index}`}
-          // A long press copies the span alone; elsewhere it opens the reply's menu.
-          onLongPress={() => void copyToClipboard(code, { copied: "Code copied", failed: CODE_COPY_FAILED })}
+          // A tap copies the span, as a tap opens a link. A long press stays
+          // the reply's own menu, which iOS opens over any press inside it.
+          onPress={() => void copyToClipboard(code, { copied: "Code copied", failed: CODE_COPY_FAILED })}
           style={[
             theme.textStyle,
             {

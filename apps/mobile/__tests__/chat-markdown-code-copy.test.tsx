@@ -99,10 +99,10 @@ describe("fenced code blocks", () => {
 });
 
 describe("inline code", () => {
-  it("copies the span's own text on a long press", async () => {
+  it("copies the span's own text on a tap", async () => {
     renderReply("Run `pnpm install` first.");
 
-    fireEvent(screen.getByText("pnpm install"), "longPress");
+    fireEvent.press(screen.getByText("pnpm install"));
 
     await waitFor(() => expect(screen.getByText("Code copied")).toBeTruthy());
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("pnpm install");
@@ -113,7 +113,7 @@ describe("inline code", () => {
     jest.spyOn(Clipboard, "setStringAsync").mockRejectedValueOnce(new Error("nope"));
     renderReply("Run `pnpm install` first.");
 
-    fireEvent(screen.getByText("pnpm install"), "longPress");
+    fireEvent.press(screen.getByText("pnpm install"));
 
     await waitFor(() => expect(screen.getByText("Could not copy code. Try again.")).toBeTruthy());
   });
@@ -121,6 +121,7 @@ describe("inline code", () => {
   it("leaves the rest of the paragraph alone", () => {
     renderReply("Run `pnpm install` first.");
 
-    expect(screen.getByText("Run ").props.onLongPress).toBeUndefined();
+    expect(screen.getByText("Run ").props.onPress).toBeUndefined();
+    expect(screen.getByText("pnpm install").props.onLongPress).toBeUndefined();
   });
 });
