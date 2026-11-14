@@ -1,0 +1,2449 @@
+# Codex handoff — spec 124 organization collaboration (2026-09-21 09:50 UTC)
+
+This is a full handoff of the running spec 124 implementation from Claude to Codex on the
+same machine (`/home/nima`). Read it top to bottom before touching anything. It tells you
+where every piece of work lives, what is finished, what is half-done, what is next, and how
+the orchestration works. Nothing here is a suggestion; the decisions are locked.
+
+Companion artifacts in this directory (section 10 has the paste-ready prompt that starts Codex):
+
+- `s09-uncommitted-2026-09-21.patch` — snapshot of the uncommitted S09 edits (also live in the worktree).
+- `s12-uncommitted-2026-09-21.patch` — snapshot of the uncommitted S12 edits (also live in the worktree).
+
+## 0. First five actions (do these before anything else)
+
+1. **The Claude agents are already stopped.** The coordinating Claude background job
+   `98b4e810` ("org collaboration implementation") and its four workers were terminated at
+   10:05 UTC on 2026-09-21 after their last write at 09:21 UTC; both worktrees were verified
+   byte-identical to the patch snapshots afterwards. The Claude background daemon auto-resumed
+   that job once at 10:06 UTC, so it was then told to stop itself and exit (a clean exit marks
+   the job done and is not respawned). Before you edit, confirm nothing respawned:
+   `ps -eo pid,cmd | grep -E "claude (bg-spare|agents)" ` should show no session whose bash
+   children sit in a `matrix-os-124-*` worktree, and `lsof +D <worktree>/packages` should be
+   empty. If the owner reopens `claude agents` and that job shows as resumable, it must be
+   deleted there, not resumed.
+2. **Verify the worktree map** in section 3 against `git -C /home/nima/matrix-os worktree list`
+   and `git -C <wt> status --short`. If a worktree has *more* uncommitted changes than listed
+   here, the Claude worker kept writing after this handoff; keep those edits, they are newer.
+3. **Commit the in-flight edits as WIP** on their branches so nothing lives only in a working
+   copy: in `matrix-os-124-s09` and `matrix-os-124-s12` run
+   `git add -A && git commit -m "wip(collaboration): S0N handoff snapshot"` then `git push`.
+   You will squash/re-cut these into proper `test(...)` / `feat(...)` commits before submitting.
+4. **Read the feature artifacts** in `specs/124-organization-collaboration/`: `spec.md`,
+   `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`, `tasks.md`,
+   `sol-runbook.md`, and every `evidence/S*-receipt.md`. Read `AGENTS.md` (root) and
+   `.specify/memory/constitution.md`. Read `docs/dev/stacked-prs.md` and
+   `docs/dev/review-pipeline.md`.
+5. **Run `gt log short` from any 124 worktree** and compare with section 4. Then start the
+   orchestration in section 6.
+
+## 1. Goal
+
+Ship **organization collaboration V1** for Matrix OS exactly as `specs/124-organization-collaboration/spec.md`
+defines it: an owner shares a project, or any standalone Chat, terminal, file, folder or app
+instance, with members of their Clerk organization using one of two whole-resource presets
+(Viewer, Contributor). Members reach the owner's home computer through a transparent platform
+relay; every authorization decision happens on the home. Members may prompt the owner's AI
+(Codex or Claude harness, one owner-selected AI source per project) when the organization
+allows it, may commit/push/PR through a Git broker under the owner's identity without owner
+approval, and see truthful readiness state inside the confirmed 525 collaboration UI. All of
+this lands as one coordinated release: one Graphite stack of small reviewed PRs, merged bottom
+up, followed by one cutover migration that makes the direct protocol the only serving path.
+
+"Done" means: every packet in the release path (section 5) merged to `main` with current-head
+Greptile 5/5 and green CI, receipts in `evidence/`, the S18 cutover proven on real Postgres,
+and the S19 acceptance matrix recorded. Deployment to customer VPSes needs the owner's explicit
+go; do not deploy or publish externally on your own.
+
+## 2. Locked product decisions (do not reopen, do not ask)
+
+- Sharing exists **only inside a Clerk organization**; the organization is the only gate.
+  Legacy release flag, rollout cohort and person-to-person sharing were deleted in S20.
+- **V1 minimum scope**: Clerk membership projection only. Organizations are administered in the
+  Clerk dashboard. No groups, guests, invitation quotes, org billing, sponsorship, member
+  computers, transfer, pooled org computer, or managed Matrix group text.
+- **Two presets only**: Viewer and Contributor, whole resource. Every resource type is shareable
+  standalone (project, Chat, terminal, file, folder, app instance). Folder share includes its
+  contents. Chat Viewer reads history and discussion only. Terminal Viewer observes only;
+  Contributor may hold the controller.
+- **Org-wide shares are pending per member**; opening is accepting, via `POST .../accept`,
+  recorded in `collaboration_grant_activations`. Never activate on list or preview fetch.
+- **One owner-selected AI source per project** (S08). Members may submit prompts when org
+  metadata `collaboration.aiSubmission="members"`, otherwise owner-only. No provider-eligibility
+  enforcement beyond that. Shared discussion never implicitly invokes AI.
+- **Run control**: cancel and tool-approval answers are allowed only to the requesting member
+  or the project/Chat owner. Retry of an interrupted or failed request is requester-only (owner
+  denied). When the home loses a run for any reason (gateway restart, scope-runtime crash, run
+  unit exit without terminal result, control-stream lease loss) mark it interrupted with the
+  requester attributed and re-admit preserved queued requests only where the requester's
+  membership evidence is fresh. Reattaching to a surviving run unit is deferred.
+- **Git**: no owner approval; broker commits/pushes/PRs under the owner identity with the
+  requesting member in audit. No per-Chat worktrees; inventory every existing Chat root at
+  share time. No integration delegation.
+- **Transport**: transparent platform relay, extracted not deleted, makes no authorization
+  decision and parses no payload. Tickets bind runtime ID and generation, not hostname. No
+  per-home hostnames or certificates.
+- **UI**: the confirmed 525 interaction model is the baseline. Add state and controls inside its
+  chrome; never add new collaboration headers, composers, share dialogs or inboxes. Web Canvas,
+  Web Desktop, Electron Desktop only; Native Mobile and CLI are a recorded limitation.
+- **Sandbox**: shared runs and terminals execute only inside the S07 sandbox manifest. No
+  prompt-only sandbox, no hidden wider file or integration access, no credential export.
+- Open UI questions listed in `spec.md` are the product owner's; do not answer them yourself.
+
+## 3. Worktree and branch map (all on this machine, owner `nima`)
+
+Main checkout: `/home/nima/matrix-os` on `main` at `e62d3fc62`. Never commit there.
+
+| Worktree | Branch | HEAD | Packet | State |
+| --- | --- | --- | --- | --- |
+| `/home/nima/matrix-os-124-s20` | `124/s20-audience-ui` | `e5f2fca10` | S20 top layer (6 layers: `124/s20`, `-organization`, `-cohort`, `-cohort-platform`, `-audience`, `-audience-ui`) | clean, in review |
+| `/home/nima/matrix-os-124-s20-l1` | `124/s20-cohort` | `31c77058a` | S20 layer 3 | clean, in review |
+| `/home/nima/matrix-os-124-s02` | `124/s02` | `79a8b846c` | S02 contracts freeze | clean, in review |
+| `/home/nima/matrix-os-124-s03` | `124/s03` | `d858e446f` | S03 Clerk membership + control authority | clean, in review |
+| `/home/nima/matrix-os-124-s04` | `124/s04` | `4a749a98b` | S04 preset grants + org precondition | clean, in review |
+| `/home/nima/matrix-os-124-s05` | `124/s05-relay` | `65732f301` | S05 top layer (`124/s05`, `-gateway`, `-relay`) | clean, in review |
+| `/home/nima/matrix-os-124-s08` | `124/s08` | `ac02be560` | S08 owner AI source | clean, in review |
+| `/home/nima/matrix-os-124-s06` | `124/s06` | `88895d988` | S06 direct client + discovery | clean, in review |
+| `/home/nima/matrix-os-124-s07` | `124/s07-terminal` | `eb6a4b4c7` | S07 top layer (`124/s07`, `-terminal`) | clean, in review |
+| `/home/nima/matrix-os-124-s09` | `124/s09` | `c4fd0f594` | **S09 shared Codex/Claude execution — IN PROGRESS** | 7 modified files uncommitted (see 3.1); pushed to origin at `c4fd0f594`; no PR yet |
+| `/home/nima/matrix-os-124-s12` | `124/s12` | `24df3dbc3` | **S12 resource adapters — IN PROGRESS** | 13 modified + 6 new files uncommitted (see 3.2); pushed to origin at `24df3dbc3`; no PR yet; `gt` says needs restack |
+| `/home/nima/matrix-os-124-handoff` | `124/handoff` | this doc | handoff | commit + push this doc here |
+
+Not yet created (create when you start them, see 6.3): S10 (`matrix-os-124-s10`, `124/s10`),
+S15 (`124/s15`), S18 (`124/s18`), S19 (`124/s19`).
+
+Other worktrees under `/home/nima/` (`matrix-os-collaboration-ux-redesign` = the 525 UI
+baseline stack, `matrix-os-org-collab-spec`, `matrix-os-codex-shared-chat`,
+`matrix-os-claude-shared-ai-compatibility`, etc.) are older, merged or unrelated stacks. Do not
+touch them. Every 124 worktree carries an unrelated stash
+`wip-fence-invitation-mutations` from an old `codex/project-sharing-integration` branch; ignore it.
+
+### 3.1 S09 in-flight detail (`/home/nima/matrix-os-124-s09`)
+
+Committed on `124/s09` (stacked on `124/s07-terminal` @ `eb6a4b4c7`):
+
+- `b989b52b4` test(collaboration): failing suite `tests/gateway/shared-coding-execution.test.ts`
+  (443 lines) covering: migration v11 registration; run control actors (cancel by requester or
+  owner, denied to other Contributors/Viewers; retry requester-only; tool approval by requester
+  or owner with relation recorded); home loses a run (first loss reason wins, `gateway_restart`
+  attribution across restart, `control_partition` interruption via orchestrator, re-admission
+  only with fresh membership, loss-reason classification); focused adapters (Codex on project
+  root inside sandbox manifest, Claude same contract refusing resume state/non-text parts, root
+  without manifest refused, runtime crash / run-unit exit reported as loss reasons).
+- `c4fd0f594` feat(collaboration): `shared-run-loss.ts` (tables
+  `collaboration_run_interruptions`, `collaboration_run_decisions`, migration version **11**),
+  run-control actor enforcement.
+
+Uncommitted (T046–T048 in progress, 206 insertions / 15 deletions across 7 files):
+
+- `packages/contracts/src/collaboration-execution.ts`, `packages/gateway/src/collaboration/run-account-binding.ts`:
+  `executionRoot` becomes nullable for standalone Chats (fingerprint digests Chat identity).
+- `packages/gateway/src/chat/queue-repository.ts`: `sharedExecution.queuedTurnId` on claimed turns.
+- `packages/gateway/src/chat/shared-execution-coordinator.ts`: new `SharedDispatchRun`, adapter
+  factory now receives `(context, run)`; rooted runs are no longer rejected at dispatch.
+- `packages/gateway/src/chat/orchestrator.ts`: signature follows the coordinator.
+- `packages/gateway/src/collaboration/shared-ai-runtime.ts` (+155): wires
+  `createSharedCodexAdapter` / `createSharedClaudeAdapter` (files already exist on the branch),
+  sandbox manifest, execution-root resolver, `interruptActiveSharedRuns`,
+  `markLostSharedRunsOnStartup`, `CollaborationRunBindingError`.
+- `packages/gateway/src/collaboration/shared-run-loss.ts` (+28).
+
+Remaining for S09: finish T047/T048 wiring until `pnpm exec vitest run tests/gateway/shared-coding-execution.test.ts`
+is green (run the lock/race cases against the real Postgres URL, section 7); make sure
+`/scopes/:scopeId/chat/requests*`, `/chat/approvals*`, `/chat/requests/:id/retry` enforce the
+actor rules for project scopes and standalone Chat scopes (standalone Chat: policy row and
+privileged actor resolve on the Chat scope with the Chat owner in the owner role); T049 live
+Codex/Claude probes stay **unrun** unless the owner supplies approved credentials (record as
+unrun in the receipt, do not fake); write `evidence/S09-receipt.md` in the S01/S07 receipt
+format; split into ≤3000-addition layers if needed; `gt submit`.
+
+### 3.2 S12 in-flight detail (`/home/nima/matrix-os-124-s12`)
+
+Committed on `124/s12` (stacked on an older `124/s07-terminal` @ `a149fad58`, so **restack onto
+`eb6a4b4c7` first** with `gt restack --only`):
+
+- `24df3dbc3` test(collaboration): failing suite `tests/gateway/direct-resource-policy-postgres.test.ts`
+  covering catalog identity across rename/delete, project-scope viewer/contributor rules with
+  revision checks and idempotent replay, namespace isolation, standalone file/folder/app/Chat/terminal
+  shares, whole-project preset mapping, concurrent same-base-revision writes (exactly one wins),
+  post-revocation write denial, and the frozen route table.
+
+Uncommitted (T061/T062/T064 in progress, 84 insertions / 20 deletions in 13 files + 6 new files, 1157 lines):
+
+- New: `packages/contracts/src/collaboration-resources.ts` (catalog/file/app schemas, safe
+  relative path rule, inline/upload size limits), `packages/gateway/src/collaboration/resource-catalog.ts`
+  (`CollaborationResourceCatalog`, `migrateResourceCatalogV12`), `resource-routes.ts`
+  (`registerResourceRoutes`, `CollaborationResourceServices`), `resource-actions.ts`,
+  `app-instance-adapter.ts`, `upload-stages.ts`.
+- Modified: `database.ts` (scope/event/outbox kinds gain `file|folder|app`; tables
+  `collaboration_resource_catalog`, `collaboration_upload_stages`), `database-migrations.ts`
+  (registers migration version **12**; 11 reserved for S09), `routes.ts` (mounts resource routes
+  after execution-policy routes), `route-support.ts` (error mapping for catalog/adapter errors,
+  `resources` option), `authority.ts`, `directory-outbox.ts`, `events.ts`, `repository-types.ts`,
+  `terminal-adapter.ts`, `packages/contracts/{package.json,src/collaboration.ts,src/index.ts}`.
+
+Remaining for S12: finish until the suite is green on real Postgres (concurrent write and
+revocation cases); own the standalone Chat scope read/discussion routes
+(`GET /scopes/:scopeId/chat`, `/chat/messages`, `/discussion/messages`, `/user-state`) and
+standalone terminal routes (`/scopes/:scopeId/terminal*`) with preset enforcement; **do not**
+mount `/chat/requests*` or `/chat/approvals*` (S09 owns them); T062 streaming reads, staged
+uploads, resume, checksums, cancel on revoked lease, staging cleanup; T064 bridge/sandbox asset
+proof across Web Canvas, Web Desktop, Electron Desktop; T063 stays deferred; write
+`evidence/S12-receipt.md`; `gt submit`.
+
+## 4. Open PR stack (bottom → top) and review state
+
+Merged on `main`: spec #1769, clarify #1773, baseline #1761 and #1765, S00 #1784,
+S01 #1785/#1788/#1786/#1787.
+
+Stack order (base → child), all non-draft:
+
+```
+main
+└─ 1789 124/s20                → 1793 124/s20-organization → 1790 124/s20-cohort
+   → 1794 124/s20-cohort-platform → 1791 124/s20-audience → 1795 124/s20-audience-ui
+   → 1792 124/s02 → 1796 124/s03 → 1797 124/s04
+   → 1802 124/s05 → 1803 124/s05-gateway → 1804 124/s05-relay
+   → 1805 124/s08 → 1806 124/s06 → 1807 124/s07 → 1808 124/s07-terminal
+   → (local, no PR yet) 124/s09  and  124/s12  (siblings on s07-terminal)
+```
+
+Gateway collaboration migration versions in use: S20=7, S04=8, S05=9, S08=10, S09=11,
+S12=12. S10 and later append at 13+.
+
+### 4.1 Review and CI state per PR (snapshot 2026-09-21 ~09:30 UTC; re-check before acting)
+
+All 16 PRs are MERGEABLE. GitHub shows `mergeStateStatus: UNSTABLE` on every PR only because
+the ignored `claude-review` job fails. No reviewer other than the author has commented; no
+CHANGES_REQUESTED reviews. Every head was force-pushed at ~09:01 UTC in one coordinated
+restack and Greptile re-scored each head between 09:06 and 09:26 UTC, so the scores below are
+current-head scores. "Unresolved" = unresolved Greptile inline threads.
+
+| PR | branch | Greptile | CI | `ready-for-ci` | Blockers to clear |
+| --- | --- | --- | --- | --- | --- |
+| 1789 | `124/s20` | 5/5 | full matrix runs (base is `main`); all jobs pass, run finalizing | yes | none. **Merge this first.** |
+| 1793 | `124/s20-organization` | 5/5 | gate only | no | 1 current P1 thread on `project-inheritance.ts`, 2 outdated |
+| 1790 | `124/s20-cohort` | 5/5 | gate only | no | none |
+| 1794 | `124/s20-cohort-platform` | 5/5 | gate only (a "fail" on connect-share-preview is a cancelled superseded run) | no | none |
+| 1791 | `124/s20-audience` | 5/5 + approved | gate only | no | none |
+| 1795 | `124/s20-audience-ui` | 5/5 + approved | gate only | no | 2 P2 threads (evidence README, electron-capture test); one item deferred to #1798 |
+| 1792 | `124/s02` | 5/5 | gate + Codex contracts check | yes (inert until base is `main`) | none |
+| 1796 | `124/s03` | 4/5 | gate only | no | P1 `organizations/database.ts`, P2 `repository.ts`; Greptile flags PR size, outbox missing columns, duplicate denial fences |
+| 1797 | `124/s04` | 5/5 | gate only | no | 1 outdated P1 thread (`capability-evaluator.ts`) |
+| 1802 | `124/s05` | 3/5 | gate only | no | 11 threads, 7 current: ticket-issuer x3, control-authority P1, control-upgrade, bootstrap, tickets test. Themes: idle homes go offline, disconnected homes block denial delivery, instance-local control state |
+| 1803 | `124/s05-gateway` | 4/5 | gate only | no | 6 threads, 5 current P1: wiring x2, direct-sessions x2, direct-websocket. Themes: denied actions consume budget, control socket fails under ESM |
+| 1804 | `124/s05-relay` | 5/5 | gate only | no | 2 outdated P1 threads (`relay.ts`) |
+| 1805 | `124/s08` | 5/5 | gate only | no | 1 current P1 on `wiring.ts`, 2 outdated |
+| 1806 | `124/s06` | **0/5** | gate only | no | 8 current threads (5 P1): unavailable streams reconnect, closed sessions return, pending shares disappear, open action always fails, duplicate property breaks validation |
+| 1807 | `124/s07` | **1/5** | gate only | no | 4 current P1: shared Chats bypass sandbox, no production sandbox roots, terminal support overstated, readiness probe unwired |
+| 1808 | `124/s07-terminal` | **2/5** | gate only | no | 4 current (3 P1): fresh sessions blocked, exhaustion revokes valid sessions, host control withdrawal lost, unbounded pending-operations registry |
+
+Notes for the coordinator:
+
+- "Gate only" means the Gate/Greptile/check/preview jobs ran, not the test matrix. The real
+  matrix (Type Check, Unit Tests, Shell Production Build, ...) runs only when the base is
+  `main`, so each PR gets its first real CI only after the one below it merges. Run the suites
+  locally per worktree before merging, or dispatch `gh workflow run ci.yml --ref <branch>`.
+- The author left replies on 1796 and 1797 saying fixes were "in a local commit, lands with the
+  next coordinated push" (commits `4a674a3f7`, `deeb57d2e`, pre-rebase SHAs). The 09:01 push
+  rebased everything and no 124 worktree has unpushed commits, so they should be in the current
+  heads. Confirm by reading the threads against the current diff before resolving them.
+- Greptile has been re-requested many times on 1792 (11), 1797 (9), 1791 (8), 1789/1796 (6+).
+  Stop doing that: request once per new head, then poll.
+- PR bodies for 1789 and 1792 carry the Invariants section but not the five-surface matrix
+  (1792 is contracts-only). Add the matrix to every user-visible PR (1795, S06, S15) before merge.
+- **Review-fix work is packet work.** Assign the 1802/1803 fixes to whoever owns S05 next, and
+  the 1806/1807/1808 fixes to the S06/S07 owner. These are lower in the stack than S09/S12,
+  so every fix there forces a restack of S09/S12; batch fixes per layer and restack once.
+
+## 5. Release path and dependencies
+
+`S00 → S01 → S20 → S02 → S03 → S04 → S05 → S08 → S06 → S07 → S09 → S10 → S12 → S15 → S18 → S19`.
+Deferred from V1 and **not to be built**: S11, S13, S14, S16, S17, T063, T077.
+
+| Packet | Tasks | Depends on | Status |
+| --- | --- | --- | --- |
+| S20 org-only precondition, flag/cohort removal | T098–T102 | S01 | in review (6 PRs) |
+| S02 frozen wire contracts | T010–T014 | S20 | in review |
+| S03 Clerk membership projection, control authority | T015–T019 | S02 | in review |
+| S04 whole-project presets, org precondition | T020–T024 | S03 | in review |
+| S05 relay, home sessions, tickets, revocation | T025–T029, T103 | S04 | in review (3 PRs) |
+| S08 single owner AI source | T040–T044 | S05 | in review |
+| S06 direct clients, discovery | T030–T034 | S08 | in review |
+| S07 sandbox for runs and terminals | T035–T039 | S06 | in review (2 PRs) |
+| **S09** shared Codex/Claude execution | T045–T049 | S07, S08 | **in progress** |
+| **S10** Git broker, share-time root inventory | T050–T054 | S09 | not started |
+| **S12** resource adapters | T060–T064 | S06, S07 | **in progress** |
+| **S15** readiness/permission UI in the 525 chrome | T075–T079 | S06, S10, S12 | not started |
+| **S18** one coordinated cutover and legacy removal | T088–T092 | S15 | not started |
+| **S19** release acceptance and docs | T093–T097 | S18 | not started |
+
+Linearize the tail of the stack as `s07-terminal → s09 → s10 → s12 → s15 → s18 → s19`
+(restack `124/s12` onto `124/s10` once S10 exists, so S15 sits on both).
+
+## 6. Orchestration: how to run this
+
+### 6.1 Roles
+
+One **coordinator** (you, the Codex session started in `/home/nima/matrix-os`) and at most
+**three workers** at a time (Codex subagents, each pinned to one packet worktree). The
+coordinator never edits packet files; it owns shared exports/manifests/lockfile, gateway
+bootstrap and exact route registration, platform startup, signing config, PR stack hygiene,
+review driving and merging. Workers own only their packet's files and must preserve other
+packets' edits.
+
+### 6.2 Immediate assignment (start now)
+
+| Worker | Worktree | Job |
+| --- | --- | --- |
+| W1 | `/home/nima/matrix-os-124-s09` | Finish S09 (3.1). Deliver receipt + `gt submit`. |
+| W2 | `/home/nima/matrix-os-124-s12` | Restack onto `eb6a4b4c7`, finish S12 (3.2). Deliver receipt + `gt submit`. |
+| W3 | `/home/nima/matrix-os-124-s10` (create it: `git worktree add -b 124/s10 ../matrix-os-124-s10 124/s09` then `gt track --parent 124/s09` from inside) | Start S10 T050 (failing `tests/gateway/project-share-inventory-postgres.test.ts`) and T051/T052 against the S09 seams as they stabilize; coordinate with W1 on `chat/execution-root.ts`. |
+| Coordinator | `/home/nima/matrix-os` + each in-review worktree | Drive the 16 open PRs to merge (6.5). Rebase S09/S12 when lower layers change. |
+
+When W1 finishes, W3 continues S10 to completion. When W2 and W3 finish, start S15 (one
+worker, React; needs Web Canvas → Web Desktop → Electron evidence and `npx react-doctor@latest shell`).
+Then S18 (one worker, real Postgres, cutover journal), then S19 (coordinator).
+
+### 6.3 Worker prompt (use verbatim, fill packet/tasks/worktree)
+
+> Implement packet Sxx, tasks Tnnn–Tmmm, from specs/124-organization-collaboration/tasks.md in
+> the worktree /home/nima/matrix-os-124-sxx on branch 124/sxx. Read
+> specs/124-organization-collaboration/handoff/codex-handoff-2026-09-21.md, AGENTS.md,
+> .specify/memory/constitution.md, then all feature artifacts and every evidence/S*-receipt.md.
+> Own only this packet's files listed in tasks.md and the S01 receipt ownership table; other
+> workers are active in sibling worktrees, so preserve their seams and coordinate overlapping
+> modules through the coordinator. Start with failing behavior tests, use the real Postgres URL
+> for races/migrations/leases, and record exact RED and GREEN output. Reuse canonical Chat,
+> provider V3, worktree, authority and route-support seams. Follow the locked decisions in the
+> handoff section 2. Keep each PR under 3000 additions and 50 files; split into Graphite layers
+> with `gt create --all --message "<conventional commit>"`. Run `bun run typecheck`,
+> `bun run check:patterns`, the focused vitest suites, and `npx react-doctor@latest shell` when
+> React files change. Write evidence/Sxx-receipt.md (task IDs, base/head SHAs, changed files,
+> RED, GREEN, DB/host/provider/surface evidence, unrun modes, migration and rollback result;
+> no credentials). Submit with `gt submit --stack` (or `--force` if remote heads were Graphite
+> auto-rebases). Do not merge, deploy, provision paid services or publish externally. Return
+> changed paths, tests, head SHA, open gates.
+
+### 6.4 Conventions
+
+- Worktree per packet at `/home/nima/matrix-os-124-<packet>`; branch `124/<packet>[-layer]`;
+  stacked with Graphite on the previous packet's top branch. Create with
+  `git worktree add -b 124/<packet> ../matrix-os-124-<packet> <parent-branch>` and track the
+  parent with `gt track`.
+- Conventional commits, test commit first, then feat, then docs receipt.
+- Receipts live in `specs/124-organization-collaboration/evidence/Sxx-receipt.md` and follow
+  `S01-receipt.md` / `S07-receipt.md` (layers table, RED→GREEN table, file ownership, Invariants,
+  Gates). PR bodies carry the Invariants section and the five-surface matrix from AGENTS.md.
+- Every PR title is a Conventional Commit, no `[codex]` prefixes.
+
+### 6.5 Review and merge procedure (coordinator)
+
+1. `.github/workflows/ci.yml` runs only for PR bases `main`, `stack/**`, `codex/**`. A stacked
+   PR whose base is another `124/*` branch gets **no CI** until it is retargeted to `main` by
+   the merge of the PR below it. To run CI early: `gh workflow run ci.yml --ref <branch>` or
+   apply the `ready-for-ci` label.
+2. Greptile reviews on push, but re-reviews only after a comment `@greptileai please review`.
+   It edits its summary comment in place; scan all its comments for the current head SHA. Never
+   post a second request while one is pending. Every restack invalidates the current-head 5/5.
+3. Merge gate per PR: base is `main` (check `gh pr view N --json baseRefName`), Greptile 5/5 on
+   the current head, CI green (the `claude-review` job may be ignored, owner's instruction
+   2026-09-21), no unresolved human/Codex review blockers, `ready-for-ci` applied.
+4. Land **strictly one PR at a time**, bottom first, with `gt merge` or the Graphite queue.
+   Never `--delete-branch` while a later PR is open, never loop `gh pr merge`. After each merge
+   wait until the next PR's base shows `main`, restack the remaining branches
+   (`gt restack --only` per branch inside its worktree; `gt sync --no-restack` to avoid rewriting
+   the owner's unrelated `codex/*` stacks), resubmit with `gt submit --stack` (`--force` when
+   remote heads were Graphite auto-rebases), then re-request Greptile.
+5. Use `/monitor-stack-reviews` (`.claude/commands/monitor-stack-reviews.md` describes the
+   gate) if you want a scripted watch; the rules above are what it enforces.
+6. `gh` and `gt` are authenticated as `Nima-Naderi`. Codex CLI 0.155.0 is at `/home/nima/.local/bin/codex`.
+
+## 7. Environment
+
+- Node 24, pnpm 10.33.4, bun at `/home/nima/.bun/bin/bun`. Run `pnpm install` from the repo
+  root after dependency changes.
+- Real Postgres for races/migrations/leases: docker container `matrixos-staging-postgres`
+  (healthy) at `172.18.0.7:5432`, user `matrixos`, database `matrixos_test_124`. Export both
+  `CHAT_TEST_DATABASE_URL` and `MATRIX_TEST_POSTGRES_URL` as
+  `postgres://matrixos:<password>@172.18.0.7:5432/matrixos_test_124` (password is in the owner's
+  local env, not in this repo). PGlite is the default and cannot express row-lock races; gate
+  such tests on the real URL as existing `*-postgres.test.ts` suites do.
+- Host is 15 GB / 8 cores and OOM-kills parallel suites: use `--maxWorkers=2` or `3`, one wide
+  run at a time, build prerequisites first (`bun run build` for packages the tests import).
+- Focused tests: `pnpm exec vitest run <path> --maxWorkers=2` (the `bun run test -- <path>`
+  filter fans out).
+- Pre-PR checklist: `bun run typecheck`, `bun run check:patterns`, `bun run test`,
+  `npx react-doctor@latest shell` for React changes, `bun run build:shell:production` when
+  `shell/` or shell-facing `packages/platform/` change.
+
+## 8. Gates, unrun probes and follow-ups
+
+- Live S00 fixtures (Clerk test organization, approved Codex/Claude credentials, disposable VPS
+  for two-computer relay proof) still need the owner's approval. The probe harnesses exist in
+  `tests/integration/collaboration-{provider,authority,direct}-boundaries.integration.ts`; keep them **explicitly unrun** in
+  receipts. Never fake a pass; capability flags become true only for observed paths.
+- #1798 (open): Web Desktop and Electron Desktop cannot reach the project share control; owned
+  by S15 T078.
+- #1799 (open): extract owner-database startup and collaboration registration from
+  `packages/gateway/src/server.ts` (4,828 LOC on main, above the 2000-LOC split-before-adding
+  threshold); coordinator-owned refactor, land it before S18 T090 adds registration changes there.
+- The `claude-review` CI job is known-failing and ignored by the owner.
+- Failed cutover keeps collaboration fenced until recovery; no legacy proxy fallback.
+
+## 9. Where things are
+
+| What | Path |
+| --- | --- |
+| Spec set | `specs/124-organization-collaboration/{spec,plan,research,data-model,quickstart,tasks,sol-runbook}.md`, `contracts/` |
+| Evidence receipts | `specs/124-organization-collaboration/evidence/` (S00–S08, S20, direct.md, providers.md) |
+| Gateway collaboration code | `packages/gateway/src/collaboration/` (routes split per resource, `route-support.ts`, `authority.ts`, `database-migrations.ts` registry) |
+| Shared execution | `packages/gateway/src/chat/{shared-execution-coordinator,queue-repository,orchestrator,execution-root}.ts`, `packages/gateway/src/collaboration/{shared-ai-runtime,shared-codex-adapter,shared-claude-adapter,shared-run-loss,run-account-binding}.ts` |
+| Platform side | `packages/platform/src/collaboration/` (relay, tickets, membership projection, control authority), `packages/platform/src/database/` |
+| Contracts | `packages/contracts/src/collaboration*.ts` |
+| UI baseline (525) | `packages/ui/src/collaboration/`, `shell/src/components/` share dialog / access popover / `SharedTerminalControls`; spec `specs/525-collaboration-ux-redesign/` |
+| Stack rules | `docs/dev/stacked-prs.md`, `docs/dev/review-pipeline.md`, `.claude/commands/monitor-stack-reviews.md` |
+
+## 10. Paste-ready prompt for the Codex coordinator
+
+Start Codex in the main checkout (`cd /home/nima/matrix-os && codex`) and paste this:
+
+```
+You are taking over as coordinator of the spec 124 "organization collaboration" implementation
+for HamedMP/matrix-os on this machine, continuing work a Claude coordinator ran until
+2026-09-21 09:21 UTC. That Claude job and its workers are stopped; you own everything now.
+
+FIRST, read in this order and do not skip:
+1. /home/nima/matrix-os-124-handoff/specs/124-organization-collaboration/handoff/codex-handoff-2026-09-21.md
+   (branch 124/handoff, draft PR #1810). It is the state ledger: goal, locked decisions,
+   worktree map, in-flight S09/S12 detail, per-PR review state, release path, orchestration,
+   worker prompt, merge procedure, environment, gates.
+2. /home/nima/matrix-os/AGENTS.md and .specify/memory/constitution.md.
+3. specs/124-organization-collaboration/{spec,plan,research,data-model,quickstart,tasks,sol-runbook}.md,
+   contracts/, and every evidence/S*-receipt.md (read them from the 124/s07 worktree
+   /home/nima/matrix-os-124-s07, which has receipts through S08 and S20).
+4. docs/dev/stacked-prs.md and docs/dev/review-pipeline.md.
+
+STATE IN ONE PARAGRAPH: main is at e62d3fc62. Merged: spec #1769, clarify #1773, baseline
+#1761/#1765, S00 #1784, S01 #1785/#1788/#1786/#1787. Open Graphite stack bottom-up:
+#1789 124/s20 -> #1793 -> #1790 -> #1794 -> #1791 -> #1795 (S20, six layers) -> #1792 124/s02
+-> #1796 124/s03 -> #1797 124/s04 -> #1802 124/s05 -> #1803 124/s05-gateway -> #1804 124/s05-relay
+-> #1805 124/s08 -> #1806 124/s06 -> #1807 124/s07 -> #1808 124/s07-terminal. Every PR has a
+manual worktree at /home/nima/matrix-os-124-<packet>. Two packets are half done with
+UNCOMMITTED edits sitting in their worktrees: S09 shared Codex/Claude execution in
+/home/nima/matrix-os-124-s09 (branch 124/s09 @ c4fd0f594, 7 modified files) and S12 resource
+adapters in /home/nima/matrix-os-124-s12 (branch 124/s12 @ 24df3dbc3, 13 modified + 6 new
+files; needs restack onto 124/s07-terminal eb6a4b4c7). Both branches are pushed; the
+uncommitted diffs are also saved as verified patches next to the handoff doc. S10, S15, S18,
+S19 are not started. Gateway collaboration migration versions: S20=7, S04=8, S05=9, S08=10,
+S09=11, S12=12; append at 13+. Greptile is 5/5 on nine PRs but 0/5, 1/5, 2/5 on #1806, #1807,
+#1808 with unresolved P1 threads, 3/5 on #1802, 4/5 on #1796 and #1803. Only #1789 (base main)
+runs the real CI matrix; the workflow ignores PRs whose base is a 124/* branch.
+
+GOAL: ship organization collaboration V1 exactly as spec.md defines it, as one coordinated
+release: every packet on the release path S20 -> S02 -> S03 -> S04 -> S05 -> S08 -> S06 -> S07
+-> S09 -> S10 -> S12 -> S15 -> S18 -> S19 merged to main with current-head Greptile 5/5, green
+CI, receipts in evidence/, the S18 cutover proven on real Postgres, and the S19 acceptance
+matrix recorded. S11, S13, S14, S16, S17, T063, T077 are deferred; do not build them. The
+product decisions in handoff section 2 are locked; never reopen them or ask about them.
+
+DO NOW, in order:
+1. Confirm no process is writing to the 124 worktrees (handoff section 0 step 1).
+2. In matrix-os-124-s09 and matrix-os-124-s12: git add -A && git commit -m "wip(collaboration):
+   S0N handoff snapshot" && git push. You will re-cut these into test/feat/docs commits later.
+3. Spawn three worker subagents, each pinned to one worktree, using the worker prompt in
+   handoff section 6.3 verbatim with the packet filled in:
+   W1 -> S09 in /home/nima/matrix-os-124-s09 (finish T046-T048 until
+        tests/gateway/shared-coding-execution.test.ts is green; T049 live probes stay unrun
+        unless the owner supplies credentials; write evidence/S09-receipt.md; gt submit).
+   W2 -> S12 in /home/nima/matrix-os-124-s12 (gt restack --only onto 124/s07-terminal first;
+        finish T061/T062/T064 until tests/gateway/direct-resource-policy-postgres.test.ts is
+        green on real Postgres; do NOT mount /chat/requests* or /chat/approvals*, S09 owns
+        them; write evidence/S12-receipt.md; gt submit).
+   W3 -> S10 in a new worktree: git -C /home/nima/matrix-os worktree add -b 124/s10
+        ../matrix-os-124-s10 124/s09, then gt track --parent 124/s09 inside it; T050 failing
+        tests/gateway/project-share-inventory-postgres.test.ts first, then T051/T052;
+        coordinate chat/execution-root.ts changes with W1 through you.
+4. Yourself, as coordinator: drive the 16 open PRs to merge per handoff section 6.5. Merge
+   #1789 first once its CI is green, then land strictly one PR at a time bottom-up with gt
+   merge, restacking (gt restack --only per branch inside its worktree, gt sync --no-restack)
+   and resubmitting (gt submit --stack, --force when remote heads were Graphite auto-rebases)
+   after each merge. Assign the Greptile P1 fixes on #1802/#1803 and #1806/#1807/#1808 to
+   workers as packet work when a worker frees up; batch fixes per layer so S09/S12 restack once.
+   Request a Greptile re-review with one "@greptileai please review" comment per new head,
+   then poll; never spam. Add the five-surface matrix to every user-visible PR body.
+5. When W1 finishes, W3 continues S10 to completion. When W2 and W3 finish, restack 124/s12
+   onto 124/s10 and start S15 (React; needs Web Canvas, then Web Desktop, then Electron
+   evidence and npx react-doctor@latest shell). Then S18 (real Postgres cutover journal, and
+   land the server.ts extraction from issue #1799 before T090). Then S19 yourself.
+
+RULES: never commit on main; every change ships from a manual git worktree as a Graphite
+layer under 3000 additions / 50 files with a Conventional Commit title; tests first, real
+Postgres for races/migrations/leases (container matrixos-staging-postgres at 172.18.0.7:5432,
+user matrixos, db matrixos_test_124, export CHAT_TEST_DATABASE_URL and
+MATRIX_TEST_POSTGRES_URL; password is in the owner's local env); host is 15 GB, so
+--maxWorkers=2 and one wide run at a time; pnpm exec vitest run <path> for focused suites;
+bun at /home/nima/.bun/bin/bun; gh and gt are authenticated as Nima-Naderi. Receipts follow
+evidence/S01-receipt.md. PR bodies carry the Invariants section. Never fake test evidence or
+live-probe passes; mark unrun probes unrun. Do not merge a PR whose base is not main, never
+--delete-branch while later PRs are open, never loop gh pr merge. The claude-review CI job is
+known-failing and ignored. Do not deploy, provision paid infrastructure or publish externally
+without the owner's explicit go. Use as many subagents as the work needs, but at most three
+packet workers writing at once, each in its own worktree; workers commit after every task.
+Keep the handoff document updated as the living state ledger (append a dated "Progress" section
+on branch 124/handoff) so the next takeover is as clean as this one. Report to the owner in
+plain language: what merged, what is in flight, what is blocked and why.
+```
+
+## 11. Addendum from the stopped Claude coordinator (received 10:08 UTC, verify before acting)
+
+The Claude coordinator job stopped itself at 10:08 UTC (job state `done`; the daemon will not
+respawn it). Before exiting it reported these facts that the 09:30 snapshot above lacks:
+
+1. **#1789 is mergeable now.** The E2E failure at 09:2x was one unrelated test
+   (`tests/e2e/terminal-soft-grid.e2e.test.ts`, passes on main); the failed jobs were rerun at
+   09:43 and the run was fully green (22 jobs, 0 failed) at 10:06. Base `main`, Greptile 5/5 on
+   `b3d2dc546`, `ready-for-ci` present. This is the first merge (section 6.5).
+2. A full-matrix CI run was dispatched at 09:44 on `124/s20-audience-ui` (`e5f2fca10`) as
+   evidence for the whole S20 stack: https://github.com/HamedMP/matrix-os/actions/runs/35584963094.
+   It was still `in_progress` at 10:10. Read its outcome before merging the S20 layers.
+3. S06 evidence (`88895d988`, 16 PNGs + README under `evidence/S06-direct-client/`) is on
+   `124/s06` and pushed. #1808's head `eb6a4b4c7` is an evidence-only rebase of S07. The
+   temporary `124/s06-evidence` branch and capture worktree were removed.
+4. **Greptile findings already triaged, never dispatched** (assign as packet fix work):
+   - #1806: duplicate `organizationId` key in `tests/gateway/collaboration-directory-outbox.test.ts:79-82` breaks type-check.
+   - #1807: shared Chat `createRuntime` calls lack a sandbox manifest; production launcher has no `sandboxRoots` (`main.ts`); terminal advertised but unlaunchable; `sandbox-readiness.ts` unwired.
+   - #1808: `revocationEnforcer.admit` never called on session create/renew; `exhausted` treated as actor-wide; `contributorControl` not persisted on the terminal-session schema; unbounded `pending` Set.
+   - #1802: `lastControlAt` not refreshed by pong; `listDueDeliveries` head-of-line blocking.
+   - #1803: action budget decremented before local authorization.
+   - #1796: 3,239 additions (over the 3,000 limit, split required); the threads on
+     `organizations/database.ts` and `control-authority.ts` are believed addressed by head
+     `d858e446f`; verify against the diff, then resolve.
+5. S12's uncommitted work includes an in-progress member-seed fix in its test ("column the
+   table doesn't have"); expect the suite to need that finished before it runs.
+6. **S09's 7 uncommitted files are the worker's GREEN step**: its suite was passing (19 tests,
+   the real-Postgres race case skipped under PGlite) and it was about to commit and restack
+   onto `eb6a4b4c7` when the session limit hit. Re-run the suite to confirm, then commit it as
+   the `feat(...)` GREEN commit rather than a WIP.
+7. Follow-ups #1798 (widened to Electron project share control) and #1799 (server.ts
+   extraction + startup harness) were opened by that job.
+8. Owner instructions on record: ignore the failing `claude-review` job; live S00 fixtures
+   (Clerk test org, Codex/Claude test credentials, disposable VPS) remain unapproved.
+
+## 12. Progress — Codex coordinator, 2026-09-21 10:22 UTC
+
+- Owner confirmed Claude job `98b4e810` exited cleanly. Process inspection found no Claude writer or open handles in S09/S12 packages; worktree statuses matched section 3.
+- S09's seven-file GREEN step reran at `6307f9c51`: `tests/gateway/shared-coding-execution.test.ts` had 19 passed, one real-Postgres case skipped under the default test DB. It was committed as `feat(collaboration): wire shared coding dispatch and run loss recovery` and pushed. S12's 19-file in-flight snapshot was committed as `f2f65cf3f` and pushed before its worker restacked it.
+- Created `/home/nima/matrix-os-124-s10` on `124/s10` at S09 `6307f9c51` and tracked it under S09. W1=S09, W2=S12, W3=S10 are active in their own worktrees. W1 found queue/command authorization still uses direct legacy grants for inherited project Chats and is adding RED tests plus authority fences. W2 restacked S12 with migration v11 before v12 and is implementing production resource services. W3 recorded T050 RED/GREEN on real Postgres and is building the share-time Chat-root inventory.
+- A private real-Postgres test env file is available at `/tmp/matrix-os-124-postgres.env` (mode 0600); workers were told to source it and never print or commit it. The file contains no repository content.
+- PR #1789 (`124/s20`) merged via `gt merge` at 10:20:39 UTC as merge commit `3cffad7de01e1a8eabe3bf6fa82a6df263da1446` after verifying base `main`, current-head Greptile 5/5 on `b3d2dc546`, green CI Results, `ready-for-ci`, and a Graphite dry run showing only that branch. `gt sync --no-restack --no-interactive` fast-forwarded local `main` to the merge commit; no open descendant was restacked or deleted.
+- The dispatched full S20 stack CI run `35584963094` finished **failure** on `124/s20-audience-ui` `e5f2fca10`. Type check, pattern scan and shell production build passed. Unit shard 3 failed five `tests/shell/chat-agents-page.test.tsx` cases; shard 2 failed 19 cases in `chat-agent-mentions.test.tsx` and `chat-app-provider-state.test.tsx`; all throw `useOrganization can only be used within ClerkProvider` from the S20 UI gate. Unit shard 4 failed one `collaboration-project-lifecycle.test.ts` case because its fixture creates a scope without `organization_id` and the new S20 grant invariant rejects it. These need fixes in their owning S20 layers, a new full-stack run, and current-head review before merging beyond #1789.
+- The current #1793 P1 comment about null-organization inheritance is already addressed in its local head (`project-inheritance.ts` checks parent `organization_id` before staging); verify after restack and resolve. #1793 is the next PR; its base had not yet settled to `main` when checked. No further merge has been attempted.
+
+## 13. Progress — Codex coordinator, 2026-09-21 10:56 UTC
+
+- S09 is committed and pushed at `f90627de4`, with receipt and real-Postgres `shared-coding-execution` 24/24 GREEN. The worker also fixed a transaction-local grant recheck after finding that S04 grant changes do not advance `auth_epoch`; the S04 epoch bump remains packet review work. S09 has no PR yet: Graphite refuses `gt submit` while the unmerged local S20 ancestry still contains the squash-merged #1789 commits. Keep its branch clean until lower layers are restacked. T049 live probes remain explicitly unrun.
+- S10 (`124/s10`) has T050 inventory, T052 Git broker and T053 setup/readiness route/UI under active development. Focused real-Postgres inventory 3/3 and broker 5/5 (including two-actor serialization), local Git driver 3/3, route/UI focused suites and gateway type-check are GREEN as reported by W3. Coordinator still owes `enableProjectGit` and production source wiring after final APIs settle; S10 is not submitted.
+- S12 real-Postgres `direct-resource-policy-postgres.test.ts` is 19/19 GREEN after app/stream changes; scoped app bridge is 3/3 GREEN on real Postgres. Coordinator added platform six-kind directory migration (`dc5562d3a`), gateway resource startup/shutdown (`8a1952f92`, wiring suite 11/11), and transactional app bridge/asset composition (`65db1f00e`, gateway type-check GREEN). W2 is splitting the >3000-addition diff into S12 base and S12-app child, fixing contract/React type-check, and writing receipts. Do not restack S12 until that split is reported. It must ultimately move above S10, with migration v12 before v13.
+- #1793 is the next merge. Its first post-#1789 head `f1d15331f` received Greptile 5/5, but the initially green CI Results was a skipped quick run with no `ready-for-ci` label. The label started full run `35589521781`; that run was canceled after replacing the head. W1 reproduced the org-context fixture RED (5/6), fixed it GREEN (6/6), and committed locally. Coordinator corrected Graphite parent metadata to `main`, aborted `gt restack --only` because it tried to replay already-merged #1789 commits, rebased exactly the three layer-2 commits with `git rebase --onto main 124/s20`, then confirmed `gt restack --only` was clean and `gt submit --no-stack --dry-run` targeted only #1793. Submitted with `gt submit --no-stack --force`, yielding current head `08091452d`; base is `main`, `ready-for-ci` remains. Current-head full CI run `35591038401` is pending; one `@greptileai please review` request was posted for this new head. **Do not merge before both finish GREEN/5/5.**
+- W1's top S20 audience UI branch has local Clerk test fixture fixes (`7feb992bc`, 30/30 focused GREEN), but it is diverged from Graphite's remote auto-rebase and not pushed. W1 is also checking the five `chat-agents-page` failures before coordinator restacks/pushes #1795. The full S20 top-stack matrix remains failed until a new run proves otherwise.
+- `main` is `3cffad7de` (#1789 only); no packet code was committed on main. The working tree has an unrelated pre-existing untracked `.repos/` directory; leave it alone. No deployment or live external probe has been performed.
+
+## 14. Progress — Codex coordinator, 2026-09-21 11:20 UTC
+
+- `main` remains at `3cffad7de` after #1789. #1793 is next: base `main`, current head `08091452d5`, Greptile 5/5, review threads resolved, `ready-for-ci`. CI run `35591038401` has passed typecheck, pattern scan, shell build and all four unit shards; E2E is still in progress. Do not merge until it finishes green.
+- S12 base was moved with Graphite onto S10 `fbfc669a5`, resolving the overlapping gateway migration registry and runtime composition. The combined registry orders versions 11, 12, 13. `tests/gateway/collaboration-wiring.test.ts` passed 12/12 and gateway TypeScript check passed. S12 base is clean at `151affc4b5`; its app child was moved onto that base, clean at `169419a7d`, with the scoped app bridge suite 3/3 and gateway TypeScript check passing. These branches still need remote push and PR submission after downstack ancestry settles.
+- S15 worktree `/home/nima/matrix-os-124-s15` was created from `124/s12-app`; W3 now owns T075/T076/T078/T079. T077 stays deferred. W3 must record Web Canvas, Web Desktop and Electron evidence truthfully.
+- W1 completed #1802 S05 core P1 fixes locally at `6511ed534`: pong now refreshes control liveness, and delivery selection avoids local-runtime head-of-line blocking. Both tests were RED before fix; focused suite passed 24/24, including real Postgres backlog; typecheck and pattern scan passed. The branch is clean but unpushed. W1 next owns #1803's budget-before-authorization P1 in `/home/nima/matrix-os-124-s05-gateway`.
+- W2 completed local S06 #1806 P1 code and a focused 46/46 sweep. The pending-share pagination case passed 1/1 on real Postgres; typecheck and packet completion are pending. The S06 branch is not pushed/restacked yet.
+- A Graphite descendant operation unexpectedly reset the local S05 core branch while W1 was committing. W1 recovered from reflog/stash and verified the clean test→fix chain above. Avoid Graphite ancestry operations while packet workers commit; inspect exact heads before pushing. No data was lost.
+
+## 15. Progress — Codex coordinator, 2026-09-21 12:04 UTC
+
+- #1793 (`124/s20-policy`) merged via `gt merge` after full CI run `35591038401` finished green, current-head Greptile 5/5 and resolved review threads. `main` is now `a9ce0000f`; local main was fast-forwarded with `gt sync --no-restack`. #1789 and #1793 are the only inherited PRs merged so far.
+- #1790 (`124/s20-cohort`) was rebased as its two unique commits onto new main and submitted alone at `5914b0d43`; its base is main, current-head Greptile scored 5/5, and the five-surface PR body plus `ready-for-ci` label were set. Full CI `35594063649` failed one inherited platform proof test (`verifier.verifyPolicy` missing); the other three unit shards, typecheck, shell build and pattern scan passed. Coordinator added signed-policy verification with constant-time signature comparison and freshness checks on this layer. Focused proof suite 11/11 and full local typecheck passed. The new head `be826421b` was submitted alone; one Greptile review request was posted; full CI `35596534829` is in progress. Do not merge until this new head has 5/5 and green substantive CI.
+- W1's #1803 S05 gateway budget fix is clean locally at `dd937cc21`; real-Postgres races 6/6, PGlite 18/18, typecheck and patterns passed. W1's #1808 S07 terminal fixes are clean locally at `dc46202b9` in `/home/nima/matrix-os-124-s07`: 103/103 focused tests, 8/8 real-Postgres, typecheck and patterns passed. The terminal receipt now correctly says only `chat_ai` is advertised until a PTY adapter exists. W1 is adding S09 sandbox manifests after W2's fail-closed S07 core change; focused S09 tests 44 passed at the latest report. These branches are unpushed pending bottom-up restack.
+- W2's #1806 S06 P1 is clean locally at `33a30326d` (46/46 focused, real Postgres pending pagination 1/1, typecheck/patterns, Web and Electron captures). #1807 S07 core is clean locally at `f4a6ec1d6` in `/home/nima/matrix-os-124-s07-core` (33 focused pass, three host probes skipped, typecheck/patterns). Its production sandbox manifests/roots fail closed; downstream S09 and S15 readiness must integrate. W2 split oversized #1796 S03 locally: base `696a52405` is 2,956 additions/24 files; child `124/s03-gateway` in `/home/nima/matrix-os-124-s03-gateway` at `4d6e56a5d` is 283 additions/4 files, with byte-identical combined tree, backup ref and patch in `/tmp`. Base platform Postgres suites 34/34, child gateway 28/28, full typecheck and patterns pass. W2 is updating the receipt, then will fix S12 catalog-incarnation enforcement before S12 merges. No Graphite metadata/remote update was attempted for the split yet.
+- W3's S10 is clean/pushed at `fbfc669a5` with receipt and 47/47 local/real-Postgres matrix. S15 UI is committed locally at `88954c759`, with a small readiness follow-up under test: file/folder/app Share controls, owner picker, Viewer/Contributor grants, 48/48 focused UI tests, full typechecks and patterns. Web shell production build passed with a non-secret test-format Clerk publishable key; Electron build passed. Changed-scope React Doctor scored 74/100 with one pre-existing FileBrowser complexity warning. No authenticated Web Canvas/Web Desktop/Electron journey has been run; T079 live evidence remains open. W3 is reviewing the pending-grant activation seam while coordinator finishes gateway work.
+- Coordinator created `/home/nima/matrix-os-124-s15-gateway` on `124/s15-gateway` from S12-app. Local commits through `30cb85cf9` implement owner preset grant create/list/patch/revoke, bounded readiness preflight, exact owner catalog resolution for normal Share controls, server-derived project namespace (and rejection of enclosing project folders), and exact platform proxy/relay routes. Each began with RED tests; focused gateway catalog/grant suite 8/8, owner driver 3/3, targeted platform transport 2/2, gateway/platform typecheck and pattern scan passed. This S15 layer is not pushed or Graphite-tracked yet. Pending organization grant activation protocol, production sandbox readiness wiring, full gateway/transport integration, and user-surface evidence remain.
+- A security follow-up was found in S12: direct file read resolves a catalog ID then opens by path without checking current filesystem incarnation; a deleted/recreated file could be read under a stale share ID. W2 owns a RED real-Postgres regression and open-fd identity fix before S12 merge. No deployment, paid provisioning, credential-backed live probes or external publish occurred.
+
+## 16. Progress — Codex coordinator, 2026-09-21 12:24 UTC
+
+- #1790 (`124/s20-cohort`) merged via `gt merge` after current-head `be826421b` Greptile 5/5, no unresolved current-head review threads, Graphite dry-run targeting only this branch, and full CI run `35596534829` success including E2E. `gt sync --no-restack --no-interactive` fast-forwarded local main to `3d8649e91`. Three of the 16 inherited open PRs have merged: #1789, #1793, #1790. #1794 is next; W1 is preparing its two unique commits on main. No other descendant was merged or deleted.
+- S15 gateway local branch `124/s15-gateway` is clean at `2bbf6bc16`. It now has owner grant activation, contract `organization_pending.grantId`, production shared-AI sandbox readiness, and catalog route tests for normal folder and registered-app resolution. The new focused catalog test passed; real-Postgres activation focused test, gateway/platform typechecks and prior focused suites passed. This branch remains unpushed until downstack review settles.
+- S15 directory child was rebased onto the gateway catalog test head; clean branch `124/s15-directory` at `d7e9a8f9b` (focused tests 21 passed, 2 real-Postgres-only skipped; full typecheck passed). A new dedicated worktree `/home/nima/matrix-os-124-s15-direct` on `124/s15-direct` was created from it for W3. W3 is using RED actual-route tests to close three release-blocking seams: pending grant acceptance with direct sessions, owner-runtime direct transport for first Share (including encoded `vps:` IDs), and standalone file/folder/app scope preflight/create against exact catalog identity. The current S15 UI receipt is provisional until these are proven.
+- S12-app worker is fixing stale file/app incarnation checks with opened-FD physical identity and registry-creation identity. Real-Postgres direct-resource policy suite passed 23/23 and full typecheck passed during this work; commit and receipt are pending. S15 must register app catalog entries with that same registry incarnation or sharing fails closed. The S03 size split and S05/S06/S07 P1 fixes remain clean locally and unpushed pending bottom-up restack.
+- W3's read-only T090 audit found additional direct-session gaps in project inventory/confirm, invitation/lifecycle routes, and runtime Share catalog/preflight/create. Scope-path routing in UI alone does not establish direct home authorization. S18 must prove every required route with actual home/session tests before removing legacy platform actor-proof proxy. Issue #1799 server.ts extraction remains coordinator work before T090; W3 provided a bounded extraction proposal and no code was changed for it yet.
+- No deployment, paid provisioning, credential-backed live probes, or external publish occurred. S18 real-Postgres cutover journal and S19 acceptance matrix are not started.
+
+## 17. Progress — Codex coordinator, 2026-09-21 12:56 UTC
+
+- #1794 (`124/s20-cohort-platform`) is the next merge and now has a backend-only current head `1b8f4287f` on base main, Greptile 5/5 on that exact head, and `ready-for-ci`. W1 rebased only its two unique commits onto merged main, then added RED/GREEN removal of the stale gateway rollout verifier to restore typecheck after the earlier squash merge. An earlier 4/5 review concerned a one-line unused UI copy change; W1 reverted the copy and requested exactly one new review for the new head. Full CI run `35601705712` is in progress. Do not merge before it finishes green and threads are resolved.
+- #1791 S20 audience layer is clean locally at `37aa9e490` after a RED/GREEN organization fixture repair. Focused audience/lifecycle suites passed 79/79; full typecheck and patterns passed. It remains unpushed/unrestacked until #1794 merges. #1795 S20 audience UI was split locally to keep each layer under 50 files: UI base `ff0d94493` (26 files) and new evidence child `c30be2aef` (29 files). Combined focused suites passed 75/75, full typecheck, Web shell production build and pattern scan passed; evidence child repairs partial screenshot writes with RED/GREEN 2/2. The original combined tree was verified against backup before the P2 helper edit. No Graphite submit yet.
+- W3 committed S15 direct pending-grant admission at `bc12b23b4`: platform tickets and home sessions bind one active, unexpired org grant; ordinary actions remain denied until acceptance. Its focused suites passed 37 with one real-Postgres-only case skipped and full typecheck/patterns passed. W3 is now wiring a separate owner-runtime direct ticket/session for the first Share (including encoded `vps:` runtime IDs); standalone file/folder/app scope creation and S12 registry-incarnation catalog bridge remain next. No S15 direct PR or live credential probe yet.
+- S12-app stale resource identity fix is clean locally at `dc3c188f6` (23/23 real-Postgres resource tests, 18/18 other focused tests, typecheck/patterns). #1796 S03 split and #1802/#1803/#1806/#1807/#1808 P1 fixes remain local and await bottom-up restack. W2 has started #1792 S02 packet audit; its old remote head had Greptile 5/5, but local/remote ancestry is divergent from Graphite auto-rebases.
+- Coordinator opened `/home/nima/matrix-os-124-s18-startup` on `124/s18-startup` as a later S18 child. Local commits through `bfe0ff3af` contain a RED/GREEN canvas fallback timer/hub cleanup, an injected owner-database fallback harness, typed owner DB startup service extraction, collaboration construction extraction, and bridge route extraction. Gateway typecheck, 38 focused startup/wiring tests, three bridge route tests and pattern scan passed. `server.ts` is still 4,380 lines, so issue #1799's under-2,000-line target and startup fail-closed HTTP/WS harness evidence are not complete. This S18 branch is unpushed and must be rebased above final S15 direct/UI before a PR.
+- No deployment, paid provisioning, credential-backed live probe or external publish occurred. S18 cutover T088–T092 and S19 acceptance T093–T097 remain open.
+
+## 18. Progress — Codex coordinator, 2026-09-21 13:13 UTC
+
+- `main` remains `3d8649e91`: #1789, #1793 and #1790 are merged. #1794 (`124/s20-cohort-platform`) at current head `1b8f4287f` has Greptile 5/5, resolved review threads, `ready-for-ci`, green Docker smoke, typecheck, shell production build and other substantive checks. Full CI `35601705712` still has unit shards 2/4 and 4/4 running; W1 will merge/sync only after all shards finish green. #1791 must then be restacked independently by W2; do not rewrite its ancestry before W1's merge.
+- W2 completed the #1792 S02 audit at clean local `016b5cb8a`: contracts 358/358, full repository typecheck including Electron, and patterns passed. Its receipt and PR body now have current evidence and a five-surface applicability matrix. It is unpushed/unrestacked until lower S20 layers merge. W2 is prepared to handle #1791 then #1795 and its evidence child in bottom-up order.
+- W3's S15 direct owner-runtime transport is committed locally at `6fbb5a1a1`: 58/58 focused tests, full typecheck and patterns pass. Standalone file/folder/app catalog-bound scope creation is under RED/GREEN development; the app-rotation test now rejects stale registry incarnations. W3 is adding real-Postgres race evidence. S15 direct and UI remain unpushed with no PR or live surface probe.
+- Coordinator S18 startup branch `124/s18-startup` is clean locally at `28d1c2cdf`, unpushed. It now extracts platform integration identity/bootstrap from `server.ts`, uses the same atomic dev upsert and verified Clerk identity, and closes an opened platform DB if client startup fails or gateway shuts down. RED/GREEN focused startup suite passed 17/17 together and gateway typecheck passed. The injected post-Chat failure harness asserts generic fail-closed HTTP and WebSocket 503. `server.ts` is still 4,239 lines, above issue #1799's target of 2,000; further focused extraction and a later restack above final S15 direct/UI are required. After #1794 merges, W1 will audit remaining T090 proxy consumers and create a separate S18 child for terminal WebSocket route extraction.
+- Cutover T088 inventory audit found that the platform person-to-person helper currently counts all directory rows, including organization rows; S18 must count only `organization_id IS NULL` and join the user index through those rows before disposition. S18 cutover journal and S19 acceptance remain unstarted. No deployment, paid provisioning, credential-backed live probe or external publication occurred.
+
+## 19. Progress — Codex coordinator, 2026-09-21 13:49 UTC
+
+- #1794 (`124/s20-cohort-platform`) merged via `gt merge` at 13:26:46 UTC after current-head Greptile 5/5, resolved review threads, green full CI `35601705712`, Docker smoke, and a Graphite dry run selecting only that layer. `main` and `origin/main` are `8be08508655bbcde7c8f75108eba9cbcfd4ef4d9`; no descendant was deleted or merged. Thirteen spec-124-related PRs are now merged in total: the nine pre-handoff spec/baseline/S00/S01 PRs and four S20 PRs (#1789, #1793, #1790, #1794). Twelve inherited feature PRs remain open, #1791 through #1808; #1810 is the separate handoff PR.
+- #1791 (`124/s20-audience`) is the next merge. Worker W2 submitted current head `6078549084d4aa02211c778d769e2a117df36212` against `main`, fixed the sole Greptile P2 in the inventory command, and obtained current-head 5/5 with zero unresolved threads. Full current-head CI including all unit shards, E2E, typecheck, shell build and patterns passed. W2 applied `ready-for-ci` and is waiting for the label-triggered run before a single-layer `gt merge`. #1795 S20 UI and its new evidence child follow, then #1792 onward.
+- S15 gateway, directory, direct, and UI branches are cleanly rebased in order through final UI head `e2ded8252`; its integrated focused suites passed 54/54, full typecheck passed, and React Doctor ran. Live Web Canvas/Web Desktop/Electron/Clerk/VPS journeys remain unrun, as recorded in the receipt.
+- Coordinator rebased S18 startup's 13 unique commits onto finalized S15 UI, preserving the S15 owner app incarnation resolver and app inventory incarnation while resolving owner-database extraction conflicts. New `124/s18-startup` head `07f7678e2` has gateway typecheck and 33 focused startup/fail-closed tests green. Rebased `124/s18-app-routes` and `124/s18-terminal-ws` cleanly on top; the combined terminal branch head `2dd0f99f8` has gateway typecheck and 61 focused tests green across startup, app and terminal route behavior. `server.ts` is 3,842 lines at this point, so issue #1799's under-2,000 target remains open before T090. These S18 extraction branches remain local and unpushed pending further extraction and lower ancestry.
+- S18 cutover work is parallel across isolated worktrees: coordinator's `124/s18-cutover` fixed the real-Postgres person-to-person inventory to exclude organization rows; W1 is writing the platform cutover journal and ticket-issuer disable guard with RED real-Postgres tests; W3 has the gateway v14 cutover migration/service GREEN on real Postgres (4/4) and is adding rollback plus route-level maintenance guards. W1 and W3 have aligned the journal phases and API. Neither child has a PR yet. S19 acceptance remains unstarted. No live credential probe, production deployment or external publication has been performed.
+
+## 20. Progress — Codex coordinator, 2026-09-21 14:31 UTC
+
+- #1791 (`124/s20-audience`) merged via `gt merge` at 14:14:20 UTC after current-head `607854908` Greptile 5/5, zero unresolved threads, `ready-for-ci`, label-triggered full CI `35607650164` success including E2E, and a Graphite dry run selecting only that layer. `main` is now `2ef63772f`; 14 spec-124-related PRs are merged (nine pre-handoff plus five S20 layers). Local main was fast-forwarded with `gt sync --no-restack`; no descendant was merged or deleted.
+- #1795 (`124/s20-audience-ui`) was restacked onto that main at clean head `12bdf4615`, submitted alone, and passed 82/82 focused UI tests and full typecheck including Electron Desktop. Its evidence child is open as #1817 (`124/s20-audience-evidence`) at `97b3122aa`, 29 files/+599, with capture restoration 2/2. #1795 received 4/5 because its current branch does not itself contain representative Electron captures and the capture-script fix lives in #1817. W2 is moving representative captures into #1795, restacking #1817, and will request one review per new head. Neither PR may merge until its exact head is 5/5 and substantive CI is green.
+- Coordinator completed issue #1799's `server.ts` extraction in a separate `124/s18-server-composition` worktree, clean head `a1a115af4` based on `124/s18-terminal-ws`. The entrypoint is 1,886 lines (from 3,842 at parent); 15 files/+2,635/-2,222, inside the PR limit. Route and startup modules were extracted in small commits. Gateway typecheck passed at each increment, full `bun run typecheck` passed, final `chat-agent-routes` 10/10 passed after building the kernel package, and pattern scan found 0 violations/5 existing warnings. The new `evidence/S18-server-composition-receipt.md` records affected-suite evidence and limits. This branch remains local and unpushed until lower ancestry settles; no cutover behavior is in it.
+- W1's S18 platform journal/transport branch is clean at `0067501e9` with RED integration test added; its journal and signed transport had already passed 14/14 real-Postgres and bootstrap 4/4. W3's separate gateway cutover branch is clean at `801883466` with 32/32 focused tests, including 9/9 real Postgres, gateway typecheck, and receipt. W1 assembled those branches only in a disposable integration worktree at `22acfa126`: the new full-stack signed platform→gateway→owner-database test passed 2/2 on two isolated real-Postgres schemas, covering six-phase activation, exact editor ceiling, wrong bearer, and stale control. This proof must be brought into final S18 ancestry; neither packet branch is pushed or merged yet. Legacy proxy removal and live host cutover proof remain open.
+- W3 started S19 in an isolated `124/s19-acceptance` worktree. A RED test found streamed relay POSTs without `Content-Length` were counted as zero request bytes. The bounded fix passed the relay suite 10/10; an in-process synthetic 40-request accounting profile passed 11/11 and recorded 89,600 request and 716,800 response bytes. W3 is running the executable quickstart matrix on real Postgres. This is not live host cost/CPU proof; owner-dependent Clerk/provider/VPS scenarios remain unrun.
+- Three packet workers are active in parallel: W2 drives #1795/#1817 reviews and bottom-up merge queue; W1 closes S18 platform/home integration; W3 drives S19 acceptance. Coordinator owns S18 extraction/restack/release gates and this ledger. No production deployment, paid provisioning, credential-backed probe or external docs publication occurred.
+
+## 21. Progress — Codex coordinator, 2026-09-21 14:47 UTC
+
+- #1795 UI was recut to include its own Electron and representative Web captures plus capture restoration helper: pushed current head `41d6d9c5d`, 46 files/+796. #1817 evidence child was reduced to 9 files/+70 at `98cbf39dd`; current-head Greptile requests are pending. An old review exposed an additional capture harness P1/P2 (required Terminal/Chat step failures swallowed and renderer restoration order); W2 is writing RED coverage/fixes in #1795, then will restack #1817. Neither has current-head 5/5 or merge permission yet.
+- Acceptance sampling exposed a **real downstream ancestry gap**: S10 and descendants through S15 were based on S09 `6307f9c51`, omitting six later S09 commits through `80b4144d9`, including Chat authority, sandbox and Postgres JSONB retry fixes. The old S15/S19 ancestry failed two S09 tests: an overly exact v11 migration-list assertion and interrupted retry with a Postgres JSON syntax error. Coordinator corrected the migration assertion on actual `124/s09` at `0c7599da7` and pushed it. No duplicate production retry fix was added; it already exists in S09 commit `cedf4bba2`.
+- In disposable `/home/nima/matrix-os-124-release-restack-probe`, all S10 (12), S12 base (17), S12 app (4), S15 gateway/directory/direct/UI (37), S18 extraction and cutover commits replayed cleanly onto final S09. At the S15 checkpoint, `shared-coding-execution.test.ts` passed **25/25 on real Postgres**, including requester-only retry; gateway/platform typechecks passed. The corrected full pre-T090 S18 probe is clean at `e5392e052`: gateway/platform typechecks and owner-home plus signed platform/home cutover tests **11/11 on real Postgres** passed. This probe is not a substitute for restacking the real Graphite packet branches before PR review; no probe branch was pushed or merged.
+- W1 proved direct relay/fullstack tests 11/11 on real Postgres and an in-process two-home direct transport E2E 4/4. Automatic approval review rejected the broad T090 legacy platform proxy/WS/ticket removal twice: it found that passing relay tests did not prove replacement wiring or preserve existing behavior. A real CLI client still uses the retired platform endpoints. `spec.md` explicitly says its existing 525 shared Chat/terminal must keep working, while S17 defers CLI direct transport and T090 removes the legacy proxy. Coordinator asked the owner which compatibility treatment governs; until answered, W1 is preserving the legacy serving paths, adding route-specific evidence, and working on a fail-closed compatible-direct rollback verifier. Do not silently break CLI or claim T090 complete.
+- W3's provisional S19 layer is clean locally at `ec36c1d1a` (4 code files/+187/-8 plus log/receipt/docs draft): RED/GREEN streamed relay byte accounting, 12/12 relay/profile tests, real-Postgres quickstart 112/112, full typecheck/patterns. The synthetic 40-request profile is not live host cost/CPU proof. A bounded V8 coverage sample initially failed due the old S09 ancestry and broad non-code include; W3 fixed the include, preserved 99/95/99/99 thresholds, and a parser smoke passed 17/17 but predictably missed full-source thresholds. Full kernel/gateway coverage and live owner/Clerk/provider/VPS acceptance remain open; S19 awaits corrected S18 ancestry. W3 is doing T095 read-only security/wiring review.
+- The three workers remain active in parallel, each in its own worktree. No production deployment, paid provisioning, live credential probe, external publication, or merge beyond #1791 occurred during this interval.
+
+## 22. Progress — Codex coordinator, 2026-09-21 15:11 UTC
+
+- `main` remains `2ef63772f`, with 14 related PRs merged in total and 11 inherited feature PRs open. #1795 S20 UI current head `79e3cee33` has exact-head Greptile 5/5, zero unresolved review threads, and `ready-for-ci`. Its full run `35615072766` has green typecheck, React Doctor, patterns, OS view parity, shell build, sync client, and unit shards 1–3; shard 4 was still running at 15:10. W2 owns a single-layer `gt merge` after the whole run succeeds. #1817 evidence current head `3a703226a` also has exact-head Greptile 5/5; W2 will restack it to main and obtain new-head review/CI after #1795 merges.
+- The corrected disposable pre-T090 integration head `e5392e052` remains the base of three independent S18 proof children, all local and unpushed pending formal release restack. W1's rollback proof `8ea419aaf` requires a fresh authenticated installed-build verifier before compatible direct rollback; real-Postgres cutover 15/15 and verifier/system-info 34/34 passed. The T090 audit/RED tests are clean at `e4405cb80`; legacy proxy, WebSocket and ticket serving paths remain in place because the replacement route/CLI evidence is incomplete and broad removal was rejected by automatic approval review twice.
+- W3's isolated direct-owner-route correction reached **12/12 focused real-Postgres GREEN**, with gateway typecheck and pattern scan passing. Adjacent suite review found that prepared private projects cannot obtain a scope direct ticket/session. W3 is adding a narrowly allowlisted owner-runtime direct-session path for project inventory/confirm, bound to owner, scope, organization, runtime and generation, with RED tests first. W3 also corrected an old test that expected legacy proof to activate a grant. This child is not yet committed or pushed.
+- Coordinator's `124/s18-secondary-reader` child is clean locally at `82db4e09d`: an unused sync share permission reader was removed while personal sync grant management stayed intact (82/82 focused tests). Two new real-Postgres tests first failed because an accepted legacy member row inserted after activation could authorize both ordinary reads and locked shared Chat execution. The fix checks the durable cutover journal before using non-owner legacy rows; cutover and authority suites passed **21/21** on real Postgres, a focused compatible-rollback denial rerun passed 1/1, gateway typecheck passed, and pattern scan reported 0 violations/4 inherited warnings. Receipts `S18-secondary-reader-receipt.md` and `S18-post-cutover-authority-receipt.md` record partial T091 scope and remaining live inventory/audit work.
+- W1 has started a separate `124/s18-confirmation-key` child: active gateway share-confirmation HMACs cannot lose their signing key when the old preflight secret env var is retired. Two regression tests failed first; deriving a domain-separated key from the persisted owner-home runtime seed passed 57/57 focused tests, gateway typecheck and patterns. W1 is checking real-Postgres restart/rotation durability and recording a receipt. This does not remove T090 routes or alter CLI behavior.
+- The owner decision on the existing CLI collaboration compatibility path is still pending. Spec 124 preserves the current CLI shared Chat/terminal behavior while deferring new CLI parity, but T090 retires the platform endpoints that CLI currently calls. Do not silently break CLI or claim T090 complete. No live host, paid provisioning, deployment or external publication occurred during this interval.
+
+## 23. Progress — Codex coordinator, 2026-09-21 15:26 UTC
+
+- #1795 S20 UI merged through one-layer `gt merge` at 15:22:15 UTC after exact-head `79e3cee33` Greptile 5/5, zero unresolved threads, and full label-triggered CI `35615072766` SUCCESS including all unit shards and E2E. Main is `b2f3e469d`; 15 spec-124-related PRs are merged. W2 advanced local main with `gt sync --no-restack` and submitted #1817 evidence alone on main at new head `19649d9aa`. Its nine-file binary patch is byte-identical to the pre-rebase evidence; current-head Greptile and CI are pending.
+- Coordinator audited #1792 S02 without mutating its tracked branch. Local `124/s02` is clean at `016b5cb8a`; six unique commits, 12 files/+1,939. A disposable `/tmp/matrix-os-124-s02-restack-probe` replay of precisely those commits onto reviewed #1795 head `79e3cee33` completed conflict-free at `302796aa2`. The formal S02 branch restack/submission waits until #1817 merges; coordinator owns #1792, W2 moves to #1796 afterward.
+- S18 rollback verifier, persisted confirmation key, T091 secondary sync-reader retirement and post-cutover legacy-role denial replayed conflict-free onto corrected pre-T090 integration in `/home/nima/matrix-os-124-release-restack-probe`; personal sync inventory was then added. Current disposable head is `8f573b8a6`, clean, 27 files/+470/−280 before the latest T102 commits. The combined real-Postgres rollback/owner-home/full-stack/key suite passed **30/30 across four files** at head `b91b18beb` before T102; T102's own real-Postgres operator-script fixture passed 1/1 in its child. This is integration evidence, not a formal Graphite restack or current-head CI/Greptile.
+- W1's confirmation-key child is clean at `28184e763`: 57/57 focused tests, real-Postgres restart/rotation 2/2, gateway tsc and patterns. Its T102 inventory child is clean at `94a802508`: absent sync table is distinct from zero; personal sync accepted/pending/expired grant counts are separate from org collaboration cutover totals; real-Postgres helper and operator JSON 1/1, gateway tsc/patterns. Both have receipts and are unpushed. W1 is now writing bounded T092 old-client/old-home and relay transparency negative tests on an isolated child; no production legacy route removal.
+- W3's prepared private-project owner-runtime path passed **19/19 focused real-Postgres gateway/client/session tests**. Adjacent collaboration routes passed 28/28; one legacy fixture expected a more specific old 403 body and is being updated to the safe generic denial. A fresh-client preflight recovery test is green. W3 is running the full typecheck/pattern gate and will commit/receipt this child before surveying the existing CLI compatibility migration. The owner question remains unanswered; the written spec requires the old CLI shared Chat/terminal behavior to keep working, so the team is preparing its smallest direct-transport migration before T090 can retire legacy serving paths.
+- No live owner host, Clerk/provider credentials, paid provisioning, deployment or external docs publication was used. S18/T090, T092 live host proof and S19 final acceptance remain open.
+
+## 24. Progress — Codex coordinator, 2026-09-21 15:40 UTC
+
+- #1817 S20 evidence merged alone at 15:30:07 UTC after exact-head `19649d9aa` Greptile 5/5, zero threads and CI `35619057482` SUCCESS. Its docs contract check ran; expensive jobs were correctly skipped for its PNG/receipt-only diff, while parent #1795's full substantive run `35615072766` had passed. Main is `317013a2164624b628cc94e3afee488ca7c16d93`. **Sixteen related PRs are merged in total** (nine prep/baseline, five inherited S20 layers, UI #1795 and evidence #1817); ten inherited feature PRs remain open from #1792 through #1808.
+- Coordinator restacked only S02's six unique commits from old `e5f2fca10` onto that main, with local backup and conflict-free disposable probe. `124/s02` is clean at `78e41687e`, 12 files/+1,939. `gt track --parent main` and `gt restack --only` were clean; forced dry-run selected only #1792, then `gt submit --no-stack --force` updated only that PR. It now has base main, exact-head Greptile **5/5** on `78e41687e`, zero unresolved threads, and local contracts **358/358**. Existing `ready-for-ci` did not start a run after the base change; coordinator removed/reapplied it once, starting full CI `35620013008`, in progress. Ignore known-failing `claude-review` only; do not merge until substantive CI is green. W2 is preparing #1796 S03 core/child, without mutating it before #1792 merges; S03 real-Postgres authority suite passed 8/8 on its local core.
+- The corrected disposable S18 release probe now includes rollback verifier, confirmation key, personal sync inventory, secondary-reader retirement, post-cutover legacy-role denial, direct owner routes, and T092 two-home negative proof, clean at `47bad6446`. Cherry-picks were conflict-free. The assembled nine-suite real-Postgres/client matrix passed **51/51**, including signed platform→home cutover, owner route/private project, real two-home relay admission, and sync inventory. Full repository typecheck and changed-file patterns had passed at the earlier assembled checkpoint before the final direct-owner/T092 additions; their individual child typechecks/patterns passed, and a final integrated static rerun remains open. This branch is a probe, not a submitted Graphite layer.
+- W3 completed S18 direct-owner child at `3c95e2fa3` with 19/19 focused real-Postgres tests, safe generic 403 adjustment, fresh-client private-project recovery and full typecheck. It is now implementing a thin Node v2 direct-session adapter for **existing** 525 CLI collaboration Chat/terminal/project commands and an exact actor-index invitation-location metadata route. The route was RED 404 then GREEN 200 for the indexed invitee with generic 404 for others; Node adapter RED was recorded, implementation ongoing. Inbox/shared remain platform metadata; no new S17 control is being built. T090 serving-route removal still waits for this compatibility path to pass.
+- W1 completed T092 local child `cdf62259f`: real-Postgres two-home Hono relay/home test was RED for an explicit v1 request returning 401, then GREEN 1/1 with 426 upgrade response; adjacent relay/direct sessions 23/23, gateway/platform typechecks and patterns passed. It preserves serving routes and marks physical TLS/two-computer live evidence unrun. W1's T095 audit then found a material compatible-rollback recovery dead end: after an active direct generation, a transient rollback-home outage blocks the journal with resume phase `verified`; resuming repeats source→target directory CAS even though the directory is already target, so it can reblock forever. W1 is writing a real-Postgres RED case and narrow fix in a separate worktree. Do not claim rollback recovery complete before that proof.
+- No live host, provider/Clerk credential probe, deployment, paid provisioning or external publication occurred.
+
+## 25. Progress — Codex coordinator, 2026-09-21 15:55 UTC
+
+- Main remains `317013a2164624b628cc94e3afee488ca7c16d93` with **16 related PRs merged**. #1792 S02 current head `78e41687e` is base `main`, Greptile 5/5 on that head, zero unresolved threads, and local contracts 358/358. Label-triggered full CI `35620013008` has passed typecheck, patterns, docs contracts, React Doctor, shell build and three unit shards; its final unit shard remains in progress without failure. Separate Docker scenario run `35620013026` remains in progress at image build. Do not merge until substantive gates finish. W2 replayed all 11 S03 core commits onto S02's reviewed head in a detached probe: conflict-free, 24 files/+2965/-20, binary diff SHA256 identical; the formal branch stays untouched until #1792 merges.
+- T095 rollback recovery child `971d1bbdf` fixed the active-to-compatible rollback dead end after a transient owner-home outage. RED/lost-ack tests preceded the fix; focused real-Postgres cutover 17/17 and platform typecheck passed. The exact four commits were cherry-picked into the disposable release probe. Its assembled nine-suite real-Postgres/client matrix then passed **55/55** at `dcfd32b94`; full repository typecheck and pattern scan passed (zero violations, five existing warnings). Physical installed-host rollback proof remains unrun.
+- An actual relay journey found the browser direct client omitted the logical runtime header required for session exchange/renew/close and owner-runtime exchange. Isolated `124/s18-ui-relay-header` recorded a RED relay 404, then GREEN 21/21 browser/relay tests and UI TypeScript. Commits `35563dcdd`, `797459435`, `478dd75e5` and receipt `S18-browser-relay-session-receipt.md` are cherry-picked into the release probe. The relay uses the ticket/session-bound runtime ID only for routing; the home still verifies proof. No physical host claim.
+- W3 completed existing 525 CLI compatibility on isolated `124/s18-cli-compat` head `6a3f970e8`: Node v2 direct session transport for existing Chat/project/invitation/terminal commands plus actor-indexed invitation-location metadata. RED 404 before runtime header, GREEN actual in-process `CollaborationRelay` + production Hono owner-home journey; combined 16/16, CLI commands 9/9, sync-client build, platform typecheck and patterns. Commits `4264e4aea`, `bc63329f6`, `6a3f970e8` and receipt were cherry-picked into disposable release probe head `a5eaec1b5`. This is compatibility for existing commands, not deferred S17 new CLI controls. W3 now owns the #1799 gateway `server.ts` extraction on another isolated child before T090 registration changes.
+- W1 completed S19 bounded relay telemetry acceptance correction at `7f5224082`: RED when a metadata callback failure entered response-stream handling twice; GREEN 13/13 relay/profile tests and owner content preserved. A five-source-file V8 sample ran 63/63 tests but **failed** configured 99/95/99/99 coverage thresholds (53.77% statements, 28.57% branches, 43.1% functions, 55.18% lines). This is not full package coverage. W1 now inventories T090 legacy serving routes and writes RED retirement tests on an isolated child; serving removal waits for CLI/browser integration. Live owner-home/Clerk/provider probes, production deployment, and external docs publication remain unrun/unapproved.
+
+## 26. Progress — Codex coordinator, 2026-09-21 16:13 UTC
+
+- #1792 S02 merged alone via `gt merge` at 16:11:55 UTC, after exact-head `78e41687e` Greptile 5/5, zero unresolved threads, `ready-for-ci`, local contracts 358/358, full CI `35620013008` **SUCCESS** including E2E, and Docker smoke `35620013026` **SUCCESS**. Graphite dry run selected only `124/s02`. `gt sync --no-restack` fast-forwarded local main to merge SHA `7a8d1d39779b8dc1d453fa6d597a39cc453cf12d`; the existing untracked `.repos/` directory was preserved. **Seventeen related PRs are merged**; nine inherited feature PRs remain open from #1796 through #1808. W2 has the new SHA and is formally replaying/submitting #1796 S03 core only; its detached 11-commit probe was conflict-free with byte-identical patch.
+- Disposable release probe head `62294c4dc` includes T095 rollback recovery, browser relay header correction, existing 525 CLI v2 compatibility, and the #1799 gateway startup collaboration registration extraction. Before extraction, its nine-suite real-Postgres/client cutover matrix passed 55/55 and full repository typecheck/pattern scan passed. After browser and CLI integration, focused relay/UI/CLI suites passed 27/27, CLI package commands 9/9, route/terminal compatibility 16/16; full repository typecheck and pattern scan again passed (zero violations, five inherited warnings). Extraction child passed gateway startup 6/6, gateway tsc and patterns; final full matrix after all T090/terminal changes is still open. This probe is not a formal Graphite release PR.
+- T090 route-retirement agent prepared RED tests proving V1 proxy/ticket/terminal WS serving remained (3 expected failures, direct relay pass), then recovered a local-only worktree command mistake: two test/docs commits briefly landed on local main but were never pushed; they were moved into the isolated child and main was verified byte-exact at its previous SHA before #1792 merged, with `.repos/` untouched. Current isolated T090 work is removing exact V1 serving paths and old proof gating while retaining v2 relay, metadata and control. Focused platform/config/workflow 40/40, CLI/relay 16/16, platform tsc and patterns passed locally; whole T090 remains blocked on the canonical shared-terminal replacement. Deployment workflow currently needs direct ticket signing key wiring; the agent is updating code-only secret references. Repository-level `gh secret list` showed no `MATRIX_COLLABORATION*` names; environment/organization secret provisioning is unverified, no values were read or set, and no deployment was attempted.
+- The #1799 gateway extraction child `9b80ddae9` moved collaboration route registration and shared-AI startup into `startup/collaboration.ts` with a RED wiring test, behavior-preserving refactor, receipt and 6/6 focused tests. W3 found `enableSharedTerminal` is never called in production and its old ShellRegistry adapter cannot drive the current `TerminalRuntimeSocketClient`; no production path feeds PTY output into the collaboration event registry. A separate RED production-wiring child is underway. The required safe bridge needs an exact durable workspace/tab/incarnation/generation binding, daemon-enforced `createdAt` compare on actions/attach to prevent ID-reuse races, bounded output forwarding, authority/controller lease checks, and direct Hono/real-Postgres proof. The first real-Postgres binding tests passed 2/2, but **terminal sharing is not yet available** and no `available:true` claim or T090 release-ready status is permitted. Workspace-wide resize must fail closed until a terminal-scoped action exists.
+- S19 full kernel/gateway coverage, live provider/Clerk/two-computer probes, installed-host rollback, final three-surface acceptance, and explicit rollout authorization remain open. No production deployment, paid provisioning or external publication occurred.
+
+## 27. Progress — Codex coordinator, 2026-09-21 16:34 UTC
+
+- Main remains `7a8d1d39779b8dc1d453fa6d597a39cc453cf12d` after #1792 S02 merged; 17 related PRs are merged. #1796 S03 core is open at exact head `5441cd8118707b4556bf0a5c437e94d2a695154c`, based on main, labeled `ready-for-ci`, with current-head Greptile 5/5 and zero unresolved threads. Full CI `35624736108` and Docker Tests `35624736024` are still running; at 16:33 two unit shards and Docker Smoke Test remained, with no failures. Coordinator will merge this single Graphite layer only after both required workflows succeed. W2 has the separate S03 gateway child clean at `d26669983` and will formalize its PR immediately after #1796 merges; then S04 follows.
+- S18 canonical-terminal binding layer 1 is clean at source `db339b469` and was cherry-picked into the isolated release probe at `984a113d3` (four commits). It uses a persisted random per-tab incarnation in the canonical terminal runtime, a version-15 owner Postgres binding, and daemon-side current-tab/incarnation checks; same-ID reuse and missing-incarnation paths fail closed. The source worktree passed terminal runtime 56/56, real-Postgres binding 5/5, typechecks, and pattern scan. The integrated release probe separately passed the focused real-Postgres binding suite 5/5 at 16:33. The production terminal output/composition layer is still underway, so this is not a completed T090 cutover or releasable terminal share.
+- W1 completed S19 acceptance replay on a disposable corrected-ancestry probe at `78da566e4`; its six unique commits replayed conflict-free after integrated S18 startup/CLI fixes. Focused relay/profile tests passed 13/13. The tracked S19 branch is clean at `14dda76a5` and its receipt now distinguishes local evidence from unrun live, coverage, T090, and terminal gates. W1 is measuring the remaining kernel/gateway coverage gap and adding meaningful tests. No S19 push or PR yet.
+- Four agents remain active including the coordinator: W2 S03/S04 queue, W3 S18 terminal output/production composition, W1 S19 acceptance/coverage, coordinator guarded merges and integration. No production deploy, secret provisioning, or public-site publication occurred.
+
+## 28. Progress — Codex coordinator, 2026-09-21 17:27 UTC
+
+- The stopped worker sessions left no active writers. A complete worktree audit found only two spec-124 worktrees with uncommitted changes: S18 terminal output and S19 acceptance. S09, S10, S12, S03, S03 gateway, the release probe, and this handoff worktree were clean. Unrelated dirty worktrees `matrix-os-shared-terminal-sessions` and `.worktrees/workspace-terminal-session-open` were preserved and excluded.
+- S18 terminal output snapshot was committed and pushed on branch `124/s18-terminal-output` at `bea2fb47e` (`feat(collaboration): wire canonical terminal output bridge`). It adds canonical PTY attach/output forwarding, a bounded 2 MiB pending queue, source drain on last viewer, production startup registration, and stale-incarnation tests. Focused validation passed **14/14**: six real-Postgres canonical bridge tests plus eight event-registry tests. The branch has no PR yet because its prior lower ancestry is local/old; the next agent must restack it onto final S18 ancestry before creating/submitting a PR. This snapshot is implementation evidence, not T090 release proof.
+- S19 acceptance snapshot was committed and pushed on branch `124/s19-acceptance` at `5a5607353` (`test(collaboration): record S19 direct admission boundaries`). It adds three direct-session/organization-boundary tests and rate-limits repeated membership-source warning logs. Focused validation passed **7/7**. The branch has no PR yet because final S18 ancestry is not settled; restack it before submission. Full package coverage, live provider/Clerk/host probes, installed rollback, and final three-surface acceptance remain open.
+- The pushed snapshots are on GitHub but are not merged and must not be represented as release-ready. No commits were made to `main`; its only worktree state remains the pre-existing untracked `.repos/` directory. No production deployment, secret provisioning, or external publication occurred.
+- Handoff action for the next coordinator: start by reading this ledger, verify both pushed heads, poll #1796 CI/Docker and merge S03 only after all required gates pass, submit the S03 gateway child and restack S04. Then restack `bea2fb47e` into the final S18 chain, finish direct Hono route/host proof, restack `5a5607353` for S19, and keep exact-head Greptile 5/5, CI, receipts, and live-gate limits explicit. The current worker sessions errored due the Codex usage limit; re-create at most three packet workers and do not assume their prior process state exists.
+
+## 29. Progress — Codex coordinator, 2026-09-21 17:31 UTC
+
+- Preserved two additional clean refs on GitHub: `124/s03-gateway` at `d26669983` (the four-file S03 gateway child, now tracking origin) and `124/release-restack-probe` at `d70975d96` (the disposable integrated S18/S19 validation probe). Neither ref is merged or release-ready; the probe is for replay/evidence only and must not bypass Graphite ancestry or Greptile gates.
+- Main remains clean at `7a8d1d397` except the pre-existing untracked `.repos/` directory. S09, S10, S12, and S03 core branches already track their pushed origin refs. The only uncommitted worktrees found are unrelated `matrix-os-shared-terminal-sessions` and `.worktrees/workspace-terminal-session-open`; preserve them.
+
+## 30. Progress — Claude coordinator, 2026-09-21 17:55 UTC
+
+- Took over from the Codex coordinator at 17:37 UTC. Verified its final state: main had moved to `80b6f75f3` by two unrelated merges (#1818, #1611); all 124 worktrees were clean (no uncommitted files), but 40 branches had local heads not on origin. Every such head was backed up to `backup/20260921T1739/<branch>` on origin before any restack.
+- #1796 (`124/s03`, head `5441cd811`) merged via one-layer `gt merge` at 17:39 UTC after base `main`, exact-head Greptile 5/5, zero unresolved threads, `ready-for-ci`, CI `35624736108` and Docker `35624736024` success, and a dry run selecting only that layer. Main is `2425202de`; local main fast-forwarded with `gt sync --no-restack`. Eighteen related PRs merged in total.
+- S03 gateway child rebased onto main with `git rebase --onto main d858e446f`; the refactor commit became empty and one docs conflict in `S03-receipt.md` (2,965 vs 2,956 additions) was resolved to main's corrected text. Single commit `bdfecf66c`: 4 files, +283/−4. Focused suites 28/28, `bun run typecheck` clean, patterns 0 violations. Submitted as **#1819** (base main, Invariants + five-surface body, `ready-for-ci`, one Greptile request).
+- S04 local head `71a5b5c7c` (10 unique commits incl. the auth-epoch-on-grant-decision fix) rebased conflict-free onto `124/s03-gateway` as `1053ced9f`: 16 files, +2,341/−14. Validation and `gt submit --force` of #1797 follow in the next section.
+- Workers re-created as Claude subagents: `w-s18` (assemble the linear S18 chain onto S15 UI `e2ded8252`, restack `bea2fb47e`, direct route/startup proof, T090 only with compat evidence) and `w-s19` (coverage, acceptance matrix, T094/T095 review). Rule: workers use plain git in their own worktrees and never run `gt`; only the coordinator restacks/submits.
+
+## 31. Progress — Claude coordinator, 2026-09-21 18:25 UTC
+
+- #1819 S03 gateway child: Greptile 4/5 on `bdfecf66c` (P2 unbatched lookups, P2 fixture shape). Fixed on `5f7aab8ce`: concurrent distinct-actor lookups are micro-batched into one platform request of at most 100 actors, each settling individually (new test: 130 actors → 2 requests, per-actor caching, batch-failure isolation); precondition fixture returns the full assertion shape. Focused 29/29, typecheck and patterns clean. Threads replied and resolved; re-review returned **5/5 on the current head**, zero unresolved threads; full CI on that head in progress. #1797 S04 will be restacked onto the final gateway head before its own merge.
+- **Ancestry gap closed**: S10/S12/S12-app/S15-gateway/S15-directory/S15-direct/S15 were based on S09 `6307f9c51`, missing seven later S09 commits (shared Chat authority fence, rooted sandbox, ordered migrations). Rebased all seven branches conflict-free onto S09 `0c7599da7` with `git rebase --onto` (no PRs on these branches; prior heads backed up at `backup/20260921T1739/`). New heads: s10 `c4f6a3cd9`, s12 `f744ceae1`, s12-app `10675fe05`, s15-gateway `08b8bca50`, s15-directory `b59fb1587`, s15-direct `1222bfb27`, s15 `6396ac953`; all pushed with `--force-with-lease`. Validation on the S15 top: `bun run typecheck` clean; `shared-coding-execution` 25/25, `direct-resource-policy-postgres` 23/23, `collaboration-wiring` 12/12, `project-share-inventory-postgres` 6/6 (real Postgres); patterns 0 violations. W-S18 was told to rebase its chain onto `6396ac953` instead of deferring the `shared-chat-authority.ts` hunk.
+- W-STACK is restacking S05 core/gateway/relay, S08, S06, S07, S07-terminal (local P1-fixed heads) onto S04 `1053ced9f` with plain git; the coordinator submits via Graphite afterwards.
+- T095 read-only security review (S19 worker's subagent) found two P1s for the S05 layers: (1) no control-stream keepalive, so a quiet attached home reads `unavailable`/`host_offline` after 20–60 s (`control-client.ts`, `ticket-issuer.ts`, `control-stream.ts`); (2) `relay.ts` `prepareSocket` awaits `resolveScopeHome` without try/catch inside the upgrade listener, so a DB error is an unhandled rejection and the client socket is never destroyed. P2: relay registry counters have no TTL sweep/idle timeout; no per-actor rate limit on relay HTTP and session exchange (replayed valid tickets cost DB work before `consume`); `direct-websocket.ts`/`control-upgrade.ts` lack gateway tests; legacy `actor-proof.ts` FIFO-evicts unexpired nonces. P3: owner-runtime tickets skip the generation check; raw-path caps disagree (1024/2048/4096); parse throws inside upgrade factories; tickets are burned before capacity checks. Verified OK: runtime/generation ticket binding, relay never parses or logs payloads, fetch timeouts, body limits, WS frame validation, registry caps/shutdown, generic client errors, enrollment atomicity. Routing: P1s to a fix worker on the restacked S05 layers; P2/P3 to receipts/follow-ups with explicit deferral.
+
+## 32. Progress — Claude coordinator, 2026-09-21 18:55 UTC
+
+- W-STACK restacked S05 core/gateway/relay, S08, S06, S07, S07-terminal (local P1-fixed heads) with plain git onto S04; every layer green on focused real-Postgres suites, typecheck and patterns; one conflict in `direct-sessions.ts` (S05-gateway budget fields vs S07-terminal `notifyAdmitted`) resolved keeping both. Coordinator then ran `gt restack --only` bottom-up from S04 (which had to move onto the #1819 P2-fix commit) and submitted each layer with `gt submit --no-stack --force`. New heads/bases: #1797 `29ca2d989` on `124/s03-gateway`; #1802 `a98b97daf` on s04; #1803 `55bfa06ec`; #1804 `592d741f8`; #1805 `18daae3ae`; #1806 `6e24c94bf`; #1807 `1228cdb1b`; #1808 `b5fe844d4`. One Greptile review requested per new head (an earlier request landed on stale heads before the push; ignore those). `gt submit --stack` from S07-terminal is refused while S09+ are stale; per-branch submits work.
+- Consequence: S09 → S10 → S12 → S12-app → S15-* → S15 (`6396ac953`) → S18 chain (W-S18 in progress) → `124/s10-git-hardening` (W-GIT in progress) are now stale relative to S07-terminal `b5fe844d4` (was `eb6a4b4c7`). They will be restacked in one pass after W-S18 and W-GIT report, so those workers are not interrupted mid-rebase.
+- Three T095 read-only reviews (relay/tickets; dynamic policy/authority; sandbox/Git broker) are recorded in task #7 and routed: W-GIT owns the S10 Git-broker P1s (member-writable `.git/config` reaches host git with the owner forge credential; owner identity read from repo-local config) and S10 P2s on new layer `124/s10-git-hardening` based on S15; W-FIX owns S05 control keepalive P1, S05-relay `prepareSocket` catch P1, S07-terminal contributor-control default P1, S08 network-call-inside-transaction P2, S04/S05 `endActorGrants` + membership evict on denial P2, and the platform cross-tenant membership oracle P2 as new layer `124/s03-authority-fix` on main. Remaining P2/P3 go into `evidence/S19-review.md` with explicit deferral.
+- #1819 (S03 gateway child): Greptile 5/5 on `5f7aab8ce`, zero threads; the label-triggered full CI run is queued (concurrency queue). Merge follows when it is green.
+
+## 33. Progress — Claude coordinator, 2026-09-21 19:00 UTC
+
+- **#1819 (S03 gateway child) merged** via one-layer `gt merge` at ~18:50 UTC as `27c61142a` after exact-head `5f7aab8ce` Greptile 5/5, zero unresolved threads, `ready-for-ci`, and the label-triggered full CI (all four unit shards, E2E, typecheck, shell build, Docker smoke) green. Nineteen related PRs merged. Local main fast-forwarded with `gt sync --no-restack`.
+- S09 → S15 restacked a second time onto S07-terminal `b5fe844d4` (W-STACK's output): conflicts resolved in `platform/collaboration/repository.ts` + `routes.ts` (kept S06 cursor pagination and added the S15 `organization_grant_id`/`grantId` projection; five test calls moved to `listOrganizationSharesForActorPage`), `ui/collaboration/direct-client.ts` (kept S06 `disposed`/`streams.closeAll()` plus S15 owner-runtime map), and `ChatCollaboration.tsx` (took the S15 "Open" button: open-is-accept). One fixture fix committed on the S15 top so the S06 pagination test records grant pointers. Heads: s09 `5b09db3be`, s10 `e2a745f54`, s12 `3fcd2fb0e`, s12-app `2390458f5`, s15-gateway `afe67613a`, s15-directory `8a5b7347d`, s15-direct `ec91be983`, **s15 `dc8edbbb1`**; all pushed. Validation on the top: typecheck clean; shared-coding-execution 25/25, direct-resource-policy 23/23, wiring 12/12, platform repository 10/10, platform routes 8/8, UI direct-client 12/12, ready-to-work 13/13; patterns 0 violations.
+- #1797 (S04): after #1819 merged, rebased so only the twelve S04 commits sit on main (`6dee7caee`; includes W-FIX's two commits evicting membership evidence on a pushed denial). Base `main`, `ready-for-ci` re-applied to start full CI, review requested. Earlier head `29ca2d989` had scored 5/5.
+- Greptile on the restacked S05–S07 PRs: #1802 4/5, #1803 3/5, #1804 4/5, #1805 4/5, #1806 4/5, #1807 3/5, #1808 4/5. A read-only subagent is collecting the unresolved threads for W-FIX, which already owns those layers.
+- W-S18 delivered a 24-layer S18 chain (98 commits) proven 102/102 across 19 files incl. the nine-suite real-Postgres cutover matrix (52/52) and a new real-Postgres direct-terminal suite that caught two production bugs (terminal share wrote `recipient_actor_ids` as a raw JS array, rejected by real Postgres; the terminal adapter dropped scope/incarnation so every action failed closed). It is now re-rebasing onto S15 `dc8edbbb1`. T090 layers 22–24 stay at the top, unmerged-ready, for the owner's decision. Same raw-array bug class exists in S10 `project-membership-transition.ts:131` and is assigned to W-GIT.
+- Fourth T095 review (shared AI runs) found 3 P1: control-loss watchdog never wired in production; cancelled/partition-interrupted requests not retryable; policy-less scopes bypass owner-source gating. Plus P2: exhausted source drains the queue instead of pausing; startup order loses `gateway_restart` attribution; network fetch inside the scope FOR UPDATE transaction (`run-account-binding.ts`); unbounded terminal WS frame queue; submit mode not enforced at submit time. Assigned to W-S09FIX on new layer `124/s09-run-hardening` above S15. Planned stack: s15 → s10-git-hardening → s09-run-hardening → S18 chain → S19.
+
+## 34. Progress — Claude coordinator, 2026-09-21 20:45 UTC
+
+- #1797 (S04): first main-based CI run failed only `tests/gateway/collaboration-database.test.ts` (hard-coded `collaboration_%` table list lacked the S04 grant tables; the suite had never run on S04 because its base was never main). Fixed on the layer; Greptile then 4/5 with two threads (outdated epoch thread from before #1819; 572-LOC `capability-repository.ts`). Resolved: extraction plan recorded in `S04-receipt.md` and follow-up issue **#1826** (listing / lifecycle / policy modules behind the unchanged facade). Current head `9c0044eee`: Greptile **5/5**, zero threads, Docker green, full CI queued behind other branches in the shared runner queue.
+- W-FIX finished (report retrieved from git): F1 keepalive (platform `124/s05` `41573fa51`+`eb2d80044`; gateway ack + `endActorGrants` on pushed denial `124/s05-gateway` `ac3351e63`+`c940ec900`), F2 relay `prepareSocket` settle (`124/s05-relay` `853d2097e`+`8e329a27e`), F3 Contributor control withheld until owner opt-in (`124/s07-terminal` `4fe20ec10`+`ec141583a`), F4 owner source resolved outside the execution-policy scope lock (`124/s08` `b55bcb9c9`+`e1ccc11c2`), F5 membership eviction on denial (`124/s04`, in #1797), F6 cross-tenant membership oracle → **#1827** (`124/s03-authority-fix` on main, 7/7 focused, CI + review requested). Per-layer `collaboration-database.test.ts` table-list updates landed on S05-gateway and S08.
+- Chain S05 → S07-terminal Graphite-restacked onto S04 `9c0044eee` and resubmitted: #1802 `71696771f`, #1803 `048c3d191`, #1804 `715a2ed01`, #1805 `ee062afeb` (table-list conflict resolved as the sorted union), #1806 `322a667d5`, #1807 `f3f58b0a1`, #1808 `52c2790ef`; one review request each. Previous scores on the pre-fix heads were 3/5–4/5; unresolved threads from that round are being collected and will be reconciled against these heads.
+- W-GIT finished `124/s10-git-hardening`: 15 commits, every S10 finding fixed (member-writable `.git/config` isolated from owner-credentialed remote ops with read-only mounts and a config preflight; owner identity from the owner's global config only; gitdir alias refusal; definite push failures settle and the owner can expire unresolved effects; PR bodies over stdin and `gh` in an empty private cwd; membership-transition outbox recipients written as JSONB on real Postgres). Rebased onto S15 `dc8edbbb1` → `ab9ad0c4f`, pushed; validation running.
+- W-S18's 24-layer chain is rebased onto S15 `dc8edbbb1` and pushed (all `124/s18-*` heads on the new base; `s18-release-integration` dropped as a duplicate). W-S19 has four unpushed local commits on `124/s19-acceptance` (`3b7af0e4d`) plus `S19-review.md`. W-S09FIX is still building `124/s09-run-hardening`.
+- Planned single restack pass once W-S09FIX reports: s09 → s10 → s12 → s12-app → s15-* → s15 onto S07-terminal `52c2790ef`, then `s10-git-hardening` → `s09-run-hardening` → S18 chain → S19, followed by S18/S19 PR submission bottom-up.
+
+## 35. Progress — Claude coordinator, 2026-09-21 21:15 UTC
+
+- **#1827** (platform tenancy fix): Greptile 3/5 on the first head found the route still `touch()`ed every requested organization before the gate (foreign runtimes could schedule cross-tenant reconciliation). Fixed test-first on `3d32c10ca`: the authority gates each organization on the runtime owner's stored membership row (repository read, never tracks) and consults the projection only for organizations that pass; the route no longer touches. Real-Postgres authority suites 16/16. Greptile **5/5** on `3d32c10ca`; CI queued.
+- **#1797** (S04): CI still queued/running on `9c0044eee` (GitHub's shared runner queue has been about an hour deep); Greptile 5/5, zero threads.
+- **Review rounds on the restacked S05–S07 heads**: #1802 4/5, #1803 **0/5**, #1804 3/5, #1805 **5/5**, #1806 2/5, #1807 3/5, #1808 4/5. The 46-thread digest for the pre-fix heads is saved at `/home/nima/.claude/jobs/76ad0cca/tmp/threads-<PR>.json`. W-FIX owns #1802/#1803/#1804 (finishing); W-FIX2 finished #1806/#1807/#1808: S06 +3 → `ce327ea67` (stale-stream sweep, scope-cap eviction; eight older threads outdated with evidence), S07 +6 → `3c2e25d1e` (production shared Chat launches carry the pinned sandbox policy and manifest; eligibility derives from the readiness probe + a `sandboxManifests` source), S07-terminal +3 → `1b6854191` (sandbox runtime bindings evict fail-closed). **Consequence**: the S07 layer has no execution-root resolver, so production shared AI reports unavailable until S09 plugs its resolver into `sandboxManifests`; expect a conflict in `shared-ai-runtime.ts` on the S09 restack (W-FIX2 on standby to resolve it).
+- **W-FIX final**: F1–F6 landed test-first (s05 `eb2d80044`, s05-gateway `63a9418a6`, s05-relay `677410658`, s08 `7960a8044`, s07-terminal `bc34d3a04`, s03-authority-fix → #1827). The S07 terminal owner opt-in is API-only (PATCH `/scopes/:scopeId/terminal`); a UI toggle across Web Canvas/Web Desktop/Electron Desktop is still owed. Denials naming only a scope or only an actor evict nothing (platform fences with org+actor).
+- **W-GIT final**: `124/s10-git-hardening` 15 commits, all six findings plus JSONB recipients fixed; rebased onto S15 `dc8edbbb1` → `ab9ad0c4f`; typecheck, 42/42, patterns clean. Adds one owner-only route (`POST …/project/git/:operationId/expire`) to the frozen direct route table; contract owner may object.
+- **W-S18 final**: 24 layers, 100 commits, linear on S15 `dc8edbbb1`, all pushed; top `a28245826`; nine-suite real-Postgres cutover matrix 53/53, 109/109 across 20 files; typecheck/patterns clean; no deferred hunk. T090 layers 22–24 unmerged-ready for the owner. Unrun: live two-computer TLS relay, installed-host cutover/rollback, Clerk/provider probes, Cloud Run ticket-key secrets, OS-view interactive terminal evidence.
+- **W-S19 final**: `124/s19-acceptance` `3b7af0e4d` (pushed); `S19-review.md` with 44 findings; two real-Postgres test repairs; T094 profile extended (synthetic). **Coverage (T093)** across 624 kernel+gateway files on real Postgres: gateway 73.34% statements / 65.34% branches / 79.28% functions / 76.58% lines; kernel 61.27% / 49.44% / 66.93% / 61.42%; 27 source files at 0% (largest: `gateway/src/server.ts` 2,014 uncovered lines, kernel `ipc-server.ts`, custom MCP integration). This is a package-wide gap against the constitution's 99–100% target and must be recorded as such in S19; it is not closable inside this release. Acceptance matrix not re-run this round (runner at `/home/nima/.claude/jobs/76ad0cca/tmp/run-matrix.sh`; last real-Postgres result 112/112 stands). Stale exact-list tests (`collaboration-foundation`, `collaboration-database`) break on every layer that adds tables/routes/migrations; each owning layer must extend the lists.
+- Next: when W-FIX reports, Graphite-restack S05 → S07-terminal once and resubmit all seven with one review request each; then one restack pass S09 → S15 → git-hardening → s09-run-hardening → S18 chain → S19 onto the new S07-terminal head (W-FIX2 resolves the S09/S07 sandbox seam); then submit S18/S19 PRs bottom-up.
+
+## 36. Progress — Claude coordinator, 2026-09-21 21:45 UTC
+
+- **#1797 (S04) merged** via one-layer `gt merge` as `82403d954` after exact-head `9c0044eee` Greptile 5/5, zero threads, `ready-for-ci`, CI + Docker green. Twenty-one related PRs merged. Local main synced with `gt sync --no-restack`; merged `124/s04` left untracked-in-place (Graphite refuses to untrack a branch with tracked children, so the layers above were re-parented by plain `git rebase --onto` + `gt track`).
+- **S05 Greptile round 2** (W-FIX, receipt section "Greptile round 2 fixes" on the S05 relay layer): #1802 atomic ticket issuance, origin validated before organization services, retired-key overlap expiry (15 min), bounded acknowledgement frames (32) with shutdown drain, full real-Postgres transport-path test; #1803 loopback-only plaintext control origin, bounded ended-listener registry, strictly ordered control frames, stream closed on rejected frame; #1804 bounded relay socket registry with idle-reservation eviction. Threads marked outdated were verified fixed with test evidence (stale control state, sockets on denial, action budget, expired tickets, session routing, conditional headers, idle-home liveness).
+- **#1805 (S08)**: three remaining threads verified already fixed by `94e85b4a4`; the production provider-snapshot reader is now the tested `createLazyProviderSnapshotReader` helper (fail-closed before attach, delegation after); 80/80 on real Postgres.
+- **Chain S05 → S07-terminal rebased onto main** and resubmitted with one review request each: #1802 `665886601`, #1803 `84bc6e375`, #1804 `2ba8cc512`, #1805 `6ecbe502f`, #1806 `c1eef3a19`, #1807 `9299e4337`, #1808 `6e28ff3c7`. CI + Docker dispatched on #1802 (base main). #1827 CI in progress on `3d32c10ca` (5/5).
+- **Upper restack started**: `124/s09` rebase onto S07-terminal `6e28ff3c7` conflicts in `scope-runtime-chat-adapter.ts` (S07 sandbox-manifest seam vs S09 run-loss commit); W-FIX2 is resolving it in `/home/nima/matrix-os-124-s09` with the acceptance bar shared-coding-execution 25/25 on real Postgres, S09 plugging its resolver into `sandboxManifests`. S10 → S15 → git-hardening → s09-run-hardening → S18 chain → S19 follow once S09 is settled. W-S09FIX still building `124/s09-run-hardening`.
+
+## 37. Progress — Claude coordinator, 2026-09-21 21:50 UTC
+
+- **Account credit exhaustion on Fable 5.1 killed two workers mid-task**; the owner switched the session to Opus 5 (1M context, high effort) and directed all workers to Opus. Every replacement worker is spawned with `model: "opus"` and inherits high effort from this session. Nothing was lost:
+  - The S09 packet rebase onto S07-terminal `6e28ff3c7` died at commit **8 of 41** (`a47a26078 fix(collaboration): mount rooted shared Chats in the sandbox`) with conflicts in `scope-runtime-chat-adapter.ts` and `shared-ai-runtime.ts`. W-S09SEAM (Opus) is resuming that exact rebase, with the acceptance bar `shared-coding-execution` 25/25 on real Postgres and S09's execution-root resolver plugged into the S07 `sandboxManifests` seam.
+  - The S09 run-hardening layer died mid-implementation. Its RED tests (`ad911f9b3`) plus 16 files of half-finished implementation were committed as `33a205389` and pushed to `origin/backup/20260921T2143/124-s09-run-hardening`. W-S09HARDEN (Opus) is finishing it and may re-cut those two commits into clean test/fix pairs.
+- **All 36 review threads on the seven stacked PRs answered with evidence and resolved.** Scores on the main-restacked heads: #1805 `6ecbe502f` **5/5**, #1808 `6e28ff3c7` **5/5**, #1802 `665886601` 4/5, #1804 `2ba8cc512` 4/5, #1806 `c1eef3a19` 4/5, #1807 `9299e4337` 2/5, #1803 `84bc6e375` **1/5**.
+- Three of the 4/5 PRs have **zero threads but blocking summary verdicts**, all AGENTS.md resource requirements: #1802 acknowledgement work only partly bounded; #1804 relay does not drain active reservations on shutdown; #1806 stale-connection eviction not extended to terminal streams. Assigned to W-FIX4 (Opus).
+- #1803 (1/5) has a current P1 with no earlier equivalent: a failed control frame closes the socket but resolves the shared `inbound` chain, so frames queued behind it still apply state (revoke sessions, advance the fence, attempt acks) after the stream was terminated. #1807 (2/5) concerns the new sandbox-manifest seam. Both assigned to W-FIX3 (Opus), lower layer first.
+- #1827 Docker green, CI in progress on `3d32c10ca` (5/5). #1802 CI + Docker dispatched on `665886601` (base main, `ready-for-ci`, zero threads).
+
+## 38. Progress — Claude coordinator, 2026-09-21 22:05 UTC
+
+- **#1827 merged** as `e0c7d5729` after exact-head `3d32c10ca` Greptile 5/5, zero threads, `ready-for-ci`, CI + Docker green. **Twenty-two related PRs merged.** This closes the cross-tenant membership oracle on already-merged S03 code: any authenticated runtime could resolve membership for actors in organizations its owner does not belong to, and could schedule those organizations for Clerk reconciliation.
+- Verified by disposable-worktree dry run that `124/s05` rebases onto the new main **with no conflict** (the merged `control-authority.ts` hunks are in `assertActors`; the S05 hunks are in delivery selection). The remaining merge churn is mechanical, but every layer still needs a fresh CI run after its restack because heads change.
+- **#1803 P1 fixed** (W-FIX3): a failed control frame closed the socket but resolved the shared `inbound` chain, so frames queued behind it still applied state — revoking sessions, advancing the fence and attempting acknowledgements after the stream was terminated. RED `e74ab57f0` → GREEN `08207f4c2` on `124/s05-gateway`; `collaboration-direct-sessions` 25/25 on real Postgres, wiring/foundation/database 18/18, typecheck and patterns clean.
+- **Routed, not patched in the wrong place**: the #1803 summary also blocks on retired signing keys staying trusted across restarts, but the code is `ticket-issuer.ts` on `124/s05` (#1802). Residual confirmed: when `MATRIX_COLLABORATION_TICKET_RETIRED_AT` has no entry for a key, `retiredAtMs` falls back to the keyring load time, so every restart restarts the 15-minute overlap and the retired key is published forever. Assigned to W-FIX4, which owns that worktree. The S05 receipt lives on the relay layer, which W-FIX4 is editing, so W-FIX3 hands me its round-3 text instead of writing across worktrees.
+- **Contract decision (coordinator, reversible by the owner)**: `124/s10-git-hardening` added `POST …/project/git/:operationId/expire` to the frozen `COLLABORATION_DIRECT_ROUTES` table. S02 froze that table; the freeze test passed only because it checks uniqueness, per-route shape and forbidden prefixes rather than an exact list. The contract already expresses git operations as **one** action endpoint — `POST …/project/git/actions` taking `CollaborationGitActionRequestSchema`, a `z.discriminatedUnion("type")` over `status|diff|commit|push|pr` — and AGENTS.md requires action endpoints to use exactly that pattern. Decision: express owner expiry as a new union member on the existing route and leave the frozen route table unchanged; the `expireUnresolved` broker method and its owner-only authorization stay. To be applied when that layer is submitted (tracked as a coordinator task).
+
+## 39. Progress — Claude coordinator, 2026-09-21 22:30 UTC
+
+**Current branch heads (all local unless noted; the seven PR layers are unpushed pending one last fix):**
+
+| Layer | Branch | Head | State |
+| --- | --- | --- | --- |
+| S05 core | `124/s05` | `206419fb8` | verdict fixed; retired-key item outstanding |
+| S05 gateway | `124/s05-gateway` | `08207f4c2` | P1 fixed |
+| S05 relay | `124/s05-relay` | `96300b268` | verdict fixed; upstream-socket leak outstanding |
+| S08 | `124/s08` | `48e6498c2` | 5/5, threads verified |
+| S06 | `124/s06` | `8796c5f87` | verdict fixed |
+| S07 core | `124/s07` | `e34f2b62c` | verdicts fixed; owns the orchestrator regression |
+| S07 terminal | `124/s07-terminal` | `6e28ff3c7` | **2 tests red** (see below) |
+| S09 | `124/s09` | `29581aa3f` (pushed) | seam integrated, 182/182 |
+| S10 | `124/s10` | `acd6ba2b5` (pushed) | rebased |
+| S12 / S12-app | `124/s12` `bacb639bf`, `124/s12-app` `8781a3022` (pushed) | | rebased |
+| S15 chain | `124/s15-gateway` `0d4dc7342`, `-directory` `7e595b75a`, `-direct` `00d7d6480`, `124/s15` `477eaca68` (pushed) | | rebased, typecheck clean |
+
+- **S09 seam landed.** The rebase onto S07-terminal integrated the sandbox-manifest seam and fixed a production gap: `enableSharedAi` took no execution-root resolver and `server.ts` passed no manifest source, so eligibility was null and **shared AI was disabled on every customer VPS**. `executionRoots` now threads through `wiring.ts` with `canonicalChatExecutionRoots` at startup. Conflicts resolved keeping both sides (S07's always-required scope-matching manifest for unrooted standalone Chats, S09's rooted-run host-path equality). 25/25 `shared-coding-execution` and 182/182 across 14 files on real Postgres.
+- **S10 → S15 restacked onto the new S09** and pushed. One conflict in `shared-ai-runtime.ts`: the auto-merge had produced a duplicate `createSandboxReadinessProbe` import and two identical probe bindings. Collapsed to one probe exposing both `readiness` (S07 readiness composition) and `sandboxSupported` (S15 share readiness). **Next restack must drop S15's duplicate `sandboxSupported` definition**, because the S07 layer has since grown its own identical helper.
+- **Three verdict-only blockers closed, all real defects** (W-FIX4): #1802 frames arriving after `close()`/`shutdown()` still chained acknowledge work invisible to the drain, and the connections registry only shrank via the socket close handler, so a half-open socket held its slot and stayed in `connectedRuntimes()` — which is exactly what the control authority filters due denial deliveries by; now `lastTouched` + 60s eviction swept before the cap, on `connectedRuntimes()`, and on a 15s interval cleared by shutdown. #1804 `close()` cleared only the sweep timer: reservations kept their counts, `onEvict` never ran so relayed sockets were never destroyed, and `prepareSocket()` kept reserving after shutdown. #1806 the stale sweep gated silence on `purpose === "events"`, so terminals were never dropped; terminal liveness is now anchored on the scope's heartbeated event stream rather than churning idle terminals.
+- **#1803 P1 fixed**: a terminated stream kept applying queued frames (revoking sessions, advancing the fence, acknowledging after termination) and the queue was unbounded; now a per-stream `terminated` flag refuses queued and later frames before `applyFrame`, pending frames capped at 128, overflow tears down so the reconnect re-registers and unacknowledged denials are redelivered.
+- **Base regression caught before merge (near miss).** `124/s07-terminal` @ `6e28ff3c7` is **#1808 at Greptile 5/5 with zero threads and 2 of 4 `collaboration-chat-orchestrator` tests failing**. Reproduced by the coordinator on a clean worktree. Cause: the S07 adapter requires a scope-matching sandbox manifest on every launch while the orchestrator dispatches without one. Assigned to the S07 owner to fix on the owning layer plus sweep the rest of `collaboration-chat-*`.
+  **Root cause of the class:** `.github/workflows/ci.yml` triggers only for PR bases `main`, `stack/**`, `codex/**`, so a stacked layer gets its first real test run only when it becomes base-main, immediately before merge. A Greptile score and zero threads say nothing about green tests. **New gate: before merging each layer, run that layer's changed-area suites locally on real Postgres plus typecheck and patterns, then dispatch CI, then merge.**
+- Still open and owned: retired signing keys surviving restarts (`ticket-issuer.ts`, S05 core); idle eviction leaking the upstream TLS socket (`platform-websocket-upgrade.ts`, S05 relay); `sandboxRuntimes` unwired on both S09 and the run-hardening layer, so nothing stops a sandboxed runtime when an actor loses its lease; T049 live provider probes unrun; the S19 coverage gap (gateway 73%, kernel 61% against a 99–100% target).
+
+## 40. Progress — Claude coordinator, 2026-09-21 22:35 UTC
+
+**Lower chain restacked onto main `e0c7d5729` and resubmitted; CI + Docker + review dispatched on all seven in parallel.**
+
+| PR | Branch | Head |
+| --- | --- | --- |
+| #1802 | `124/s05` | `ffa102d99` |
+| #1803 | `124/s05-gateway` | `6e199c1e0` |
+| #1804 | `124/s05-relay` | `567838ff0` |
+| #1805 | `124/s08` | `2756ec6d0` |
+| #1806 | `124/s06` | `8479cc4ab` |
+| #1807 | `124/s07` | `8e147fa2f` |
+| #1808 | `124/s07-terminal` | `afb3bbf32` |
+
+- **Parallel CI is the fix for the structural gap.** `workflow_dispatch` runs on any branch regardless of PR base, so every layer now gets real test evidence at once instead of only when it reaches the front of the merge queue an hour at a time. All seven lower layers pass `collaboration-foundation` 7/7 locally.
+- **Routed items closed** (W-FIX4): retired signing keys are now **fail-closed by configuration** — the keyring load-time fallback is gone, a retired key with no `MATRIX_COLLABORATION_TICKET_RETIRED_AT` entry is refused by loader and issuer, the two maps must correspond exactly (a missing entry cannot silently never expire, a stray entry is caught as a typo), and a retirement dated beyond the protocol clock skew is refused. The 15-minute overlap is untouched. **Operator action required at rotation**: set that variable alongside any retired key or the ticket route answers unavailable. Recorded in the S05 receipt.
+- The **upstream TLS socket leak** was worse than reported: the shutdown drain added earlier in the same session had the same hole, because both paths tear down through a client-side `destroy()`, which emits `close`, not `error`. Teardown from the sweep, the drain, the client or the upstream now ends both halves with counts released exactly once. File is `packages/platform/src/platform-websocket-upgrade.ts`.
+- **Orchestrator base regression fixed on its owning layer** (`124/s07`, test-only commit `bbae9943c`). Diagnosis: the fixture was under-specified, not the adapter over-tightened — there is exactly one production call site of the shared adapter and it always resolves the authoritative root first, so no legitimate unrooted shared dispatch exists and the fail-closed gate stands. Orchestrator 4/4, full `collaboration-chat-*` group 78/78.
+- **Stale exact-list assertions are a recurring class, now traced.** `collaboration-database` and `collaboration-foundation` assert exact table, route, migration and body-limit lists; every layer that adds one must extend them, and nothing ran the suites because CI skips non-main bases. Fixed so far: S04 grant tables, S05 runtime identity, S08 execution policy tables, S10 git operations table, S12 resource catalog + upload tables. **Remaining drift is confined to the upper chain** (about 17 routes, migrations 12–14, 2 DELETE + 2 PUT body limits), assigned to W-FIX4 across S10 → S15 with the rule that a real defect must be reported rather than absorbed into the expectation.
+- Upper chain rebased and pushed: s10 `42c1f68dd`, s12 `d70752495`, s12-app `ea375019c`, s15-gateway `7e5aa5620`, s15-directory `0ed64d911`, s15-direct `22dd2c782`, s15 `487d9e41e`. Validation at the S15 top: database 3/3, shared-coding-execution 25/25, wiring 16/16, direct-resource-policy 23/23, orchestrator 4/4, git broker 8/8, share inventory 6/6, ready-to-work 13/13, direct client 16/16; typecheck clean; patterns 0 violations; foundation 3/7 pending W-FIX4.
+- **Restack hazard for the next pass**: S09 and S07 now each carry a fix for the same orchestrator fixture, and S15 carries a `sandboxSupported` definition identical to the one S07 has since grown. Both must be de-duplicated when S09 and S15 are rebased onto the settled lower chain.
+
+## 41. Review state on the main-based heads — 2026-09-21 22:50 UTC
+
+| PR | Branch | Head | Score | Blocking finding | Owner |
+| --- | --- | --- | --- | --- | --- |
+| #1802 | `124/s05` | `ffa102d99` | 4/5 | retirement config aborts platform startup | W-FIX5 |
+| #1803 | `124/s05-gateway` | `6e199c1e0` | **5/5** | — | — |
+| #1804 | `124/s05-relay` | `567838ff0` | **5/5** | — | — |
+| #1805 | `124/s08` | `2756ec6d0` | 4/5 | same retirement blocker (lower layer) | W-FIX5 |
+| #1806 | `124/s06` | `8479cc4ab` | 3/5 | terminal streams permanently disconnected; relay leaks a late upstream | W-FIX3 / W-FIX5 |
+| #1807 | `124/s07` | `8e147fa2f` | 4/5 | disabled shared AI marks non-executing resources unsupported | W-FIX3 |
+| #1808 | `124/s07-terminal` | `afb3bbf32` | **5/5** | — | — |
+
+- **Every blocking verdict on an upper layer is caused by code on a lower one**, so each is assigned to the layer that owns the file rather than patched where the symptom appeared. This is the third time that pattern has held in this stack.
+- **The retirement blocker is a fail-closed fix that overshot.** `loadTicketSigningKeyring()` validates only that the timestamp parses, while the issuer constructor enforces the clock-skew deadline and throws, and nothing between them catches it — so a mistimed key rotation stops the whole platform from starting instead of making connection-ticket issuance unavailable. Fix direction: validate the deadline in the loader and return `null`, so the existing "keyring did not load" path degrades the route, rather than a try/catch at the construction site which would leave two places defining a valid retirement. The security property must survive unchanged: a retired key is still never published without a recorded retirement, the retired-key set and retirement map must still correspond exactly, and the 15-minute overlap is untouched. The failure mode moves from "process will not start" to "ticket route unavailable", never to "key silently published". A bootstrap regression test covers far-future, malformed JSON and unparseable dates.
+- **Real defect found and routed** (`124/s10`): `packages/contracts/src/collaboration.ts` imports `./canonical-chat-primitives.js` instead of the declared `#canonical-chat-primitives` subpath, so `@matrix-os/contracts` cannot be loaded by plain Node — exactly what `tests/contracts/native-runtime-import.test.ts` guards. Passes on `124/s09`, fails from `124/s10` up; introduced by `9f90749b5`. It was twice reported as pre-existing because the same test also fails on `main` for an unrelated reason (that checkout has no install, `Cannot find package '@matrix-os/contracts'`).
+- **Frozen route table restored** (`124/s10-git-hardening` @ `c177e3e86`, pushed): owner Git expiry moved out of a new route and into the existing actions endpoint as `{ type: "expire", operationId }`. The union was split so the effect union types what the broker stores and the driver executes while the action union is what the endpoint accepts, making an expire action unable to reach the driver by construction. A freeze guard now asserts the project Git surface is exactly the two rows S02 froze. Owner-only proven end to end on real Postgres: contributor 403 with the operation still unknown, owner 200 with one audit row, repeat 409.
+
+## 42. Full chain linear from main to S15 — 2026-09-21 23:15 UTC
+
+Fifteen layers, linear ancestry verified end to end, all pushed:
+
+`main e0c7d5729` → s05 `e0b36f5ba` → s05-gateway `b12889dd0` → s05-relay `327caf425` → s08 `5fd1efc3b` → s06 `afe9d98dd` → s07 `cb29a9d63` → s07-terminal `ab4bab247` → s09 `57f672b1b` → s10 `389b22c9a` → s12 `d5d2012c2` → s12-app `1ae99ed3a` → s15-gateway `e8bbf67e7` → s15-directory `df1776cb7` → s15-direct `98c88ba9e` → s15 `d132aa7c3`
+
+**Three semantic conflicts resolved by consumer evidence rather than by taking a side.** Each would have been wrong either way:
+
+1. `shared-ai-runtime.ts` (S09 onto S07): three hunks. Imports merged as a union; the manifest-source computation kept from S09 (it is what makes production eligible) while keeping S07's probe name because `sandboxSupported` uses it; and in the returned object S07's `sandboxSupported` kept alongside S09's `interruptForLoss`, with `readiness` **dropped** — a `git grep` showed nothing consumes it, while `sandboxSupported` has real consumers in `wiring.ts` and tests.
+2. `collaboration-chat-orchestrator.test.ts` (S09 onto S07): both layers had independently fixed the same under-specified fixture. Took S07's, which derives the manifest from the dispatch's own scope and actor instead of a fixed constant; S09's duplicate dropped.
+3. `ticket-issuer.ts` (S15-direct onto the retirement work): HEAD carried the loader's new signature and contract, the replayed commit carried a new `IssuedOwnerRuntimeTicket` interface. Either side alone loses something, so both were kept.
+   Also `direct-wiring.ts` twice: after the construction-site catch was reverted, `CollaborationTicketIssuerError` had no remaining use, so only the used symbols were kept and typecheck confirmed it.
+
+**Review state after the restack** (scores move because content moves): #1805 and #1807 are **5/5**; #1802, #1803, #1804, #1806, #1808 are 4/5 with findings assigned to owning layers.
+
+**The most valuable finding of the round refutes an argument I had accepted.** The retirement fix rested on "a keyring the loader admits is one the issuer accepts", justified because both compare against now-plus-skew and the loader runs strictly earlier. That holds for the *deadline* but not for *cardinality*: one active key plus eight distinct retired keys passes the loader's **separate** eight-key limits while the issuer throws on the **combined** count, and with the construction-site catch removed that exception escapes bootstrap and stops the platform starting — the exact failure the fix was closing. The instruction given was to validate the combined count in the loader, keep the loader as sole authority, and then re-audit the constructor for any other throw the loader cannot rule out, restoring a narrow catch if a residual class genuinely exists rather than fixing one shape at a time.
+
+Other real findings this round: an authenticated client can omit `Content-Length` and stream an unbounded body through the relay to a customer home (the 96 KiB check only validates the declared length); endpoint registration commits before the control upgrade ticket in a separate transaction, so a failed issuance returns 503 with the generation and key changes already committed; and the control-upgrade route validates its `ticket` query parameter with handwritten checks instead of a bounded Zod schema.
+
+## 43. All review threads closed; chain relinearized — 2026-09-21 23:35 UTC
+
+**Every one of the seven PRs now has zero unresolved review threads.** Final heads, all submitted with CI + Docker + review dispatched:
+
+| PR | Branch | Head |
+| --- | --- | --- |
+| #1802 | `124/s05` | `53b7a698d` |
+| #1803 | `124/s05-gateway` | `d29312c91` |
+| #1804 | `124/s05-relay` | `eaf0547ae` |
+| #1805 | `124/s08` | `8f9dae50f` |
+| #1806 | `124/s06` | `8136abe38` |
+| #1807 | `124/s07` | `f11a09afa` |
+| #1808 | `124/s07-terminal` | `3c5d5d97d` |
+
+Above them, linear and pushed: s09 `652518aa7`, s10 `08dff9891`, s12 `f3d9ca153`, s12-app `2512f2f84`, s15-gateway `b1e2c9417`, s15-directory `871d6ee30`, s15-direct `95e0dcd07`, s15 `0d0df2c91`, plus `124/s10-git-hardening` `5b1df5d54` rebased onto S15.
+
+**The key-count bug was real and is fixed with a systematic audit rather than one patch.** The key map parser caps active and retired at eight *each* while the constructor counts distinct ids across *both* against eight, so five plus five loaded and then threw out of platform startup. Independently reproduced by a second worker at that smaller, likelier rotation shape. The loader now applies the combined cap on both return paths, and **every** constructor refusal was audited against what rules it out at load: missing active key, bad key id, wrong seed length, retired key with no retirement, unparseable retirement, retirement past the clock skew, and the combined cap. No residual class remains, so no catch was restored at the construction site. The loader's comment no longer asserts the bare invariant; it names each refusal it rules out.
+
+**Two findings were disproved rather than accommodated, both with executable evidence.** The relay's "streamed bodies bypass limit" impact did not reproduce, because the framework already wraps a body with no declared length in a counting stream — but underneath it a real structural defect was found and fixed: the relay's only bound came from a constant in the contracts package while its own configured limit was enforced against the declared length alone, so a relay configured with a smaller limit forwarded a 128 KiB chunked body whole to a home. And the terminal PATCH "missing body limit" was wrong, since the composition registers one shared limit for POST, PATCH and DELETE before any handler; it is now locked by a 97 KiB request asserting 413, which also fails if PATCH is ever dropped from that shared registration.
+
+**Also fixed:** endpoint registration and upgrade-ticket issuance now share one transaction (a failed issuance previously returned 503 with the generation bump and merged keys committed; the test requires the refused registration to leave the recorded generation at 1, where it reached 4); and the control-upgrade `ticket` query parameter parses through a bounded Zod schema instead of handwritten checks.
+
+**S09 run-hardening complete** at `83ff5b1d8`: all eight findings plus all four P3 items, `shared-coding-execution` 32 passing (25 before the layer). It also repaired a previous worker's flood test whose mock returned a promise that never settled, hanging the whole file past every timeout — which likely explains earlier failures attributed to host contention.
+
+**Coordinator error worth recording:** after resolving the S15 conflict by dropping a duplicate method in favour of the base's, that layer's separate import of the same type remained, duplicating one the base already had — two compile errors in a hand-merged file. Tests and the pattern scan passed; only the typecheck exit code caught it, and it was briefly reported as green from the test lines alone. Hand-resolved semantic conflicts are exactly where type errors hide. Check the exit code, not the summary lines.
+
+## 44. Final chain, all blockers closed — 2026-09-22 00:00 UTC
+
+Every review thread closed and both verdict-only blockers fixed. Fifteen layers linear from `main e0c7d5729`, all pushed:
+
+| PR | Branch | Head |
+| --- | --- | --- |
+| #1802 | `124/s05` | `53b7a698d` |
+| #1803 | `124/s05-gateway` | `bbedf6ffb` |
+| #1804 | `124/s05-relay` | `3348e4bc7` |
+| #1805 | `124/s08` | `31a3d7ee2` |
+| #1806 | `124/s06` | `dbb65e6b7` |
+| #1807 | `124/s07` | `e2210ada7` |
+| #1808 | `124/s07-terminal` | `7ffac5e05` |
+
+Above them: s09 `26ae6daeb`, s10 `05e77de23`, s12 `539c721c6`, s12-app `5cbd2084b`, s15-gateway `2645c97ce`, s15-directory `4ae3a4d74`, s15-direct `1c925aa7c`, s15 `e76713d23`. Side layers: `124/s10-git-hardening` `5b1df5d54`, `124/s09-run-hardening` `57eb77680` (awaiting restack onto the new S15).
+
+**The gateway fence drained nothing.** `wiring.ts fence()` never called into the control client, so a fenced runtime kept its control stream, reconnect timer and 5-minute re-registration interval; a later frame then ran `sessions.revoke`, membership eviction and `endActorGrants` against the very dependencies the caller was destroying, and acknowledged a fence for a runtime that had stopped serving. A frame already inside its grant cleanup also resumed and acknowledged. Both the control client and `DirectSessionService` now have **synchronous** `fence()` methods with `shutdown()` delegating to them — in both cases the async signature sat over a body that never awaited, so the drain is complete rather than best-effort. In-flight work is abandoned at its resumption points (a frame refuses to start once drained; a denial whose cleanup lands after returns without moving the fence; no acknowledgement is sent, so it completes at its lease deadline through the existing cleanup-failure branch). The shared-AI and outbox drains stay best-effort because theirs are genuinely async.
+
+**Streamed overflow now outranks an early answer.** Through a relay limited to 32 KiB, a 256 KiB body with the home answering 400 mid-upload delivered 400 to the client: the cap held and the source was cancelled, but the client was never told size ended the request. The bounded stream now signals settlement (completion, overflow or cancellation) and forwarding waits for it before committing an upstream response, bounded by the request's own timeout, with abandonment counting as settled and non-stream bodies skipping the wait. The mirror case is pinned with a 100 ms timeout so a regression to an unbounded wait hangs rather than passing quietly.
+
+**Root cause of the inert-code family, fixed at the source.** `runtimes` and `onLoss` are now **required** on the shared chat/coding adapters. The rule recorded for the next person: *a collaborator whose absence changes behaviour silently is required; one whose absence is reported to the caller may stay optional.* An audit of 619 exported symbols across the collaboration surface found 8 genuinely unreachable exports, all benign (a duplicate route surface, superseded adapters, retired-feature residue, two functions implementing explicitly deferred scope), and 55 optional collaborator inputs of which production supplies all but the documented fail-closed ones.
+
+**Follow-up issues filed rather than patched mid-release:** #1828 (a relative *value* import breaks the contracts entrypoint under plain Node; type-only relative imports are erased and harmless, so the rule is about values), #1829 (the direct terminal WebSocket answers a bare 404 when a dependency is missing while the HTTP routes correctly report `unavailable`, plus a duplicated path regex), #1830 (**repo-root tests are never typechecked** — `bun run typecheck` runs per package and no package includes `tests/`, so fixture drift passes the mandatory pre-PR gate; scoped with the warning that enabling it surfaces a pre-existing backlog around Kysely generics and async-iterator typing, so run it non-blocking first).
+
+**Process correction:** CI was being dispatched on every restack, burning shared runner capacity on heads that were then superseded. From here: validate locally, then dispatch CI once on final heads.
+
+## 45. CI is not a usable gate right now — 2026-09-22 00:30 UTC
+
+**The merge queue is blocked by capacity, not by code.** No substantive CI run has executed on any of the seven
+main-path heads. Two independent causes stack:
+
+1. **The known structural gap.** `.github/workflows/ci.yml` triggers on `pull_request` only for bases
+   `main`, `stack/**`, `codex/**`. Six of the seven layers are based on a sibling branch, so they get no
+   automatic run at all. Only #1802 (base `main`) receives one.
+2. **Runner starvation from an unrelated workstream.** Six `codex/*` speech PRs have been cycling CI since
+   23:33 (repeatedly cancelled and re-queued). Every one of our runs sat at status `pending` with **zero jobs
+   assigned** for more than twenty minutes. `ci.yml` uses `concurrency: { group: ci-<ref>-shared, queue: max }`,
+   so superseded runs on the same ref hold their group's slot while parked.
+
+**Action taken.** Cancelled 38 superseded/duplicate spec-124 runs (every `workflow_dispatch` CI and Docker run
+on heads that the pending restack will rewrite, plus parked `pull_request` runs on old SHAs). Kept exactly one:
+the `pull_request` CI run on `124/s05` @ `53b7a698d`, the only head that the restack will not move. This both
+unblocks the shared queue for the other workstream and stops us holding concurrency groups we no longer need.
+
+**Consequence for the release: local gates are the merge gate.** Do not read a green check list on a stacked
+layer as evidence — `gh pr checks` on these PRs shows Docker, preview and review jobs only, with no typecheck
+and no unit tests. Before each merge, run `bun run typecheck`, `bun run check:patterns` and the layer's suites
+**in that layer's worktree**, and record exit codes rather than summary lines. A Postgres-backed suite that
+*skips* is not a suite that *passes*; say which it was.
+
+**Two process corrections, both mine.**
+
+- *Cite the commit that contains the fix.* I replied "Fixed in `945973db0`" on #1803's control-client thread;
+  that commit touches `direct-sessions.ts` only, and the control-client guard was still unwritten. Unresolved
+  the thread and posted the correction. A fix SHA is a checkable claim — verify with `git show --stat` before
+  posting it.
+- *Never select review threads by file path.* Twice a path filter replied to every thread on a file (five on
+  `control-client.ts`, five on `direct-streams.ts`) and the first instance also unresolved four threads that
+  earlier rounds had legitimately closed. Both were retracted and the four re-resolved. Select threads by
+  **node id**, after printing each thread's opening comment to confirm which one you mean.
+
+**Ancestry confirmed** (GitHub bases match the intended stack):
+`main` <- `124/s05` (#1802) <- `124/s05-gateway` (#1803) <- `124/s05-relay` (#1804) <- `124/s08` (#1805)
+<- `124/s06` (#1806) <- `124/s07` (#1807) <- `124/s07-terminal` (#1808).
+
+**Unpushed worker commits held deliberately** (one restack pass will carry them, so they are not pushed yet):
+`124/s05-gateway` 665104d64/945973db0/a18a0547a; `124/s05-relay` 77eb5e28a/1f9421127/72c65de30;
+`124/s06` 408ab27a9/2db95964b/e12c24bc2.
+
+**The stream-cap finding on #1806 stayed disproved.** A fix did land on that exact line, but as defensive
+hardening: evicting a scope's *last* stream prunes the scope, so a new handle could be inserted into a detached
+map holding live sockets. Unreachable while the cap is 8, because the victim is then never the scope's last
+stream. The durable win is the RED `408ab27a9` — the cap was correct but had **no test that pushed past it with
+fully-opened sockets**. It is asserted now.
+
+## 46. What CI actually gates, and the remaining scope — 2026-09-22 00:55 UTC
+
+**CI is gated by a label, not only by base branch.** `.github/workflows/ci.yml` computes `should_run`
+and exits early unless one of these holds: the event is `workflow_dispatch` or `merge_group` (always
+runs), the PR action is `ready_for_review`, the action is `labeled` with **`ready-for-ci`**, or the
+action is `synchronize` **while the PR already carries `ready-for-ci`**. Of the seven main-path PRs,
+only **#1802 carries that label**. So even the layers that could receive a `pull_request` event would
+have produced an empty run.
+
+Combined with the base-branch filter (`main`, `stack/**`, `codex/**`), the rule for this stack is:
+
+- A layer based on `main`: add `ready-for-ci`, and every later push reruns CI automatically.
+- A layer based on a sibling branch: **no `pull_request` event fires at all**, labelled or not.
+  `gh workflow run ci.yml --ref <branch>` is the only route, and dispatch always runs CI in full.
+
+**This makes merge order do useful work.** When a layer merges, GitHub retargets the next PR's base to
+`main`, which makes it eligible for automatic CI. Merging strictly bottom-up therefore converts the
+stack into properly tested PRs as it goes. **Apply `ready-for-ci` to the next layer immediately after
+its predecessor merges**, not before — while the label is on, every push reruns CI, so applying it to a
+branch that is about to be rebased burns shared runner capacity for nothing.
+
+**Concurrency parks runs rather than cancelling them.** `concurrency: { group: ci-<ref>-shared,
+queue: max }` means superseded runs on the same ref sit in `pending` **with zero jobs assigned** and
+hold their group. They do not self-cancel. A head with several superseded runs can therefore look
+"queued" indefinitely while nothing is wrong with the code. Cancelling the stale runs releases the
+group and the next run starts immediately — that is exactly what unblocked #1802.
+
+**First substantive CI on this release passed its static gates.** On `124/s05` @ `53b7a698d`: Detect
+changes, React Doctor, Pattern Scan, Docs Contract Tests, Agent SDK compatibility, Type Check,
+Symphony Polling Safety, OS View Parity, Sync Client Package and Shell Production Build all
+**success**; the four Unit Tests shards were still running when this was written.
+
+**Remaining scope after the current seven.** Eight `124/*` PRs are open (the seven plus this ledger).
+**37 branches still have no PR at all**: `124/s09`, `124/s09-retry-jsonb`, `124/s09-run-hardening`,
+`124/s10`, `124/s10-git-hardening`, `124/s12`, `124/s12-app`, `124/s15`, `124/s15-direct`,
+`124/s15-directory`, `124/s15-gateway`, **25 `124/s18-*` branches**, and `124/s19-acceptance`. Each
+needs submission, a current-head Greptile 5/5, and a dispatched CI run. Plan for that volume rather
+than discovering it at the end.
+
+**Graphite is authenticated (v1.8.6) but its recorded ancestry is not trustworthy here.**
+`refs/branch-metadata/` is empty for all seven branches and `gt ls` shows `124/s07` as "needs restack"
+with an ordering that does not match the GitHub bases. Do **not** run `gt merge` against this state.
+Land with the documented last-resort procedure and its safety rules: verify `gh pr view <n> --json
+baseRefName` shows `main` before each merge, merge strictly one at a time, never pass
+`--delete-branch` while descendants are open, and never loop over the stack.
+
+**S19 evidence is committed** on `124/s19-acceptance` @ `bc018a4ab`: `47498d1d7` the kernel/gateway
+coverage measurement (gateway 73.34% statements, kernel 61.27%, against a 99/95/99/99 threshold, with
+the gap attributed to pre-existing untested composition entrypoints rather than to this spec) and
+`bc018a4ab` the quickstart acceptance matrix.
+
+## 47. S05 merged; chain restacked onto new main — 2026-09-22 01:30 UTC
+
+**#1802 is merged.** `main` is now `4f13d4c6d` (`feat(platform): register relay-routable homes and issue signed
+connection tickets`). It is the first spec-124 layer to merge with **full substantive CI green on its exact
+head**: all four unit shards, Type Check, Pattern Scan, React Doctor, Docs Contract Tests, Agent SDK
+compatibility, Symphony Polling Safety, OS View Parity, Sync Client Package, Shell Production Build and E2E.
+Greptile 5/5, zero unresolved threads, base verified `main` immediately before merging.
+
+**The whole chain was restacked twice and is clean.** First onto its fixed parents, then onto the new `main`
+after the squash merge. Eleven rebases, **zero conflicts**. Current heads, linear end to end:
+
+| PR | branch | head | own commits |
+| --- | --- | --- | --- |
+| #1803 | `124/s05-gateway` | `733e778c0` | 24 |
+| #1804 | `124/s05-relay` | `128aee713` | 31 |
+| #1805 | `124/s08` | `6a89d4fe3` | 13 |
+| #1806 | `124/s06` | `a8b26f0ac` | 31 |
+| #1807 | `124/s07` | `fef47cc52` | 19 |
+| #1808 | `124/s07-terminal` | `ff12caf18` | 15 |
+
+**#1803's base had to be retargeted by hand.** GitHub did *not* auto-retarget it to `main` after #1802 merged,
+because `124/s05` still exists (correctly — never delete a branch while descendants are open). `gh pr edit 1803
+--base main` was required, then `ready-for-ci` applied so the layer gets automatic CI. Expect to repeat both
+steps for every subsequent layer as it reaches the front.
+
+**A restack is not cosmetic here — it un-reverts fixes.** Before the restack, `git diff 124/s06..124/s07` showed
+the just-landed stream-cap hardening being *removed*, because the descendant still carried the pre-fix copy.
+After the restack the fix survives to the top of the chain. **Any diff taken against an unrebased parent is
+misleading**, and a "user-visible files" audit run against one produced a false positive for the same reason.
+
+**Three fixes landed on `124/s05-gateway` for one defect class**: in-flight work crossing a fence or a
+revocation. Sessions (`create`/`renew`/`authenticate` each await inside admission), the control client
+(`start`/`register`/`connectControl`, where adoption is the commit point), and a per-record `ended` flag for
+work that outlives a pushed revocation. All follow the same shape: revalidate at the commit point, refuse the
+late arrival, never cancel in flight and never commit-then-undo.
+
+**Two items deferred with issues, recorded in the PR bodies:** #1831 (an admission whose authority check
+predates a revocation is not refused; needs a revocation watermark at registration, which is new state, and the
+window's duration has never been measured) and #1832 (a deprecated `z.string().url()` spelling; not swapped
+because `z.url()` was not verified behaviourally identical, and changing validation semantics on a release
+branch without a pinning test is the wrong trade).
+
+**Correction recorded on #1806.** I described the stream-cap test as a RED. It never failed against the real
+code — it passed first time, and only failed when the line was rewritten into the form the reviewer described.
+There was no defect. The commit's value is a standing assertion plus a measurement, not a caught bug, and the
+thread now says so.
+
+## 48. S18 is a parallel copy of the stack, not a stale one — 2026-09-22 01:30 UTC
+
+**This is the largest structural problem in the release and it is not yet solved.**
+
+`124/s18-startup`, the bottom of the 24-branch S18 chain, forks off **`main~4` (`2425202de`)**, not off the S15
+group. `124/s15` is **not an ancestor of any S18 branch**. The two chains carry independent rebase copies of the
+same lower-layer work: 129 commit subjects appear in both, and 105 subjects exist only on the S15 side.
+
+The 24-branch chain is internally **linear and clean**, and the S15 group is clean and already on current main:
+`main → 124/s15-gateway → 124/s15-directory → 124/s15-direct → 124/s15`.
+
+**Of `124/s18-startup`'s 155 commits, only 14 are genuinely S18's own work** — the gateway startup and route
+extraction slices (`startup/owner-database.ts`, `startup/owner-database-fallback.ts`,
+`startup/platform-integrations.ts`, `startup/collaboration.ts`, `server/bridge-routes.ts`, plus `server.ts`,
+their tests and `S18-chain.md`). Another 12 look S18-only but are pre-squash originals of work already in
+`main`; 15 of the 20 files they touch are byte-identical to S15. **141 of the 155 base commits are replayable
+duplicates.**
+
+**A rebase would be actively dangerous, not merely expensive.** 47 of 59 files overlap between the 105 S15-only
+review-round fixes and the duplicated commits in `s18-startup`. All 43 files in the overlap differ, and the
+drift is uniformly one-directional: `git diff 124/s18-startup..124/s15` is **+4377 / -286**, S15 newer
+everywhere. Replaying S18's older copies over S15 would silently revert the review-round hardening — the same
+failure mode already observed today on a single file.
+
+Highest-risk overlapping files include `packages/contracts/src/collaboration.ts`, most of
+`packages/gateway/src/collaboration/*` (control-client, direct-sessions, execution-policy,
+revocation-enforcer, sandbox-readiness, scope-runtime-chat-adapter, shared-ai-runtime, terminal-adapter,
+terminal-dispatcher, terminal-task-profile, wiring), `packages/gateway/src/server.ts`,
+`packages/gateway/src/shell/registry.ts`, most of `packages/platform/src/collaboration/*`,
+`packages/platform/src/platform-websocket-upgrade.ts` and `packages/scope-runtime/src/systemd-launcher.ts`.
+
+**Indicated strategy: extract S18's own 14 commits plus the 23 clean upper layers onto the final S15, and
+discard the duplicated 141-commit base.** Do not `git rebase` the chain wholesale. This has not been executed
+and is the next major decision.
+
+## 49. A CI run can report success having tested nothing — 2026-09-22 07:00 UTC
+
+**Do not read `conclusion: success` as evidence that CI ran.** On `124/s05-gateway` @ `733e778c0`, run
+`35697218329` reported **every job green** — Type Check, Pattern Scan, all four Unit Test shards, Shell
+Production Build, E2E, CI Results — and completed in **64 seconds** (`06:57:30Z -> 06:58:34Z`). It tested
+nothing.
+
+**Cause.** The run fired on the `synchronize` event from the push, *before* `ready-for-ci` was applied. The
+`changes` job therefore emitted `should_run=false`, and each downstream job took its no-op branch (the
+`if: needs.changes.outputs.should_run != 'true'` step) and **exited success**. Only `Symphony Polling Safety`
+reported `skipped`; the rest reported `success` without doing work.
+
+**How to tell a real run from a no-op run:**
+
+- **Duration.** A genuine run on this repo takes tens of minutes. Under about two minutes means no-op.
+- **`Detect CI-relevant changes` job log**, which prints either `CI relevant changes: true` or
+  `CI trigger not requested; add the ready-for-ci label...`.
+- A real run has `E2E Tests` and four `Unit Tests (n/4)` shards that each take minutes.
+
+**Ordering rule that avoids it entirely.** Push first, then apply `ready-for-ci`. The push's `synchronize` run
+no-ops harmlessly, and the `labeled` event then fires one genuine run on the final head. Applying the label
+first means the label run and the push run both execute in full, wasting a shared runner pool that an unrelated
+workstream is already saturating.
+
+This matters beyond convenience: had the no-op green been taken at face value, an untested layer would have
+gone to `main` with a full column of passing checks next to it.
+
+## 50. The upper chain is stale, not duplicated — correcting section 48's scope — 2026-09-22 07:20 UTC
+
+**Correction first.** On seeing that no upper branch had `124/s07-terminal` as an ancestor, I briefly concluded
+that the whole upper chain was a set of parallel copies like S18. **That was wrong for S09, S10, S12 and S15**,
+and the ledger must not carry it. Section 48's finding stands for S18 only.
+
+**What is actually true.** `124/s09`, `124/s10`, `124/s12` and `124/s15` form a proper linear stack that was
+correctly built on `124/s07-terminal` — at its **pre-restack** head `7ffac5e05`. Today's restack moved that
+head to `ff12caf18`, which orphaned them. They are ordinary stale descendants. The ancestry check said "not a
+descendant" only because it compared against the *new* head.
+
+`7ffac5e05` is confirmed as the pre-restack head: it is exactly what
+`backup/20260922T0050/s07-terminal` points at.
+
+**Each branch has a clean three-part shape**, oldest first:
+
+```
+[21 pre-squash originals of S01-S04 work already in main]
+[121 commits of the S05..S07-terminal chain, as correct ancestry]
+[its own work, CONTIGUOUS AT THE TIP]
+```
+
+Tip blocks, all sharing oldbase `7ffac5e05`, and internally nested
+(`s09 ⊂ s10 ⊂ s12 ⊂ s15`):
+
+| branch | tip block | own commits vs its parent |
+| --- | --- | --- |
+| `124/s09` | 15 | 15 |
+| `124/s10` | 30 | 15 |
+| `124/s12` | 49 | 19 |
+| `124/s15` | 92 | 43 |
+
+**So the fix is the ordinary restack, not an extraction**: rebase each `--onto` its new parent with oldbase
+`7ffac5e05`, bottom-up, after the seven main-path layers have landed. Do it once, at the end, because every
+merge rewrites the chain beneath them.
+
+**They do not yet contain today's fixes.** `assertServing` — the fence guard added to
+`packages/gateway/src/collaboration/direct-sessions.ts` — appears 6 times on `124/s07-terminal` and **0 times**
+on `124/s09` and `124/s15`. That is expected for a stale descendant and is precisely what the restack brings in.
+It is also a ready-made check that a restack actually took: after rebasing, `assertServing` must appear on
+every branch above the gateway layer.
+
+**S18 and S19 remain genuinely anomalous.** Neither shares the `7ffac5e05` boundary. `124/s18-startup`'s last
+shared commit is `b5fe844d4` and `124/s19-acceptance`'s is `eb6a4b4c7`, and neither is any branch head, past or
+present — both were built on intermediate points of an older chain iteration. S18 keeps the section 48
+treatment; S19 needs the same analysis before it is restacked.
+
+**Method worth reusing.** Printing, per branch, a one-character-per-commit map of "is this subject also in the
+chain" made the shape obvious in a way that reading commit lists did not. Duplicated bases and contiguous tip
+blocks show up instantly, and it is what distinguished the ordinary staleness here from the genuine parallel
+copy in S18.
+
+## 51. Complete restack plan for everything above the merge queue — 2026-09-22 07:30 UTC
+
+**The stack has several generations.** Work was done at different times against different chain states and
+never reconciled, so branches fork from four distinct points: `2425202de` (`main~4`), `e62d3fc62`,
+`e0c7d5729`/`7ffac5e05` (the pre-restack chain head) and `d29312c91` (an old `s05-gateway` head).
+
+**Group 1 — clean nested stack, ordinary restack.** Confirmed linear, each contained in the next:
+
+```
+124/s07-terminal → s09 → s10 → s12 → s12-app → s15-gateway → s15-directory → s15-direct → s15
+```
+
+All share oldbase `7ffac5e05`. Rebase each `--onto` its new parent, bottom-up, after the seven main-path
+layers land. Own commits per layer: s09 15, s10 15, s12 19, s12-app 4, s15-gateway 16, s15-directory 5,
+s15-direct 7, s15 43.
+
+**Group 2 — own work is NOT contiguous, so `--onto` will not do.** For these, the tip block is far smaller
+than the count of commits that are genuinely theirs, which means their work is interleaved with duplicated
+base commits and must be cherry-picked selectively:
+
+| branch | commits | own subjects | contiguous tip |
+| --- | --- | --- | --- |
+| `124/s09-retry-jsonb` | 77 | 42 | **0** |
+| `124/s09-run-hardening` | 144 | 21 | 4 |
+| `124/s10-git-hardening` | 244 | 39 | 18 |
+| `124/s19-acceptance` | 156 | 58 | 16 |
+| `124/s18-startup` | 155 | 31 | **14** |
+
+A contiguous tip of 0 on `s09-retry-jsonb` means none of its own work sits at the end at all.
+
+**Cross-validation worth trusting.** The subject-map method computed `124/s18-startup`'s contiguous tip block
+as **14**, independently matching the 14 genuine commits a separate agent identified by reading content and
+comparing blobs. Two methods, same answer, so the technique is sound and can be applied to the rest.
+
+**The method, for reuse.** Build the set of commit subjects already canonical (`origin/main..124/s07-terminal`
+plus `7ffac5e05..124/s15`, currently 225 distinct). For any branch, walk its commits oldest-first and mark each
+as canonical or own. If the own commits form a block at the tip, `git rebase --onto <new parent> <last
+canonical commit> <branch>` replays only that block. If they do not, the branch needs selective cherry-picking
+and the map tells you exactly which commits.
+
+**Order of operations.** Do not restack any of this until the seven main-path layers have merged, because each
+merge rewrites the chain beneath them. Verify a restack actually took by checking that `assertServing` appears
+in `packages/gateway/src/collaboration/direct-sessions.ts` on every branch above the gateway layer — it is
+present 6 times there and 0 times on the stale branches.
+
+## 52. Some branches sit on integrated copies, not on their own layer — 2026-09-22 07:45 UTC
+
+**Refinement of section 51's "Group 2".** A branch whose own work is *not* contiguous at the tip is not
+necessarily a hard case. Check what its base actually is before concluding anything.
+
+`124/s09-run-hardening` looked like the hard shape: 144 commits, 21 own subjects, only a 4-commit contiguous
+tip. In fact its four own commits **are** clean and contiguous:
+
+```
+ad911f9b3 test(collaboration): cover S09 shared-run hardening findings
+83ff5b1d8 fix(collaboration): harden shared-run loss, retry and admission
+05848e070 fix(collaboration): wire the sandbox runtime registry into production
+57eb77680 fix(collaboration): require the shared adapter runtime registry and loss hook
+```
+
+The complication is its base, `a2e0d2315` = `docs(collaboration): record final integrated S15 typecheck`. That
+is a **flattened, fully integrated branch through S15**, not an S09 state. It is not an ancestor of `124/s09`,
+and `124/s09` does not contain it. So the branch is four commits on top of an integrated copy of the entire
+stack, and the 17 "own" subjects that are not at the tip are simply that integrated base's own commits.
+
+**Why this matters for every such branch.** The work is S09-concern hardening, so it belongs on the restacked
+`124/s09` layer, but it was written against a tree that already had S10, S12 and S15. A cherry-pick onto S09
+therefore only works if none of the four commits references a symbol, type, table, migration or call site that
+a later layer introduces. That question is being answered per file before anything is moved, because getting
+it wrong either breaks S09 or silently drags later-layer code down the stack.
+
+**The general rule for this release:** before planning any restack, resolve what the branch's base *is*, by
+reading the base commit's subject and testing ancestry against the layer the work belongs to. A commit count
+alone will mislead you — three different shapes (stale descendant, parallel copy, integrated-base graft) all
+look like "many commits ahead of main".
+
+**S09 hardening content is complete and gated**, on that stale base: all eight review findings plus five P3
+items in `83ff5b1d8`, with `shared-coding-execution` 32, `collaboration-owner-source` 42, `shared-ai-runtime`
+21, `collaboration-wiring` 17, `collaboration-chat-controls` 14, `collaboration-lifecycle` 7 and
+`collaboration-terminal-websocket` 3 passing against real Postgres, typecheck exit 0 and patterns clean. Those
+numbers are **not** evidence about the rebased parents and must be re-run after the move.
+
+## 53. S09 hardening grafts cleanly; the risk is re-anchoring, not dependency — 2026-09-22 07:50 UTC
+
+**Answer to section 52's open question: all four `124/s09-run-hardening` commits apply at S09. No later-layer
+dependency, so no split.** Verified by content rather than by SHA, so it survives the pending restack.
+
+Every symbol, table and call site the hardening acts on already exists at S09:
+
+- `shared-ai-runtime.ts` has `ownerSource`, `executionPolicies`, `runLoss`, `sandboxRuntimes`, `executionRoots`,
+  `SandboxRuntimeRegistry`, `admitRun`, `createSharedChatSandboxManifest`, and the `resolveAccessSource`
+  fallback the change deletes.
+- `shared-run-loss.ts` already exports `startControlLossWatchdog` — which *is* the P1 finding: the watchdog
+  exists and nothing calls it.
+- Tables touched are `chat_queued_turns`, `chat_runs`, `collaboration_scopes`, `collaboration_members`,
+  `collaboration_execution_policies`, `collaboration_run_bindings` and `collaboration_run_interruptions`, the
+  last being S09's own migration 11. **Nothing** from S10's git operations or S12's resource catalog and upload
+  stages.
+- A sweep of every identifier on the added lines found no S10, S12 or S15 symbol anywhere; the only absent
+  names are ones these commits introduce.
+
+**Seven files conflict, all from divergence, not dependency**: `scope-runtime-chat-adapter.ts`,
+`shared-ai-runtime.ts`, `wiring.ts`, and the orchestrator, owner-source, wiring and scope-runtime-adapter test
+files. S09 and the integrated S15 base edited the same regions.
+
+**The real risk is two `wiring.ts` hunks anchored on lines S09 does not have.** The return-object hunk sits
+after `ownerRuntimeSessions` (S15) and the close-path hunks beside `closeResourceServices()` (S12). S09 has
+equivalent anchors (`controlClient`, and both close paths with `closing = true`), so these need re-anchoring
+rather than redesign — but a close path is precisely where ordering is load-bearing. An earlier conflict in
+this same file turned on exactly that: both drains had to precede resource teardown, because sessions ending in
+the drain can still reach the catalog and file driver. **Any re-anchoring must justify why the new position is
+correct at S09**, and must say so if the ordering property differs there because S12 and S15 are absent.
+
+**Conflict-resolution rule restated**, because two of the conflicts are in files whose fixtures were fixed on
+higher layers: when a resolution forces a choice between the grafted version and a newer fixture, **take the
+newer one and say so**. Carrying an older fixture down the stack is the silent-revert failure mode that has
+already occurred once in this release.
+
+**Sequencing.** Nothing moves until the seven main-path layers land. The merge simulation above was run against
+`124/s09` @ `26ae6daeb`, which still sits on the pre-restack chain head, so the conflict set must be recomputed
+once S09 has its final parent.
+
+## 54. The watchdog's shutdown position, and why it is not the S12 ordering — 2026-09-22 07:55 UTC
+
+**Section 53 flagged the `wiring.ts` re-anchoring as the risk. It has been answered before any code moved, and
+the answer is "the property does not exist yet", not "preserve the shape".**
+
+`closeResourceServices`, `resourceServices` and `standaloneScope` have **zero occurrences** in `wiring.ts` at
+`124/s09` — independently confirmed, and they are also absent at the current `124/s07-terminal`. The catalog
+and file driver arrive with S12. So the ordering I resolved earlier in this release (both drains must precede
+resource teardown, because sessions ending in the drain can still reach the catalog and file driver) **has
+nothing to constrain at S09**. It must not be asserted there as if it were live.
+
+**S09 has its own, stricter ordering**, stated in its own comments, and both shutdown paths mirror it, one
+synchronous and one awaited:
+
+1. Drain the **control client first** — its frames revoke sessions, evict membership evidence and end grants,
+   so it must stop before the registries detach and the verifier shuts down.
+2. Drain **direct sessions second** — ending them notifies the event and terminal registries through end hooks
+   that the following lines detach.
+
+**This gives the control-loss watchdog a correct position independent of S12.** It must stop *before* the
+control client drains, because it reads control freshness and calls `interruptForLoss`. If it survives that
+drain it will observe the control client going quiet, read that as a partition, and **mark healthy runs
+interrupted during an ordinary shutdown**. So `controlLossWatchdog?.stop()` belongs immediately after
+`closing = true` and the timer clear, before the control client drain, in both `fence()` and `shutdown()`.
+
+On the integrated base it currently sits next to `closeServices` by accident of surrounding context, which
+happens to be early enough. At S09 it will be placed against the control drain, which is the reason it needs to
+be early in the first place.
+
+**The general lesson for the remaining grafts.** When a hunk is anchored on a line a lower layer does not have,
+ask what invariant the anchor encoded and whether that invariant exists at the target — rather than looking for
+the nearest similar-looking line. Here the honest answer was that the S12 invariant is absent and a different,
+stronger one applies, which produced a better placement than mechanically preserving the original position
+would have.
+
+## 55. The S18 extraction works, and it exposes a silent security revert — 2026-09-22 08:05 UTC
+
+**The extraction strategy from section 48 is proven on throwaway branches.** All 24 layers replayed onto
+`124/s15` as `probe/s18-base` → `probe/s18-legacy-cleanup` in `/home/nima/matrix-os-124-s18-probe`. **100
+commits on top of S15** (14 base plus 86 across layers 2–24) against 241 for a naive rebase. **19 of 23 layers
+applied completely clean.** Five conflicts total, four of them touching only `packages/gateway/src/server.ts`,
+all from S18 extracting inline blocks that S15 has since edited. The real `124/*` branches were not touched.
+
+### SR-1: the Contributor-control opt-in would be silently reverted
+
+**This is the most important finding of the release.**
+
+`packages/gateway/src/startup/collaboration.ts` is **new** in S18, so it cherry-picks with **no conflict marker
+at all**. Only typecheck caught it:
+
+```
+src/startup/collaboration.ts(123,9): error TS2741: Property 'setContributorControl' is missing
+```
+
+S18's extracted construction block builds the terminal adapter against the **pre-fix** interface. The current
+interface comes from the S15-only commit **`d9918d84f fix(collaboration): withhold Contributor control of
+shared host shells until the owner opts in`** (test `1e83dab2b`).
+
+Verified independently:
+
+| branch | terminal-adapter | terminal-dispatcher | terminal-routes | shell/registry |
+| --- | --- | --- | --- | --- |
+| `124/s15` | 3 | 3 | 1 | 1 |
+| `124/s07-terminal` | 3 | 3 | 1 | 1 |
+| `124/s18-startup` | **0** | **0** | **0** | 1 |
+
+`d9918d84f` is an ancestor of `124/s15`, **not** of `124/s18-startup`, and **not** of `origin/main`.
+
+**`124/s07-terminal` already carries the fix**, and that branch is #1808 in the merge queue, so the fix reaches
+`main` through the ordinary queue and needs no rescue.
+
+**This is the argument for the extraction, not against it.** On S18's own chain the revert **compiles**,
+because S18's `wiring.ts` also predates the fix — both sides are old, so nothing flags it and owner opt-in for
+Contributor control of shared host shells is silently undone. Extracting onto S15 turns the same defect into a
+**hard typecheck failure**. The extraction fails loudly exactly where the naive rebase fails silently.
+
+Resolution is not "choose a side": S18's extracted file must be updated to S15's post-fix interface.
+
+### Conflicts 1 and 2: one substantive line, twice
+
+`0a7c01c61` (extract owner collaboration construction) and `57b140a32` (extract owner database startup
+services), both in `server.ts`, both the same divergence: `providerSnapshotReader:
+lazyCollaborationProviderSnapshotReader` versus `collaborationProviderSnapshots.reader`. S15 replaced that
+inline closure with `createLazyProviderSnapshotReader()` in `collaboration/lazy-provider-snapshot-reader.ts`,
+one of the 105 S15-only commits. S18's extracted files take `providerSnapshotReader` as a **parameter**, so the
+extraction itself is compatible and only the call sites needed adapting.
+
+### The rule this establishes
+
+**Classify every silent-revert point by how it announces itself**: conflict marker, typecheck error, or
+neither. A conflict marker is safe, because a human must look at it. A typecheck error is safe, because CI
+stops. **Neither is the dangerous class**, and each one needs a named check written for it. SR-1 was in the
+second class only by luck — the file was new, so nothing conflicted, and only the type system noticed.
+
+Outstanding: SR-2 and SR-3 in detail; the remaining conflicts in `server-composition`, `server-extraction` and
+`t090-retirement`; and, decisively, **whether typecheck was run at every one of the 24 probe layers or only at
+the end** — if only at the end, further SR-1-shaped defects may be masked at intermediate layers.
+
+## 56. A finding downgraded on its own evidence — 2026-09-22 08:15 UTC
+
+**The S09 P2-8 finding was overstated and has been corrected by the agent that raised it, before it reached a
+receipt.** It was framed as submission being unguarded for a member on an owner-only scope. It is not.
+
+Verified independently: `requireSubmitMode` is defined at `chat-execution-adapter.ts:328` on `124/s09` and
+called from **both** `submit` (line 116) and `retry` (line 189). It returns early for the owner, resolves the
+effective mode, and throws `forbidden` for a member on an owner-only scope. **Submission is guarded twice, at
+submit and at dispatch.**
+
+**What the change actually fixes is narrower and different in kind:** `resolveCapability` reports `available`
+to a member whose submission would then be refused. That is a **truthfulness defect in a capability flag**, not
+an authorization hole. The hunk is still correct and still carries over; only the claim changes.
+
+This matters beyond wording. A receipt asserting that an authorization gap was closed would have misrepresented
+the layer's security posture, and a later reader would have drawn the wrong conclusion about what was ever
+exposed. **Restate the finding in the receipt; do not repeat the original wording.**
+
+### The accidental-correctness audit found one more, and cleared the rest
+
+Run deliberately before the graft rather than under restack pressure (see section 54 for the first case, the
+control-loss watchdog):
+
+- **Exhaustion pause** — the one most expected to be accidental, because S09's claim loop has two
+  preparation-failure sites and the guard covers only the second. **Correct:** the first site is the
+  scope-mismatch check, which always writes `interrupted` and never `unavailable`, so it cannot carry an
+  exhaustion signal. The second is the adapter-creation catch, where the owner source's `unavailable` surfaces.
+  Both bases have exactly two sites.
+- **The loss repository** — not accidental, and *more* necessary at S09 than at the integrated base. Verified:
+  `shared-ai-runtime.ts` has 8 `runLoss` occurrences, all optional and guarded, while `wiring.ts` has **zero**.
+  Nothing supplies it, so interruption records are **inert** there — the same shape as the sandbox registry.
+  The fix constructs it in wiring and makes it required.
+- **Startup order** — S09 still has the pre-fix order (reconcile at 4360, `enableSharedAi` at 4366). Live.
+- **Archive-time queue cancellation** — columns exist and the status check constraint already admits
+  `cancelled` and `interrupted`.
+
+One resolution note: S09 guards `ownerSource` construction on `eligibility && executionPolicies`; the graft adds
+`&& runBindings`. Take the three-condition form, since `runBindings` becomes required.
+
+**The practice worth keeping.** Auditing your own hunks for *accidental* correctness — right at the source base
+for reasons that do not hold at the target — found two things here: a real misplacement (the watchdog) and an
+overstated claim (this one). Both were found before any code moved, and neither would have produced a test
+failure.
+
+## 57. `main` is red for an unrelated reason, and it blocks the whole queue — 2026-09-22 08:30 UTC
+
+**Every unit-test shard on `main` has failed since 04:38 UTC**, from PR #1815
+(`6be1c67d1 feat(chat): display delegated agent activity`). The previous main, `3cb53c6cd`, was green.
+
+```
+Error: Failed to resolve import "@matrix-os/contracts/chat-subagent" from
+"desktop/src/renderer/src/features/coding-agents/AgentConversationView.tsx"
+```
+
+Four desktop suites fail to collect: `coding-agent-conversation-approvals`, `draft-chat-send`,
+`mission-control-autoselect`, `project-chats-view-layout`.
+
+**Cause.** The package is fine — `packages/contracts/package.json` has
+`"./chat-subagent": "./src/chat-subagent.ts"`, the file exists, and the subpath resolves outside Vitest.
+`vitest.config.ts` aliases the package root to `src/index.ts`, and **Vite object aliases match by prefix**, so
+`@matrix-os/contracts/chat-subagent` hits that entry and resolves to a path *inside* `index.ts`. The config
+avoids this everywhere else by listing each subpath explicitly above the bare entry — `./collaboration` for
+contracts, and the same for brand, observability and kernel. The new subpath arrived without its alias.
+
+**Fix open as #1835** (`fix/vitest-contracts-chat-subagent-alias`), one line in the position the convention
+already uses, from a worktree off `main`. Verified locally: the four failing suites pass, **36 tests, exit 0**.
+
+**Deliberately not fixed in that PR:** the alias list must be hand-synced with each package's exports map and
+nothing enforces it — that gap *is* this bug, not a typo. A regex alias mirroring the exports map would remove
+the class entirely, but it changes a convention used across four packages and does not belong in a change
+unblocking a red `main`. Worth a follow-up.
+
+**Consequence for the release.** #1803's CI failure is **inherited, not caused**. The branch content is
+identical to `main` for every file involved. No layer can show a green run until #1835 lands.
+
+### Two more CI blind spots, both verified verbatim
+
+**1. A suite reports the same pass count against a fake database.**
+`tests/gateway/collaboration-direct-sessions.test.ts:101` picks its fixture at runtime with **no skip guard**:
+
+```ts
+fixture = process.env.MATRIX_TEST_POSTGRES_URL
+  ? await createRealCollaborationTestDatabase()
+  : await createCollaborationTestDatabase();
+```
+
+Without the variable it still reports **35/35 — against an in-memory fake**. CI has no Postgres URL, so CI's
+green on this suite is the fake path. The same 35 were independently re-run *with* the variable set: same
+number, much stronger claim. **A pass count is not evidence of which backend ran.**
+
+**2. Real-Postgres races are skipped entirely in CI.**
+`tests/gateway/collaboration-project-transition.test.ts:713`:
+
+```ts
+const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
+```
+
+A genuine failure lives behind that gate: *"admits one preparation and publishes one authority under concurrent
+activation"* fails with **zero** preparations fulfilled, not two — both concurrent activations rejected, nothing
+published. It reproduces on two different worktrees on two different mains, and the file is not in any spec-124
+layer's diff. **Pre-existing on `main`, invisible to CI.**
+
+### Layers verified locally while the queue is blocked
+
+- **#1804 `124/s05-relay` @ `128aee713`** — typecheck 0, patterns 0 (5 pre-existing warnings, zero in touched
+  files), **80 passed / 0 skipped** across 7 suites, plus e2e 4 passed. The settlement-timeout fix confirmed
+  per-test: *"refuses the upload rather than relaying an answer when the body never settles"* passes, and both
+  neighbours pinning precedence ordering still pass, so the timeout case was not bought by breaking them.
+- **#1805 `124/s08` @ `6a89d4fe3`** — typecheck 0, patterns 0, 11 suites exit 0.
+
+**Environment note for anyone reproducing:** `bun` is not on `PATH` in a fresh shell (`exit 127`); prefix with
+`/home/nima/.bun/bin`. Toolchain: Node v24.14.1, bun 1.4.2, pnpm 10.33.4, PostgreSQL 16.13.
+
+## 58. Correcting "on real Postgres" in the S09 gate evidence — 2026-09-22 08:45 UTC
+
+**Section 56 and the S09 gate counts were reported as running "against real Postgres". That is true of three
+suites and false of four, and the ledger must say so.**
+
+| Suite | Backend actually exercised |
+| --- | --- |
+| `shared-coding-execution` | both, with env-guarded real cases |
+| `collaboration-owner-source` | both, with env-guarded real cases |
+| `collaboration-chat-controls` | both, with env-guarded real cases |
+| `collaboration-wiring` | **PGlite only** |
+| `collaboration-lifecycle` | **PGlite only** |
+| `collaboration-terminal-websocket` | **PGlite only** |
+| `shared-ai-runtime` | no database |
+
+The counts are honest; the blanket phrase was not. The four PGlite suites would report identical numbers with
+or without the environment sourced.
+
+**Which findings this affects.** P1-2 (retryable cancel and interrupt) and P2-6 (the network call outside the
+scope transaction) are concurrency claims, and their real-Postgres cases live in `shared-coding-execution` and
+`collaboration-owner-source`, which do carry env-guarded real coverage — properly evidenced. The **control-loss
+watchdog** and the **startup-order proof** live entirely in `collaboration-wiring`, which is PGlite only.
+Neither is a locking claim, so PGlite is adequate — but the receipt must state that per suite rather than let
+one phrase imply real-database coverage across the table.
+
+**This is not the #1836 defect, and the distinction is worth keeping.** `createRealCollaborationTestDatabase`
+has two guards: it throws without `MATRIX_TEST_POSTGRES_URL`, and throws again if the URL does not name a test
+database. Called directly it cannot silently produce a fake. The #1836 defect is a **call site** that defeats
+those guards by wrapping it in a ternary whose else-branch is the in-memory fixture, so the first guard can
+never fire — that is why `collaboration-direct-sessions` reports an identical 35 on both paths. The fix belongs
+at such call sites, not in the helper. #1836 has been amended to say so.
+
+**The shared hazard.** A suite holding both PGlite cases and env-guarded real cases reports the same totals
+whether the guarded cases ran or were skipped. Not a silent substitution, but the same consequence: it implies
+coverage the run did not have.
+
+**Rule for every remaining receipt in this release: state the backend per suite, and after a re-run confirm the
+env-guarded cases actually executed rather than skipped.** A skipped guard and a passing guard both read as
+green in the totals.
+
+## 59. S18 silent-revert points, resolved — 2026-09-22 09:00 UTC
+
+Detail behind section 55. Three silent-revert points, classified by **how each announces itself**, which is the
+thing that decides whether it needs a named check.
+
+| | conflict marker | typecheck error | verdict |
+| --- | --- | --- | --- |
+| **SR-1** `startup/collaboration.ts`, Contributor control | **no** | yes, `TS2741` | loud, but only on the extraction path |
+| **SR-2** `server.ts` import block | yes | yes | loud, twice |
+| **SR-3a** `bootstrap.ts` signing semantics | yes | yes, duplicate `relayOrigin` | loud, twice |
+| **SR-3b** `collaboration-bootstrap.test.ts` timer test | yes | **no** | marker only |
+
+### SR-2 — the resolution is neither side wholesale
+
+Commit `4d5af1dc3` in `server-composition` deletes a 31-line import block, replacing it with
+`import { type Kysely } from "kysely";`. That drops 28 symbols, **24 of which are still referenced**. The one
+that matters is `createLazyProviderSnapshotReader`, backing S15's `collaborationProviderSnapshots =
+createLazyProviderSnapshotReader()` — S15's extraction of a previously inline throwing closure.
+
+**Correct resolution: S18's side, plus re-adding `createLazyProviderSnapshotReader`.** Keeping S15's block
+instead produces **48 duplicate-identifier errors**, because S18's own later commits in the same layer re-add
+the rest in sorted order. Four symbols are provably unused and safe either way: `createAiProviderRoutes`,
+`createProviderSettingsRoutes`, `registerCustomMcpGatewayRoutes`, `z`.
+
+### SR-3a — the two comments assert opposite behaviour
+
+`packages/platform/src/collaboration/bootstrap.ts`:
+
+- S18: *"signing keys are rejected by configuration validation before construction"*
+- S15: *"signing keys leave ticket issuance fail-closed without skipping construction"*
+
+These are **opposite claims about what happens on bad signing configuration**, not a wording difference. S15
+also binds `relayOrigin` at line 55 via `loadCollaborationRelayOrigin(options.env)` with an early fail-closed
+return at 56, so S18's added `const relayOrigin = config.relayOrigin;` redeclares it. Origin: S15-only
+`f40cd3405`, `9f79784f9`, `70791739c`.
+
+### SR-3b — the one that needs a named check
+
+`tests/platform/collaboration-bootstrap.test.ts`. S18 reinstates two older tests (16 lines) and drops S15's
+*"leaves no organization timers running when the relay origin is invalid"* (75 lines, asserting
+`vi.getTimerCount()` against a fixture baseline; from S15-only `ccbad97fe`, `b1f6b8483`).
+
+It raises a conflict marker, so it cannot slip past a rebase unnoticed — **but nothing downstream fails if
+someone resolves it toward S18**, because deleted test coverage is invisible to `tsc`. **Named check: after any
+S18 resolution, assert that file still contains `leaves no organization timers running when the relay origin is
+invalid` and a `getTimerCount()` baseline assertion.**
+
+### Conflicts 1 and 2 — verified by pre-image diff, not by reading markers
+
+Rather than trusting the conflict markers, S18's *removed pre-image* block was diffed against S15's HEAD block:
+
+- `0a7c01c61`: S18 removed 160 lines, S15 HEAD 150. Difference is 10 import lines the same commit removes
+  elsewhere in the file, plus **exactly one** in-block line.
+- `57b140a32`: S18 removed 214, S15 HEAD 197. Difference is 17 import lines outside the block, plus the **same
+  single** in-block line.
+
+That line is `providerSnapshotReader: lazyCollaborationProviderSnapshotReader` →
+`collaborationProviderSnapshots.reader`. Both extracted functions take `providerSnapshotReader` as a parameter
+typed `CanonicalProviderSnapshotReader`, so adapting the call-site argument sufficed: no signature change, no
+behaviour change. **This method is worth reusing — a marker shows you a region, a pre-image diff shows you what
+actually differs.**
+
+### Not a silent-revert point
+
+`server-extraction`, commit `61acc7f10`: S15's inline `if (gatewayCollaboration) { const sharedAi = await
+gatewayCollaboration.enableSharedAi({` versus S18's `await enableOwnerSharedAi({ gatewayCollaboration, input:
+{`. S18's helper keeps the null guard and the identical log line, and preserves the S09 sandbox seam. Cleared.
+
+**Conflict totals:** `server-composition` 1 of 13 commits, `server-extraction` 1 of 3, `t090-retirement` 1, plus
+the 2 in the base — 5 across 100 replayed commits.
+
+## 60. Correcting the subject-map method, and the counts it produced — 2026-09-22 09:15 UTC
+
+**The method in sections 50, 51 and 52 has two flaws. The shapes it identified are right; several of the
+counts are inflated. Anyone reusing it must apply both fixes first.**
+
+### Flaw 1 — the canon set had a 21-commit hole
+
+Canon was built as `origin/main..124/s07-terminal` plus `7ffac5e05..124/s15`. After #1802 merged and the chain
+was rebased, **`124/s05` is no longer an ancestor of `124/s07-terminal`** — verified — because its 21 commits
+now live in `main` as the squash `4f13d4c6d`. So `origin/main..124/s07-terminal` returns 133 commits and
+excludes all 21.
+
+Those 21 are exactly the leading `1`-block I saw on every branch and described in section 50 as "21 pre-squash
+originals of S01-S04 work". **That attribution was wrong.** It is the S05 layer, missing from canon. It
+inflated the "own subjects" counts for `124/s10-git-hardening` and `124/s12-app` in particular.
+
+**Fix:** add `git log --format=%s origin/main..124/s05` to the canon file before mapping anything.
+
+### Flaw 2 — squash merges rename commits, so subject matching misses them
+
+A squash merge appends ` (#NNNN)` to the subject. A branch commit reading `feat(collaboration): gate every home
+operation on the organization precondition` therefore does **not** match `main`'s
+`feat(collaboration): gate every home operation on the organization precondition (#1817)`.
+
+Confirmed: comparing `124/s19-acceptance`'s 156 subjects against only the last 50 `main` subjects with the
+suffix stripped already yields 8 matches, and the true figure across full history is ~39. **Subject matching
+alone over-reports own work roughly threefold on the older-generation branches.**
+
+**Fix:** strip ` (#NNNN)` from `main`'s subjects and include them in canon.
+
+**A caution on the obvious alternative.** Patch-id (`git patch-id --stable`, `git cherry`) does **not** rescue
+this. `git cherry origin/main 124/s19-acceptance` reports all 156 commits as absent, because a squash is one
+commit whose patch-id matches none of the individuals it replaced. Patch-id is right for detecting *rebase
+copies*; it is blind to *squashed* content. **Use both: patch-id for copies, suffix-stripped subjects for
+squashes.**
+
+### Results after correction
+
+**`124/s12-app` — refuted, nothing to do.** It is not a stale descendant. It is exactly **4 commits above
+`124/s12`** and is already an ancestor of `124/s15-gateway`, `s15-directory`, `s15-direct` and `s15` — both
+verified. Its position is correct as it stands; oldbase `7ffac5e05` does not apply and no restack command is
+needed. Its own work is `129723280`, `35bc223a0`, `94407bd82`, `5cbd2084b`.
+
+**`124/s10-git-hardening` — integrated-base graft, grafts cleanly.** 209 commits above fork `d29312c91`, of
+which **190 are byte-identical copies by patch-id**, covering chain positions 39→233 monotonically: a flattened
+copy of the whole stack through `124/s15`'s head. Graft base `0d0df2c91`, the copy's twin of `e76713d23`
+(`124/s15` HEAD). **Own work: 18 commits, contiguous at the tip** — the Git broker hardening: member-writable
+config kept away from owner-credentialed remote operations, owner identity resolved from the owner's global
+config only, project roots required to own their repository, definite push failures settled with only the owner
+expiring unresolved effects, and PR bodies streamed over stdin with `gh` run in an empty private cwd.
+
+One commit below the graft base, `15d4eaa5c` *"mount owner resource services in gateway"*, is a stale variant of
+the chain's `85adc491f`; a rebase from `0d0df2c91` discards it, which is the correct outcome.
+
+### One more thing this surfaced
+
+`origin/main` is now `4f13d4c6d`, **11 commits ahead of the `e0c7d5729` that the `s05→s15` line is based on**.
+`124/s07-terminal` has been rebased onto it; the rest of that line has not. Factor that in when restacking.
+
+## 61. Two more merges, and `main` repaired twice — 2026-09-22 09:50 UTC
+
+**Merged since section 47:** #1835 and #1840 (both `main` repairs) and **#1803**
+(`feat(collaboration): authenticate direct sessions on the home with single-use tickets`). `main` is
+`7eddfd964`. Twenty-seven spec-124 PRs have now landed.
+
+**`main` broke twice today, both times from unrelated work, both times blocking every layer.**
+
+The second was #1834 (`fix(chat): restore two-pane provider picker`), which left two suites asserting the
+pre-redesign shape. Fixed in #1840, test-only:
+
+- `canonical-chat-wiring` read the shell setup component as **raw text** and required
+  `onSetupAction(instance, action)`. The picker now receives the handler and invokes it at
+  `compact-chat-provider-choices.tsx:203` as `onSetupAction(activeInstance, action)`. **Respelling the
+  assertion would have been wrong** — the guarantee now spans two files, so the test asserts both halves: the
+  shell passes the handler through, and the picker calls it with the instance and the action. Matching only
+  the new spelling keeps the appearance of a guarantee while dropping the half that matters.
+- `canonical-chat-composer-preferences` needed three separate corrections: the control is now labelled
+  **"New chat"**, the picker is **two-pane** so a harness must be selected before its models are listed, and
+  the workspace has its **own icon-only** "New chat" control with the same accessible name, so the picker's is
+  now selected by visible label rather than position.
+
+**Both breakages share a root cause worth fixing:** #1834's CI run shows **`cancelled`**, not `success`. A PR
+can merge while its CI run is incomplete. Filed as #1838 along with the diagnosis.
+
+### Operational notes for the remaining merges
+
+- **Read Greptile's score from the summary comment, not the last comment.** The bot's *last* comment is often
+  a "Comments Outside Diff" note with no score, which reads as "never reviewed". Select the last comment
+  matching `Confidence Score`. This produced a false "two layers unscored" reading that was my own query bug.
+- **Cycling `ready-for-ci` creates a duplicate run** that parks in the concurrency group behind the real one.
+  Prefer retargeting the base to `main` (which triggers a run on its own) and labelling once. If a duplicate
+  appears, cancel the one with **zero jobs** — the real run shows ~14.
+- **A force-push does not reliably trigger a re-review.** After six PRs sat stale for 90 minutes, a single
+  `@greptileai please review` per PR returned all six to **5/5** within minutes. One request each is not the
+  spamming the repo guidance warns against; repeated nudging would be.
+
+### Verification standard that emerged
+
+For proving a suite ran against real PostgreSQL, **count the schemas it created on the server**. One sweep
+confirmed 46 distinct `collaboration_*` schemas during a run of exactly those tests. That is positive evidence,
+where "0 skipped" is merely the absence of contrary evidence.
+
+**Current state:** all six remaining layers at **5/5 on their current heads, zero unresolved threads**. #1804
+retargeted to `main`, rebased, pushed, labelled, CI running. `124/s06` verified locally: typecheck 0, patterns
+0, **756 passed / 1 failed / 0 skipped** across 88 suites on real Postgres, the single failure being the known
+pre-existing publication-race test that is byte-identical to `main`.
+
+## 62. The S18 extraction has no masked defects — 2026-09-22 10:05 UTC
+
+**Section 55's open question is answered: no defect is introduced at one layer and masked by a later one.**
+`bun run typecheck` was run at **every one of the 24 probe layers**, bottom to top. Across all of them there
+are exactly **25 distinct normalized errors**, and every one is **contiguous from its first appearance through
+layer 24**. Nothing appears and then disappears, which is the signature that would have mattered.
+
+**Ancestry came from `git rev-list --topo-order`, not from names** — and name order is indeed wrong:
+`t090-retirement-tests` precedes `t090-retirement`, and `ui-relay-header` sits mid-chain at position 16. The
+chain is strictly linear with 0 merges, `124/s15` is an ancestor of the tip, and `probe/s18-base` carries 14
+commits rather than being a single commit above S15.
+
+### Three error families; only one is a real defect
+
+**1. `TS2300` duplicate identifiers in `packages/gateway/src/server.ts`, layers 04→24, 23 identifiers —
+probe replay artifact.** `server.ts` at the probe's layer 04 carries the `./ai-providers/*`,
+`./plugins/index.js`, `./app-db-*` import block **twice**; the real `124/s18-server-composition` and
+`124/s18-legacy-cleanup` carry it once. A conflict resolution in the probe kept both sides. **Not an S18
+defect** — but it does mean the probe's own resolution of SR-2 needs redoing when the extraction is performed
+for real.
+
+**2. `TS2741 setContributorControl` at `startup/collaboration.ts:123`, layers 21→24 — REAL.** Confirmed
+independently: `124/s15` has 3 references to `setContributorControl` in `collaboration/terminal-adapter.ts`;
+`124/s18-terminal-output` has **zero**, carrying a pre-fix copy. S18's new startup block builds the registry
+against that pre-fix interface. **Introduced at layer 21 (`probe/s18-terminal-output`), by commits
+`bf4787e48` / `7b089f09f`** — the only chain commits above base touching that file besides `ec613d153`. That
+pins section 55's SR-1 to an exact layer and pair of commits.
+
+**3. `TS2304 loadCollaborationRelayOrigin` at `platform/collaboration/bootstrap.ts:57`, layers 23→24 — probe
+replay artifact.** The real branch resolves `const relayOrigin = config.relayOrigin` at line 115 and makes no
+such call; the probe carries an older variant, and `24b65ebce` removes the import — correct for the real
+chain, broken for the replayed one.
+
+### A repo-wide gate gap found by the method, not the code
+
+**`bun run typecheck` is one `&&` chain of eight steps, so the first failing package suppresses every package
+after it.** From probe layer 04 onward the gateway step fails, which means **platform, proxy, edge-router and
+desktop were never typechecked at all** by the literal command. Running the steps **un-chained** is what
+surfaced the platform error above — the chained command stops two steps earlier and cannot report it.
+
+The practical harm is misattribution: someone fixes the gateway error, re-runs, and discovers a platform error
+that existed all along, now appearing to be caused by their fix. Filed as **#1841**.
+
+**This is the fourth gate in the same family**, and the pattern is now worth stating plainly: *a gate that
+cannot see part of the tree will report green over the part it cannot see.* The four are #1830 (repo-root
+`tests/` in no package's tsconfig, so fixtures are never typechecked), #1835 (a Vitest alias missing for a new
+package subpath), #1836 (database-backed suites running against a fake or skipped entirely), and #1841 (this
+one).
+
+**Method note worth reusing:** when a composite gate fails, re-run its steps individually before concluding
+anything about what is broken. The composite's exit code tells you that *something* failed, not that only that
+thing failed.
+
+## 63. Four layers merged — 2026-09-22 10:45 UTC
+
+`main` is `096151518`. Merged in order, each with base verified as `main` immediately beforehand, a **current-head
+Greptile 5/5**, zero unresolved threads and a completed CI run:
+
+| PR | layer |
+| --- | --- |
+| #1802 | `feat(platform): register relay-routable homes and issue signed connection tickets` |
+| #1803 | `feat(collaboration): authenticate direct sessions on the home with single-use tickets` |
+| #1804 | `feat(platform): extract the transparent collaboration relay` |
+| #1805 | `feat(collaboration): bind shared runs to one owner-selected AI source` |
+
+Plus the two `main` repairs, #1835 and #1840. Three layers remain: #1806, #1807, #1808.
+
+**The working loop, which is now reliable.** Retarget the next PR's base to `main` (`gh pr edit N --base main`
+— GitHub does **not** do this automatically, because the parent branch still exists and must not be deleted
+while descendants are open); rebase everything above it `--onto origin/main` with the previous head as oldbase;
+push with `--force-with-lease`; let the retarget fire CI and add `ready-for-ci` only if absent; request one
+review per moved head; merge on green.
+
+**Duplicate runs are expected.** Retargeting and labelling can each fire a run, and the loser parks in the
+concurrency group with **zero jobs**. Cancel the empty one; the real run shows ~14–15 jobs.
+
+### Treating a red CI honestly without treating it as fatal
+
+#1805's first run failed on `tests/e2e/terminal-soft-grid.e2e.test.ts`,
+*"keeps the final row visible in 'Electron Desktop' at zoom 1"*, with `expected 60 to be less than or equal to
+1` and `Matcher did not succeed in time`. Before re-running, three things were checked:
+
+- **no terminal file appears in that layer's diff** (`git diff --name-only origin/main...124/s08`);
+- `main`'s last **completed** run was green;
+- it was the **only** CI failure across the last 40 runs, so not a systemic break.
+
+Only then was the job re-run, and it passed clean. **That order matters.** Re-running first and reasoning
+afterwards is how a real failure gets retried until it looks like a flake. The checks are cheap and they are
+what distinguishes "flake" from "intermittent real defect".
+
+**Still open across the release:** #1831 (revocation watermark at admission), #1832 (deprecated Zod spelling),
+#1836 (database suites against a fake or skipped, plus a concurrency test that has never run), #1838 (`main`
+red from the picker change; now fixed), #1841 (typecheck short-circuits past four packages), #1830 (repo-root
+tests never typechecked), #1828/#1829 (contracts entrypoint, direct terminal WebSocket 404).
+
+## 64. S09 ships its loss recovery inert unless the hardening graft lands with it — 2026-09-22 10:55 UTC
+
+**This is now a hard dependency, not a follow-up.** Verified directly:
+
+| branch | `wiring.ts` | `server.ts` |
+| --- | --- | --- |
+| `124/s09` | `runLoss` **0**, `sandboxRuntimes` **0** | `runLoss` **0**, `sandboxRuntimes` **0** |
+| `124/s15` (chain tip) | `runLoss` **0**, `sandboxRuntimes` **0** | `runLoss` **0**, `sandboxRuntimes` **0** |
+| `124/s09-run-hardening` | `runLoss` **2** | — |
+
+`createSharedAiRuntime` accepts `runLoss` and `sandboxRuntimes`, and **nothing in the chain supplies either**,
+at S09 or anywhere up to the S15 tip. So **`shared-run-loss.ts`, 334 lines, is dead in production** along with
+its lease-driven runtime stops. The only branch that wires it is `124/s09-run-hardening`, which is **not in the
+chain**.
+
+**Consequence for sequencing:** the hardening graft must land **with or immediately after S09, and before
+S15** — otherwise the release ships a control-loss recovery path that never executes, while its tests pass in
+isolation because they inject the collaborator directly.
+
+This is the same defect class recorded earlier in this release, and the rule still holds: *a collaborator whose
+absence changes behaviour silently is required; one whose absence is reported to the caller may stay optional.*
+`runLoss` and `sandboxRuntimes` are optional and silent, which is exactly why this survived to the chain tip.
+The graft makes them required (`57eb77680`).
+
+### Three more sharp edges found while drafting the upper-chain PR bodies
+
+- **`124/s12-app` — the file incarnation hash includes `ctimeNs`.** `physicalIncarnation()` in
+  `owner-resource-driver.ts:29` hashes `dev:ino:birthtimeNs:ctimeNs`. Any metadata change — a `chmod`, a
+  `touch`, an out-of-band editor write that bypasses the collaboration write path — **rotates the incarnation
+  and makes an existing share 404 for members until the owner re-shares**. Intentional for the
+  delete-and-recreate attack it closes, but a far wider trigger than "recreated file". Worth a deliberate
+  decision rather than discovery in production.
+- **`124/s15-gateway` — `hostOnline()` returns a constant `true`.** In `gateway-readiness-probes.ts`, so the
+  readiness projection **can never report an offline home**. Recorded as deferred scope in that PR body.
+- **`124/s15-direct` — local I/O inside a held row lock.** `StandaloneResourceScopeService.create()` calls
+  `this.current(...)` inside the transaction while the catalog row is locked, reaching `driver.inspect`
+  (a filesystem `stat`) or `resolveAppIncarnation` (a separate DB read). Not a network call, so it does not
+  breach the letter of the no-network-in-transaction rule, but it holds a lock across I/O of unbounded latency.
+
+**Eight upper-chain PR bodies are drafted** at `/home/nima/.claude/jobs/76ad0cca/tmp/prbodies/`, each with the
+mandatory Invariants section grounded in the diff and the layer's evidence receipt, with no UNKNOWN answers.
+Surface matrices are present for `s10`, `s12` and `s15`; `s09`, `s12-app`, `s15-gateway` and `s15-directory`
+are stated backend-only. **`s15-direct` needs a matrix added before submission** — its only `packages/ui/`
+files render nothing, so a rationale was written instead, but the rule is written to require the matrix.
+
+## 65. Five layers merged; S06 took three rounds, all real — 2026-09-22 12:20 UTC
+
+`main` is `57daf78ce`. Merged: #1802, #1803, #1804, #1805, **#1806**. Remaining: #1807 (in CI), #1808.
+
+**#1806 failed CI twice and drew two review findings. None was churn, and all four shared one shape: a test
+that passed without exercising what it claimed to cover.**
+
+1. **Listener count.** The layer adds `onEvent("auth:changed", closeDesktopCollaborationSessions)`. The unwire
+   test asserted `operator.on` was called exactly 4 times across two wire cycles — two listeners times two
+   cycles. Three listeners makes six.
+2. **My first fix was weak, and the reviewer caught it.** I replaced the literal with a self-derived count.
+   Removing the listener *lowers* that count, the channel check still passes because another `auth:changed`
+   listener remains, and the test stays green. I had traded brittle for useless.
+3. **A deeper problem the count hid.** The mock stored **one callback per channel**
+   (`listeners.set(channel, callback)`), so the second `auth:changed` registration **overwrote the first** and
+   the cleanup handler was never reachable from the test at all. The mock now collects every listener per
+   channel and its teardown removes only its own callback, and the assertion is the handler itself:
+   `expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions)`.
+   **Proved by deleting the listener and re-running: `1 failed | 11 passed`. Restored: `12 passed`.**
+4. **A second suite, a second mock gap.** `terminal-sharing-runtime` mocked `@matrix-os/ui` with two exports.
+   This layer makes the connection store reach the direct collaboration client, so the graph needs a third;
+   without it the component never rendered and the assertions compared against nothing.
+5. **And that mock had the wrong shape.** It returned a flat `close`, but production cleans up through
+   `api.direct.close()` — twice in `lib/collaboration.ts`, when evicting the oldest client past the cap and
+   when the desktop auth state changes. Render-only assertions pass either way, so it would have surfaced much
+   later as a confusing failure in whichever suite first exercised cleanup, looking like a bug in *that*
+   change.
+
+**Two rules worth carrying.**
+
+- **Verify a reviewer's claim against the source before accepting the suggestion.** Both findings here were
+  correct, and checking took one command each. Applying a suggestion on trust is how a wrong one lands.
+- **When you assert that a regression is caught, demonstrate it.** Deleting the listener and watching the test
+  fail took thirty seconds and converted a claim into evidence.
+
+**Triage order that separated two identical-looking CI failures this session:** is the failing file in the
+layer's diff? is `main` green on its last *completed* run? is this the only failure across recent runs? Only
+then re-run. #1805's failure was a genuine flake in a file absent from its diff; #1806's was real and in a file
+it modifies. Re-running first would have masked the second.
+
+## 66. Consolidation plan: ~40 remaining PRs down to ~15 — 2026-09-22 12:55 UTC
+
+**Measured, not estimated.** Repo limits are 3000 additions and 50 files per PR.
+
+### Upper chain: 8 layers → 6 PRs
+
+| unit | additions | files | verdict |
+| --- | --- | --- | --- |
+| `s09` (+ the hardening graft, see below) | 1725 | 28 | own PR |
+| `s10` | 1904 | 28 | own PR |
+| `s12` | 2793 | 32 | own PR, near the limit |
+| **`s12-app` + `s15-gateway` + `s15-directory`** | **1343** | **42** | **combine** |
+| `s15-direct` | 1361 | 31 | own PR |
+| `s15` | 867 | 25 | own PR |
+
+Rejected by measurement: `s09`+`s10` is **3627 additions** (over), `s15-direct`+`s15` is **56 files** (over),
+`s15-directory`+`s15-direct`+`s15` is **62 files** (over).
+
+### S18: 24 layers → ~5 PRs
+
+The extracted content is **10854 additions across 153 files** in 100 commits. The limits force a floor of
+four PRs (`10854/3000` and `153/50`), so ~5 respecting logical boundaries. **That is the single biggest saving
+in the release: 24 review-and-CI cycles become 5.** The 141 duplicated base commits are discarded by the
+extraction, never reviewed.
+
+### Fold the hardening graft into S09
+
+`124/s09-run-hardening`'s four commits must land with S09 or the loss recovery ships inert (section 64). S09
+is 1725 additions across 28 files and the graft is roughly +1083 across 24 heavily overlapping files, so the
+combined layer should sit near 2800 additions and about 40 files — **inside both limits**. Folding it in
+solves the dependency and removes a PR at the same time, and means the inert window never exists on `main`.
+
+### Net effect
+
+Remaining PRs go from roughly **40 to about 15**: two in the current queue, six for the upper chain
+(hardening folded into the first), five for S18, one for S19, one for the ledger.
+
+**Why this is safe rather than corner-cutting.** Combining adjacent layers changes review granularity, not
+content — every commit is preserved and each combined PR still carries its own Invariants section. The S18
+reduction is not combining at all: it is discarding duplicated base commits that were never this spec's own
+work and that a reviewer should never have been asked to read.
+
+## 67. The seven-layer merge queue is complete — 2026-09-22 13:20 UTC
+
+`main` is **`8a05f0c86`**. All seven main-path layers have landed, plus the two `main` repairs. The only open
+`124/*` PR is this ledger.
+
+| PR | layer |
+| --- | --- |
+| #1802 | register relay-routable homes and issue signed connection tickets |
+| #1803 | authenticate direct sessions on the home with single-use tickets |
+| #1804 | extract the transparent collaboration relay |
+| #1805 | bind shared runs to one owner-selected AI source |
+| #1806 | add the shared direct client and metadata-only discovery |
+| #1807 | add the sandbox mount manifest and policy for shared runs |
+| #1808 | enforce sandbox-only terminal control and revoke on lease loss |
+
+Plus #1835 and #1840, both repairs to a `main` broken by unrelated work.
+
+**Every merge met the same bar:** base verified as `main` immediately beforehand, a current-head Greptile 5/5,
+zero unresolved threads, and a **completed** CI run — not a cancelled one, and not a 60-second no-op.
+
+### What the queue actually cost, and why
+
+Three real defects in our own layers, all on #1806, all the same shape — *a test that passed without
+exercising what it claimed to cover*: a listener the mock could not see because it stored one callback per
+channel; a mock missing an export the layer newly required; and a mock whose shape did not match the
+production call path (`api.direct.close()`).
+
+Two apparent defects **disproved**: #1805's terminal-soft-grid failure was a genuine flake in a file absent
+from its diff, and #1807's "failing" Docker jobs were **cancelled** jobs that `gh pr checks` renders as `fail`.
+
+Two repairs to `main`, neither ours: a Vitest alias missing for a new package subpath, and two Chat suites
+left behind by the two-pane picker redesign. Both reached `main` because **a PR can merge while its CI run is
+cancelled** — filed as #1838.
+
+### The three status traps, all of which would have caused a wrong decision
+
+1. **A green run that tested nothing.** Every job success in 64 seconds, because the gate short-circuited
+   before the label was applied and each job took its no-op branch. Check duration.
+2. **A cancelled run reported as a failure.** `gh pr checks` shows cancelled jobs as `fail`. Check the run's
+   own conclusion.
+3. **A review summary that is not the bot's last comment.** Greptile's last comment is often an out-of-diff
+   note with no score, which reads as "never reviewed". Select the last comment matching `Confidence Score`.
+
+### Remaining work, now consolidated (section 66)
+
+Roughly **15 PRs instead of 40**: six for the upper chain with the hardening graft folded into S09, about five
+for S18, one for S19, one for this ledger. Two streams are running now — the S09 graft and the S18
+consolidation.
+
+## 68. The S18 regression was a security hole, not a type error — 2026-09-22 13:45 UTC
+
+**Sections 55 and 59 recorded this as `TS2741 setContributorControl is missing`. The type error was a
+symptom. The defect underneath is worse, and it is now fixed rather than deferred.**
+
+Verified directly on `124/s18-terminal-output`, in
+`packages/gateway/src/collaboration/canonical-terminal-bridge.ts`:
+
+```
+177:          contributorControl: true,
+```
+
+with **zero** occurrences of `setContributorControl` in that file. The bridge built its registry with no way
+to set the flag, dropped the bind-time opt-in, and **hardcoded `true` on every read**. Shipping it would have
+granted Contributors control of the owner's host shell on **every shared canonical terminal, regardless of the
+owner's choice** — silently undoing the fix in S15-only commit `d9918d84f`.
+
+The fix persists the opt-in on the binding (a `contributor_control` column on the not-yet-landed V15 table),
+reports the **persisted** value rather than a constant, and adds the owner-checked `setContributorControl`
+write. New test: *keeps Contributor control an owner opt-in across bind, read and withdrawal*, covering bind
+default, grant, foreign-owner rejection and withdrawal.
+
+**Why it hid so well.** It produced no conflict marker, because the file is new to S18. It produced no test
+failure, because S18's own tests were written against the pre-fix shape. It only surfaced as a type error, and
+only on the extraction path — on S18's own chain both sides predate the fix, so it compiles and passes. That
+is the whole argument for extracting onto the newer branch instead of rebasing: **the extraction fails loudly
+exactly where the naive rebase fails silently.**
+
+## 69. S18: 24 layers land as 5 PRs — 2026-09-22 13:45 UTC
+
+| # | branch | probe layers | additions | files |
+| --- | --- | --- | --- | --- |
+| 1 | `s18-consolidated/u1` | base, app-routes, terminal-ws | 1935 | 16 |
+| 2 | `s18-consolidated/u2` | server-composition | 2636 | 15 |
+| 3 | `s18-consolidated/u3` | cutover → secondary-reader (7 layers) | 2871 | 45 |
+| 4 | `s18-consolidated/u4` | personal-sync-inventory → gateway-direct-config (8 layers) | 1908 | **50** |
+| 5 | `s18-consolidated/u5` | terminal-wiring-probe → legacy-cleanup (5 layers) | 1510 | 49 |
+
+**All five pass the full `bun run typecheck` gate at exit 0** — and note that is the *composite* gate, which
+short-circuits (#1841), so each was confirmed rather than assumed.
+
+**The split is not arbitrary.** Every contiguous partition of the 24 layers was enumerated against both
+limits: **there is no valid 4-way split, and exactly three valid 5-way splits.** All three share the same last
+two cuts and all three land two units at 50 and 49 files, so the **file budget, not the addition budget, pins
+this**. The chosen one keeps unit 2 a pure gateway refactor and puts `cutover` with the cutover group.
+
+Two boundaries were forced rather than chosen: **u1/u2** splits one continuous gateway-extraction effort that
+is 4573 additions together, cut between extracting the leaf route modules and finishing `server.ts`
+composition; and **u4 sits at exactly 50 files**, unavoidable in any 5-way split. Test layers stayed with what
+they test.
+
+**141 duplicated base commits are discarded, never reviewed.** That is where the saving comes from: this is
+not 24 reviews compressed into 5, it is 5 reviews of the content that was actually this spec's own work.
+
+## 70. The whole release is submitted: 11 PRs — 2026-09-22 14:05 UTC
+
+`main` is `8a05f0c86`. The seven main-path layers and two `main` repairs have merged. Everything remaining is
+now open and correctly chained:
+
+```
+main
+ └ #1845 124/s09            (+2749 / 38 files)  ← run-hardening graft folded in
+   └ #1846 124/s10          (+1904 / 28)
+     └ #1847 124/s12        (+2796 / 32)
+       └ #1848 124/s15-directory  (+1343 / 42)  ← 3 layers combined
+         └ #1849 124/s15-direct   (+1368 / 31)
+           └ #1850 124/s15        (+867 / 25)
+             └ #1851 s18 u1       (+1935 / 16)
+               └ #1852 s18 u2     (+2642 / 15)
+                 └ #1853 s18 u3   (+2871 / 45)
+                   └ #1854 s18 u4 (+1911 / 50)
+                     └ #1855 s18 u5 (+1510 / 49)
+```
+
+Plus #1810, this ledger. **Eleven PRs instead of roughly forty**, every one inside the 3000-addition /
+50-file limits.
+
+### Three silent losses caught while replaying S18 onto the current chain
+
+**None would have failed a test**, and each came from the same pattern: an extraction replaces a block with a
+call into a module, and the module predates something the block acquired since.
+
+1. **Telegram voice transcription.** The channel extraction replaced 185 lines with a 3-line call, and the
+   module did not carry `telegramAdapter.setVoiceContext({ homePath, stt: speechRuntime.channelStt })`. Taking
+   the extraction as written silently stops voice notes transcribing. The speech-to-text handle is now an
+   explicit **required** option on the module.
+2. **`createGatewaySpeechRuntime`.** Dropped with a legacy import block that the incoming side deletes
+   wholesale; it exists only on the newer base and is used at four call sites. Re-added in sorted position.
+3. **A documented startup ordering.** The collaboration-startup extraction is faithful in *what* it calls, but
+   the current base documents an explicit ordering that the extracted call would have changed. **Ordering is
+   invisible to the type checker** and no test covered it.
+
+**The rule this establishes:** when a conflict replaces a block with a call into an extracted module, diff
+what the block *did* against what the module *does*. Do not assume the extraction is complete because it
+compiles — two of these three compiled fine.
+
+### Consolidation, recorded so the choice is auditable
+
+- **S18: 24 units → 5.** Not compression — **141 duplicated base commits are discarded and never reviewed.**
+  Every contiguous partition was enumerated against both limits: **no valid 4-way split, exactly three valid
+  5-way splits**, all pinned by the *file* budget. Two boundaries were forced: u1/u2 splits one continuous
+  4573-addition extraction, and u4 sits at exactly 50 files.
+- **Upper chain: 8 → 6.** `s12-app`, `s15-gateway` and `s15-directory` combine at 1343 additions / 42 files.
+  Rejected on measurement: `s09`+`s10` (3627 additions), `s15-direct`+`s15` (56 files),
+  `s15-directory`+`s15-direct`+`s15` (62 files).
+- **The hardening graft folded into S09** rather than shipping separately, which removes a PR *and* means the
+  window where `main` carries 334 lines of never-executing loss recovery never exists.
+
+### What this release nearly shipped
+
+Three defects, none of which any test would have caught: **Contributor control hardcoded on** for every shared
+canonical terminal regardless of the owner's choice; **334 lines of loss recovery that never execute**; and
+**Telegram voice transcription silently dropped** by an incomplete extraction. All three are fixed, and each
+one was found by a different method — a type error on the extraction path, a wiring audit, and a
+block-versus-module diff during conflict resolution.
+
+## 71. Ten layers merged; the rest under parallel fix — 2026-09-22 17:10 UTC
+
+`main` is `fb15a762c`. Ten spec-124 layers have landed plus two `main` repairs. Ten PRs remain, each with a
+dedicated fix agent working it.
+
+### #1846 landed with four fixes, one disproof and rendered evidence
+
+**Disproved, not patched:** *"Missing Roots Become Ready"*. The fallback mirrors the canonical default rather
+than inventing a root — `queue-admission.ts:106` and `turn-admission.ts:83` compute the identical
+`input.executionRoot ?? (record.projectId ? { kind: "project", projectId: record.projectId } : undefined)`. So
+for a project Chat that has never queued a turn, that **is** the root it will execute in. Reporting
+`chat_root_unavailable` would block sharing for every newly created Chat while announcing a blocker that is not
+true. Pinned with a regression test carrying the rationale, green on arrival.
+
+**Fixed:**
+- *Detached roots blocked.* Measured: `git symbolic-ref --quiet --short HEAD` exits **1** when detached, while
+  a non-Git directory exits **128**. Only 128 was tolerated, so a valid detached root was reported blocked, and
+  the `Promise.all` discarded a good `status` read whenever the branch probe failed. Each probe is now
+  classified on its own exit status.
+- *Global Git identity hidden.* `HOME=/nonexistent`, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`
+  were applied to the identity reads, so an owner configured in an ordinary `~/.gitconfig` was reported
+  identity-less and every mutation failed ahead of execution. **Mutating commands stay hermetic** — that
+  matters because `ownerRemote` inspects only `--local` url rewrites, and the check stays sound precisely
+  because a global `url.*.pushInsteadOf` cannot apply to a push.
+- *Completed commits recorded as failed*, and *the readiness route could not forward through the proxy*.
+
+**Side effect worth keeping:** the pre-existing `identity → missing` assertion only passed because global
+config was hidden. Once that changed it began reading the runner's real identity. The driver tests now pin the
+owner home they assert against, so the case is genuinely missing at every level rather than depending on the
+machine.
+
+### The delete-vs-modify conflict that looked like a silent revert
+
+u5 deletes `packages/platform/src/collaboration/proxy.ts` while retiring the V1 serving routes — the same file
+the readiness fix had just modified. Accepting the deletion **does not** drop that fix: after the cutover the
+platform stops proxying application paths entirely, and `direct-routes.ts` handles only home registration and
+connection-ticket issuance, so there is no allowlist for any route to be missing from. Verified before
+accepting, rather than assumed in either direction.
+
+### Screenshot evidence, and a parity question it surfaced
+
+Six Chromium renders committed under `evidence/S10-project-sharing/`, covering all three states of both new Git
+status lines plus both execution-root variants, with a README stating plainly what they do **not** cover.
+
+Capturing them found something the review had not: the same states carry **different copy** on two surfaces.
+The dialog says *"GitHub access is missing. Connect the owner's GitHub account before push or pull requests."*;
+the popover says only *"GitHub access is missing."* State semantics match and only the remediation differs,
+which is defensible — the dialog is where an owner acts — but the parity rule asks for divergence to be
+recorded rather than assumed, so it is recorded for a reviewer to accept or reject.
+
+### Flake triage held again
+
+#1846's E2E failure was `terminal-soft-grid`, *"keeps the final row visible in 'Electron Desktop' at zoom 1"*,
+`expected 60 to be less than or equal to 1` / `Matcher did not succeed in time` — the same signature already
+cleared on #1805. Triage first: **the file is not in the layer's diff**, and it was the only failure on the
+run. Only then re-run, which passed. Re-running before checking is how a genuine intermittent defect gets
+retried until it looks like a flake.
+
+## 72. Three wrong oldbases, each caught only by counting — 2026-09-23 10:40 UTC
+
+**The cardinal rule: `git rebase --onto <new-parent> <oldbase> <branch>` takes the branch's CURRENT PARENT as
+`<oldbase>`.** Nothing else. Three different wrong values for it have now appeared in this release, and every
+one was caught by comparing `git rev-list --count <branch> ^<parent>` before and after the restack — not by an
+error, a conflict or a failing test. All three fail silently.
+
+1. **`git merge-base` against `main`.** On `124/s19-acceptance` this sweeps **157** commits where the correct
+   oldbase `801883466` sweeps **15**. `merge-base` answers *where did these two histories diverge*, which on a
+   stack that has been restacked repeatedly sits far below the branch's own parent.
+2. **The branch's own tip.** Replays **zero** commits and silently resets the branch onto its parent. This
+   destroyed `124/s15-direct` and `124/s15` earlier in the release and needed reflog recovery. The tell is
+   three branches sharing one hash, which is never a real outcome of a restack.
+3. **The merged layer's *post-rebase* head.** After #1848 was rebased onto new `main` and squash-merged, its
+   new head `89d24d710` looks like the natural parent for `124/s15-direct`. Using it gave **40** commits; the
+   true oldbase was the *pre-rebase* `329ddc6a0`, giving **10**. `89d24d710` was never an ancestor of the
+   branch at all — a squash merge mints a commit the child has never seen.
+
+Verified oldbases for this release, with the commit count each branch must still have afterwards:
+
+| branch | oldbase | own commits |
+| --- | --- | --- |
+| `124/s15-direct` | `329ddc6a0` | 10 |
+| `124/s15` | `e2be7f903` | 14 |
+| `s18-consolidated/u1` | `bac7b7fd0` | 21 |
+| `s18-consolidated/u2` | `da6cdb592` | 18 |
+| `s18-consolidated/u3a` | `f4599ff22` | 19 |
+| `s18-consolidated/u3` | `3e01b3c51` | 14 |
+| `s18-consolidated/u4` | `592f7f8c8` | 28 |
+| `s18-consolidated/u5a` | `5e7ae15a9` | 1 |
+| `s18-consolidated/u5b` | `efb855c0f` | 1 |
+| `124/s19-acceptance` | `801883466` | 15 |
+
+**The check is the count, taken twice.** A restack that changes it has taken the wrong oldbase, whichever of
+the three ways it got there, and the only signal you will get is the number.
+
+## 73. Two distinct mechanisms make CI look like it never ran — 2026-09-23 10:40 UTC
+
+From outside they are indistinguishable, and neither looks like a failure: there is **no run at all** — not a
+red one, not a skipped one, nothing to click. This cost hours because the first explanation fits both.
+
+**Structural.** `ci.yml`'s `pull_request: branches: [main, "stack/**", "codex/**"]` filter matches the PR's
+**base**, and is evaluated *before* `types`. A PR based on `s18-consolidated/*` can never receive a
+`pull_request` event. `workflow_dispatch` carries no branch filter, so dispatching the run is the **standing
+answer for stacked PRs**, not a workaround for something broken.
+
+**Conflict.** For `pull_request` events GitHub runs against the merge ref `refs/pull/N/merge`. When a PR is
+`CONFLICTING` that merge commit cannot be created, so **no run is created at all**. #1848 hit this after three
+PRs landed on `main` and rewrote the same part of `packages/gateway/src/server.ts`. The discriminator:
+`pull_request_target` uses the base ref and needs no merge commit, so those workflows kept firing while every
+`pull_request` workflow produced nothing. **One family running while the other is silent means conflicting,
+not misconfigured.**
+
+**The consequence that outlives both causes.** A dispatched run on a conflicting PR, and any dispatched run on
+a stacked PR, tests **the branch head alone, not its merge with `main`**. Green there says nothing about
+merging. That is the same shape as a bare `PASS` row in the acceptance matrix (section 78) and as the
+64-second green run in section 67: a real run that measured something other than the thing being claimed. It
+belongs beside #1838 — a PR that can merge on a cancelled run, and a PR that can be green on a head nobody
+will ship, are one gap seen from two sides.
+
+## 74. Greptile edits its summary, so `created_at` lies — 2026-09-23 10:40 UTC
+
+Greptile **edits its existing summary comment** rather than posting a new one. `created_at` stays pinned to
+the first post while `updated_at` moves. Reading `created_at` — which is exactly what
+`gh pr view --json comments | last | .createdAt` hands you — makes a current 5/5 look like a stale review from
+the previous day. This produced a real misread in both directions today.
+
+**Read `updated_at`, and cross-check the "Greptile Review" check status.** Combined with section 67's third
+status trap, resolving Greptile's actual state takes both steps: select the last comment matching
+`Confidence Score` (the newest comment is often a scoreless out-of-diff note), then read that comment's
+`updated_at`, never its `created_at`.
+
+## 75. GitHub does not auto-retarget stacked children — 2026-09-23 10:40 UTC
+
+When #1848 merged, #1849's base stayed `124/s15-directory` and the PR went `dirty`. It had to be retargeted by
+hand: `gh pr edit 1849 --base main`.
+
+GitHub auto-retargets children **only when the base branch is deleted** — and the stacked-merge safety rule
+forbids deleting a base branch while any descendant PR is open (Hard Rules; the 2026-07-13 cascade). The two
+rules do not conflict. They mean **retargeting is a manual step you own**, and it is the step most easily
+skipped because the PR looks merged-adjacent already.
+
+The per-layer cycle this fixes into place:
+
+1. restack with the verified oldbase (section 72),
+2. push,
+3. **retarget to `main`** (`gh pr edit <n> --base main`),
+4. apply the label,
+5. dispatch CI (section 73),
+6. request Greptile and read `updated_at` (section 74),
+7. merge.
+
+## 76. Two live layers were closed by mistake, and recovered — 2026-09-23 10:40 UTC
+
+#1849 and #1850 were closed at 01:12Z on 2026-09-23. One minute later a comment was posted **on #1849** citing
+head `329ddc6a0` — which is **#1848's** head, not #1849's. Someone acted on the wrong PR and closed two live
+layers doing it.
+
+`git` was the arbiter, not GitHub: `124/s15-direct` and `124/s15` still carried **9** and **14** commits
+present in no other PR. Both were reopened — possible only because their base branches had never been deleted
+— and came back at **+1454 / 37 files** and **+1068 / 27 files**.
+
+Unnoticed, this ends one of two ways: 23 commits stranded on branches no PR tracks, or #1851 retargeted onto
+`main` to unblock the stack, swelling it past the 3000-addition limit and pulling both layers in unreviewed.
+
+**Cross-reference:** a closed PR whose base branch was **deleted** cannot be reopened *or* retargeted — GitHub
+rejects both, which is what made the 2026-07-13 cascade unrecoverable. Recovery was cheap here only because
+the rule about not deleting base branches under open descendants had been followed. The cheap guard before
+acting on any PR: `gh pr view <n> --json headRefOid` and compare it with the hash you are about to cite.
+
+## 77. Four real defects, none of them on anyone's list — 2026-09-23 10:40 UTC
+
+Found by agents doing an audit nobody asked for. Each is recorded with its mechanism, because each is a
+repeatable class rather than a one-off.
+
+### `SELECT ... FOR UPDATE` locks nothing while the row is still absent
+
+`applyDirectoryEvent` lost a metadata-revision race. The pre-read guard took a row lock — but a lock on a row
+that does not exist yet excludes nothing, so two concurrent *first* writers both passed the guard, and the
+loser's unconditional `ON CONFLICT ... DO UPDATE` replayed stale metadata over the winner's. Fixed by moving
+the revision test into the write statement, `WHERE metadata_revision < :revision` plus `RETURNING`, so the
+database decides rather than the reader. **Failed 2 of 3 runs before, 5 of 5 after.** This is the **third**
+instance of pre-read-plus-unconditional-write in this release.
+
+### A test that fails by calendar
+
+`collaboration-direct-owner-routes.test.ts` pinned `now` to `2026-09-21T15:00Z` and wrote `expires_at` 24
+hours later, but built its repository on the **real** clock. Every accept returned 410 once wall-clock passed
+`2026-09-22T15:00Z`. It was green when written and went red on a machine nobody had touched. Fixed by passing
+the pinned clock into the repository. **Pushing `expires_at` out would only move the bomb** — a test with one
+foot on the real clock fails eventually whatever the offset is.
+
+### A fix that relocated a failure instead of removing it
+
+Raising the shared-terminal snapshot frame limit to 5 MiB did not stop viewers disconnecting: snapshot and
+live output still shared one `pendingBytes` counter, so the failure simply moved from attach time to the first
+output frame. Fixed with separate `pendingSnapshotBytes` / `pendingOutputBytes` budgets. **The tell is a
+symptom that changes timing rather than disappearing** — that is a relocated failure, not a fixed one.
+
+### Every streamed upload logged as zero bytes
+
+The relay's inline accounting always took the `: 0` branch, because the route **always** passes a
+`ReadableStream`. And a capped request logged the client-declared `content-length` rather than the bytes
+actually sent. This is the byte/egress accounting feed: it reported zero for the streaming path and an
+attacker-supplied number for the capped one.
+
+## 78. The acceptance matrix overstated seven rows — 2026-09-23 10:40 UTC
+
+Rows **1, 4, 9, 10, 11, 12 and 17** carried a bare `PASS` with **no recorded live gap**, when they had only
+ever run in-process. That is identical in kind to six other rows whose gaps *were* recorded — same evidence,
+different label. The giveaway was internal to the document: a section headed *"Three rows passed their
+automated part"* then listed six.
+
+Corrected classification of the 26 quickstart journeys:
+
+| class | count | rows |
+| --- | --- | --- |
+| LIVE | **0** | — |
+| AUTOMATED-ONLY | 13 | includes the seven corrected rows |
+| BLOCKED | 3 | rows 13, 19, 23 |
+| NEVER RUN | 10 | — |
+
+**Zero of 26 quickstart journeys are verified live**, not thirteen. Nothing regressed to produce that number;
+the label was wrong.
+
+Two further corrections to the same document:
+
+- S15 has **four** unevidenced sharing surfaces — `ReadinessSummary`, `ProjectSourceSummary`,
+  `AudienceGrantPicker`, `ResourceSharingButton` — not three.
+- **Row 16 is an unmet release gate, not a deferral.** The deferrals are S11, S13, S14, S16, S17, T063 and
+  T077, each by explicit decision. An unmet gate and a decided deferral must never read the same: one is a
+  thing someone chose, the other is a thing nobody did.
+
+### The standing rule this produced
+
+An `N/A` in a PR surface matrix must carry an explicit sentence stating that it covers **that PR's diff only**
+and is **not** a parity claim for the release. Without that sentence the same overstatement reappears one
+document over: a reader aggregating per-PR matrices arrives at a release-wide `N/A` nobody ever wrote.
+
+## 79. The release landed: ten PRs, and three repairs to `main` along the way — 2026-09-24 06:50 UTC
+
+The spec 124 stack is on `main`, merged bottom-up one at a time with `base == main` verified before each:
+#1848 `7ef2543d2`, #1849 `f6b780e32`, #1850 `ba1847a75`, #1851 `00ba13417`, #1852 `5f6d0ce71`,
+#1860 `13c4ca234`, #1853 `2dacfb8e5`, #1854 `7b348d918`, #1864 `274b6f6d7`, #1865 `2486bc684`.
+
+Three separate repairs to `main` were required to get there, none of them caused by this release:
+**#1878** `09b630fe7` and **#1885** `89a39d93f` (platform schema baseline, twice, different columns each time)
+and **#1879** `3b5239f3b` (unit-shard `timeout-minutes` 20 → 30). **#1884** `3cb29dd10` then corrected the
+Greptile rule and the soft-grid flake.
+
+The headline for the release record is unchanged by any of it: **zero of 26 acceptance journeys are verified
+live.** Sixteen automated-only, ten never run, zero blocked after the S19 replay resolved rows 13, 19 and 23.
+
+## 80. Two PRs merged with their own CI red, and broke `main` twice — 2026-09-24 06:50 UTC
+
+#1842 (`615c9f517`) added three columns to `ai_funded_usage_reservations` without updating the schema baseline
+fixture. Its own CI run `35956743015` concluded `failure`. It merged anyway. #1843 (`ecfa4e5eb`) then merged
+on top, also red. Every branch cut from `main` afterwards failed `Unit Tests (3/4)` regardless of content.
+
+**The diagnostic that identified it as a base problem rather than a branch problem: two unrelated PRs failing
+the identical shard.** One branch failing is a hypothesis. Two unrelated branches failing the same test is a
+measurement. The same move cleared the soft-grid flake earlier the same night, where `main` @ `a4335006a`
+failed with a byte-identical assertion value.
+
+A green local suite cannot see this. A branch that predates the breakage passes correctly, because it does not
+contain it; CI builds `refs/pull/N/merge` and merges the broken base in. **The local pass is evidence about the
+branch, the CI failure is evidence about the merge, and only the second is the question the merge button asks.**
+
+## 81. `refs/pull/N/merge` does not recompute when you fix the base — 2026-09-24 06:50 UTC
+
+#1885 merged at `05:59:53Z`. Two PRs were re-triggered at `06:00:22Z`, 29 seconds later. **Both built against a
+base without the fix**, failing on the exact three columns #1885 had just added. The stale merge ref survived
+**25 minutes** and survived forcing mergeability through the API.
+
+- A **re-run** reuses the old merge SHA and cannot help.
+- A **fresh event** may still pick up a stale ref, as it did here.
+- Only `gh pr update-branch` (or an equivalent head move) reliably recomputes it — at the cost of invalidating
+  the current Greptile score, since the head changes.
+- The only trustworthy check is ancestry: `git merge-base --is-ancestor <fix> <refs/pull/N/merge>`.
+
+**"I merged the fix, so the PR now tests against it" is an assumption, not a fact.**
+
+## 82. `ci.yml` mechanics that are not in the repo docs — 2026-09-24 06:50 UTC
+
+- `types: [labeled, ready_for_review, synchronize]` — **`opened` is absent.** A newly opened PR gets no run
+  until `ready-for-ci` is added. A *pushed-to* PR needs nothing, because a push is `synchronize`. Both halves
+  matter: one agent correctly learned the first and then carried it past its boundary, nearly queuing a
+  redundant run behind its own push.
+- `concurrency: ci-<ref>-shared` has **no `cancel-in-progress`**. A new run queues behind the previous one —
+  including behind a run on a head you have already abandoned. Nothing releases the slot but an explicit
+  cancel. This cost four separate delays in one night.
+- The changed-files gate computes `git diff --name-only origin/$GITHUB_BASE_REF $GITHUB_SHA` — **PR-wide, not
+  per-push** — so a docs-only push still runs the suites when the PR touches code.
+
+## 83. Greptile does not review every commit, and the doc said it did — 2026-09-24 06:50 UTC
+
+`CLAUDE.md` stated that Greptile "is configured to review every new commit" and that a stale footer means the
+review is still running. **Both halves were false.** It reviews on PR creation and thereafter **only** on an
+explicit `@greptileai please review`. Measured on #1865: two reviews total; two pushes and 54 minutes produced
+nothing; one request produced 5/5 in three minutes.
+
+An agent following the old text waits forever **while believing it is being patient** — the worst shape for a
+rule to fail in, because inaction looks like compliance. Corrected in #1884, which also added the piece that
+cost the most time: reading the reviewed commit SHA rather than a timestamp, as a four-row table. The row that
+traps people is *reviewed SHA names an older head* → **answered, stale, request now** — not "still working".
+A readiness check must separate *not yet* from *done, about something else*; they are identical to any check
+that only asks whether the answer matches the expectation.
+
+The retry rule is stated as a trade rather than a proof: a slow review and a dropped one are indistinguishable
+from outside, a duplicate costs one redundant review that overwrites the same comment, and a deadlock needs a
+human — so prefer the recoverable failure.
+
+## 84. Five tooling false negatives in one night, all of them plausible — 2026-09-24 06:50 UTC
+
+Every instrument that failed tonight failed *quietly*, returning something believable instead of erroring:
+
+1. A **pinned CI run id** reported `cancelled` — true of the run it named, false of the PR.
+2. `gh run list --jq` silently **misparses jq's `--arg`**, returning empty. Read as "no CI run exists".
+3. A **transient empty run listing** read as "no ci.yml run for head".
+4. `gh pr comment` with a malformed flag returned **empty instead of a URL** — a review request that never
+   posted, one step from being reported as sent.
+5. `gh run list` reported a run as `queued` that was already `cancelled`; the **attempted cancel** was the only
+   thing that revealed the truth, by refusing.
+
+> `gh`'s output is a snapshot that can be empty on malformed input and stale on valid input. An empty result is
+> not evidence of an empty state, and a returned value is not evidence of a current one. Read the state back,
+> and prefer a command whose failure mode is an error over one whose failure mode is a value.
+
+Four of the five returned *nothing* where a value existed; the fifth returned a plausible wrong value. The
+first kind cannot be caught by reading more carefully — only by checking the state afterwards.
+
+## 85. The dominant failure mode of this release, in one sentence — 2026-09-24 06:50 UTC
+
+> **Verifying the action you took is not verifying the state you wanted.**
+
+Seven instances, in seven different media, in one night:
+
+| # | The action verified | The state not verified |
+| --- | --- | --- |
+| 1 | a suite ran green | it could not observe a zero-row write |
+| 2 | mobile tests passed | they assert the client's own output, not the server's acceptance |
+| 3 | a budget test passed | it had stopped exercising exhaustion |
+| 4 | an ordering test passed | it measured callback order, never the rendered screen |
+| 5 | a reply mutation succeeded | the thread was still open; the gate reads a different boolean |
+| 6 | a claim was corrected where found | four more copies survived, including the V1 scope statement |
+| 7 | a push happened | whether pushing triggers CI was never re-checked |
+
+Instance 4 is the worst shape, and it was **live inside the fix for its own class**: a real, passing,
+conscientiously written assertion measuring a proxy. A gap looks like a gap; a proxy assertion looks like
+coverage, consumes the reviewer's attention, and returns nothing.
+
+The companion rule, from the same night: **a count is not a finding until it says what each item is.** Five
+occurrences / four defects / one quotation; 26 journeys / 17 in scope / 0 live; 15 polls in a file / 2 observed
+failing. Each collapsed to one number misleads someone deciding what is left to do.

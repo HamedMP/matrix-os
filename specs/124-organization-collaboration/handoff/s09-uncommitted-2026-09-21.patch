@@ -1,0 +1,396 @@
+diff --git a/packages/contracts/src/collaboration-execution.ts b/packages/contracts/src/collaboration-execution.ts
+index ae1e4ee33..fa4f328ca 100644
+--- a/packages/contracts/src/collaboration-execution.ts
++++ b/packages/contracts/src/collaboration-execution.ts
+@@ -110,7 +110,8 @@ export const CollaborationRunBindingSchema = z.object({
+   source: CollaborationRunSourceSchema,
+   policyRevision: CollaborationRevisionSchema,
+   audienceGeneration: CollaborationRevisionSchema,
+-  executionRoot: CanonicalChatExecutionRootRefSchema,
++  /** Null for a standalone Chat without an execution root; the fingerprint then digests the Chat identity. */
++  executionRoot: CanonicalChatExecutionRootRefSchema.nullable(),
+   rootFingerprint: z.string().regex(HEX_DIGEST),
+   sessionGeneration: CollaborationRevisionSchema,
+   admittedAt: IsoTimestampSchema,
+diff --git a/packages/gateway/src/chat/orchestrator.ts b/packages/gateway/src/chat/orchestrator.ts
+index c4de54201..9b3eb9daa 100644
+--- a/packages/gateway/src/chat/orchestrator.ts
++++ b/packages/gateway/src/chat/orchestrator.ts
+@@ -566,11 +566,7 @@ export class CanonicalChatOrchestrator {
+     owner: ChatOwner,
+     chatId: string,
+     scopeId: string,
+-    createAdapter: (
+-      context: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3] extends (
+-        context: infer Context,
+-      ) => unknown ? Context : never,
+-    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
++    createAdapter: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3],
+   ): Promise<void> {
+     this.assertOpen();
+     await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);
+diff --git a/packages/gateway/src/chat/queue-repository.ts b/packages/gateway/src/chat/queue-repository.ts
+index 396c0099d..ed62347da 100644
+--- a/packages/gateway/src/chat/queue-repository.ts
++++ b/packages/gateway/src/chat/queue-repository.ts
+@@ -115,6 +115,8 @@ export interface ClaimedQueuedTurn {
+   queueDepth: number;
+   sharedExecution?: {
+     scopeId: string;
++    /** S09: the queued request this run was claimed for (binding, loss and decision records). */
++    queuedTurnId: string;
+     requestingActorId: string;
+     authEpoch: number;
+     authorityGeneration: number;
+@@ -1091,6 +1093,7 @@ export class ChatQueueRepository {
+           && sharedScope.execution_eligibility ? {
+             sharedExecution: {
+               scopeId: row.collaboration_scope_id,
++              queuedTurnId: row.id,
+               requestingActorId: row.requesting_actor_id,
+               authEpoch: Number(sharedScope.auth_epoch),
+               authorityGeneration: Number(sharedScope.authority_generation),
+diff --git a/packages/gateway/src/chat/shared-execution-coordinator.ts b/packages/gateway/src/chat/shared-execution-coordinator.ts
+index b1e2aaad8..2010b0850 100644
+--- a/packages/gateway/src/chat/shared-execution-coordinator.ts
++++ b/packages/gateway/src/chat/shared-execution-coordinator.ts
+@@ -22,6 +22,14 @@ export interface SharedActiveRunHandle {
+   sharedScopeId?: string;
+ }
+ 
++/** S09: the claimed canonical run handed to the shared adapter factory. */
++export interface SharedDispatchRun {
++  id: string;
++  turnId: string;
++  executionRoot: CanonicalChatRun["executionRoot"] | null;
++  executionRootFingerprint: string | null;
++}
++
+ export interface StartSharedDispatchInput {
+   owner: ChatOwner;
+   message: CanonicalChatMessage;
+@@ -61,6 +69,7 @@ export class SharedChatExecutionCoordinator {
+     scopeId: string,
+     createAdapter: (
+       context: NonNullable<ClaimedQueuedTurn["sharedExecution"]>,
++      run: SharedDispatchRun,
+     ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+   ): Promise<void> {
+     if (this.options.isClosing() || this.options.atCapacity(owner)
+@@ -85,8 +94,9 @@ export class SharedChatExecutionCoordinator {
+           await this.notify(scopeId);
+           return;
+         }
+-        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId
+-          || claimed.run.executionRoot) {
++        // S09: a rooted run is dispatched on the owner's sandboxed root; the adapter
++        // factory refuses it when no sandbox capability or root resolver exists.
++        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId) {
+           await this.finishPreparationFailure(
+             owner,
+             chatId,
+@@ -101,7 +111,12 @@ export class SharedChatExecutionCoordinator {
+ 
+         let adapter: CanonicalChatProviderAdapter;
+         try {
+-          adapter = await createAdapter(claimed.sharedExecution);
++          adapter = await createAdapter(claimed.sharedExecution, {
++            id: claimed.run.id,
++            turnId: claimed.run.turnId,
++            executionRoot: claimed.run.executionRoot ?? null,
++            executionRootFingerprint: claimed.run.executionRootFingerprint ?? null,
++          });
+           if (adapter.driverKind !== claimed.run.driverKind) {
+             throw new Error("Shared adapter driver mismatch");
+           }
+diff --git a/packages/gateway/src/collaboration/run-account-binding.ts b/packages/gateway/src/collaboration/run-account-binding.ts
+index d406d20a5..9aca8c3a9 100644
+--- a/packages/gateway/src/collaboration/run-account-binding.ts
++++ b/packages/gateway/src/collaboration/run-account-binding.ts
+@@ -56,7 +56,8 @@ const AdmissionSchema = z.object({
+   scopeId: z.string().uuid(),
+   requestingActorId: z.string().min(1).max(128),
+   expectedPolicyRevision: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
+-  executionRoot: CanonicalChatExecutionRootRefSchema,
++  /** Null for a standalone Chat that has no execution root (S09). */
++  executionRoot: CanonicalChatExecutionRootRefSchema.nullable(),
+   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+   audienceGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
+   harness: CollaborationSharedHarnessSchema.optional(),
+@@ -68,7 +69,7 @@ export type CollaborationRunAdmission = z.infer<typeof AdmissionSchema>;
+ /** Stable digest of everything a shared provider session is bound to. */
+ export function sharedSessionKey(input: {
+   source: { accessSourceId: string; providerInstanceId: string; harness: string };
+-  executionRoot: CanonicalChatExecutionRootRef;
++  executionRoot: CanonicalChatExecutionRootRef | null;
+   rootFingerprint: string;
+   audienceGeneration: string;
+ }): string {
+diff --git a/packages/gateway/src/collaboration/shared-ai-runtime.ts b/packages/gateway/src/collaboration/shared-ai-runtime.ts
+index 32ae9fc05..3258c6819 100644
+--- a/packages/gateway/src/collaboration/shared-ai-runtime.ts
++++ b/packages/gateway/src/collaboration/shared-ai-runtime.ts
+@@ -43,7 +43,20 @@ import type { CollaborationChatScopeService } from "./chat-scope.js";
+ import type { OwnerCollaborationDatabase } from "./database.js";
+ import type { CollaborationEventRegistry } from "./events.js";
+ import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
+-import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
++import { createHash } from "node:crypto";
++import type { CanonicalChatExecutionRootRef, CollaborationRunInterruptionReason } from "@matrix-os/contracts";
++import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
++import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
++import type { SharedDispatchRun } from "../chat/shared-execution-coordinator.js";
++import type { SandboxRuntimeRegistry } from "./revocation-enforcer.js";
++import { CollaborationRunBindingError } from "./run-account-binding.js";
++import { createSharedClaudeAdapter } from "./shared-claude-adapter.js";
++import { createSharedCodexAdapter } from "./shared-codex-adapter.js";
++import {
++  interruptActiveSharedRuns,
++  markLostSharedRunsOnStartup,
++  type CollaborationRunLossRepository,
++} from "./shared-run-loss.js";
+ import {
+   createScopeRuntimeClient,
+   type ScopeRuntimeProfileCatalog,
+@@ -103,6 +116,12 @@ export async function createSharedAiRuntime(options: {
+   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+   /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
+   ownerSource?: SharedRunOwnerSource;
++  /** S09: immutable loss and control records; required for interrupted-run attribution. */
++  runLoss?: CollaborationRunLossRepository;
++  /** S07: registry that stops sandboxed runtimes when the requesting actor loses its lease. */
++  sandboxRuntimes?: Pick<SandboxRuntimeRegistry, "bind" | "release">;
++  /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
++  executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
+ }) {
+   const client = createScopeRuntimeClient({
+     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
+@@ -144,6 +163,7 @@ export async function createSharedAiRuntime(options: {
+     )).selectedAccessSourceId);
+   const commands = new CollaborationChatCommands({
+     db: options.db,
++    ...(options.runLoss ? { runControls: options.runLoss } : {}),
+     submitApproval: async () => {
+       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
+     },
+@@ -166,7 +186,7 @@ export async function createSharedAiRuntime(options: {
+       { type: "personal", ownerId: await ownerIdFor(options.db, scopeId, chatId) },
+       chatId,
+       scopeId,
+-      async (execution) => {
++      async (execution, run) => {
+         try {
+           const context = await options.authority.authorize({
+             scopeId,
+@@ -219,7 +239,35 @@ export async function createSharedAiRuntime(options: {
+                 instanceId: "claude_shared" as const,
+                 accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource(),
+               };
+-          return createScopeRuntimeChatProviderAdapter({
++          // S09: a rooted run mounts the owner's project or worktree through the S07
++          // sandbox; without the sandbox capability or a root resolver it is unavailable.
++          const sandbox = await sandboxManifestFor({
++            run,
++            scopeId,
++            actorId: execution.requestingActorId,
++            capability: client.capability(),
++            executionRoots: options.executionRoots,
++            owner: { type: "personal", ownerId: context.ownerId },
++          });
++          // S08/S09: pin actor, owner, source, policy revision, audience and root per run
++          // before any provider work; a refusal keeps the queued request in place.
++          if (ownerDecision && options.ownerSource?.bindings) {
++            await admitRun({
++              bindings: options.ownerSource.bindings,
++              run,
++              scopeId,
++              chatId,
++              requestId: execution.queuedTurnId,
++              requestingActorId: execution.requestingActorId,
++              policyRevision: ownerDecision.policyRevision,
++              audienceGeneration: String(execution.authorityGeneration),
++              harness: ownerDecision.harness,
++              modelId: execution.selection.model,
++              rootFingerprint: sandbox?.worktree.fingerprint ?? run.executionRootFingerprint ?? null,
++            });
++          }
++          const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
++          return factory({
+             client: scopedClient({
+               client,
+               registry,
+@@ -231,11 +279,21 @@ export async function createSharedAiRuntime(options: {
+             }),
+             scopeId,
+             executionGeneration: capability.executionGeneration,
+-            adapterId: adapter.adapterId,
+             harnessVersion: adapter.harnessVersion,
++            ...(sandbox ? { sandbox } : {}),
++            ...(options.sandboxRuntimes ? { runtimes: options.sandboxRuntimes } : {}),
++            onLoss: (reason) => {
++              void recordLoss(options.runLoss, {
++                runId: run.id, scopeId, chatId, requestId: execution.queuedTurnId,
++                requestingActorId: execution.requestingActorId, reason,
++              });
++            },
+           });
+         } catch (error: unknown) {
+           if (error instanceof SharedChatRunPreparationError) throw error;
++          if (error instanceof CollaborationRunBindingError) {
++            throw new SharedChatRunPreparationError(error.code === "owner_only" ? "unauthorized" : "unavailable");
++          }
+           if (error instanceof CollaborationAuthorizationError) {
+             throw new SharedChatRunPreparationError(
+               error.code === "not_found" || error.code === "forbidden" ? "unauthorized" : "unavailable",
+@@ -307,6 +365,7 @@ export async function createSharedAiRuntime(options: {
+     } : {}),
+     requestDispatch: dispatch,
+     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
++    ...(options.runLoss ? { runLoss: options.runLoss } : {}),
+   });
+ 
+   const broker = createScopeRuntimeBroker({
+@@ -349,8 +408,14 @@ export async function createSharedAiRuntime(options: {
+   }
+   let stopped = false;
+   let wakeInFlight: Promise<void> | undefined;
++  let lostRunsMarked = false;
+   const runQueueWake = async (): Promise<void> => {
+     try {
++      if (!lostRunsMarked && options.runLoss) {
++        // Every shared run still active in the database was lost with the previous process.
++        await markLostSharedRunsOnStartup({ db: options.db, loss: options.runLoss });
++        lostRunsMarked = true;
++      }
+       await recoverSharedAiQueue({
+         reconcilePendingApprovals: async () => {
+           await commands.reconcilePendingApprovals();
+@@ -385,6 +450,20 @@ export async function createSharedAiRuntime(options: {
+   return {
+     available: true as const,
+     chatExecutionAdapter,
++    /**
++     * S09: the home lost its control authority (or its scope runtime): every
++     * active shared run is recorded as lost and stopped; queued requests are
++     * preserved and re-admit on fresh membership once control returns.
++     */
++    async interruptForLoss(reason: CollaborationRunInterruptionReason): Promise<string[]> {
++      if (!options.runLoss) return [];
++      return interruptActiveSharedRuns({
++        db: options.db,
++        loss: options.runLoss,
++        reason,
++        orchestrator: options.orchestrator,
++      });
++    },
+     async shutdown(): Promise<void> {
+       stopped = true;
+       clearInterval(wakeTimer);
+@@ -713,3 +792,71 @@ function scopedClient(input: {
+     },
+   };
+ }
++
++async function recordLoss(
++  loss: CollaborationRunLossRepository | undefined,
++  input: Parameters<CollaborationRunLossRepository["recordInterruption"]>[0],
++): Promise<void> {
++  if (!loss) return;
++  try {
++    await loss.recordInterruption(input);
++  } catch (error: unknown) {
++    console.warn("[collaboration] shared run loss record failed",
++      error instanceof Error ? error.name : "UnknownError");
++  }
++}
++
++async function sandboxManifestFor(input: {
++  run: SharedDispatchRun;
++  scopeId: string;
++  actorId: string;
++  capability: ReturnType<ReturnType<typeof createScopeRuntimeClient>["capability"]>;
++  executionRoots: Pick<ChatExecutionRootResolver, "resolve"> | undefined;
++  owner: { type: "personal"; ownerId: string };
++}): Promise<ScopeRuntimeSandboxManifest | undefined> {
++  if (!input.run.executionRoot) return undefined;
++  if (!input.executionRoots || !input.capability.available || !input.capability.sandbox
++    || !input.capability.sandbox.workloads.includes("chat_ai")) {
++    throw new SharedChatRunPreparationError("unavailable");
++  }
++  const resolved = await input.executionRoots.resolve(input.owner, input.run.executionRoot);
++  if (input.run.executionRootFingerprint && resolved.fingerprint !== input.run.executionRootFingerprint) {
++    throw new SharedChatRunPreparationError("unavailable");
++  }
++  return {
++    version: 1,
++    scopeHandle: `scope_${input.scopeId.replaceAll("-", "")}`,
++    actorId: input.actorId,
++    worktree: { hostPath: resolved.primaryWorkspaceRoot, mode: "rw", fingerprint: resolved.fingerprint },
++    network: "broker_only",
++  };
++}
++
++async function admitRun(input: {
++  bindings: NonNullable<SharedRunOwnerSource["bindings"]>;
++  run: SharedDispatchRun;
++  scopeId: string;
++  chatId: string;
++  requestId: string;
++  requestingActorId: string;
++  policyRevision: string;
++  audienceGeneration: string;
++  harness: "codex" | "claude_code";
++  modelId: string;
++  rootFingerprint: string | null;
++}): Promise<void> {
++  const executionRoot: CanonicalChatExecutionRootRef | null = input.run.executionRoot ?? null;
++  await input.bindings.admit({
++    runId: input.run.id,
++    requestId: input.requestId,
++    scopeId: input.scopeId,
++    requestingActorId: input.requestingActorId,
++    expectedPolicyRevision: input.policyRevision,
++    executionRoot,
++    rootFingerprint: input.rootFingerprint
++      ?? createHash("sha256").update(`no-root:${input.chatId}`).digest("hex"),
++    audienceGeneration: input.audienceGeneration,
++    harness: input.harness,
++    modelId: input.modelId,
++  });
++}
+diff --git a/packages/gateway/src/collaboration/shared-run-loss.ts b/packages/gateway/src/collaboration/shared-run-loss.ts
+index 965c97156..685e2e7be 100644
+--- a/packages/gateway/src/collaboration/shared-run-loss.ts
++++ b/packages/gateway/src/collaboration/shared-run-loss.ts
+@@ -304,3 +304,31 @@ export async function interruptActiveSharedRuns(options: {
+ function omitOwner(run: { runId: string; scopeId: string; chatId: string; requestId: string; requestingActorId: string }) {
+   return { runId: run.runId, scopeId: run.scopeId, chatId: run.chatId, requestId: run.requestId, requestingActorId: run.requestingActorId };
+ }
++
++/**
++ * Drives control-partition interruption from the S05 control snapshot: when
++ * freshness lapses past the lease the callback fires once per outage episode,
++ * and a restored control stream re-arms it. Never extends authority.
++ */
++export function startControlLossWatchdog(options: {
++  controlFresh(): boolean;
++  onLost(): Promise<unknown>;
++  intervalMs?: number;
++}): { stop(): void } {
++  const intervalMs = Math.min(Math.max(options.intervalMs ?? 5_000, 250), 60_000);
++  let lost = false;
++  let inFlight: Promise<unknown> | undefined;
++  const tick = (): void => {
++    const fresh = options.controlFresh();
++    if (fresh) { lost = false; return; }
++    if (lost || inFlight) return;
++    lost = true;
++    inFlight = options.onLost().catch((error: unknown) => {
++      console.warn("[collaboration] control loss interruption failed",
++        error instanceof Error ? error.name : "UnknownError");
++    }).finally(() => { inFlight = undefined; });
++  };
++  const timer = setInterval(tick, intervalMs);
++  timer.unref?.();
++  return { stop: () => clearInterval(timer) };
++}
