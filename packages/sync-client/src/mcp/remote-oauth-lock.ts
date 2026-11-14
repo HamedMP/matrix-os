@@ -1,7 +1,7 @@
 /**
- * Cross-process refresh lock for one profile's `/mcp` tokens (spec 2691).
- * Rotating refresh tokens are single-use, so two bridges on one profile must
- * not both spend the same one.
+ * Cross-process lock for one profile's `/mcp` tokens (spec 2691). It
+ * serializes refreshes (rotating refresh tokens are single-use, so two bridges
+ * on one profile must not both spend the same one) with login saves and logout.
  *
  * The lock is published atomically: its full content is written to a unique
  * temp file, then `link()`ed into place, which fails if the lock exists. So a
@@ -67,7 +67,7 @@ export async function withProfileRefreshLock<T>(path: string, operation: () => P
       } catch (error: unknown) {
         if (errorCode(error) !== "EEXIST") throw error;
         if (await isStale(path, Date.now())) { await ignoreMissing(unlink(path)); continue; }
-        if (Date.now() >= deadline) throw new Error("Matrix MCP token refresh is busy in another process");
+        if (Date.now() >= deadline) throw new Error("Matrix MCP tokens are busy in another process");
         await new Promise(resolve => setTimeout(resolve, POLL_MS));
       }
     }
