@@ -209,6 +209,14 @@ run SHA; previous-head receipts cannot be carried forward. Sonnet/GLM price
 reviews must be current, at most 31 days; Jev at most 90 days. Versions remain
 immutable and timestamps are not renewed relative to startup.
 
+The Production workflow reads the exact model price bindings from the verified
+receipt's `configuration.pricing` map. The two administrator-managed acceptance
+pins authorize those reviewed values. The candidate's environment must match
+the active receipt at promotion, including every optional per-model binding
+needed by the production catalog. Remove redundant Production price variables
+once this workflow is active on main and any prior runs have drained. Staging
+continues to use its own GitHub price variables.
+
 For registry-mode Relay releases, set `configuration.pricingRegistryEnabled`
 to JSON `true` and set the GitHub environment variable
 `MATRIX_FUNDED_AI_RELAY_PRICING_REGISTRY_ENABLED=true`. The receipt's `pricing` map then contains only the three

@@ -55,7 +55,7 @@ const fullGlmReview = () => individualReview("GLM_FULL", "cloudflare-2026-10-15-
 function verify(receipt = fixture(), options: Record<string, unknown> = {}) {
   // Build real ZIP bytes, then exercise the same Python verifier used before cloud authentication.
   const result = spawnSync("python3", ["-c", `
-import hashlib, importlib.util, io, json, os, sys, zipfile
+import hashlib, importlib.util, io, json, os, pathlib, sys, tempfile, zipfile
 spec = importlib.util.spec_from_file_location("gate", "scripts/verify-funded-relay-evidence.py")
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
@@ -82,11 +82,22 @@ try:
         "HamedMP/matrix-os", "production" if data.get("promotion") else "preview")
     if data.get("candidate"):
         gate.verify_candidate(result, data["candidate"])
+    if data.get("exerciseConfiguration"):
+        config = result["configuration"]
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp, "env")
+            os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main",
+                "GITHUB_ENV": str(output), "GITHUB_SHA": "${sha}",
+                "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED": data.get("registryToggle", "")})
+            os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
+            os.environ.update(data.get("unreviewedEnv", {}))
+            gate.load_evidence = lambda stage: result
+            gate.configuration()
+            print(output.read_text(), end="")
     if data.get("exercisePromotion"):
         config = result["configuration"]
         os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null", "GITHUB_SHA": "${sha}"})
         os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
-        os.environ.update(config["pricing"])
         if config.get("pricingRegistryEnabled"): os.environ["MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"] = "true"
         # A supplied emitted environment is the complete candidate input; never
         # mask missing or drifted workflow values with receipt fixture defaults.
@@ -116,8 +127,7 @@ try:
         if change == "unreviewedEnv": entries.append({"name":"UNREVIEWED_SETTING", "value":"true"})
         if change == "extraWorkers": entries.append({"name":"MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION", "value":"cloudflare-2026-10-15-workers-eight"})
         if change == "missingWorkers": entries[:] = [entry for entry in entries if entry["name"] != "MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH"]
-        if change == "operatorWorkers": os.environ["MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION"] = "cloudflare-2026-10-15-workers-eight"
-        if change == "operatorDeepSeek": os.environ["MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION"] = "cloudflare-2026-11-12-deepseek-v4.1-flash-1017"
+        if change == "registry": os.environ["MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"] = "yes"
         if change == "maxInstances": revision["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "999"
         if change == "cloudConcurrency": revision["spec"]["containerConcurrency"] = 1000
         if change == "memory": revision["spec"]["containers"][0]["resources"]["limits"]["memory"] = "8Gi"
@@ -156,6 +166,33 @@ except (ValueError, KeyError, TypeError) as error:
 }
 
 describe("reviewed funded Relay release evidence", () => {
+  it("binds production prices from verified evidence without duplicate GitHub variables", () => {
+    const receipt = fixture();
+    Object.assign(receipt.configuration.pricing, deepSeekReview(), fullGlmReview());
+    const result = verify(receipt, { exerciseConfiguration: true });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WORKERS_TOKEN_VERSION=2\n");
+    const binding = result.stdout.split("\n").find(line => line.startsWith("RELAY_PRICING_BINDINGS="));
+    expect(binding?.split("|").slice(1).sort())
+      .toEqual(Object.entries(receipt.configuration.pricing).map(([name, value]) => `${name}=${value}`).sort());
+
+    const stale = verify(receipt, { exerciseConfiguration: true,
+      unreviewedEnv: { MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION: "obsolete" } });
+    expect(stale.status).toBe(0);
+    expect(stale.stdout).toBe(result.stdout);
+    expect(verify(receipt, { exerciseConfiguration: true, registryToggle: "true" }).status).toBe(1);
+  });
+  it.each(["|UNREVIEWED_SETTING=true", "\nCANDIDATE_TAG=unreviewed"])(
+    "rejects a production pricing entry with a binding separator before export",
+    suffix => {
+      const receipt = fixture();
+      Object.assign(receipt.configuration.pricing, fullGlmReview());
+      receipt.configuration.pricing.MATRIX_FUNDED_GLM_FULL_PRICING_REVIEW_VERSION += suffix;
+      const result = verify(receipt, { exerciseConfiguration: true });
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("RELAY_PRICING_BINDINGS=");
+    },
+  );
   it("accepts only a hash-pinned exact-source reviewed metadata package", () => {
     expect(verify().status).toBe(0);
   });
@@ -217,29 +254,24 @@ describe("reviewed funded Relay release evidence", () => {
       .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
     const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
     const config = receipt.configuration;
+    const prepared = verify({ ...receipt, stage: "preview", candidate: undefined }, {
+      exerciseConfiguration: true, registryToggle: mode === "registry" ? "true" : "",
+    });
+    expect(prepared.status).toBe(0);
+    const verifiedEnv = Object.fromEntries(prepared.stdout.split("\n").flatMap(line => {
+      const separator = line.indexOf("=");
+      return separator < 0 ? [] : [[line.slice(0, separator), line.slice(separator + 1)]];
+    }));
     const result = spawnSync("bash", ["-c", `
 gcloud() { for arg in "$@"; do printf '%s\\n' "$arg"; done; exit 0; }
-set -e
-export GITHUB_ENV="$(mktemp)"
-trap 'rm -f "$GITHUB_ENV"' EXIT
-if [ "$MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED" != true ]; then
-  python3 scripts/verify-funded-relay-evidence.py workers-pricing-bindings
-  export WORKERS_PRICING_BINDINGS="$(cut -d= -f2- "$GITHUB_ENV")"
-fi
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-      ...process.env, GITHUB_SHA: sha, CANDIDATE_TAG: `relay-${sha.slice(0, 12)}`, IMAGE_DIGEST: receipt.candidate.image,
+      ...process.env, ...verifiedEnv, GITHUB_SHA: sha, IMAGE_DIGEST: receipt.candidate.image,
       GCP_PROJECT_ID: config.projectId, GCP_REGION: config.region,
       AI_RELAY_CLOUD_RUN_SERVICE: config.relayService,
       AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: config.relayServiceAccount,
       PLATFORM_INTERNAL_URL: config.platformOrigin,
       CLOUDFLARE_AI_GATEWAY_URL: config.cloudflareGatewayUrl,
-      GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token-production", GATEWAY_TOKEN_VERSION: "1",
-      WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-production", WORKERS_TOKEN_VERSION: "2",
-      CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "3",
-      METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "4",
-      MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: mode === "registry" ? "true" : "",
-      ...config.pricing,
     } });
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
@@ -274,9 +306,6 @@ ${script}
     Object.assign(receipt.configuration.pricing, deepSeekReview(), fullGlmReview());
     expect(verify(receipt, { promotion: true, exercisePromotion: true }).status).toBe(0);
 
-    expect(verify(productionFixture(), { promotion: true, exercisePromotion: true,
-      candidateChange: "operatorDeepSeek" }).stderr).toContain("Reviewed deployment configuration mismatch");
-
     const duplicate = structuredClone(receipt);
     Object.assign(duplicate.configuration.pricing, workersReview());
     expect(verify(duplicate, { promotion: true }).status).toBe(1);
@@ -306,14 +335,12 @@ ${script}
     Object.assign(reviewed.configuration.pricing, workersReview());
     expect(verify(legacy, { promotion: true, exercisePromotion: true,
       candidateChange: "extraWorkers" }).stderr).toContain("Unreviewed candidate environment");
-    expect(verify(legacy, { promotion: true, exercisePromotion: true,
-      candidateChange: "operatorWorkers" }).stderr).toContain("Reviewed deployment configuration mismatch");
     expect(verify(reviewed, { promotion: true, exercisePromotion: true,
       candidateChange: "missingWorkers" }).stderr).toContain("Candidate runtime configuration mismatch");
     expect(verify(reviewed, { promotion: true, exercisePromotion: true,
       candidateChange: "pricing" }).status).toBe(1);
   });
-  it.each(["secret", "source", "sourcePrefixCollision", "tag", "tagUrl", "revision", "account", "pricing", "duplicate", "notReady", "environment",
+  it.each(["secret", "source", "sourcePrefixCollision", "tag", "tagUrl", "revision", "account", "pricing", "duplicate", "notReady", "environment", "registry",
     "unboundedRate", "unreviewedEnv", "maxInstances", "cloudConcurrency", "memory", "entrypoint", "mount"])(
     "rejects drift in actual candidate %s", candidateChange => {
       expect(verify(productionFixture(), { promotion: true, exercisePromotion: true, candidateChange }).status).toBe(1);
