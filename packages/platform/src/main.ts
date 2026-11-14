@@ -136,6 +136,7 @@ import {
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
 import { startPlatformServer } from './platform-startup.js';
 import type { createDevstackRunRoutes } from './devstack-runs/routes.js';
+import type { createDevstackCliRoutes } from './devstack-cli-routes.js';
 import type { createDevstackPreviewRoutes } from './devstack-preview-routes.js';
 import type { DevstackPublicPreviewAccess, DevstackPublicPreviewBinding } from './devstack-public-preview.js';
 import {
@@ -263,6 +264,7 @@ export function createApp(deps: {
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
   devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
+  devstackCliRoutes?: ReturnType<typeof createDevstackCliRoutes>;
   devstackPreviewRoutes?: ReturnType<typeof createDevstackPreviewRoutes>;
   devstackPublicPreview?: DevstackPublicPreviewAccess;
   orchestrator: Orchestrator;
@@ -717,6 +719,10 @@ export function createApp(deps: {
 
   if (registeredRuntimeInstance && deps.devstackRunRoutes) {
     app.route('/api/devstack/runs', deps.devstackRunRoutes);
+  }
+
+  if (registeredRuntimeInstance && deps.devstackCliRoutes) {
+    app.route('/', deps.devstackCliRoutes);
   }
 
   if (registeredRuntimeInstance && deps.devstackPreviewRoutes) {
