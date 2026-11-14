@@ -109,13 +109,19 @@ export function createComposerChoiceStore(storage: ComposerChoiceStorage = Async
       // What the storage holds for other computers is kept: it is read first.
       void load().then(save);
     },
-    /** Forgets every remembered choice, in memory and on the phone. */
+    /**
+     * Forgets every remembered choice, in memory and on the phone. The store
+     * is then unread, as on a fresh launch: the next reader reads the storage
+     * again.
+     */
     async forget() {
       entries = [];
       reading = Promise.resolve();
-      notify();
       save();
       await writing;
+      entries = null;
+      reading = null;
+      notify();
     },
     subscribe(listener: () => void) {
       listeners = [...listeners, listener];

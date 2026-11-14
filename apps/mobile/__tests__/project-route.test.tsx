@@ -429,6 +429,22 @@ describe("project route", () => {
       expect(requests.createChat).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, expect.objectContaining({ currentSelection: opus }));
     });
 
+    it("lets the next new chat follow the project's latest chat once a chat is started with the model chosen here", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockResolvedValue(admission);
+      await renderPortfolio();
+      act(() => modelPickerProps().onSelectionChange(opus));
+
+      // By the time the chats are read again, the newest one was switched back to Sonnet.
+      const switchedBack = { ...landing, chat: { ...landing.chat, currentSelection: sonnet, activityAt: new Date().toISOString() } };
+      requests.fetchProjectChats.mockResolvedValue({ items: [switchedBack, caseStudy] });
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(opus));
+
+      await waitFor(() => expect(modelPickerProps().selection).toEqual(sonnet));
+    });
+
     it("starts on the model of the project's most recently active chat, as last used on any device", async () => {
       const usedOpus = { ...landing, chat: { ...landing.chat, currentSelection: opus, activityAt: new Date().toISOString() } };
       requests.fetchProjectChats.mockResolvedValue({ items: [caseStudy, usedOpus] });

@@ -1,4 +1,5 @@
 import React from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import { TextInput } from "react-native";
 
@@ -149,7 +150,10 @@ function openChat(overrides: Record<string, unknown> = {}) {
 
 const focus = TextInput.prototype.focus as jest.Mock;
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Nothing is remembered on the phone, and the phone's storage has been read.
+  await composerChoices.forget();
+  await composerChoices.load();
   jest.useFakeTimers();
   focus.mockClear();
 });
@@ -181,7 +185,6 @@ afterEach(() => {
   mockRetryFailed = false;
   mockRetried = undefined;
   mockChatReadFailed = false;
-  void composerChoices.forget();
 });
 
 describe("chat screen: new chat", () => {
@@ -275,6 +278,24 @@ describe("chat screen: new chat", () => {
       chatId: null,
       selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
     }), expect.anything());
+  });
+
+  it("holds a new chat's model and Send until the choice saved on this phone has been read", async () => {
+    await composerChoices.forget();
+    let finishRead!: (value: string | null) => void;
+    jest.spyOn(AsyncStorage, "getItem").mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    expect(mockSendMessage).not.toHaveBeenCalled();
+
+    const low = { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] };
+    await act(async () => finishRead(JSON.stringify({ entries: [{ scope: "user_a:amin:primary", choice: { selection: low } }] })));
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: null, selection: low }), expect.anything());
   });
 
   it("remembers on this phone the model and effort chosen in the composer", () => {

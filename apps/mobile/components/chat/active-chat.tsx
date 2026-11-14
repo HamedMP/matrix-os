@@ -55,15 +55,16 @@ function useActiveChatState() {
   // Sending only waits when there is no catalog to choose a model from yet:
   // one that is merely being re-checked already gives the selection, and the
   // computer validates that selection when it admits the turn.
-  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
-  const providerCatalogLoading = !directBot && catalogPending;
-  // A new chat starts on the model last chosen on this phone. It is read from
-  // the phone's storage once, when the app starts, so nothing waits for it.
+  // A new chat starts on the model last chosen on this phone, so its model is
+  // not known, and nothing is sent, until the phone's storage has been read.
+  const rememberedPending = !directBot && activeChatId === null && selectionOverride === null && !remembered.ready;
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending);
+  const providerCatalogLoading = !directBot && (catalogPending || rememberedPending);
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
-    ?? (activeChatId === null
-      ? newChatSelection(catalog, { remembered: remembered.choice?.selection })
-      : defaultCatalogSelection(catalog));
+    ?? (activeChatId !== null
+      ? defaultCatalogSelection(catalog)
+      : rememberedPending ? null : newChatSelection(catalog, { remembered: remembered.choice?.selection }));
   const { remember } = remembered;
   const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
     setSelectionOverride(chosen);

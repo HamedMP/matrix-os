@@ -121,6 +121,20 @@ describe("the composer choice remembered on this phone", () => {
     expect(console.warn).toHaveBeenCalledWith("[mobile] composer choice could not be remembered", "Error");
   });
 
+  it("forgets every choice, on the phone too, and reads the phone's storage again afterwards", async () => {
+    const storage = memoryStorage();
+    const store = createComposerChoiceStore(storage);
+    await store.load();
+    store.remember("user_a:alice:primary", { selection: CLAUDE });
+
+    await store.forget();
+
+    expect(store.choice("user_a:alice:primary")).toBeUndefined();
+    await store.load();
+    expect(store.choice("user_a:alice:primary")).toBeNull();
+    expect(storage.getItem).toHaveBeenCalledTimes(2);
+  });
+
   it("tells whoever is listening when a choice changes", async () => {
     const store = createComposerChoiceStore(memoryStorage());
     const listener = jest.fn();

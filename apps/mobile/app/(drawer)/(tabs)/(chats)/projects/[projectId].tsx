@@ -92,8 +92,10 @@ export default function ProjectRoute() {
     disabled: catalogPending || (chosenModel === null && choiceUnknown),
     onChatStarted: (chatId, startedWith) => {
       // The send made the new chat the open one. The model it was started
-      // with stays chosen there.
+      // with stays chosen there; the next new chat here starts from the
+      // project's latest chat again.
       setSelectionOverride(startedWith);
+      setChosenModel(null);
       if (navigation.isFocused()) showChat(chatId);
     },
   });
