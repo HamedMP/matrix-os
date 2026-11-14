@@ -43,6 +43,8 @@ export interface ComposerProps {
   onRemoveAttachment?: (id: string) => void;
   /** Why the message cannot be sent with what is waiting, said under the attachments. */
   attachmentNotice?: string | null;
+  /** A previous send's result, independent of attachment preflight warnings. */
+  sendError?: string | null;
   /** The "+" that adds to the message, at the start of the toolbar. */
   addControl?: ReactNode;
   /** The engine and model control, after the "+". */
@@ -70,6 +72,7 @@ export function Composer({
   attachments,
   onRemoveAttachment,
   attachmentNotice,
+  sendError,
   addControl,
   modelControl,
   speech,
@@ -91,6 +94,11 @@ export function Composer({
         {attachmentNotice ? (
           <Text testID="composer-attachment-notice" accessibilityRole="alert" style={styles.attachmentNotice}>
             {attachmentNotice}
+          </Text>
+        ) : null}
+        {sendError ? (
+          <Text testID="composer-send-error" accessibilityRole="alert" style={styles.speechError}>
+            {sendError}
           </Text>
         ) : null}
         {speech?.error ? (

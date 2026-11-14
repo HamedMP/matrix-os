@@ -81,6 +81,7 @@ export const requests = {
   fetchChatProviderCatalog: jest.fn(),
   createChat: jest.fn(),
   admitChatTurn: jest.fn(),
+  fetchChatDetail: jest.fn(),
 };
 
 /** Stands in for `@/lib/requests`: the real keys and error class over mocked requests. */
