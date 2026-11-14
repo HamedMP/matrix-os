@@ -18,6 +18,8 @@
     "dev": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/brand' --filter '@matrix-os/kernel' build && pnpm --parallel --filter '@matrix-os/gateway' --filter '@matrix-os/proxy' --filter './shell' dev",
     "dev:infra": "pnpm node scripts/dev-local.mjs infra",
     "dev:infra:stop": "pnpm node scripts/dev-local.mjs stop",
+    "test:devstack:qualification": "node --test tests/scripts/devstack-qualification.node-test.mjs",
+    "dev:qualify:source": "node scripts/devstack-qualification/run.mjs",
     "dev:source": "pnpm node scripts/dev-local.mjs full",
     "dev:full": "pnpm node scripts/dev-production-parity.mjs up",
     "dev:parity": "pnpm node scripts/dev-production-parity.mjs up",
