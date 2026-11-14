@@ -1,11 +1,15 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { FlatList, Text, type ListRenderItemInfo } from "react-native";
+import Animated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 
 import { AnalyticsMask } from "@/lib/analytics";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 import { AssistantMessage } from "./AssistantMessage";
+import { messageEntering, messageEnteringReduced } from "./message-motion";
+import { createSeenMessages, type SeenMessages } from "./seen-messages";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { useUnsentMessageActions } from "./unsent-message-actions";
 import { UserMessage } from "./UserMessage";
@@ -25,6 +29,10 @@ export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderC
 
 const keyExtractor = (message: TranscriptMessage) => message.id;
 
+/** Still arriving: sent from this phone and on its way, or a reply being written. Only these animate in. */
+const isArriving = (message: TranscriptMessage) =>
+  message.delivery === "sending" || (message.role === "assistant" && message.isRunning);
+
 /** A chat's messages, newest at the bottom. */
 export function MessageList({
   messages,
@@ -34,18 +42,24 @@ export function MessageList({
   renderComputerPhoto,
   footer,
 }: MessageListProps) {
+  const reduceMotion = useReduceMotion();
+  const entering = reduceMotion ? messageEnteringReduced : messageEntering;
+  const [seen] = useState(createSeenMessages);
+
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
-    <AnalyticsMask>
-      {renderRequest?.(item) ?? (
-        <Message
-          message={item}
-          chatId={chatId}
-          renderResults={renderResults}
-          renderComputerPhoto={renderComputerPhoto}
-        />
-      )}
-    </AnalyticsMask>
-  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
+    <MessageMotion id={item.id} arriving={isArriving(item)} seen={seen} entering={entering}>
+      <AnalyticsMask>
+        {renderRequest?.(item) ?? (
+          <Message
+            message={item}
+            chatId={chatId}
+            renderResults={renderResults}
+            renderComputerPhoto={renderComputerPhoto}
+          />
+        )}
+      </AnalyticsMask>
+    </MessageMotion>
+  ), [chatId, renderRequest, renderResults, renderComputerPhoto, entering, seen]);
 
   return (
     <FlatList
@@ -62,6 +76,37 @@ export function MessageList({
       keyboardShouldPersistTaps={chatId ? "never" : "handled"}
       contentContainerStyle={styles.content}
     />
+  );
+}
+
+/**
+ * Lets an arriving message rise in the first time it is drawn. The list lets
+ * rows far from view go and draws them again on the way back; a reply still
+ * being written then holds still instead of entering again.
+ */
+function MessageMotion({
+  id,
+  arriving,
+  seen,
+  entering,
+  children,
+}: {
+  id: string;
+  arriving: boolean;
+  seen: SeenMessages;
+  entering: typeof messageEntering | typeof messageEnteringReduced;
+  children: ReactNode;
+}) {
+  // Decided once, as the row is first drawn.
+  const [enters] = useState(() => arriving && !seen.has(id));
+  useEffect(() => {
+    if (arriving) seen.add(id);
+  }, [arriving, seen, id]);
+
+  return (
+    <Animated.View testID={`message-motion-${id}`} entering={enters ? entering : undefined}>
+      {children}
+    </Animated.View>
   );
 }
 

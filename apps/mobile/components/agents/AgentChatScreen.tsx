@@ -1,4 +1,5 @@
-import { KeyboardAvoidingView, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
