@@ -11,6 +11,25 @@ export type RuntimeState = z.infer<typeof RuntimeStateSchema>;
 export const RuntimeLimitReasonSchema = z.enum(["ai_allowance", "storage", "compute"]);
 export type RuntimeLimitReason = z.infer<typeof RuntimeLimitReasonSchema>;
 
+/**
+ * The body a platform returns instead of proxying when the owner's runtime is not ready
+ * (waking a stopped container, busy at capacity, or held at a limit). `limit` names the
+ * limit exactly when the state is `limit_reached`; `resetsAt` says when it lifts on its
+ * own, for limits that reset (the monthly compute limit). `error` is fixed copy, never
+ * provider or database text.
+ */
+export const RuntimeStateResponseSchema = z.object({
+  error: z.string().max(200).optional(),
+  runtimeState: RuntimeStateSchema,
+  limit: RuntimeLimitReasonSchema.optional(),
+  resetsAt: z.iso.datetime().optional(),
+}).strict().refine(
+  (body) => (body.runtimeState === "limit_reached") === (body.limit !== undefined)
+    && (body.resetsAt === undefined || body.limit !== undefined),
+  { message: "limit is required exactly for limit_reached, and resetsAt only with a limit" },
+);
+export type RuntimeStateResponse = z.infer<typeof RuntimeStateResponseSchema>;
+
 export const RuntimeProfileCapabilityIdSchema = z.enum([
   "chat.matrix_ai", "chat.coding_harness", "apps.build", "apps.node_runtime",
   "files", "terminal", "code_editor", "channels", "cron", "bots",

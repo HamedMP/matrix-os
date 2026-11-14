@@ -4,6 +4,7 @@ import {
   RuntimeProfileCapabilityIdSchema,
   RuntimeLimitReasonSchema,
   RuntimeStateSchema,
+  RuntimeStateResponseSchema,
   SubstrateKindSchema,
 } from "../../packages/contracts/src/index.js";
 
@@ -61,6 +62,33 @@ describe("runtime substrate contract", () => {
     ];
     for (const candidate of rejected) {
       expect(RuntimeCapabilitiesV1Schema.safeParse(candidate).success, JSON.stringify(candidate)).toBe(false);
+    }
+  });
+});
+
+describe("RuntimeStateResponseSchema", () => {
+  it("accepts a plain state and a compute limit with its reset time", () => {
+    expect(RuntimeStateResponseSchema.parse({ error: "Matrix computer not ready", runtimeState: "waking" }))
+      .toEqual({ error: "Matrix computer not ready", runtimeState: "waking" });
+    const capped = RuntimeStateResponseSchema.parse({
+      error: "Monthly compute limit reached", runtimeState: "limit_reached", limit: "compute", resetsAt: "2026-12-01T00:00:00.000Z",
+    });
+    expect(capped).toMatchObject({ limit: "compute", resetsAt: "2026-12-01T00:00:00.000Z" });
+  });
+
+  it("requires a limit reason exactly when the state is limit_reached, and a reset time only with one", () => {
+    const rejected = [
+      { runtimeState: "limit_reached" },
+      { runtimeState: "waking", limit: "compute" },
+      { runtimeState: "waking", resetsAt: "2026-12-01T00:00:00.000Z" },
+      { runtimeState: "limit_reached", limit: "compute", resetsAt: "next month" },
+      { runtimeState: "limit_reached", limit: "disk" },
+      { runtimeState: "asleep" },
+      { runtimeState: "ready", error: "x".repeat(201) },
+      { runtimeState: "ready", detail: "provider said no" },
+    ];
+    for (const candidate of rejected) {
+      expect(RuntimeStateResponseSchema.safeParse(candidate).success, JSON.stringify(candidate)).toBe(false);
     }
   });
 });
