@@ -73,6 +73,7 @@ export function RenameableConversationRow({
   onRenameCommit,
   onRenameCancel,
   onDelete,
+  onArchive,
   nowMs,
 }: {
   conversation: RenameableConversation;
@@ -86,6 +87,7 @@ export function RenameableConversationRow({
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
   onDelete?: () => void;
+  onArchive?: () => void;
   /** When set, the row shows how long ago the Chat started, as in Project lists. */
   nowMs?: number;
 }) {
@@ -147,6 +149,8 @@ export function RenameableConversationRow({
             onRenameStart();
           }, 0);
         },
+    }] : []), ...(onArchive ? [{
+        label: "Archive", onSelect: onArchive,
     }] : []), ...(onDelete ? [{
         // Open after the menu closes so the dialog receives focus.
         label: "Delete", danger: true, onSelect: () => {

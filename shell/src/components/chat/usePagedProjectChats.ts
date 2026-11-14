@@ -1,7 +1,8 @@
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import type { WebProject } from "./web-projects";
+import type { CanonicalChatNavigationItem, CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 const ProjectChatsResponseSchema = z.object({
   items: z.array(z.object({ chat: z.object({ id: z.string().min(1), title: z.string().min(1),
@@ -10,13 +11,12 @@ const ProjectChatsResponseSchema = z.object({
   nextCursor: z.string().regex(/^chatcur_[A-Za-z0-9_-]+$/).max(512).nullable().optional(),
 });
 export type FetchedProjectChat = { id: string; title: string; titleVersion: number;
-  importSource?: { harness: "claude" | "codex" } };
+  importSource?: { harness: "claude" | "codex" }; canonicalRecord?: CanonicalChatNavigationItem };
+type LoadNavigationPage = (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 type PageCursors = { id?: string | null; slug?: string | null };
-// Older Chats kept per expanded project; paging stops here so a very large project cannot grow memory without bound.
-export const MAX_PROJECT_CHAT_ROWS = 1_000;
-
+const MAX_RETAINED_PROJECT_ROWS = 500;
 async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: string | null, unreadOnly: boolean, signal: AbortSignal) {
-  const query = new URLSearchParams({ projectId, limit: "100" });
+  const query = new URLSearchParams({ projectId, limit: cursor ? "20" : "5" });
   if (cursor) query.set("cursor", cursor);
   if (unreadOnly) query.set("unread", "true");
   // Without the import-source version the gateway strips provenance, and source filters would drop every row.
@@ -28,7 +28,7 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false) {
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0) {
   const initialCursors = (): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) });
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
@@ -37,9 +37,20 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const [loading, setLoading] = useState(initiallyExpanded);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const previousRefreshVersion = useRef(refreshVersion);
+  useEffect(() => {
+    if (previousRefreshVersion.current === refreshVersion) return;
+    previousRefreshVersion.current = refreshVersion;
+    setFetched([]);
+    setPageCursors(initialCursors());
+    setNextCursors({});
+    setLoading(expanded);
+    setError(false);
+    setRetryCount(value => value + 1);
+  }, [refreshVersion, expanded]);
 
-  // Global navigation can stop at 1,000 chats. Each project source is paged
-  // independently, and closing or changing the authority aborts both reads.
+  // Each project source is paged independently, and closing or changing the
+  // authority aborts both reads.
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- the routed owner's computer is only known at runtime.
   useEffect(() => {
     if (!expanded) return;
@@ -47,23 +58,30 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
     const sources: Array<{ key: "id" | "slug"; value: string; cursor: string | null }> = [];
     if (pageCursors.id !== undefined) sources.push({ key: "id", value: project.id, cursor: pageCursors.id });
     if (pageCursors.slug !== undefined) sources.push({ key: "slug", value: project.slug, cursor: pageCursors.slug });
-    void Promise.all(sources.map(async source => ({ key: source.key,
-      page: await loadProjectChats(gatewayUrl, source.value, source.cursor, unreadOnly, controller.signal),
-    }))).then(pages => {
+    void Promise.all(sources.map(async source => {
+      if (loadNavigationPage) {
+        const page = await loadNavigationPage({ group: "project", projectId: source.value, limit: source.cursor ? 20 : 5, ...(source.cursor ? { cursor: source.cursor } : {}) });
+        return { key: source.key, nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.unread).map(item => ({
+          id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
+          importSource: item.importSource, canonicalRecord: item,
+        })) satisfies FetchedProjectChat[] };
+      }
+      const page = await loadProjectChats(gatewayUrl, source.value, source.cursor, unreadOnly, controller.signal);
+      return { key: source.key, nextCursor: page.nextCursor, rows: page.items.map(item => ({ id: item.chat.id,
+        title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0, importSource: item.importSource })) satisfies FetchedProjectChat[] };
+    })).then(pages => {
       if (controller.signal.aborted) return;
-      const rows = pages.flatMap(({ page }) => page.items.map(item => ({ id: item.chat.id,
-        title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
-        importSource: item.importSource })));
+      const rows: FetchedProjectChat[] = pages.flatMap(({ rows }) => rows);
       setFetched(previous => {
-        const ids = new Set(previous.map(row => row.id));
-        return [...previous, ...rows.filter(row => {
-          if (ids.has(row.id)) return false;
-          ids.add(row.id);
-          return true;
-        })].slice(0, MAX_PROJECT_CHAT_ROWS);
+        const additions: FetchedProjectChat[] = [];
+        for (const row of rows) {
+          if (!previous.some(item => item.id === row.id) && !additions.some(item => item.id === row.id)) additions.push(row);
+        }
+        // Keep a bounded window while the cursor continues through full history.
+        return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};
-      for (const { key, page } of pages) next[key] = page.nextCursor ?? undefined;
+      for (const { key, nextCursor } of pages) next[key] = nextCursor ?? undefined;
       setNextCursors(next);
     }).catch((cause: unknown) => {
       if (controller.signal.aborted) return;
@@ -71,7 +89,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
       setError(true);
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [expanded, gatewayUrl, project.id, project.slug, pageCursors, retryCount, unreadOnly]);
+  }, [expanded, gatewayUrl, project.id, project.slug, pageCursors, retryCount, unreadOnly, loadNavigationPage]);
 
   const toggleExpanded = () => {
     if (expanded) {
@@ -89,7 +107,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   };
   const retry = () => { setLoading(true); setError(false); setRetryCount(value => value + 1); };
   const loadMore = () => { setLoading(true); setError(false); setPageCursors(nextCursors); };
-  const capped = fetched.length >= MAX_PROJECT_CHAT_ROWS;
+  const capped = false;
   return { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, capped,
-    hasMore: !capped && Boolean(nextCursors.id || nextCursors.slug) };
+    hasMore: Boolean(nextCursors.id || nextCursors.slug) };
 }

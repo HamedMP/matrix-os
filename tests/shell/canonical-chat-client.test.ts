@@ -115,6 +115,17 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("lists archived Chats across project and global scopes", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ items: [record] }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    await client.list({ lifecycle: "archived", limit: 50 });
+
+    const url = new URL(String(fetchFn.mock.calls[0]?.[0]));
+    expect(url.searchParams.get("lifecycle")).toBe("archived");
+    expect(url.searchParams.has("scope")).toBe(false);
+  });
+
   it("renames a Chat through the canonical revision-guarded endpoint", async () => {
     const renamed = { ...record, chat: { ...record.chat, title: "Release plan", revision: 1 } };
     const fetchFn = vi.fn(async () => Response.json(renamed));
@@ -320,7 +331,7 @@ describe("canonical shell Chat client", () => {
 it("opts navigation into immutable import source projection", async () => {
   const fetchFn = vi.fn(async () => Response.json({ version: 1, items: [], truncated: false }));
   await createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn }).navigation!();
-  expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
+  expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=100", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
 
 it("preserves the separate owner browser intent in canonical approval submissions", async () => {

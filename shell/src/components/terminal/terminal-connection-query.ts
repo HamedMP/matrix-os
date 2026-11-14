@@ -2,6 +2,7 @@ interface TerminalConnectionQueryInput {
   terminalRef: { workspaceId: string; tabId: string };
   fromSeq: number;
   mobile: boolean;
+  chatId?: string;
   lease?: "exclusive" | "observe" | null;
   size?: { cols: number; rows: number } | null;
 }
@@ -15,6 +16,7 @@ export function buildTerminalConnectionQuery(input: TerminalConnectionQueryInput
     client: input.mobile ? "mobile" : "browser",
     inputCapability: "binary-input-v1",
     scrollCapability: "native-scroll-v1",
+    ...(input.chatId ? { chat: input.chatId } : {}),
     ...(input.lease ? { lease: input.lease } : {}),
     ...(input.size ? { cols: String(input.size.cols), rows: String(input.size.rows) } : {}),
   };

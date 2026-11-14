@@ -255,6 +255,16 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onDeleteConversation={chat.deleteConversation}
+                loadNavigationPage={chat.navigationPage}
+                searchConversations={chat.searchConversations}
+                navigationUpdatedAt={chat.navigationUpdatedAt}
+                onArchiveConversation={chat.archiveConversation}
+                onRestoreConversation={chat.restoreConversation}
+                onListArchivedConversations={chat.listArchivedConversations}
+                onArchiveProjectChats={chat.archiveProjectChats}
+                onRestoreArchivedChats={chat.restoreArchivedChats}
+                sideChatClient={chat.sideChatClient}
+                terminalSessionIds={chat.terminalSessionIds}
                 onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} projectSkillRootAvailable={chat.projectSkillRootAvailable} onSetChatProject={chat.setChatProject}
                 onSubmitApproval={chat.submitApproval}

@@ -1,15 +1,12 @@
-import { useAuth } from '@clerk/nextjs';
-import { getGatewayUrl } from '@/lib/gateway';
 import { AgentAvatar, useBotDraftRecovery, type ChatAgentClient, type BotConversationSummary } from '@matrix-os/ui';
 import type { ChatComposerDraft } from './useChatComposerDraft';
 
-export function useWebBotDraftNavigation({client,scope,sourceChatId,newChatSequence,seed,open,restore}: {
-  client?:ChatAgentClient;scope:string;sourceChatId?:string;newChatSequence:number;
+export function useWebBotDraftNavigation({client,identityKey,scope,sourceChatId,newChatSequence,seed,open,restore}: {
+  client?:ChatAgentClient;identityKey:string;scope:string;sourceChatId?:string;newChatSequence:number;
   seed:ChatComposerDraft['seedChatDraft'];open(chatId:string):void;
   restore(source:{chatId?:string;sequence:number}):void;
 }) {
-  const {userId,sessionId}=useAuth();
-  return useBotDraftRecovery({client,identityKey:`${userId ?? ''}:${sessionId ?? ''}:${getGatewayUrl()}`,scope,targetScope:id=>id,seed,open,
+  return useBotDraftRecovery({client,identityKey,scope,targetScope:id=>id,seed,open,
     capture:()=>({chatId:sourceChatId,sequence:newChatSequence}),restore,
   });
 }

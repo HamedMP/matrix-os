@@ -25,4 +25,7 @@ describe("Terminal connection query", () => {
       client: "mobile", lease: "observe", cols: "120", rows: "36",
     });
   });
+  it("binds a chat-only terminal socket to its chat", () => {
+    expect(buildTerminalConnectionQuery({ terminalRef, fromSeq: 0, mobile: false, chatId: "chat_one" })).toMatchObject({ chat: "chat_one" });
+  });
 });

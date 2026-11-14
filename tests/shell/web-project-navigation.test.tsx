@@ -9,9 +9,10 @@ import { usePagedProjectChats } from "../../shell/src/components/chat/usePagedPr
 import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
-function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void }) {
+function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn(), renamedTitles = {}, loadNavigationPage }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void; renamedTitles?: Record<string, string>; loadNavigationPage?: Parameters<typeof WebProjectsNav>[0]["loadNavigationPage"] }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
   return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} activeChatId={activeChatId} onSelectChat={onSelectChat}
+    renamedTitles={renamedTitles} loadNavigationPage={loadNavigationPage}
     renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
 }
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
@@ -20,7 +21,10 @@ const auth = vi.hoisted(() => ({ userId: "user_owner", sessionId: "session_owner
 
 vi.mock("@clerk/nextjs", () => ({
   useOrganization: () => ({ organization: null }),
-  useAuth: () => auth,
+  useAuth: () => {
+    if (document.documentElement.dataset.matrixSelfHosted === "1") throw new Error("ClerkProvider is absent");
+    return auth;
+  },
 }));
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("../../shell/src/components/chat/ChatInput", () => ({ ChatInput: () => null }));
@@ -29,7 +33,120 @@ vi.mock("@matrix-os/ui", async original => ({ ...await original<typeof import("@
   ChatAgentsRailSection: () => null,
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.userId = "user_owner"; auth.sessionId = "session_owner"; window.history.replaceState(null, "", "/"); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.userId = "user_owner"; auth.sessionId = "session_owner"; delete document.documentElement.dataset.matrixSelfHosted; window.history.replaceState(null, "", "/"); });
+
+it("loads project navigation in self-hosted Chat without a ClerkProvider", async () => {
+  document.documentElement.dataset.matrixSelfHosted = "1";
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  render(<Nav gatewayUrl="https://example.test" scopeKey="self-hosted-owner/runtime/main" />);
+  expect(await screen.findByRole("button", { name: "Expand Local project chats" })).toBeTruthy();
+});
+
+it("archives both the project ID and legacy slug chats", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={archive}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
+  expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
+});
+
+it("reports running chats skipped when a project archive changes no chats", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={vi.fn(async () => ({ archived: [], archivedCount: 0, skippedCount: 3 }))}
+    onRestoreConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  expect(await screen.findByText("Archived 0 chats in Local project; 3 running skipped")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+it("restores an older archived chat into an expanded project without reopening it", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  let active = true;
+  const item = { chat: { id: "chat_old", title: "Older project chat", titleVersion: 1, revision: 2,
+    lifecycle: "active", attention: "none", messageCount: 1, createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
+    projectId: "proj_local", readState: { readThroughSeq: 1, markedUnread: false, unread: false }, classification: "done", persistence: "durable" };
+  const load = vi.fn(async (query: { group: string }) => ({ items: query.group === "project" && active ? [item] : [], totalCount: active ? 1 : 0 }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" loadNavigationPage={load as never}
+    onArchiveProjectChats={vi.fn(async () => { active = false; return { archived: [{ chatId: "chat_old", revision: 3 }], archivedCount: 1, skippedCount: 0 }; })}
+    onListArchivedConversations={vi.fn(async () => ({ items: active ? [] : [{ chat: { ...item.chat, lifecycle: "archived", revision: 3 } }] })) as never}
+    onRestoreConversation={vi.fn(async () => { active = true; return true; })} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  await within(nav).findByText("No chats in this project yet.");
+  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Older project chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restore selected" }));
+  await screen.findByText("No archived chats.");
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Archived chats" })).getAllByRole("button", { name: "Close", exact: true })[0]!);
+  expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
+  expect(within(nav).getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
+});
+
+it("keeps only failed project chats in bulk Undo after a partial restore", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
+  const restore = vi.fn().mockResolvedValueOnce(["chat_local"]).mockResolvedValueOnce(["chat_proj_local"]);
+  const restoreSingle = vi.fn(async () => true);
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={archive}
+    onRestoreConversation={restoreSingle} onRestoreArchivedChats={restore}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
+  expect(restore.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+    { chatId: "chat_local", revision: 2 }, { chatId: "chat_proj_local", revision: 2 },
+  ]));
+  expect(await screen.findByText("Chats could not be restored. Try again.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(restoreSingle).toHaveBeenCalledWith("chat_proj_local", 2));
+  expect(restore).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+});
+
+it("updates a visible paged project title after rename without collapsing its project", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  const loadNavigationPage = vi.fn(async () => ({ items: [{ chat: {
+    id: "chat_old", title: "Old title", titleVersion: 1, revision: 1, lifecycle: "active", attention: "none", messageCount: 0,
+    createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
+  }, readState: { readThroughSeq: 0, markedUnread: false } }], totalCount: 1 }));
+  const props = { gatewayUrl: "https://example.test", scopeKey: "owner/runtime", loadNavigationPage: loadNavigationPage as never };
+  const view = render(<Nav {...props}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand Local project chats" }));
+  expect(await screen.findByRole("button", { name: "Old title" })).toBeTruthy();
+  view.rerender(<Nav {...props} renamedTitles={{ chat_old: "New title" }}/>);
+  expect(screen.getByRole("button", { name: "New title" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
+});
+
+it("renders self-hosted Chat after a conversation exists without a ClerkProvider", async () => {
+  document.documentElement.dataset.matrixSelfHosted = "1";
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[{ id: "chat_local", title: "Local chat", preview: "", messageCount: 0, updatedAt: 1 }]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="self-hosted-owner/runtime/main" />
+  </OrganizationStateProvider>);
+  expect(await screen.findByText("No projects on this computer yet.")).toBeTruthy();
+});
 
 it("finds an existing personal project and opens its chat from the Web Chat rail", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -62,6 +179,85 @@ it("finds an existing personal project and opens its chat from the Web Chat rail
   fireEvent.click(within(reloadedNav).getByRole("button", { name: "France: data lab" }));
   expect(reopened).toHaveBeenCalledWith("chat_france");
   expect(request.mock.calls.filter(([url]) => url.includes("/api/workspace/projects"))).toHaveLength(2);
+});
+
+it("pages a project's canonical navigation independently and retains full row actions", async () => {
+  const project = { id: "proj_france", slug: "proj_france", name: "France" };
+  const item = (index: number) => ({
+    chat: { id: `chat_${index}`, title: `Chat ${index}`, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
+      createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z", activityAt: "2026-11-12T00:00:00Z" },
+    projectId: project.id, readState: { readThroughSeq: 0, markedUnread: false }, classification: "done", persistence: "durable",
+  });
+  const load = vi.fn(async (query: { cursor?: string }) => query.cursor
+    ? { items: [item(6)], totalCount: 6 }
+    : { items: [1, 2, 3, 4, 5].map(item), totalCount: 6, nextCursor: "navcur_next" });
+  const { result } = renderHook(() => usePagedProjectChats(project as never, "https://example.test", false, true, load as never));
+  await waitFor(() => expect(result.current.fetched).toHaveLength(5));
+  expect(load).toHaveBeenCalledWith(expect.objectContaining({ group: "project", projectId: project.id, limit: 5 }));
+  expect(result.current.fetched[0]?.canonicalRecord?.chat.id).toBe("chat_1");
+  act(() => result.current.loadMore());
+  await waitFor(() => expect(result.current.fetched).toHaveLength(6));
+  expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_next", limit: 20 }));
+});
+
+it("uses the projected unread flag for paged project chats", async () => {
+  const item = (id: string, unread: boolean) => ({
+    chat: { id, title: id, messageCount: 9, updatedAt: "2026-11-12T00:00:00Z" },
+    readState: { unread, readThroughSeq: 0, markedUnread: false },
+  });
+  const load = vi.fn(async () => ({ items: [item("read", false), item("unread", true)], totalCount: 2 }));
+  const { result } = renderHook(() => usePagedProjectChats({ id: "proj_france", slug: "proj_france", name: "France" }, "https://example.test", true, true, load as never));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.fetched.map(chat => chat.id)).toEqual(["unread"]);
+});
+
+it("refreshes expanded project rows after a bulk archive even beyond the exclusion window", async () => {
+  let archived = false;
+  const load = vi.fn(async () => ({ items: archived ? [] : [{ chat: { id: "chat_old", title: "Old chat" } }], totalCount: archived ? 0 : 1 }));
+  const project = { id: "proj_france", slug: "proj_france", name: "France" };
+  const hook = renderHook(({ revision }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, revision), { initialProps: { revision: 0 } });
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(1));
+  archived = true;
+  hook.rerender({ revision: 1 });
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(0));
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
+it("searches committed history beyond loaded Web Desktop rail rows", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], nextCursor: null })));
+  const searchConversations = vi.fn().mockResolvedValueOnce({ items: [{ chat: {
+    id: "chat_older", title: "Older planning chat", messageCount: 1,
+    activityAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
+  } }], nextCursor: "chatcur_more" }).mockResolvedValueOnce({ items: [{ chat: {
+    id: "chat_oldest", title: "Oldest planning chat", messageCount: 1,
+    activityAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z",
+  } }] });
+  const open = vi.fn();
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} sessionId="chat_current"
+    onNewChat={vi.fn()} onSwitchConversation={open} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main"
+    searchConversations={searchConversations as never}/></OrganizationStateProvider>);
+  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "planning" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Older planning chat" }));
+  fireEvent.click(within(screen.getByRole("region", { name: "Chat search results" })).getByRole("button", { name: "Show more" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Oldest planning chat" }));
+  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50 });
+  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50, cursor: "chatcur_more" });
+  expect(open).toHaveBeenCalledWith("chat_older");
+  expect(open).toHaveBeenCalledWith("chat_oldest");
+});
+
+it("opens archive management from Chat and searches the full archived history", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
+  const search = vi.fn(async () => ({ items: [{ chat: { id: "chat_archived", title: "Older planning", revision: 2, archivedAt: "2026-11-12T00:00:00Z" } }] }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onListArchivedConversations={vi.fn(async () => ({ items: [] })) as never}
+    searchConversations={search as never} onRestoreConversation={vi.fn(async () => true)} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search archived chats" }), { target: { value: "planning" } });
+  expect(await screen.findByRole("checkbox", { name: "Select Older planning" })).toBeTruthy();
+  expect(search).toHaveBeenCalledWith("planning", { lifecycle: "archived", limit: 50 });
 });
 
 it("keeps the owner's projects visible when the account is also an organization member", async () => {
@@ -108,12 +304,12 @@ it("drops prior computer projects immediately and ignores their late response", 
 it("does not show one account's projects when the account changes on the same computer", async () => {
   const response = vi.fn(async () => Response.json({ projects: [{ id: `proj_${auth.userId}`, slug: auth.userId, name: auth.userId }], nextCursor: null }));
   vi.stubGlobal("fetch", response);
-  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "user_owner/main", chats: [], onSelectChat: vi.fn() };
   const view = render(<Nav {...props} />);
   expect(await screen.findByRole("button", { name: "Expand user_owner chats" })).toBeTruthy();
   auth.userId = "user_next";
   auth.sessionId = "session_next";
-  view.rerender(<Nav {...props} />);
+  view.rerender(<Nav {...props} scopeKey="user_next/main" />);
   expect(screen.queryByRole("button", { name: "Expand user_owner chats" })).toBeNull();
   expect(await screen.findByRole("button", { name: "Expand user_next chats" })).toBeTruthy();
   expect(response).toHaveBeenCalledTimes(2);
@@ -169,18 +365,18 @@ function renderChatApp(conversations: RenameableConversation[], sessionId?: stri
     sessionId={sessionId} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" /></OrganizationStateProvider>);
 }
 
-it("lists a project Chat under its Project only, as on Electron Desktop", async () => {
+it("lists a project Chat under its Project and status group", async () => {
   renderChatApp([projectConversation(1), { id: "chat_loose", title: "Loose chat", preview: "", messageCount: 1, updatedAt: 1 }]);
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
-  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1" })).toHaveLength(0));
+  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1" })).toHaveLength(1));
   fireEvent.click(await within(projectsNav).findByRole("button", { name: "Expand France chats" }));
   expect(within(projectsNav).getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
-  expect(screen.getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Chat 1" })).toHaveLength(2);
   expect(within(projectsNav).queryByRole("button", { name: "Loose chat" })).toBeNull();
   expect(screen.getByRole("button", { name: "Loose chat" })).toBeTruthy();
 });
 
-it("shows project Chats six at a time, with start times and the open Chat always visible", async () => {
+it("shows project Chats five at a time, with start times and the open Chat always visible", async () => {
   renderChatApp(Array.from({ length: 14 }, (_, index) => projectConversation(index + 1)), "chat_10");
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(projectsNav).findByRole("button", { name: "Expand France chats" }));
@@ -290,7 +486,7 @@ it("applies the Chat source filter to older project rows", async () => {
   expect(within(nav).queryByRole("button", { name: "Imported chat" })).toBeNull();
 });
 
-it("keeps pinned project chats in Pinned instead of moving them into Projects", async () => {
+it("keeps pinned project chats in Pinned and their Project", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   // The project page also returns the pinned Chat, as the gateway does.
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
@@ -304,8 +500,7 @@ it("keeps pinned project chats in Pinned instead of moving them into Projects", 
     authorityKey="owner/main" /></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "Expand France chats" }));
-  expect(await within(nav).findByText("No chats in this project yet.")).toBeTruthy();
-  expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
+  expect(await within(nav).findByRole("button", { name: "Chat 1" })).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", { name: "Chat 1" })).toBeTruthy();
 });
 
@@ -355,13 +550,13 @@ it("ignores a late project-chat page after the account changes", async () => {
     ? Response.json({ projects: [{ id: "proj_shared_name", slug: "shared-name", name: "Project" }] })
     : auth.userId === "user_owner" ? oldPage
       : Response.json({ items: [{ chat: { id: "chat_new", title: "New account chat" } }], nextCursor: null })));
-  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "user_owner/main", chats: [], onSelectChat: vi.fn() };
   const view = render(<Nav {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Expand Project chats" }));
   await waitFor(() => expect(screen.getByText("Loading chats…")).toBeTruthy());
   auth.userId = "user_next";
   auth.sessionId = "session_next";
-  view.rerender(<Nav {...props} />);
+  view.rerender(<Nav {...props} scopeKey="user_next/main" />);
   fireEvent.click(await screen.findByRole("button", { name: "Expand Project chats" }));
   expect(await screen.findByRole("button", { name: "New account chat" })).toBeTruthy();
   finishOld(Response.json({ items: [{ chat: { id: "chat_old", title: "Old account chat" } }], nextCursor: null }));
@@ -517,7 +712,7 @@ it("lays out projects like the other rail sections and older chats like ordinary
   expect(older.closest(".matrix-web-project-chats")).toBeTruthy();
 });
 
-it("stops keeping older project chats at 1,000 rows", async () => {
+it("continues paging older project chats beyond 1,000 rows with a bounded window", async () => {
   let page = 0;
   const request = vi.fn(async (url: string) => {
     // Every page is full and claims more, as a very large project would.
@@ -533,8 +728,9 @@ it("stops keeping older project chats at 1,000 rows", async () => {
     act(() => result.current.loadMore());
   }
   await waitFor(() => expect(result.current.loading).toBe(false));
-  expect(result.current.fetched).toHaveLength(1_000);
-  expect(result.current.capped).toBe(true);
-  expect(result.current.hasMore).toBe(false);
-  expect(request).toHaveBeenCalledTimes(10);
+  expect(result.current.fetched).toHaveLength(500);
+  expect(result.current.fetched.some(row => row.id === "chat_i11_99")).toBe(true);
+  expect(result.current.capped).toBe(false);
+  expect(result.current.hasMore).toBe(true);
+  expect(request).toHaveBeenCalledTimes(22);
 });

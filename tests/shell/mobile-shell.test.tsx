@@ -141,6 +141,18 @@ async function loadMobileShell() {
 }
 
 describe("mobile shell", () => {
+  it("finds older chats through server search after the initial navigation window", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+    const searchConversations = vi.fn(async () => ({ items: [{ chat: { id: "chat_old", title: "Older planning chat", messageCount: 1, updatedAt: "2026-01-01T00:00:00Z" } }] }));
+    const chat = { messages: [], sessionId: undefined, busy: false, connected: true, conversations: [],
+      newChat: vi.fn(), switchConversation: vi.fn(), submitMessage: vi.fn(), searchConversations } as unknown as React.ComponentProps<typeof ChatProvider>["value"];
+    const MobileShell = await loadMobileShell();
+    render(<ChatProvider value={chat}><MobileShell launchAppPath="__chat__" /></ChatProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Chat sidebar" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "Older planning" } });
+    await waitFor(() => expect(searchConversations).toHaveBeenCalledWith("Older planning", expect.objectContaining({ lifecycle: "active" })));
+    expect(await screen.findByText("Older planning chat")).toBeTruthy();
+  });
   it("resolves built-in artwork from the current preview even when the module was already loaded", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
     const MobileShell = await loadMobileShell();
