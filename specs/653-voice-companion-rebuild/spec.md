@@ -58,34 +58,37 @@ To add (one layer, all entry points benefit):
 
 ## Layers (one native GitHub stack, ENG-476)
 
-| Layer | Content | Rough size |
+First stack: a demoable call on Web Desktop and Web Canvas.
+
+| Layer | Content | Size |
 |---|---|---|
 | L1 | Spec (this file) | docs |
-| L2 | Contracts + platform native-live relay and funding + `PlatformDatabase` type | ~1.2k |
-| L3 | Gateway core: adapter/ports/runtime/pipeline (split), Gemini client upgrade, coordinator, Matrix Pi port, thin ticket + WS route | ~2.8k |
-| L4 | Shared UI voice controller, capture/playback, panel; wiring in Web Desktop, Web Canvas, Electron Desktop mini chat | ~2.5k |
-| L5 | Matrix Pi `terminal.*`, `message.send`, `app.open/close` tools | ~1.5k |
+| L2 | Native core: contracts, lean `VoiceMediaAdapter` seam, Gemini Live client upgrade, companion coordinator, Chat journal and task broker (ported with their stack tests) | ~2.4k |
+| L3 | Live route: generic Chat resolver, session host (limits, frame validation), owner-scoped call registry, `/ws/voice/live` + `/api/voice/live/status`, server wiring | ~0.6k |
+| L4 | Shell: `useVoiceLive`, `VoiceLivePanel` overlay, dock button unhidden, Talk button in the Chat composer | ~0.45k |
 
-Each layer stays under 3,000 additions and 50 files. Tests come over with the code they cover (stack tests under `tests/gateway/live-companion`, `tests/platform/native-live-*`, `tests/ui/voice-session-*`), minus cascade-only suites.
+The thin session host in L3 replaces the stack's `engine`, `session-runtime` and `session-pipeline`; native Live needs no engine-side admission, delivery ledger or synthesis.
+
+Follow-on stack: platform-funded native Live sessions (`platform/native-live`, per-session budget reservation), task event watching, Electron Desktop and mobile surfaces, Matrix Pi `terminal.*` / `message.send` / `app.open` tools, GPT Realtime adapter, and removal of legacy `/ws/vocal` + `VocalPanel`.
 
 ## Security
 
-- Auth matrix: ticket issue requires the owner principal (session/JWT). The WebSocket accepts only a single-use HMAC ticket bound to owner + Chat id, short TTL; registered in the query-token allowlist.
-- No user Gemini key. The VPS reaches Gemini only through the platform relay, which checks funding policy and reserves budget per session.
+- Auth matrix: the WebSocket upgrade uses gateway auth (session/JWT, or the query token for browsers, via the query-token allowlist); the principal is read server-side. The client never names an owner or a capture turn; a requested Chat id is validated and must be owned and unshared.
+- No user Gemini key. On a VPS the gateway reaches Gemini only through the existing platform relay; locally it uses the operator `GEMINI_API_KEY`. Per-session funding and budget reservation land in the follow-on stack.
 - All client frames are Zod-validated after JSON parse; audio frames are size-capped.
 - Delegated work runs as ordinary Matrix Pi turns, so existing owner-tool authority and approvals apply unchanged. `message.send` and other outward actions require confirmation.
 - Client errors are generic codes (`session_limit_reached`, `provider_unavailable`); provider names and raw errors are logged server-side only.
 
 ## Failure modes
 
-- Gemini drop or relay timeout: session emits a recoverable error; the Chat keeps every journaled turn; the client can reconnect with a new ticket and context is restored from the Chat.
+- Gemini drop or relay timeout: session emits a recoverable error; the Chat keeps every journaled turn; a new call restores context from the Chat.
 - Gateway restart mid-call: the call ends; in-flight delegated turns are durable Chat turns and continue.
 - Concurrent voice + typed input on one Chat: both go through canonical turn admission; ordering is the Chat's sequence.
 - Funding exhausted: relay refuses before audio starts; the client falls back to text.
 
 ## Resource limits
 
-- One live voice session per owner (configurable), idle timeout, and maximum call length.
+- One live call per owner (a new call replaces the old one), at most 8 owners per gateway, 90 s idle timeout, 30 min maximum call length, 256 KB client frame cap.
 - Bounded in-memory maps in the coordinator (at most 3 in-flight delegations) and session registry with TTL sweep and shutdown drain.
 - No raw audio is persisted.
 
