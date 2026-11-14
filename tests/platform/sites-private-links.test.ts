@@ -33,6 +33,19 @@ async function publishedPrivateSite() {
 }
 
 describe('private Matrix.page access links', () => {
+  it('does not restore a claimed one-time link after switching through email mode', async () => {
+    const { siteId } = await publishedPrivateSite();
+    const service = createSitesService({ db: db.db, emailCapability: async () => true,
+      emailSessionSecret: 'mode-independence-secret-long-enough' });
+    const created = await service.createAccessLink(owner, { baseRevision: 1 });
+    const token = created.url.split('.').at(-1)!;
+    await service.patch(owner, { accessMode: 'private_email', baseRevision: 1 });
+    expect(await db.db.executor.selectFrom('public_site_access_links').select('id')
+      .where('site_id', '=', siteId).execute()).toHaveLength(0);
+    await service.patch(owner, { accessMode: 'private_link', baseRevision: 2 });
+    await expect(service.claimAccessLink(siteId, { linkId: created.link.id, token }))
+      .rejects.toMatchObject({ code: 'not_found' });
+  });
   it('refuses to publish email mode while the backend capability is disabled', async () => {
     const { siteId } = await publishedPrivateSite();
     const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' } });

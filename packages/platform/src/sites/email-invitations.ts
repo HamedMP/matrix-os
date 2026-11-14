@@ -22,6 +22,51 @@ const ClerkIdSchema = z.string().regex(/^user_[A-Za-z0-9_-]{1,200}$/);
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,200}$/);
 const InventoryCursorSchema = z.object({ at: z.iso.datetime(), id: SiteIdSchema }).strict();
 
+/** Caller holds the owner admission and site row lock. Invites → grants → sessions → outbox → audit. */
+export async function revokeSiteEmailAuthorityForTransition(
+  trx: PlatformDB, siteId: string, ownerId: string, reason: 'mode_changed' | 'unpublished',
+  toMode?: 'public' | 'private_link',
+): Promise<void> {
+  const now = new Date();
+  let cursor: { email: string; id: string } | null = null;
+  for (;;) {
+    let rows = trx.executor.selectFrom('public_site_email_invitations')
+      .select(['id', 'normalized_email']).where('site_id', '=', siteId)
+      .where('state', 'in', ['pending', 'accepted']);
+    const after = cursor;
+    if (after) rows = rows.where(eb => eb.or([
+      eb('normalized_email', '>', after.email),
+      eb.and([eb('normalized_email', '=', after.email), eb('id', '>', after.id)]),
+    ]));
+    const page = await rows.orderBy('normalized_email').orderBy('id')
+      .limit(100).forUpdate().execute();
+    if (!page.length) break;
+    cursor = { email: page[page.length - 1]!.normalized_email, id: page[page.length - 1]!.id };
+    if (page.length < 100) break;
+  }
+  await trx.executor.updateTable('public_site_email_invitations').set({
+    state: 'revoked', revoked_at: now, state_reason: reason, updated_at: now,
+    revision: sql`revision + 1`,
+    delivery_state: sql`CASE WHEN delivery_state IN ('queued','sending','failed','ambiguous')
+      THEN 'suppressed' ELSE delivery_state END`,
+  }).where('site_id', '=', siteId).where('state', 'in', ['pending', 'accepted']).execute();
+  await trx.executor.updateTable('public_site_viewer_grants').set({
+    revoked_at: now, revocation_reason: reason,
+  }).where('site_id', '=', siteId).where('revoked_at', 'is', null).execute();
+  await trx.executor.updateTable('public_site_viewer_sessions').set({ revoked_at: now })
+    .where('site_id', '=', siteId).where('revoked_at', 'is', null).execute();
+  await trx.executor.updateTable('public_site_invitation_deliveries').set({
+    state: 'cancelled', lease_token: null, lease_until: null, updated_at: now,
+  }).where('invitation_id', 'in', trx.executor.selectFrom('public_site_email_invitations')
+    .select('id').where('site_id', '=', siteId))
+    .where('state', 'in', ['queued', 'leased', 'failed', 'ambiguous']).execute();
+  await appendSiteInvitationAuditEvent(trx, { siteId, invitationId: null,
+    type: reason === 'mode_changed' ? 'mode_changed' : 'unpublished',
+    actorKind: 'owner', actorReference: ownerId,
+    details: { reason, fromMode: 'private_email', ...(toMode ? { toMode } : {}) },
+  });
+}
+
 function summary(row: Selectable<SiteEmailInvitationsTable>, now = new Date()): SiteEmailInvitationSummary {
   return {
     id: row.id, emailAddress: row.normalized_email,
