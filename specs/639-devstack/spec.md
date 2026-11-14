@@ -107,10 +107,11 @@ candidate containers, restores only its prior registration/config, and removes
 only approved new ingress/DNS/Clerk entries. Preserve journals and previous source
 for inspection. Do not change Main services, Fast CI, Stage 2 or existing Preview.
 
-Retained `runId` recovery for this source-publication path and continuous sync
-remain separate increments; the existing Git-revision operator-run API is not
-evidence of content-revision recovery. Do not add JSON/SQLite result storage.
-Extend the existing Postgres run contract when implementing that increment.
+Retained source-content results use the existing Postgres run store as described
+in [source run recovery](source-run-recovery.md). The recovery-capable CLI saves a
+run UUID/key before upload and can read that same run from another process. This
+is separate from the old Git-revision operator-run API. Continuous sync and live
+owner/browser qualification remain outstanding. No JSON/SQLite result store.
 
 Update the separate `FinnaAI/matrix-os-site` documentation PR (existing #339 where
 appropriate) after live qualification. Do not publish a claim of working hosted

@@ -425,7 +425,7 @@ async function startPlatformServerWithCleanup(
   const closePrimaryDb = () => primaryDbClosing ??= db.destroy();
   registerCustomMcpStartupCleanup(closePrimaryDb);
   await db.ready;
-  if (devstackRunConfig) await migrateDevstackRuns(db.kysely);
+  if (devstackRunConfig || (registeredRuntimeInstance && process.env.MATRIX_DEVSTACK_SOURCE_PUBLISHER)) await migrateDevstackRuns(db.kysely);
   const fundedAiConfig = loadAiFundedControlPlaneConfig({
     ...process.env,
     PLATFORM_SECRET: platformSecret,
@@ -583,7 +583,10 @@ async function startPlatformServerWithCleanup(
       }
     : undefined;
   const devstackPreviewRoutes = devstackPreviewDeps && createDevstackPreviewRoutes(devstackPreviewDeps);
-  const { devstackCliRoutes, devstackPublicPreview } = createDevstackHostedAccess(devstackPreviewDeps, process.env);
+  const { devstackCliRoutes, devstackPublicPreview, close: closeDevstackHostedAccess } = createDevstackHostedAccess(
+    devstackPreviewDeps, process.env, createDevstackRunStore(db.kysely),
+  );
+  registerCustomMcpStartupCleanup(closeDevstackHostedAccess);
 
   const collaboration = registeredRuntimeInstance ? undefined : await bootstrapPlatformCollaboration({
     env: process.env,
@@ -1288,6 +1291,7 @@ async function startPlatformServerWithCleanup(
         await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
         await previewPairRuntime?.close();
+        await closeDevstackHostedAccess();
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([

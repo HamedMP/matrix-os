@@ -92,4 +92,31 @@ describe.skipIf(!connectionString)('DevStack retained runs on PostgreSQL', () =>
     await sql`UPDATE devstack_runs SET lease_until = NOW() - interval '1 second' WHERE run_id = ${input.runId}`.execute(db);
     expect(await read.admit({ ...input, runId: randomUUID() })).toMatchObject({ outcome: 'admitted' });
   });
+
+  it('upgrades the existing generation-one table without changing retained operator runs', async () => {
+    const input=admission(), store=createDevstackRunStore(db);
+    await store.admit(input);
+    // Restore the exact previous column/check contract inside this disposable
+    // schema; the production migration must preserve the existing record.
+    await db.transaction().execute(async trx => {
+      await sql`ALTER TABLE devstack_runs DROP CONSTRAINT devstack_source_binding_check,
+        DROP COLUMN source_binding_digest, DROP COLUMN source_receipt,
+        DROP CONSTRAINT devstack_runs_kind_check`.execute(trx);
+      await sql`ALTER TABLE devstack_runs ADD CONSTRAINT devstack_runs_kind_check CHECK(kind IN ('exec','test'))`.execute(trx);
+      await sql`UPDATE platform_schema_revisions SET generation=1,fingerprint='devstack-runs-v1' WHERE scope='devstack-runs'`.execute(trx);
+    });
+    const before=await sql`SELECT run_id, owner_id, request_digest, revision, status FROM devstack_runs`.execute(db);
+    await Promise.all([migrateDevstackRuns(db),migrateDevstackRuns(reader)]);
+    expect((await sql`SELECT run_id, owner_id, request_digest, revision, status FROM devstack_runs`.execute(reader)).rows).toEqual(before.rows);
+    expect(await createDevstackRunStore(reader).read(input.runId,owner,keyDigest)).toMatchObject({status:'running',revision:input.revision});
+  });
+
+  it('retains an exact content receipt for another connection while preserving the separate Git baseline', async () => {
+    const input={...admission(),kind:'source' as const,sourceBindingDigest:'e'.repeat(64)};
+    const write=createDevstackRunStore(db),read=createDevstackRunStore(reader);
+    await write.admit(input);
+    const receipt={revision:'f'.repeat(64),files:1,updated:1,removed:0,test:{revision:'f'.repeat(64),exitCode:7,log:'actual test output'}};
+    await write.finish(input.runId,{status:'failed',exitCode:7,logs:[{stream:'stdout',text:receipt.test.log}],truncated:false},receipt);
+    expect(await read.read(input.runId,owner,keyDigest)).toMatchObject({revision:input.revision,sourceReceipt:receipt,sourceBindingDigest:input.sourceBindingDigest});
+  });
 });

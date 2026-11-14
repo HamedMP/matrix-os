@@ -9,7 +9,7 @@ import { openBrowser } from "../../auth/oauth.js";
 import { getConfigDir } from "../../lib/config.js";
 import { loadProfiles } from "../../lib/profiles.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
-import { hostedDevstackOrigin, pairHostedStageThree, syncHostedStageThree } from "./devstack-stage3-connect.js";
+import { hostedDevstackOrigin, pairHostedStageThree, syncHostedStageThree, prepareHostedSourceResult, recoverHostedStageThree } from "./devstack-stage3-connect.js";
 import { watchStageThree } from "./devstack-stage3-watch.js";
 
 const exec = promisify(execFile);
@@ -39,7 +39,7 @@ const diffSchema = z.object({
   excluded: z.array(safeText).max(2000).optional(),
 });
 const stageTwoActions = ["connect", "sync", "diff", "status", "reset"] as const;
-const actions = [...stageTwoActions, "watch"] as const;
+const actions = [...stageTwoActions, "watch", "result"] as const;
 type Action = typeof stageTwoActions[number];
 
 const errors: Record<Action | "list" | "discover" | "enroll", string> = {
@@ -240,11 +240,13 @@ const commandArgsSchema = z.strictObject({
   worktree: safeText.optional(),
   stage: z.enum(["2", "3"]).optional(),
   hosted: z.boolean().optional(),
+  'run-id': z.uuidv4().optional(),
+  runId: z.uuidv4().optional(),
   profile: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,30}$/).optional(),
   platform: safeText.max(512).optional(),
   open: z.boolean().optional(),
   json: z.boolean().optional(),
-});
+}).refine(value => value.runId === undefined || value['run-id'] === value.runId);
 
 type CommandOptions = z.infer<typeof commandArgsSchema>;
 
@@ -289,12 +291,21 @@ async function connectStageThree(options: CommandOptions, interactive: boolean, 
 
 async function connectHosted(options: CommandOptions, interactive: boolean, json: boolean): Promise<void> {
   const origin = httpsOrigin(options.platform ?? hostedDevstackOrigin);
-  if (options._[0] === "sync" && origin !== hostedDevstackOrigin) {
+  if ((options._[0] === "sync" || options._[0] === 'result') && origin !== hostedDevstackOrigin) {
     throw cliError("devstack_invalid_origin", "Hosted source sync sends changes only to the Matrix DevStack origin.");
   }
   const source = await currentWorktree("Run `matrix devstack` from the Git worktree you want to connect.");
+  if (options._[0] === 'result') await prepareHostedSourceResult(origin, source, options['run-id']!);
   const grant = await pairHostedStageThree({ origin, worktree: source, open: options.open ?? interactive });
   const { binding } = grant;
+  if (options._[0] === 'result') {
+    const result = await recoverHostedStageThree({ origin, worktree: source, grant, runId: options['run-id']! });
+    if (json) console.log(formatCliSuccess({ computer: binding.runtime, worktree: binding.worktree, ...result }));
+    else console.log(`Run ${result.runId}: ${result.status}${result.test ? `. Tests exited ${result.test.exitCode}: ${result.test.log}` : ''}`);
+    if (result.test?.exitCode) process.exitCode = result.test.exitCode;
+    else if (result.status === 'interrupted' || result.status === 'binding_rejected') process.exitCode = 1;
+    return;
+  }
   if (options._[0] === "sync" && !binding.sourceSync) {
     throw cliError("devstack_source_unavailable", "The approved DevStack worktree does not have a source publisher.");
   }
@@ -317,6 +328,7 @@ export const devstackCommand = defineCommand({
     action: { type: "positional", required: false, description: "connect (default), sync, diff, status, reset, or watch (Stage 3)" },
     stage: { type: "string", description: "Stage 2 local adapter or Stage 3 registered browser preview" },
     hosted: { type: "boolean", description: "Connect the current Git worktree to hosted DevStack" },
+    'run-id': { type: 'string', description: 'Original hosted source run UUID for result recovery' },
     profile: { type: "string", description: "Stage 3 CLI profile (default: devstack)" },
     platform: { type: "string", description: "Approved Stage 3 HTTPS origin" },
     computer: { type: "string", description: "Dev Computer for Stage 2 or watch. Stage 3 connect accepts this for compatibility; the worktree selects the preview." },
@@ -329,17 +341,21 @@ export const devstackCommand = defineCommand({
     try {
       const parsed = commandArgsSchema.safeParse(args);
       if (!parsed.success) {
-        throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset|watch] --help.");
+        throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset|watch|result] --help.");
       }
       const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
       const action = parsed.data._[0] ?? "connect";
+      if ((action === 'result') !== Boolean(parsed.data['run-id']) || (action === 'result' && !parsed.data.hosted)) {
+        throw cliError('devstack_selection_required', 'Use matrix devstack result --hosted --run-id <uuid>.');
+      }
       if (parsed.data.hosted) {
-        if ((action !== "connect" && action !== "sync") || parsed.data.stage || parsed.data.profile || parsed.data.computer || parsed.data.worktree) {
+        if ((action !== "connect" && action !== "sync" && action !== 'result') || parsed.data.stage || parsed.data.profile || parsed.data.computer || parsed.data.worktree) {
           throw cliError("devstack_selection_required", "Run `matrix devstack --hosted` from your Git worktree to select a hosted preview.");
         }
         await connectHosted(parsed.data, interactive, json);
         return;
       }
+      if (action === 'result') throw cliError('devstack_selection_required', 'Result recovery requires --hosted.');
       if (action === "watch") {
         if (parsed.data.stage !== "3") {
           throw cliError("devstack_action_unsupported", "Watch requires --stage 3.");

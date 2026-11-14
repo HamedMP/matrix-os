@@ -20,6 +20,7 @@ import { createBoundedRateLimiter, runtimeSelectionSourceKey } from './request-a
 import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import { getTrustedSessionRouteHost } from './session-routing-websocket.js';
 import { normalizeSessionHost } from './ws-upgrade.js';
+import { devstackSourceRunId, devstackSourceRunKey, type createDevstackSourceRuns } from './devstack-source-runs.js';
 
 const pairPath = '/devstack/cli/pair';
 const pollPath = '/devstack/cli/poll';
@@ -55,11 +56,13 @@ interface CliRoutesDeps {
     apply(binding: DevstackCliBinding, delta: DevstackSourceDelta,
       assertCurrent: () => Promise<void>, signal?: AbortSignal): Promise<DevstackSourceReceipt>;
   };
+  sourceRuns?: ReturnType<typeof createDevstackSourceRuns>;
   isMember: DevstackBrowserMembership;
   resolve(target: DevstackPreviewTarget): Promise<Pick<RegisteredRuntimeEndpoint, 'handle' | 'clerkUserId' | 'containerId'> | null>;
 }
 
-export function isDevstackCliPath(method: string, path: string, sourceEnabled = false): boolean {
+export function isDevstackCliPath(method: string, path: string, sourceEnabled = false, sourceRunsEnabled = false): boolean {
+  if (path.startsWith(sourcePath + '/')) return sourceRunsEnabled && method === 'GET' && devstackSourceRunId.safeParse(path.slice(sourcePath.length + 1)).success;
   if (path === sourcePath) return sourceEnabled && method === 'POST';
   if (path === pairPath || path === pollPath) return method === 'POST';
   if (method !== 'GET' && method !== 'POST') return false;
@@ -122,6 +125,7 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
   const pollRate = createBoundedRateLimiter(120);
   const browserRate = createBoundedRateLimiter(60);
   const sourceRate = createBoundedRateLimiter(60);
+  const sourceResultRate = createBoundedRateLimiter(240);
   const unavailable = (c: Context) => c.json({ error: 'DevStack CLI connection unavailable' }, 404);
 
   app.onError((error, c) => {
@@ -138,14 +142,14 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     const approving = c.req.path.startsWith(pairPath + '/');
     const expectedOrigin = approving ? approvalOrigin : origin;
     if (!deps.config.publicBrowserOnly || normalizeSessionHost(routed) !== (approving ? new URL(approvalOrigin).hostname : host)
-      || !isDevstackCliPath(c.req.method, c.req.path, Boolean(source)) || new URL(c.req.url).search) return unavailable(c);
+      || !isDevstackCliPath(c.req.method, c.req.path, Boolean(source), Boolean(deps.sourceRuns)) || new URL(c.req.url).search) return unavailable(c);
     const requestOrigin = c.req.header('origin');
     if ((requestOrigin && requestOrigin !== expectedOrigin) ||
       (c.req.method === 'POST' && approving && requestOrigin !== approvalOrigin)) {
       return c.json({ error: 'Forbidden' }, 403);
     }
     const limiter = c.req.path === pairPath ? startRate : c.req.path === pollPath ? pollRate
-      : c.req.path === sourcePath ? sourceRate : browserRate;
+      : c.req.path === sourcePath ? sourceRate : c.req.path.startsWith(sourcePath + '/') ? sourceResultRate : browserRate;
     if (!limiter.check(runtimeSelectionSourceKey(c, deps.edgeRouterSecret))) {
       return c.json({ error: 'Try again later' }, 429);
     }
@@ -169,10 +173,54 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
     if (result.status === 'capacity') return c.json({ error: 'Try again later' }, 429);
     if (result.status !== 'approved') return unavailable(c);
     const { bearer, expiresAt, binding: { runtime, worktree, sourceIdentity } } = result;
-    return c.json({ bearer, expiresAt, binding: { runtime, worktree, sourceIdentity, ...(source && { sourceSync: true }) } });
+    return c.json({ bearer, expiresAt, binding: { runtime, worktree, sourceIdentity,
+      ...(source && { sourceSync: true }), ...(deps.sourceRuns && { sourceRuns: true }) } });
   });
 
   if (source) {
+    function selection(c: Context) {
+      const authorization = c.req.header('authorization');
+      const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+      const binding = pairing.authenticate(bearer);
+      if (!binding) return { status: 401 as const };
+      const target = deps.config.targets.find(entry => entry.owner === binding.owner
+        && entry.runtime === binding.runtime && entry.worktree === binding.worktree
+        && entry.handle === binding.handle && entry.containerId === binding.containerId);
+      if (!target || !deps.enabledWorktrees.has(target.worktree) || binding.sourceIdentity !== source!.identity) return { status: 404 as const };
+      const approvedTarget = target;
+      const authority = pairing.authorityFor(bearer);
+      const assertAdmitted = async () => {
+        // Admission delegates only this bounded job. Rotating the upload bearer
+        // grants no new uploads to the old CLI and does not extend its deadline.
+        if (!authority || authority.expiresAt <= Date.now() || !await deps.isMember(approvedTarget.owner, authority.token)
+          || !matchesRegisteredPreviewTarget(await deps.resolve(approvedTarget), approvedTarget)
+          || authority.expiresAt <= Date.now()) throw new StaleSourceBinding();
+      };
+      const assertCurrent = async () => {
+        const token = pairing.browserTokenFor(bearer);
+        if (!token || pairing.authenticate(bearer) !== binding || !await deps.isMember(approvedTarget.owner, token)
+          || !matchesRegisteredPreviewTarget(await deps.resolve(approvedTarget), approvedTarget)
+          || pairing.authenticate(bearer) !== binding) throw new StaleSourceBinding();
+      };
+      return { binding, assertCurrent, assertAdmitted };
+    }
+    if (deps.sourceRuns) {
+      const runs = deps.sourceRuns;
+      app.get(sourcePath + '/:runId', async c => {
+        const selected = selection(c);
+        if ('status' in selected) return c.json({ error: 'DevStack source result unavailable' }, selected.status);
+        const id = devstackSourceRunId.safeParse(c.req.param('runId'));
+        const key = devstackSourceRunKey.safeParse(c.req.header('x-devstack-run-key'));
+        if (!id.success || !key.success) return unavailable(c);
+        try {
+          const result = await runs.read(id.data, key.data, selected.binding, selected.assertCurrent);
+          return result ? c.json(result) : unavailable(c);
+        } catch (error: unknown) {
+          if (error instanceof StaleSourceBinding) return c.json({ error: 'DevStack binding is no longer current' }, 409);
+          throw error;
+        }
+      });
+    }
     app.post(sourcePath, async (c, next) => {
       // Authenticate before accepting a multi-megabyte payload.
       const authorization = c.req.header('authorization');
@@ -183,15 +231,9 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
       maxSize: DEVSTACK_SOURCE_DELTA_MAX_BYTES,
       onError: c => c.json({ error: 'DevStack CLI request is too large' }, 413),
     }), async c => {
-      const authorization = c.req.header('authorization');
-      const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
-      const binding = pairing.authenticate(bearer);
-      if (!binding) return c.json({ error: 'Authentication required' }, 401);
-      const target = deps.config.targets.find(entry => entry.owner === binding.owner
-        && entry.runtime === binding.runtime && entry.worktree === binding.worktree
-        && entry.handle === binding.handle && entry.containerId === binding.containerId);
-      if (!target || !deps.enabledWorktrees.has(target.worktree) ||
-        binding.sourceIdentity !== source.identity) return unavailable(c);
+      const selected = selection(c);
+      if ('status' in selected) return c.json({ error: 'DevStack source unavailable' }, selected.status);
+      const { binding, assertCurrent, assertAdmitted } = selected;
       let delta;
       try {
         if (c.req.header('content-type')?.split(';')[0]?.trim() === 'application/json') {
@@ -201,16 +243,17 @@ export function createDevstackCliRoutes(deps: CliRoutesDeps) {
         if (!(error instanceof SyntaxError)) throw error;
       }
       if (!delta) return c.json({ error: 'Invalid DevStack source delta' }, 400);
-      const approvedTarget = target;
-      async function assertCurrent() {
-        const token = pairing.browserTokenFor(bearer);
-        if (!token || pairing.authenticate(bearer) !== binding ||
-          !await deps.isMember(approvedTarget.owner, token) ||
-          !matchesRegisteredPreviewTarget(await deps.resolve(approvedTarget), approvedTarget) ||
-          pairing.authenticate(bearer) !== binding) throw new StaleSourceBinding();
-      }
       try {
         await assertCurrent();
+        const runId = c.req.header('x-devstack-run-id'), runKey = c.req.header('x-devstack-run-key');
+        if (runId !== undefined || runKey !== undefined) {
+          const id = devstackSourceRunId.safeParse(runId), key = devstackSourceRunKey.safeParse(runKey);
+          if (!id.success || !key.success || !deps.sourceRuns) return c.json({ error: 'Invalid DevStack source run' }, 400);
+          const result = await deps.sourceRuns.start(id.data, key.data, binding, delta, assertCurrent, assertAdmitted);
+          if ('result' in result) return c.json(result.result, 202);
+          if (result.outcome === 'missing') return unavailable(c);
+          return c.json({ error: 'DevStack source run unavailable' }, result.outcome === 'capacity' ? 429 : 409);
+        }
         const receipt = await source.apply(binding, delta, assertCurrent, c.req.raw.signal);
         await assertCurrent();
         return c.json(receipt);

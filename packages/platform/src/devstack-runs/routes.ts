@@ -123,6 +123,7 @@ export function createDevstackRunRoutes(deps: DevstackRunRoutesDeps) {
     const keyDigest = c.get('keyDigest');
     const requestDigest = digest(JSON.stringify(input));
     const prior = await store.read(input.runId, owner, keyDigest);
+    if (prior?.kind === 'source') return unavailable(c);
     if (prior) return prior.requestDigest === requestDigest ? c.json(resultPage(prior), 202) : changed(c);
 
     const target = config.targets.find(candidate =>
@@ -156,7 +157,7 @@ export function createDevstackRunRoutes(deps: DevstackRunRoutesDeps) {
     const cursor = cursorSchema.safeParse(query.get('cursor') ?? '0');
     if (!runId.success || !cursor.success || query.size > 1 || (query.size === 1 && !query.has('cursor'))) return invalid(c);
     const record = await store.read(runId.data, c.get('owner'), c.get('keyDigest'));
-    if (!record) return unavailable(c);
+    if (!record || record.kind === 'source') return unavailable(c);
     if (cursor.data > record.logs.length) return invalid(c);
     return c.json(resultPage(record, cursor.data));
   });

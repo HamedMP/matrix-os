@@ -84,6 +84,14 @@ describe('recoverable DevStack run config', () => {
 });
 
 describe('recoverable DevStack run HTTP boundary', () => {
+  it('keeps source receipts behind the source binding checks rather than the legacy operator result path', async () => {
+    const { app, store, dispatch } = setup();
+    store.read.mockResolvedValue({ runId, runtime: target.runtime, worktree: target.worktree,
+      requestDigest: '0'.repeat(64), kind: 'source', revision: target.revision, previewUrl: input.previewOrigin,
+      status: 'succeeded', exitCode: 0, logs: [], truncated: false, sourceBindingDigest: '1'.repeat(64) });
+    expect((await app.request('/' + runId, { headers: { authorization:'Bearer allowed', 'x-devstack-run-key':key } })).status).toBe(404);
+    expect((await dispatch()).status).toBe(404);
+  });
   it('uses the verified Clerk subject to check the existing internal organization without a custom claim', async () => {
     const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwtKey = publicKey.export({ type: 'spki', format: 'pem' }).toString();

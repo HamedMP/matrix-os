@@ -76,6 +76,16 @@ ignored, sensitive and generated files stay out of the delta.
 | `POST /devstack/cli/pair/:approvalId` | Exact approval-origin browser form and signed JWT party, verified Clerk session, current membership and exact owner/worktree/runtime/container. One explicit approval. |
 | `POST /devstack/cli/poll` | Separate random poll secret, one exchange. The opaque bearer expires no later than the approving Clerk token and stays in the CLI process. |
 | `POST /devstack/cli/source` | Available only with a configured publisher. The dedicated bearer is bound to the approved source and exact target. Check its expiry, current membership and live registration before staging, before publication and before returning results. The request cannot select paths on the server, an owner, a runtime or a test command. |
+| `GET /devstack/cli/source/:runId` | When retained runs are enabled, requires a current grant with the original six-field binding and recovery key; checks current membership and registration. Returns only the original retained status/receipt. |
+
+With a Postgres run store, polling advertises `sourceRuns: true`. The CLI saves
+its run UUID/key privately before upload and prints the UUID. It sends run headers
+with the source POST, receives 202 after durable admission and polls the retained
+result. `matrix devstack result --hosted --run-id <uuid>` reads the same run from
+another process without uploading source, after current browser approval. The key
+stays in a private transport-metadata file; receipts/logs live in Postgres. See
+[source run recovery](source-run-recovery.md) for limits, authority and failure
+semantics. The synchronous compatibility path still cancels on HTTP disconnect.
 
 Use a persistent, private staging Git checkout and a separate managed
 projection. Keep the staging checkout and publication journal inaccessible
@@ -108,6 +118,5 @@ receives only `MATRIX_DEVSTACK_SOURCE_PUBLISHER` JSON containing `socketPath`,
 required. Keep all service/config/staging/journal paths outside the uploaded
 source mirror. Deployment and access changes require separate owner approval.
 
-Continuous sync, retained content-revision run log recovery
-and additional developer acceptance are follow-up gates. Publish the corresponding Matrix OS
+Continuous sync and additional developer acceptance are follow-up gates. Publish the corresponding Matrix OS
 site guide once the real workflow is released and qualified.

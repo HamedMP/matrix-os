@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 import { openBrowser } from "../../auth/oauth.js";
 import { cliError } from "../output.js";
 import { collectDevstackSourceDelta } from "./devstack-source-delta.js";
+import { loadHostedSourceRun, saveHostedSourceRun, sourceRunIdSchema, type HostedSourceRun } from './devstack-source-run-state.js';
 
 const exec = promisify(execFile);
 const requestTimeoutMs = 10_000;
@@ -41,7 +42,7 @@ const pairingSchema = z.object({ approvalId: secret, pollSecret: secret, expires
 const grantSchema = z.object({
   bearer: secret,
   expiresAt: expiration,
-  binding: z.object({ runtime: slug, worktree: slug, sourceIdentity: fingerprint, sourceSync: z.literal(true).optional() }),
+  binding: z.object({ runtime: slug, worktree: slug, sourceIdentity: fingerprint, sourceSync: z.literal(true).optional(), sourceRuns: z.literal(true).optional() }),
 });
 
 const sourceReceiptSchema = z.strictObject({
@@ -60,7 +61,7 @@ function invalidCheckout() {
   return cliError("devstack_selection_required", "Run this command from a Git worktree you want to connect.");
 }
 
-async function identifyCheckout(worktree: string): Promise<string> {
+export async function identifyCheckout(worktree: string): Promise<string> {
   try {
     // Ignore per-process Git overrides. The filesystem identity belongs to cwd.
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
@@ -117,11 +118,11 @@ async function boundedJson(response: Response, maximum = maxResponseBytes): Prom
 }
 
 async function post(origin: string, endpoint: "pair" | "poll" | "source", body: object,
-  timeoutMs = requestTimeoutMs, bearer?: string): Promise<Response> {
+  timeoutMs = requestTimeoutMs, bearer?: string, headers: Record<string, string> = {}): Promise<Response> {
   try {
     return await fetch(`${origin}/devstack/cli/${endpoint}`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", ...(bearer && { authorization: "Bearer " + bearer }) },
+      headers: { accept: "application/json", "content-type": "application/json", ...(bearer && { authorization: "Bearer " + bearer }), ...headers },
       body: JSON.stringify(body),
       redirect: "error",
       credentials: "omit",
@@ -186,7 +187,32 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
   if (expiresAt <= Date.now()) {
     throw cliError("devstack_pairing_expired", "DevStack approval is too close to expiry. Reconnect and retry.");
   }
-  const response = await post(origin, "source", delta, 125_000, bearer);
+  const retained = binding.sourceRuns ? await saveHostedSourceRun({ origin, sourceIdentity: binding.sourceIdentity,
+    runtime: binding.runtime, worktree: binding.worktree }) : undefined;
+  if (retained) console.error(`DevStack runId: ${retained.runId}\nRecover with: matrix devstack result --hosted --run-id ${retained.runId}`);
+  let response;
+  try {
+    response = await post(origin, "source", delta, 125_000, bearer, retained ? {
+      'x-devstack-run-id': retained.runId, 'x-devstack-run-key': retained.key,
+    } : {});
+  } catch (error: unknown) {
+    if (!retained) throw error;
+    throw interruptedSourceRun(retained.runId);
+  }
+  if (retained) {
+    if (response.status !== 202) {
+      await response.body?.cancel();
+      throw interruptedSourceRun(retained.runId);
+    }
+    const admitted = sourceRunSchema.safeParse(await boundedJson(response, 32 * 1024));
+    if (!admitted.success || admitted.data.runId !== retained.runId || admitted.data.runtime !== binding.runtime
+      || admitted.data.worktree !== binding.worktree) throw interruptedSourceRun(retained.runId);
+    const result = await waitForSourceRun(origin, retained, grant, true);
+    const { runId, status, ...receipt } = result;
+    const validated = sourceReceiptSchema.safeParse(receipt);
+    if (!validated.success) throw interruptedSourceRun(retained.runId);
+    return { runId, status, ...validated.data };
+  }
   if (response.status !== 200) {
     await response.body?.cancel();
     if (response.status === 409) throw cliError("devstack_source_conflict", "The DevStack binding or Git baseline changed. Check the selected worktree and retry.");
@@ -195,4 +221,44 @@ export async function syncHostedStageThree({ origin, worktree, grant }: {
   const receipt = sourceReceiptSchema.safeParse(await boundedJson(response, 32 * 1024));
   if (!receipt.success) throw invalidResponse();
   return receipt.data;
+}
+
+const sourceRunSchema = z.strictObject({ runId: sourceRunIdSchema, runtime: slug, worktree: slug,
+  status: z.enum(['running', 'succeeded', 'failed', 'timed_out', 'interrupted', 'binding_rejected']),
+  receipt: sourceReceiptSchema.optional(),
+}).refine(value => ['succeeded', 'failed', 'timed_out'].includes(value.status) === Boolean(value.receipt));
+function interruptedSourceRun(id: string) {
+  return cliError('devstack_source_run_pending', `DevStack runId ${id} has no confirmed result. Use matrix devstack result --hosted --run-id ${id}.`);
+}
+export async function prepareHostedSourceResult(origin: string, worktree: string, runId: string) {
+  return loadHostedSourceRun(runId, origin, await identifyCheckout(worktree));
+}
+export async function recoverHostedStageThree({ origin, worktree, runId, grant }: {
+  origin: string; worktree: string; runId: string; grant: z.infer<typeof grantSchema>;
+}) {
+  const record = await prepareHostedSourceResult(origin, worktree, runId);
+  return waitForSourceRun(origin, record, grant, false);
+}
+async function waitForSourceRun(origin: string, record: HostedSourceRun, grant: z.infer<typeof grantSchema>, wait: boolean) {
+  if (!grant.binding.sourceRuns || grant.binding.sourceIdentity !== record.sourceIdentity
+    || grant.binding.runtime !== record.runtime || grant.binding.worktree !== record.worktree) throw invalidResponse();
+  const deadline = Math.min(Date.now() + 150_000, grant.expiresAt);
+  do {
+    let response: Response;
+    try {
+      response = await fetch(`${origin}/devstack/cli/source/${record.runId}`, { method: 'GET', redirect: 'error', credentials: 'omit',
+        headers: { accept: 'application/json', authorization: 'Bearer ' + grant.bearer, 'x-devstack-run-key': record.key },
+        signal: AbortSignal.timeout(requestTimeoutMs) });
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
+      throw interruptedSourceRun(record.runId);
+    }
+    if (response.status !== 200) { await response.body?.cancel(); throw interruptedSourceRun(record.runId); }
+    const parsed = sourceRunSchema.safeParse(await boundedJson(response, 32 * 1024));
+    if (!parsed.success || parsed.data.runId !== record.runId || parsed.data.runtime !== record.runtime
+      || parsed.data.worktree !== record.worktree) throw invalidResponse();
+    if (!wait || parsed.data.status !== 'running') return { runId: record.runId, status: parsed.data.status, ...parsed.data.receipt };
+    await delay(1000);
+  } while (Date.now() < deadline);
+  throw interruptedSourceRun(record.runId);
 }

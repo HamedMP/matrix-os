@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,12 +20,12 @@ beforeEach(async () => {
   repo = join(home, "checkout");
   await exec("git", ["init", "--quiet", repo]);
   await writeFile(join(home, "fixture.mjs"), `
-    import { appendFileSync } from "node:fs";
+    import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
     let sourceIdentity;
     let polls = 0;
     globalThis.fetch = async (url, options) => {
       const { pathname, origin } = new URL(url);
-      const input = JSON.parse(options.body);
+      const input = options.body ? JSON.parse(options.body) : undefined;
       appendFileSync(${JSON.stringify(join(home, "requests"))}, JSON.stringify({
         origin, pathname, input, method: options.method, redirect: options.redirect,
         authorization: new Headers(options.headers).get("authorization"),
@@ -44,14 +44,28 @@ beforeEach(async () => {
           binding: {
             runtime: "dev-linux", worktree: "feature-one",
             ...(process.env.DEVSTACK_TEST_SYNC_CAPABLE === "1" ? { sourceSync: true } : {}),
+            ...(process.env.DEVSTACK_TEST_RECOVERY === "1" ? { sourceSync: true, sourceRuns: true } : {}),
             sourceIdentity: process.env.DEVSTACK_TEST_WRONG_TREE === "1" ? "f".repeat(64) : sourceIdentity,
           },
         });
       }
       if (pathname === "/devstack/cli/source") {
         const revision = "e".repeat(64);
-        return Response.json({ revision, files: 1, updated: 1, removed: 0,
-          test: { revision, exitCode: 0, log: "4 tests passed" } });
+        const receipt = { revision, files: 1, updated: 1, removed: 0,
+          test: { revision, exitCode: 0, log: "4 tests passed" } };
+        if (process.env.DEVSTACK_TEST_RECOVERY === "1") {
+          const headers = new Headers(options.headers);
+          const runId = headers.get('x-devstack-run-id'), key = headers.get('x-devstack-run-key');
+          writeFileSync(${JSON.stringify(join(home, 'server-run.json'))}, JSON.stringify({ runId, key, receipt }));
+          if (process.env.DEVSTACK_TEST_SOURCE_LOST === "1") throw new Error('fixture response lost after admission');
+          return Response.json({runId, runtime:'dev-linux', worktree:'feature-one', status:'running'}, {status:202});
+        }
+        return Response.json(receipt);
+      }
+      if (pathname.startsWith('/devstack/cli/source/')) {
+        const stored = JSON.parse(readFileSync(${JSON.stringify(join(home, 'server-run.json'))}, 'utf8'));
+        if (new Headers(options.headers).get('x-devstack-run-key') !== stored.key || !pathname.endsWith(stored.runId)) return new Response(null,{status:404});
+        return Response.json({runId:stored.runId, runtime:'dev-linux', worktree:'feature-one', status:'succeeded', receipt:stored.receipt});
       }
       return new Response(null, { status: 404 });
     };
@@ -76,6 +90,35 @@ async function requests() {
 }
 
 describe("hosted matrix devstack", () => {
+  it('recovers the same run from another CLI process after an admitted upload loses its response, without uploading again', async () => {
+    await writeFile(join(repo, 'example.txt'), 'baseline');
+    await exec('git', ['-C', repo, 'add', '.']);
+    await exec('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Baseline']);
+    await writeFile(join(repo, 'example.txt'), 'Uncommitted');
+    await expect(run(repo, ['sync', '--hosted'], { DEVSTACK_TEST_RECOVERY:'1', DEVSTACK_TEST_SOURCE_LOST:'1' }))
+      .rejects.toMatchObject({code:1, stderr:expect.stringContaining('runId')});
+    const server = JSON.parse(await readFile(join(home, 'server-run.json'), 'utf8'));
+    expect(server.runId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(server.key).toMatch(/^[a-f0-9]{64}$/);
+    const metadata = join(home, '.matrixos', 'devstack-source-runs', server.runId + '.json');
+    expect((await lstat(metadata)).mode & 0o777).toBe(0o600);
+    const recovered = await run(repo, ['result', '--hosted', '--run-id', server.runId], {DEVSTACK_TEST_RECOVERY:'1'});
+    expect(JSON.parse(recovered.stdout).data).toMatchObject({runId:server.runId, status:'succeeded', revision:'e'.repeat(64), test:{exitCode:0,log:'4 tests passed'}});
+    expect(recovered.stdout + recovered.stderr).not.toContain(server.key);
+    expect((await requests()).filter(request => request.pathname === '/devstack/cli/source')).toHaveLength(1);
+    expect((await requests()).filter(request => request.pathname === '/devstack/cli/source/' + server.runId)).toHaveLength(1);
+    const before = await requests();
+    const peer = join(home, 'peer');
+    await exec('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'peer', peer]);
+    await expect(run(peer, ['result', '--hosted', '--run-id', server.runId], {DEVSTACK_TEST_RECOVERY:'1'}))
+      .rejects.toMatchObject({code:1, stderr:expect.stringContaining('devstack_run_state_unavailable')});
+    const outside = join(home, 'outside.json'), saved = await readFile(metadata, 'utf8');
+    await writeFile(outside, saved, {mode:0o600}); await unlink(metadata); await symlink(outside, metadata);
+    await expect(run(repo, ['result', '--hosted', '--run-id', server.runId], {DEVSTACK_TEST_RECOVERY:'1'}))
+      .rejects.toMatchObject({code:1, stderr:expect.stringContaining('devstack_run_state_unavailable')});
+    expect(await readFile(outside, 'utf8')).toBe(saved);
+    expect(await requests()).toEqual(before);
+  });
   it("opens the separate trusted approval origin while keeping poll and source on the hosted origin", async () => {
     const approvalOrigin = 'https://devstack-approve.example.test';
     const { stderr } = await run(repo, [], { DEVSTACK_TEST_APPROVAL_ORIGIN: approvalOrigin });

@@ -174,10 +174,16 @@ export function createDevstackCliPairing(options: {
     return key ? sessions.get(key)?.browserToken : undefined;
   }
 
+  function authorityFor(bearer: string) {
+    const key = findSessionKey(bearer);
+    const session = key && sessions.get(key);
+    return session ? { token: session.browserToken, expiresAt: session.expiresAt } : undefined;
+  }
+
   function revoke(bearer: string): boolean {
     const key = findSessionKey(bearer);
     return key !== undefined && sessions.delete(key);
   }
 
-  return { create, lookupApproval, approve, poll, authenticate, browserTokenFor, revoke };
+  return { create, lookupApproval, approve, poll, authenticate, browserTokenFor, authorityFor, revoke };
 }

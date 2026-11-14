@@ -28,6 +28,7 @@ interface PublicPreviewDeps {
   edgeRouterSecret?: string;
   cliPairingEnabled?: boolean;
   cliSourceEnabled?: boolean;
+  cliSourceRunsEnabled?: boolean;
   approvalOrigin?: string;
   isMember: DevstackBrowserMembership;
   resolve(target: DevstackPreviewTarget): Promise<RegisteredRuntimeEndpoint | null>;
@@ -172,7 +173,7 @@ export function createDevstackPublicPreviewAccess(deps: PublicPreviewDeps) {
     if (!matchesHost(trustedHost)) return c.text('Not Found', 404);
     const url = new URL(c.req.url);
     const path = url.pathname;
-    if (deps.cliPairingEnabled && isDevstackCliPath(c.req.method, path, deps.cliSourceEnabled)) return next();
+    if (deps.cliPairingEnabled && isDevstackCliPath(c.req.method, path, deps.cliSourceEnabled, deps.cliSourceRunsEnabled)) return next();
     const cookie = c.req.header('cookie');
     const navigationMethod = c.req.method === 'GET' || c.req.method === 'HEAD';
     if (navigationMethod && path === '/') return c.redirect('/devstack', 302);
