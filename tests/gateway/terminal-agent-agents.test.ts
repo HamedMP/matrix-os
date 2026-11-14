@@ -344,9 +344,9 @@ describe("terminal agents: children after a send", () => {
     await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toMatchObject({ reason: "timeout" });
   });
 
-  // Fault detected (#3298 review): matrix-status writes whole seconds, so a result in the
-  // send's own second looked older than the send.
-  it("counts a whole-second reporter result from the send's second as the child having stopped", async () => {
+  // Fault detected (#3298 reviews): a result in the send's own second must count only
+  // when it came after the send.
+  it("counts a result reported after the send in the same second as the child having stopped", async () => {
     const h = await harness();
     const parent = { workspaceId, tabId: parentId };
     const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
@@ -365,7 +365,7 @@ describe("terminal agents: children after a send", () => {
       verbs: h.verbs as never,
       status: {
         list: async () => new Map([[`${workspaceId}:${child.ref.tabId}`, {
-          ref: child.ref, status: "idle" as const, reportedAt: new Date(1_000).toISOString(), source: "reporter" as const,
+          ref: child.ref, status: "idle" as const, reportedAt: new Date(1_500).toISOString(), source: "reporter" as const,
         }]]),
         get: async () => undefined,
         sentAt: () => 1_200,
