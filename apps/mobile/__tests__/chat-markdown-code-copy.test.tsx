@@ -96,6 +96,41 @@ describe("fenced code blocks", () => {
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("echo one");
   });
+
+  it("stop saying Copied once more code arrives", async () => {
+    const view = renderReply("```bash\necho one");
+    fireEvent.press(screen.getByLabelText("Copy code"));
+    await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
+
+    view.rerender(
+      <>
+        <View>{renderChatMarkdown("```bash\necho one\necho two", theme)}</View>
+        <ToastHost />
+      </>,
+    );
+
+    expect(screen.queryByText("Copied")).toBeNull();
+    expect(screen.getByText("Copy")).toBeTruthy();
+  });
+
+  it("do not say Copied when the code changed while copying", async () => {
+    let finish: (value: boolean) => void = () => {};
+    jest.spyOn(Clipboard, "setStringAsync").mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { finish = resolve; }),
+    );
+    const view = renderReply("```bash\necho one");
+    fireEvent.press(screen.getByLabelText("Copy code"));
+
+    view.rerender(
+      <>
+        <View>{renderChatMarkdown("```bash\necho one\necho two", theme)}</View>
+        <ToastHost />
+      </>,
+    );
+    await act(async () => finish(true));
+
+    expect(screen.queryByText("Copied")).toBeNull();
+  });
 });
 
 describe("inline code", () => {

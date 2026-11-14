@@ -26,7 +26,10 @@ export interface ChatCodeBlockProps {
  * language is called "text".
  */
 export function ChatCodeBlock({ code, language, theme, children }: ChatCodeBlockProps) {
-  const [copied, setCopied] = useState(false);
+  // The code that was copied. The button says Copied only while that is still
+  // the code shown, so a block that grows as a reply streams goes back to Copy.
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const copied = copiedCode === code;
   // Only the latest press decides what the button says, and nothing changes
   // once the block has gone.
   const attempt = useRef(0);
@@ -36,17 +39,18 @@ export function ChatCodeBlock({ code, language, theme, children }: ChatCodeBlock
     return () => { mounted.current = false; };
   }, []);
   useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), CODE_COPIED_MS);
+    if (copiedCode === null) return;
+    const timer = setTimeout(() => setCopiedCode(null), CODE_COPIED_MS);
     return () => clearTimeout(timer);
-  }, [copied]);
+  }, [copiedCode]);
 
   const copy = async () => {
+    const value = code;
     const mine = ++attempt.current;
     const current = () => mounted.current && mine === attempt.current;
-    setCopied(false);
-    const ok = await copyToClipboard(code, { failed: CODE_COPY_FAILED }, current);
-    if (ok && current()) setCopied(true);
+    setCopiedCode(null);
+    const ok = await copyToClipboard(value, { failed: CODE_COPY_FAILED }, current);
+    if (ok && current()) setCopiedCode(value);
   };
 
   const labelStyle = { ...theme.textStyle, fontSize: 12.5, lineHeight: 16, color: theme.mutedColor };
