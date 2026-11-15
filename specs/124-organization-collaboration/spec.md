@@ -92,6 +92,9 @@ All route parameters and bodies use bounded Zod schemas and mutating routes use 
 - Existing records may be retained temporarily for rollback or audit, but current organization membership and the project's selected organization are the serving authority.
 - Existing scope IDs, grants, events, standalone links, and recipient entries remain valid for compatibility.
 - Reads, role management, and revocation remain available for existing standalone scopes.
+- Pre-organization directory pointers without an organization ID stay visible as unavailable access. They cannot obtain organization-bound tickets; clients must not guess an organization or retry them during discovery. This preserves the records without widening authorization.
+- Background drive discovery reads platform metadata and opens only relevant folder scopes. It must not hydrate unrelated Chats or projects on every refresh.
+- Connection-ticket 404s mean missing or unavailable access, not an offline owner. Event and terminal streams stop on missing/denied access or a required sign-in; transient offline failures retain reconnect behavior. Regression tracking: [ENG-338](https://linear.app/matrix-os/issue/ENG-338/distinguish-unavailable-and-removed-collaboration-access).
 - The standalone preflight may return an existing scope for management, but it must not issue a confirmation token for a new standalone scope.
 - Direct standalone create requests fail closed at the gateway with a generic authorization response, except for an exact app build with a current readiness certificate under `specs/2689-collaborative-app-sharing/`.
 - The app exception never changes legacy project or standalone roles. Any current organization member may share an app they own, and every current member including the organization guest role receives the app's full declared functionality without app-specific permission rows.
