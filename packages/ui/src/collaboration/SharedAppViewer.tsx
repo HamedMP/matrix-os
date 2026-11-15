@@ -23,6 +23,10 @@ const BridgeMessageSchema = z.discriminatedUnion("type", [
     expectedRevision: z.string().regex(/^\d+$/),
     action: z.json(),
   }),
+  z.strictObject({
+    type: z.literal("matrix:shared-app:retry"),
+    requestId: z.string().min(8).max(128),
+  }),
 ]);
 const BRIDGE_READY_TIMEOUT_MS = 10_000;
 
@@ -42,6 +46,7 @@ export function SharedAppViewer({ target, transport }: {
   const activeDocumentGeneration = useRef(0);
   const pendingMutationRecovery = useRef(false);
   const documentReady = useRef(false);
+  const recovery = useRef<{ generation: number; promise: ReturnType<SharedAppTransport["retryMutation"]> } | null>(null);
   const entryUrl = entry?.targetKey === targetKey ? entry.url : null;
   const title = `${displayName(target.appId)} shared by ${target.owner.displayName}`;
 
@@ -108,6 +113,24 @@ export function SharedAppViewer({ target, transport }: {
     };
   }, [applyFailure, launch, target.appId, transport]);
 
+  // Both the app and the overlay recover the original operation, never a new mutation.
+  const recoverMutation = useCallback(() => {
+    const generation = activeDocumentGeneration.current;
+    if (recovery.current?.generation === generation) return recovery.current.promise;
+    const promise = Promise.resolve().then(() => transport.retryMutation()).then((result) => {
+      if (mounted.current && activeDocumentGeneration.current === generation) {
+        pendingMutationRecovery.current = false;
+        setState(documentReady.current ? "ready" : "launching");
+        iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
+      }
+      return result;
+    }).finally(() => {
+      if (recovery.current?.promise === promise) recovery.current = null;
+    });
+    recovery.current = { generation, promise };
+    return promise;
+  }, [transport]);
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow
@@ -122,7 +145,9 @@ export function SharedAppViewer({ target, transport }: {
       }
       const work = request.type === "matrix:shared-app:query"
         ? transport.query(request.action)
-        : transport.mutate(request.action, request.expectedRevision);
+        : request.type === "matrix:shared-app:mutate"
+          ? transport.mutate(request.action, request.expectedRevision)
+          : recoverMutation();
       const generation = activeDocumentGeneration.current;
       void work.then((result) => {
         if (mounted.current && activeDocumentGeneration.current === generation) reply(event, request.requestId, { ok: true, result });
@@ -136,7 +161,7 @@ export function SharedAppViewer({ target, transport }: {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [applyFailure, transport]);
+  }, [applyFailure, recoverMutation, transport]);
 
   const retry = useCallback(async () => {
     if (state !== "uncertain" && entryUrl && documentReady.current) {
@@ -157,15 +182,11 @@ export function SharedAppViewer({ target, transport }: {
     }
     const generation = ++requestGeneration.current;
     try {
-      await transport.retryMutation();
-      if (!mounted.current || requestGeneration.current !== generation) return;
-      pendingMutationRecovery.current = false;
-      setState(documentReady.current ? "ready" : "launching");
-      iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
+      await recoverMutation();
     } catch (error: unknown) {
       if (mounted.current && requestGeneration.current === generation) applyFailure(error);
     }
-  }, [applyFailure, entryUrl, launch, state, target.appId, transport]);
+  }, [applyFailure, entryUrl, launch, recoverMutation, state, target.appId, transport]);
 
   const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain" || state === "conflict";
   return <div className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">
