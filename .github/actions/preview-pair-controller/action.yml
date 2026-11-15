@@ -14,7 +14,7 @@ runs:
       with:
         script: |
           const {verifyPreviewPairControlOrigin} = await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/control-origin.mjs`);
-          const proof = await verifyPreviewPairControlOrigin(github, {...context,
+          const proof = await verifyPreviewPairControlOrigin(github, {...context, repo: context.repo,
             workflowSha: process.env.GITHUB_WORKFLOW_SHA, workflowRef: process.env.GITHUB_WORKFLOW_REF,
             runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)}, process.env.PAIR_CONTROLLER_SHA);
           const fs = await import('node:fs/promises');
