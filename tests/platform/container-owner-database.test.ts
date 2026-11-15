@@ -198,6 +198,59 @@ describe('container owner databases', () => {
     expect(second.passwordEpoch).toBe(4);
   });
 
+  /** Runs `interleave` once, just before the first statement matching `pattern` reaches the cluster. */
+  function interleaved(pattern: RegExp, interleave: () => Promise<void>) {
+    const base = pgliteAdmin(cluster, log);
+    let fired = false;
+    return createContainerOwnerDatabases({
+      db, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3,
+      admin: {
+        ...base,
+        async query(statement, params, s) {
+          if (!fired && pattern.test(statement)) {
+            fired = true;
+            await interleave();
+          }
+          return base.query(statement, params, s);
+        },
+      },
+    });
+  }
+
+  it('a fence that lands while ensure provisions leaves the role unable to log in', async () => {
+    const credentials = await service().ensure('user_owner_a', 1, signal());
+    const owners = interleaved(/WITH LOGIN/, () => service().fence('user_owner_a', signal()));
+
+    await expect(owners.ensure('user_owner_a', 1, signal())).rejects.toMatchObject({ code: 'fenced' });
+    expect((await role(cluster, credentials.roleName))?.rolcanlogin).toBe(false);
+  });
+
+  it('a rotation that lands while ensure provisions leaves the newer password in force', async () => {
+    const credentials = await service().ensure('user_owner_a', 1, signal());
+    const owners = interleaved(/WITH LOGIN/, async () => { await service().rotate('user_owner_a', 2, signal()); });
+
+    await expect(owners.ensure('user_owner_a', 1, signal())).rejects.toMatchObject({ code: 'stale_generation' });
+    const newest = service().passwordFor(credentials.roleName, 2);
+    const applied = log.filter(s => s.startsWith(`ALTER ROLE "${credentials.roleName}"`) && s.includes(' PASSWORD '));
+    expect(applied.at(-1)).toContain(`'${newest}'`);
+  });
+
+  it('a delayed removal never tombstones the record that replaced the one it read', async () => {
+    const first = await service().ensure('user_owner_a', 1, signal());
+    let second: Awaited<ReturnType<ReturnType<typeof service>['ensure']>> | undefined;
+    // The slow removal has read the old row; another removal finishes and the owner comes back.
+    const owners = interleaved(/FROM pg_roles/, async () => {
+      await service().remove('user_owner_a', signal());
+      second = await service().ensure('user_owner_a', 2, signal());
+    });
+    await owners.remove('user_owner_a', signal());
+
+    expect(second!.databaseName).not.toEqual(first.databaseName);
+    const row = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ database_name: second!.databaseName, state: 'active', deleted_at: null });
+    expect(await role(cluster, second!.roleName)).toMatchObject({ rolcanlogin: true });
+  });
+
   it('refuses identifiers that do not match the generated format before any SQL use', async () => {
     for (const bad of ['mxo_short', 'MXO_AAAAAAAAAAAAAAAAAAAAAAAAAA', 'mxo_aaaaaaaaaaaaaaaaaaaaaaaaa"; DROP ROLE x; --', 'postgres']) {
       expect(() => assertOwnerIdentifier(bad, 'mxo_')).toThrow(ContainerOwnerDatabaseError);

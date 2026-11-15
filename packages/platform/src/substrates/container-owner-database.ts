@@ -178,6 +178,34 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     await terminateSessions(row.role_name, signal);
   }
 
+  const MAX_SETTLE_PASSES = 5;
+
+  /**
+   * Provisioning writes the cluster from a row it read earlier. Fence and
+   * rotate record their intent in the table before touching the cluster, so
+   * re-reading the row after provisioning sees any that landed in between and
+   * re-applies it: a fence wins over provisioning, and the newest password
+   * epoch is the one left in force.
+   */
+  async function settleProvisioned(provisioned: Row, signal: AbortSignal): Promise<Row> {
+    let applied = provisioned.password_epoch;
+    for (let pass = 0; pass < MAX_SETTLE_PASSES; pass += 1) {
+      const current = await load(provisioned.clerk_user_id);
+      if (current.role_name !== provisioned.role_name || current.database_name !== provisioned.database_name) {
+        throw new ContainerOwnerDatabaseError('deleting');
+      }
+      if (current.state === 'fenced') {
+        await admin.query(`ALTER ROLE ${quoteIdentifier(current.role_name, 'mxr_')} NOLOGIN`, [], signal);
+        await terminateSessions(current.role_name, signal);
+        throw new ContainerOwnerDatabaseError('fenced');
+      }
+      if (current.password_epoch === applied) return current;
+      applied = current.password_epoch;
+      await applyPassword(current, applied, signal);
+    }
+    throw new Error('Owner database provisioning did not settle');
+  }
+
   async function rotate(clerkUserId: string, generation: number, signal: AbortSignal) {
     assertGeneration(generation);
     const row = await load(clerkUserId);
@@ -230,6 +258,8 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       if (row.state === 'fenced') throw new ContainerOwnerDatabaseError('fenced');
       if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
       await provision(row, signal);
+      row = await settleProvisioned(row, signal);
+      if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
       if (row.password_epoch < generation) {
         await rotate(clerkUserId, generation, signal);
         row = await load(clerkUserId);
@@ -268,13 +298,20 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       return { sizeBytes, overLimit: sizeBytes > Number(row.size_limit_bytes) };
     },
 
-    /** Drops the role and database. Safe to repeat; the record stays as a tombstone. */
+    /**
+     * Drops the role and database. Safe to repeat; the record stays as a
+     * tombstone. Both record updates match the names this call read, so a
+     * delayed removal never marks a record that replaced them.
+     */
     async remove(clerkUserId: string, signal: AbortSignal): Promise<void> {
       const row = await db.executor.selectFrom('container_owner_databases').selectAll()
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
       if (!row || row.deleted_at) return;
-      await db.executor.updateTable('container_owner_databases').set({ state: 'deleting' })
-        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null).execute();
+      const marked = await db.executor.updateTable('container_owner_databases').set({ state: 'deleting' })
+        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
+        .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
+        .returning('clerk_user_id').executeTakeFirst();
+      if (!marked) return;
       const roleSql = quoteIdentifier(row.role_name, 'mxr_');
       const dbSql = quoteIdentifier(row.database_name, 'mxo_');
       const roleExists = await exists('pg_roles', row.role_name, signal);
@@ -287,7 +324,9 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
       await admin.query(`DROP DATABASE IF EXISTS ${dbSql} WITH (FORCE)`, [], signal);
       await admin.query(`DROP ROLE IF EXISTS ${roleSql}`, [], signal);
       await db.executor.updateTable('container_owner_databases').set({ deleted_at: sql<Date>`now()` })
-        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null).execute();
+        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
+        .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
+        .execute();
     },
   };
 }
