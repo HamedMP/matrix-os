@@ -25,7 +25,7 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
-import type { FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, type FreeFundingConfig } from "./free-tier/funded-policy.js";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
@@ -164,7 +164,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("runtime_token_epoch", "=", machine.runtime_token_epoch)
           .where("expires_at", ">", checkedAt).executeTakeFirst()
         : undefined;
-      if (machine.provisioning_class !== "customer" && !preview) throw new AiFundedPolicyError("access_disabled");
+      // A free runtime reads its funding under the same model and allowance rules its admission uses.
+      const free = machine.provisioning_class === "free";
+      if (machine.provisioning_class !== "customer" && !free && !preview) throw new AiFundedPolicyError("access_disabled");
+      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, grantCreditInTransaction);
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: currentPeriod,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
@@ -181,6 +184,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
+          .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
         : [];
       const funding = {
         ...fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),

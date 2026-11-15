@@ -7,6 +7,7 @@ import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import { FREE_MANAGED_MODEL_ID } from "./free-tier/funded-policy.js";
 
 type CheckoutRow = {
   clerk_user_id: string; machine_runtime_slot: string; machine_runtime_token_epoch: number;
@@ -99,7 +100,10 @@ export async function readCheckoutFundingSnapshot(input: {
           expiresAt: row.preview_expires_at,
         }
       : undefined;
-    if (row.machine_provisioning_class !== "customer" && !preview) {
+    // A free runtime reads under its admission's model rule. This read-only snapshot never grants
+    // its monthly allowance; the first runtime funding read or admission of the month does.
+    const free = row.machine_provisioning_class === "free";
+    if (row.machine_provisioning_class !== "customer" && !free && !preview) {
       throw new AiFundedPolicyError("access_disabled");
     }
     const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
@@ -108,6 +112,7 @@ export async function readCheckoutFundingSnapshot(input: {
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
     const allowedModelIds = enabled
       ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
+        .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
       : [];
     const currentBalance = input.projectExpiredCredit
       ? await projectExpiredPromotionalCredit(trx.executor, identity, row, checkedAt) : row;

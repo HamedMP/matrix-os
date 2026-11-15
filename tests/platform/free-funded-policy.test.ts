@@ -1,5 +1,7 @@
 import { FundedAiSafeErrorSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
-import { createAiFundedRelayRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
+import { Hono } from 'hono';
+import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
+import { buildPlatformRuntimeVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
@@ -136,6 +138,32 @@ describe('free funded policy', () => {
     expect(response.headers.get('retry-after')).toBe(String(12 * 3600));
     const body = FundedAiSafeErrorSchema.parse(await response.json());
     expect(body).toEqual({ error: { code: 'busy', message: 'Matrix AI is busy; try again later', retryAt: '2026-11-21T00:00:00.000Z' } });
+  });
+
+  it('shows a free owner their Matrix AI funding and the managed model through the runtime routes', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const secret = 'p'.repeat(48);
+    const app = new Hono().route('/internal/containers/:handle/ai',
+      createAiFundedRuntimeRoutes({ db, platformSecret: secret, repository: free.repo, now: () => clock.now }));
+    const call = (path: string, body: unknown) => app.request(`/internal/containers/free1/ai/${path}?runtimeSlot=primary`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${buildPlatformRuntimeVerificationToken({ handle: 'free1', machineId: identity.machineId, runtimeSlot: 'primary' }, secret)}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const summary = await call('funding-summary', {});
+    expect(summary.status).toBe(200);
+    const parsed = await summary.json() as { funding: { creditBalanceMicrousd: number }; policy: { enabled: boolean; allowedModelIds: string[] } };
+    expect(parsed.policy).toMatchObject({ enabled: true, allowedModelIds: [FREE_MANAGED_MODEL_ID] });
+    // The starter credit plus this month's allowance.
+    expect(parsed.funding.creditBalanceMicrousd).toBe(10 * USD);
+    const readiness = await call('route-readiness', {});
+    expect(readiness.status).toBe(200);
+    expect(await free.repo.getCheckoutFundingSummary(identity, Date.now() + 5_000))
+      .toMatchObject({ policy: { enabled: true, allowedModelIds: [FREE_MANAGED_MODEL_ID] } });
   });
 
   it('answers a free runtime that asks for credentials too often as rate limited, not disabled', async () => {
