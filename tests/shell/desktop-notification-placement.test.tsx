@@ -69,15 +69,10 @@ vi.mock("../../shell/src/components/canvas/CanvasToolbar.js", () => ({
   CanvasToolbar: () => null,
 }));
 
-vi.mock("@/hooks/useVocalSession", () => ({
-  useVocalSession: () => ({
-    voiceState: "idle",
-    subtitle: "",
-    error: "Aoede could not connect",
-    connected: false,
-    notifyDelegationComplete: vi.fn(),
-    notifyExecuteResult: vi.fn(),
-    pushDelegationStatus: vi.fn(),
+vi.mock("@/hooks/useVoiceLive", () => ({
+  useVoiceLive: () => ({
+    status: "error", chatId: null, userCaption: "", assistantCaption: "", tasks: [],
+    errorCode: "provider_unavailable", endReason: null, end: vi.fn(),
   }),
 }));
 
@@ -184,6 +179,6 @@ describe("Desktop shell notifications", () => {
     const dock = document.querySelector("[data-dock]");
     expect(dock).toBeTruthy();
     expect(dock?.contains(indicator)).toBe(false);
-    expect(vocalError.textContent).toContain("Aoede could not connect");
+    expect(vocalError.textContent).toContain("voice service is unavailable");
   });
 });

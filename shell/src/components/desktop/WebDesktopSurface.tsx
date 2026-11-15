@@ -15,7 +15,10 @@ import {
   osViewIconUrlForApp,
   osViewFixedAppAppearanceForPath,
 } from "@matrix-os/contracts";
+import { VOICE_HIDDEN } from "@/lib/feature-flags";
+import { useVocalStore } from "@/stores/vocal";
 import {
+  AudioLinesIcon,
   Blocks,
   BrushIcon,
   Code2,
@@ -211,6 +214,19 @@ function DesktopDestination({
   );
 }
 
+function TaskbarVoiceButton() {
+  const active = useVocalStore((s) => s.active);
+  const toggle = useVocalStore((s) => s.toggle);
+  if (VOICE_HIDDEN) return null;
+  return (
+    <TaskbarButton label={active ? "End voice call" : "Talk with Matrix"} title="Talk with Matrix" pressed={active} running={active} onClick={toggle}>
+      <span className="aoede-dock-button flex size-10 items-center justify-center rounded-full border border-border/60 bg-white text-black shadow-[0_2px_3px_rgba(0,0,0,0.18)]">
+        <AudioLinesIcon className="size-5" />
+      </span>
+    </TaskbarButton>
+  );
+}
+
 function TaskbarButton({
   label,
   title,
@@ -403,6 +419,8 @@ export function WebDesktopSurface({
             className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
           />
         </TaskbarButton>
+
+        <TaskbarVoiceButton />
 
         {otherRunningWindows.length > 0 ? (
           <>

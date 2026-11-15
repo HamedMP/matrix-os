@@ -7,7 +7,7 @@ export const HERMES_CHAT_HIDDEN = false;
 
 // Voice (Aoede) dock button is hidden for now while the voice experience is
 // out of the minimal flow. The vocal store/overlay wiring stays intact.
-export const VOICE_HIDDEN = true;
+export const VOICE_HIDDEN = false;
 
 import { isSelfHostedDocument } from "./self-host-mode";
 

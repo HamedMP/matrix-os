@@ -27,6 +27,7 @@ import {
 } from "./composer-reference-tokens";
 import { useConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { DesktopVoiceCallButton } from "../voice/DesktopVoiceCallButton";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -135,6 +136,7 @@ export function SharedChatComposer({
   menuSide = "top",
   layout = "default",
   speech,
+  voiceChatId,
 }: {
   permissionModeRequest?: number;
   value: string;
@@ -180,6 +182,8 @@ export function SharedChatComposer({
   menuSide?: "top" | "bottom";
   layout?: "default" | "narrow";
   speech?: { scopeKey: string; onDraft: (text: string) => void };
+  /** Shows "Talk with Matrix": `null` joins the generic Matrix Pi Chat, a Chat id joins that Chat. */
+  voiceChatId?: string | null;
 }) {
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -501,6 +505,7 @@ export function SharedChatComposer({
         controls={(
           <>
             {canAttach ? <ChatComposerAttachButton disabled={disabled} onClick={() => onAttach?.()} /> : null}
+            {voiceChatId === undefined ? null : <DesktopVoiceCallButton chatId={voiceChatId ?? undefined} />}
             {leadingControls}
           </>
         )}

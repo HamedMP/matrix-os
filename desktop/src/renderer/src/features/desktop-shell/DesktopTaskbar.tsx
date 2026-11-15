@@ -4,6 +4,8 @@ import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import SurfaceIcon from "./SurfaceIcon";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { AudioLinesIcon } from "../../lib/hugeicons";
+import { useDesktopVoiceCall } from "../voice/voice-call-store";
 
 function DockAppButton({
   label,
@@ -50,6 +52,26 @@ function DockAppButton({
         {running ? <span data-taskbar-running-indicator className="size-1 rounded-full bg-[var(--accent)]" /> : null}
       </span>
     </div>
+  );
+}
+
+function VoiceCallDockButton() {
+  const active = useDesktopVoiceCall((s) => s.active);
+  const toggle = useDesktopVoiceCall((s) => s.toggle);
+  return (
+    <DockAppButton
+      testId="desktop-taskbar-voice"
+      label={active ? "End voice call" : "Talk with Matrix"}
+      title="Talk with Matrix"
+      icon={(
+        <span className="flex size-10 items-center justify-center rounded-full border border-black/10 bg-white text-black">
+          <AudioLinesIcon className="size-5" />
+        </span>
+      )}
+      pressed={active}
+      running={active}
+      onClick={toggle}
+    />
   );
 }
 
@@ -121,6 +143,7 @@ export default function DesktopTaskbar({
             else onActivate(filesTab.id);
           }}
         />
+        <VoiceCallDockButton />
       </div>
       {otherRunningTabs.length > 0 ? <>
         <span className="mx-0.5 h-12.5 w-px shrink-0" style={{ background: "var(--border-default)" }} />

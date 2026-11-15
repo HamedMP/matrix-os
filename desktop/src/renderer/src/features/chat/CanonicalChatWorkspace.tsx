@@ -836,6 +836,7 @@ function CanonicalChatWorkspaceContent({
           ? "Edit queued message…"
           : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
+        voiceChatId={controller.activeChatId ?? initialChatId ?? null}
         leadingControls={(
           <ConversationContextPicker
             context={context}

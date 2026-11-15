@@ -9,6 +9,8 @@ export const DESKTOP_Z_INDEX = {
   nativeDesktopDrawer: 42,
   nativeDesktopLaunchpad: 44,
   nativeDesktopTaskbar: 45,
+  // Live voice call overlay: over windows and the taskbar, under dialogs.
+  voiceCall: 46,
   dialog: 50,
   // Get started wizard (spec 635): covers windows, taskbar and dialogs until finished or skipped.
   getStarted: 60,
