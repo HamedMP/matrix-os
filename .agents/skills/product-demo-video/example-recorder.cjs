@@ -8,6 +8,9 @@ const OUT_DIR = path.join(os.homedir(), "Desktop", "demo videos");
 const CHAPTER = path.join(os.tmpdir(), "mxo-demo-chapter.mp4");
 
 async function main() {
+  // First satisfy SKILL.md's real-product-flow requirements: actual frontend/backend at the intended build,
+  // UI-triggered action, and backend outcome evidence. Never substitute a harness page or synthetic provider.
+  // Use only browser/app tooling allowed by the task; the helpers below do not override those restrictions.
   // 1. Launch the surface: lib.launchWeb(chromium, session) or lib.launchElectron(electron, { repo, profile }).
   //    Then call lib.assertCssSize(page, lib.WEB) or lib.assertCssSize(page, lib.EL).
   // 2. lib.startCapture(session, page), then caption and click each beat, then lib.stopCapture(session).
