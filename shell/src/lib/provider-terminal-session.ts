@@ -226,6 +226,10 @@ async function listActiveSessions(fetcher: Fetcher): Promise<ActiveSessionIndex>
   return active;
 }
 
+function queuedSessionKey(entry: QueuedSession): string {
+  return JSON.stringify([entry.sessionId ?? null, entry.terminalRef ?? null, entry.targetId ?? null, entry.expiresAt]);
+}
+
 export async function drainExistingTerminalSessionQueue(
   targetId?: string,
   options: { fetcher?: Fetcher } = {},
@@ -254,7 +258,10 @@ export async function drainExistingTerminalSessionQueue(
       settledEntries.add(entry);
       acceptedRefs.add(ref);
     }
-    if (!writeQueue(queued.filter((entry) => !settledEntries.has(entry)))) return [];
+    // Lookups wait on the network: another Open may have queued a tab meanwhile, so
+    // remove the settled entries from a fresh read instead of writing the old one back.
+    const settled = new Set([...settledEntries].map(queuedSessionKey));
+    if (!writeQueue(readQueue().filter((entry) => !settled.has(queuedSessionKey(entry))))) return [];
     return [...acceptedRefs];
   } catch (error) {
     console.warn("[provider-settings] Terminal session handoff failed:", error instanceof Error ? error.name : typeof error);

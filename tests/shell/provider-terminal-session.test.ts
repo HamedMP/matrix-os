@@ -236,6 +236,22 @@ describe("handing off a known tab when the list is too big to read", () => {
     expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
   });
 
+  // Fault detected (review of #3299): a second Open clicked while the first tab was being
+  // looked up was queued, then the first drain wrote its older queue back and erased it.
+  it("keeps a tab queued while another tab was being looked up", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/terminal/workspaces")) return Response.json(workspaceResponse(many));
+      // The person clicks Open on another alert during this lookup.
+      enqueueExistingTerminalRef(otherRef, "window-b");
+      return Response.json({ tab: { id: PROVIDER_TAB_ID, workspaceId: WORKSPACE_ID, status: "running" }, state: "live" });
+    });
+    enqueueExistingTerminalRef(providerRef, "window-a");
+
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher })).resolves.toEqual([providerRef]);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    expect(hasQueuedExistingTerminalSession("window-b")).toBe(true);
+  });
+
   it("drops a requested tab that has finished or is gone, and keeps it on a failed lookup", async () => {
     const list = () => Response.json(workspaceResponse(many));
     enqueueExistingTerminalRef(providerRef, "window-a");
