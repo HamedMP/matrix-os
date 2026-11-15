@@ -1,6 +1,6 @@
 # 2693: Share popover redesign
 
-Status: implementation (phase 1 of 4)
+Status: implementation (phases 1–2 of 4)
 Design: https://claude.ai/artifact/ER7AzhxZ6n46gVazELsZ3B (Prototype, SharePopover component, per-state artboards)
 Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (unmerged stack #3233–#3340)
 Linear: blocked. The Linear connector was unreachable from the implementing session; a requester-assigned ENG ticket must be linked before any PR opens.
@@ -20,7 +20,7 @@ The tabs (Private · Organization · Public) are navigation only. A green dot ma
 | --- | --- |
 | Web Desktop | Window-header Share trigger and popover |
 | Web Canvas | Same trigger in the canvas window title bar |
-| Electron Desktop | Same shared component; existing org section placed in the Organization tab until phase 2 |
+| Electron Desktop | Same shared component, including the Organization tab (phase 2) |
 | Web Mobile / Native Mobile | N/A. No owner publishing controls exist there (551 V1 limitation) |
 
 There is one implementation: `packages/ui/src/share/`. Shell and Electron supply only the trigger chrome and the site client.
@@ -61,6 +61,18 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 
 `POST …/site` requires `reviewedConfig`. The gateway compares it to the current manifest's `publishing` config and returns 409 if it differs, so it is a freshness check, not a stored human acknowledgement. The existing one-time-link flow already sends `getConfig()` unchanged, and the new popover does the same. Because the review step is removed from the UI, the owner no longer sees declared public data and forms before publishing. Product should confirm this is acceptable for apps that declare public forms.
 
+## Organization tab and completion event (phase 2)
+
+- Org picker: Select with initial avatar, name, member count (`OrganizationManagementSummary.memberCount`); static with one org; the tab is hidden with none.
+- **Share with {Org}** rechecks 2689 readiness for that org (`POST …/readiness/check`). `ready` → preflight + share at once. `blocked`/`stale` → the two-step card. Readiness is the single gate; the server preflight re-enforces it.
+- **Start in Chats** writes the handoff record (below) as `running`, opens Matrix Chats on a new chat and sends:
+  `/matrix-collaborative-app-builder @{App}` + "{Org} members will use this app together…" + `Share handoff: app <slug>, organization <orgId>, request <uuid>.`
+- **Completion event** — `~/system/share/collaborative/<appSlug>.json`, schema `CollaborativeHandoffRecordSchema` (`packages/contracts/src/collaborative-app-handoff.ts`):
+  `{ version: 1, event: "collaborative_app.preparation", requestId, appSlug, organizationId, state, updatedAt }`, `state ∈ running | completed | failed | cancelled | applied`, ≤2 KiB, no secrets.
+  The builder skill (`skills/matrix/collaborative-app-builder/SKILL.md`, "Share popover handoff") rewrites it as `completed` after Build passed + owner preflight, or `failed`. The window-header host (mounted while the app window is open, so the popover may be closed) re-reads the record every 5 s while `running` (max 30 min; reopening Share resumes), ignores a different `requestId`, rechecks readiness, and creates the share only on `ready`; it then writes `applied` so a later Stop sharing is never undone. A completion with readiness still failing shows "Claude finished, but the app isn’t ready to share yet."
+- Shared: "{Org} link · Opens it in the Matrix app" + Copy (phase 2 copies `/shared/app/<scopeId>?…` on the current origin; phase 4 swaps in the hand-off page), "Stop sharing with {Org}" (`DELETE …/share` with share/binding revisions).
+- The previous Electron "Share with your org" section is removed; Web keeps the existing in-app readiness bar in `AppViewer` (it also refreshes the owner participant context) until a follow-up routes that refresh through the popover.
+
 ## Failure modes
 
 - **Load failure:** an alert with Try again.
@@ -70,8 +82,8 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 
 ## Phases
 
-1. Popover, Private (one-time links real, email stubbed), Public, mode-switch confirm, and slug availability. **This phase.**
-2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share.
+1. Popover, Private (one-time links real, email stubbed), Public, mode-switch confirm, and slug availability. **Done.**
+2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share. **Done.**
 3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips.
 4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`).
 

@@ -87,15 +87,12 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     await dialog.getByRole("tab", { name: /Organization/ }).click();
     await dialog.getByText("Matrix Team").waitFor();
     expect(await page.getByRole("button", { name: "Share", exact: true }).count()).toBe(1);
-    expect(await dialog.getByText(/including guests/).count()).toBe(1);
-    await dialog.getByRole("button", { name: "Check collaboration" }).click();
-    await dialog.getByText("Ready to share").waitFor();
-    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-ready.png") });
-    await dialog.getByRole("button", { name: "Share with your org" }).click();
-    await dialog.getByText("Shared with Matrix Team").waitFor();
+    // Readiness is rechecked on Share; a ready result shares at once.
+    await dialog.getByRole("button", { name: "Share with Matrix Team" }).click();
+    await dialog.getByText("Matrix Team link").waitFor();
     if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-active.png") });
-    await dialog.getByRole("button", { name: "Stop sharing" }).click();
-    await dialog.getByText("Sharing stopped").waitFor();
+    await dialog.getByRole("button", { name: "Stop sharing with Matrix Team" }).click();
+    await dialog.getByRole("button", { name: "Share with Matrix Team" }).waitFor();
     expect(publicationMutations).toEqual([]);
   }, 60_000);
 });

@@ -1,0 +1,114 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  COLLABORATIVE_HANDOFF_EVENT, collaborativeHandoffPath, parseCollaborativeHandoff,
+  type CollaborativeHandoffRecord, type CollaborativeHandoffState,
+} from "@matrix-os/contracts";
+
+/** Minimal owner file API (Web `shellApi`, Electron `ApiClient.forRuntime`). */
+export interface HandoffFileApi {
+  get(path: string, options?: { signal?: AbortSignal }): Promise<unknown>;
+  put(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
+}
+
+export const HANDOFF_POLL_MS = 5_000;
+/** Stop watching after 30 minutes; the owner can reopen Share to resume. */
+export const HANDOFF_MAX_POLLS = 360;
+
+const blobPath = (appSlug: string) => `/api/files/blob?path=${encodeURIComponent(collaborativeHandoffPath(appSlug))}`;
+
+function isNotFound(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as { category?: unknown; status?: unknown; httpStatus?: unknown };
+  return value.category === "notFound" || value.status === 404 || value.httpStatus === 404;
+}
+
+/**
+ * Tracks the "Make app collaborative" handoff record for one app. While the
+ * skill runs, the record is re-read on a bounded interval; the skill's write of
+ * `completed`/`failed` is the completion event (see contracts/collaborative-app-handoff).
+ */
+export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api: HandoffFileApi | null }) {
+  const [record, setRecord] = useState<CollaborativeHandoffRecord | null>(null);
+  const [writeFailed, setWriteFailed] = useState(false);
+  const generation = useRef(0);
+
+  const read = useCallback(async (signal?: AbortSignal): Promise<CollaborativeHandoffRecord | null> => {
+    if (!api) return null;
+    try {
+      return parseCollaborativeHandoff(await api.get(blobPath(appSlug), { signal }), appSlug);
+    } catch (error: unknown) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
+  }, [api, appSlug]);
+
+  useEffect(() => {
+    if (!api) return;
+    const controller = new AbortController();
+    const current = ++generation.current;
+    void read(controller.signal).then((next) => {
+      if (generation.current === current) setRecord(next);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) console.warn("[share] handoff read failed", error instanceof Error ? error.name : "UnknownError");
+    });
+    return () => controller.abort();
+  }, [api, read]);
+
+  const running = record?.state === "running";
+  const requestId = record?.requestId;
+  useEffect(() => {
+    if (!api || !running) return;
+    let polls = 0;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const poll = async () => {
+      if (cancelled || ++polls > HANDOFF_MAX_POLLS) return;
+      try {
+        const next = await read(controller.signal);
+        if (cancelled) return;
+        // Only the active request's completion counts; a stray record is ignored.
+        if (next && next.requestId === requestId && next.state !== "running") { setRecord(next); return; }
+      } catch (error: unknown) {
+        if (cancelled) return;
+        console.warn("[share] handoff poll failed", error instanceof Error ? error.name : "UnknownError");
+      }
+      timer = setTimeout(() => { void poll(); }, HANDOFF_POLL_MS);
+    };
+    timer = setTimeout(() => { void poll(); }, HANDOFF_POLL_MS);
+    return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); };
+  }, [api, read, running, requestId]);
+
+  const write = useCallback(async (next: CollaborativeHandoffRecord): Promise<CollaborativeHandoffRecord | null> => {
+    if (!api) return null;
+    generation.current += 1;
+    try {
+      await api.put(blobPath(appSlug), next);
+      setRecord(next); setWriteFailed(false);
+      return next;
+    } catch (error: unknown) {
+      console.warn("[share] handoff write failed", error instanceof Error ? error.name : "UnknownError");
+      setWriteFailed(true);
+      return null;
+    }
+  }, [api, appSlug]);
+
+  const transition = useCallback((state: CollaborativeHandoffState) => {
+    if (!record) return Promise.resolve(null);
+    return write({ ...record, state, updatedAt: new Date().toISOString() });
+  }, [record, write]);
+
+  return {
+    record,
+    writeFailed,
+    /** Owner chose "Start in Chats" for this organization. */
+    start: (organizationId: string) => write({
+      version: 1, event: COLLABORATIVE_HANDOFF_EVENT, requestId: crypto.randomUUID(), appSlug, organizationId,
+      state: "running", updatedAt: new Date().toISOString(),
+    }),
+    cancel: () => transition("cancelled"),
+    markApplied: () => transition("applied"),
+  };
+}
+
+export type CollaborativeHandoff = ReturnType<typeof useCollaborativeHandoff>;

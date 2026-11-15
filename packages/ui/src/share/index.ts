@@ -7,3 +7,6 @@ export {
 } from "./email-invitations";
 export * from "./share-model";
 export type { ShareSiteClient } from "./share-site-client";
+export { useShareOrganization, collaborativeChatPrompt, MAKE_COLLABORATIVE_SKILL, type ShareOrganizationHost } from "./use-share-organization";
+export { organizationColor, organizationInitial, membersLabel, type ShareOrganization } from "./organization-identity";
+export type { HandoffFileApi } from "./use-collaborative-handoff";
