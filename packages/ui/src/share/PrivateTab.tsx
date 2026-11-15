@@ -20,9 +20,16 @@ export interface PrivateTabState {
 }
 
 export function PrivateTab({ share, ownerInitial, appUrl, state }: { share: ShareController; ownerInitial: string; appUrl: string | null; state: PrivateTabState }) {
+  const privateOn = share.pageMode === "private_link" || share.pageMode === "private_email";
   return <div className="flex flex-col gap-3">
     <InvitePeople share={share} ownerInitial={ownerInitial} appUrl={appUrl} draft={state.draft} setDraft={state.setDraft} />
     <OneTimeLinks share={share} open={state.linksOpen} setOpen={state.setLinksOpen} />
+    {privateOn ? <div className="-mt-1 flex flex-col items-end gap-1">
+      <ShareButton variant="link" disabled={share.operation !== null} onClick={() => void share.stopSharing()}>
+        {share.operation === "stop" ? <Spinner /> : null}Stop sharing privately
+      </ShareButton>
+      {share.error?.operation === "stop" ? <InlineError>{share.error.message}</InlineError> : null}
+    </div> : null}
   </div>;
 }
 
@@ -44,10 +51,10 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
     <div className="flex gap-2">
       <label htmlFor={inputId} className="sr-only">Email address</label>
       <ShareInput id={inputId} type="email" autoComplete="off" placeholder="Invite by email" value={draft}
-        disabled={!available || share.loading}
+        disabled={!available || share.loading || share.loadFailed}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
-      <ShareButton variant="primary" disabled={!available || !valid || busy} onClick={() => void submit()}>
+      <ShareButton variant="primary" disabled={!available || !valid || busy || share.loading || share.loadFailed} onClick={() => void submit()}>
         {inviting ? <Spinner /> : null}Invite
       </ShareButton>
     </div>
@@ -106,7 +113,7 @@ function OneTimeLinks({ share, open, setOpen }: { share: ShareController; open: 
         })}
       </ul>
       {share.linksNextCursor ? <ShareButton variant="link" className="self-start" disabled={busy} onClick={() => void share.loadMoreLinks()}>Show more links</ShareButton> : null}
-      <ShareButton size="sm" disabled={busy || share.loading} className="mt-0.5 h-[30px] self-start border-dashed border-[var(--share-input)] pl-2" onClick={async () => {
+      <ShareButton size="sm" disabled={busy || share.loading || share.loadFailed} className="mt-0.5 h-[30px] self-start border-dashed border-[var(--share-input)] pl-2" onClick={async () => {
         const created = await share.request({ to: "private_link" });
         if (created) setOpen(true);
       }}>{creating ? <Spinner /> : <Plus className="size-3.5" />}New one-time link</ShareButton>

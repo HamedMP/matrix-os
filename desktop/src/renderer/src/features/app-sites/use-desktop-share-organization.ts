@@ -2,11 +2,13 @@ import { useMemo } from "react";
 import { useShareOrganization } from "@matrix-os/ui/share";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
-import { useHermesChat } from "../../stores/hermes-chat";
-import { useTabs } from "../../stores/tabs";
+import { openDesktopTextChatDraft } from "../../stores/company-drive-chat-draft";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import { openChatIndex } from "../mission-control/navigation-roots";
 import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
 
-const openChatTab = () => useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
+/** Chats list, where the owner finds the setup chat they started. */
+const openChats = () => { useDesktopSurfaces.getState().activateSurface(openChatIndex()); };
 
 /** Electron Desktop wiring for the shared Organization tab (spec 2693 phase 2). */
 export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch }: {
@@ -23,13 +25,9 @@ export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch 
     preferredOrganizationId: activeOrganizationId,
     collaborationApi: api,
     fileApi: api,
-    openChat: () => { openChatTab(); },
-    startChat: async (prompt) => {
-      openChatTab();
-      const chat = useHermesChat.getState();
-      chat.newChat();
-      return useHermesChat.getState().send(prompt);
-    },
+    openChat: openChats,
+    // Prefills a new draft in the visible Chat surface; the owner sends it.
+    startChat: async (prompt) => openDesktopTextChatDraft(prompt),
     orgLink: (share) => {
       const origin = import.meta.env.VITE_CHAT_SHARE_ORIGIN || platformHost;
       if (!origin) return null;

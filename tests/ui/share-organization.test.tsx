@@ -33,24 +33,29 @@ const share = (state: "active" | "stopped" = "active") => ({
   createdAt: "2026-11-05T10:00:00.000Z", updatedAt: "2026-11-05T10:00:00.000Z",
 });
 
-function collaboration(checkResults: Array<"ready" | "blocked">) {
+function collaboration(checkResults: Array<"ready" | "blocked">, options: { initialShare?: unknown; preflightGate?: Promise<void>; shareReadFailures?: number } = {}) {
   let current: unknown = null;
-  let currentShare: unknown = null;
+  let currentShare: unknown = options.initialShare ?? null;
+  let shareReadFailures = options.shareReadFailures ?? 0;
   const results = [...checkResults];
   let checkCount = 0;
   return {
     get: vi.fn(async (path: string) => {
       if (path.endsWith("/registration")) return { registrationIncarnation: build.registrationIncarnation };
-      if (path.endsWith("/share")) return currentShare;
+      if (path.endsWith("/share")) {
+        if (shareReadFailures > 0) { shareReadFailures -= 1; throw new Error("share read failed"); }
+        return currentShare;
+      }
       return current;
     }),
     post: vi.fn(async (path: string, _body: unknown) => {
       if (path.endsWith("/readiness/check")) { checkCount += 1; current = readiness(results.shift() ?? "blocked", String(checkCount + 1)); return current; }
+      if (path.endsWith("/share/preflight")) await options.preflightGate;
       if (path.endsWith("/share/preflight")) return { eligible: true, catalogId: build.catalogId, resourceRevision: "0", readinessId: "40000000-0000-4000-8000-000000000001", buildId: build.buildId, confirmationToken: "token_payload.signature_value" };
       if (path.endsWith("/share")) { currentShare = share(); return currentShare; }
       throw new Error(`unexpected ${path}`);
     }),
-    delete: vi.fn(async () => { currentShare = share("stopped"); return currentShare; }),
+    delete: vi.fn(async () => { currentShare = { ...share("stopped"), updatedAt: new Date().toISOString() }; return currentShare; }),
   };
 }
 
@@ -58,7 +63,11 @@ function files(initial: unknown = null) {
   let stored: unknown = initial;
   return {
     get: vi.fn(async () => { if (stored === null) throw Object.assign(new Error("missing"), { category: "notFound" }); return stored; }),
-    put: vi.fn(async (_path: string, body: unknown) => { stored = body; return { ok: true }; }),
+    // Mirrors the gateway blob route: replacing an existing file needs force=true.
+    put: vi.fn(async (path: string, body: unknown) => {
+      if (stored !== null && !path.includes("force=true")) throw Object.assign(new Error("file_exists"), { status: 409 });
+      stored = body; return { ok: true };
+    }),
     /** Simulates the builder skill rewriting the record. */
     skillWrites: (patch: Record<string, unknown>) => { stored = { ...(stored as object), ...patch, updatedAt: "2026-11-15T12:00:00.000Z" }; },
     current: () => stored as Record<string, unknown> | null,
@@ -200,5 +209,55 @@ describe("Organization tab", () => {
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
     await waitFor(() => expect(fileApi.get).toHaveBeenCalled());
     expect(api.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("Organization tab review fixes", () => {
+  const completedRecord = { version: 1, event: "collaborative_app.preparation", requestId: "50000000-0000-4000-8000-000000000001", appSlug: "sales-crm", organizationId: ORG, state: "completed", updatedAt: "2026-11-15T12:00:00.000Z" };
+
+  it("replaces the handoff record on every transition and marks it applied", async () => {
+    const api = collaboration(["blocked", "ready"]);
+    const fileApi = files();
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
+    await screen.findByText("Claude is setting it up in a new chat.");
+    fileApi.skillWrites({ state: "completed" });
+    await vi.advanceTimersByTimeAsync(HANDOFF_POLL_MS + 10);
+    await screen.findByText("Collaborative and shared");
+    await waitFor(() => expect(fileApi.current()).toMatchObject({ state: "applied" }));
+    expect(fileApi.put.mock.calls.every(([path]) => String(path).includes("force=true"))).toBe(true);
+  });
+
+  it("never shares when the owner cancels while the share request is in flight", async () => {
+    let release!: () => void;
+    const api = collaboration(["ready"], { preflightGate: new Promise((resolve) => { release = resolve; }) });
+    render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
+    await openOrganizationTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel sharing" }));
+    release();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share/preflight", expect.anything()));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+  });
+
+  it("does not re-share from a completion saved before the owner stopped sharing", async () => {
+    const stopped = { ...share("stopped"), updatedAt: "2026-11-15T13:00:00.000Z" };
+    const api = collaboration(["ready"], { initialShare: stopped });
+    render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
+    await openOrganizationTab();
+    expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything());
+  });
+
+  it("retries a failed share read so a finished setup still applies", async () => {
+    const api = collaboration(["ready"], { shareReadFailures: 1 });
+    render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
+    await openOrganizationTab();
+    expect(await screen.findByText("Collaborative and shared")).toBeTruthy();
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
   });
 });

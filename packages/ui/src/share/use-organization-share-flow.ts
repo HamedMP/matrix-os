@@ -10,8 +10,9 @@ export interface OrganizationSharing {
   actionState: "idle" | "loading" | "sharing" | "stopping" | "failed";
   actionMessage: string | null;
   recheck(input: { organizationId: string }): Promise<void>;
-  createShare(input: { organizationId: string }): Promise<CollaborativeAppShare | null>;
+  createShare(input: { organizationId: string }, options?: { shouldContinue?: () => boolean }): Promise<CollaborativeAppShare | null>;
   stopShare(): Promise<CollaborativeAppShare | null>;
+  refreshShare(): Promise<unknown>;
 }
 
 export type OrganizationShareStep = "idle" | "checking" | "required" | "running" | "applying" | "done";
@@ -39,6 +40,9 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
   const [notice, setNotice] = useState<string | null>(null);
   const creating = useRef(false);
   const handledCompletion = useRef<string | null>(null);
+  const shareRetried = useRef<string | null>(null);
+  /** Bumped by every new attempt and by Cancel, so a cancelled attempt can never share. */
+  const attempt = useRef(0);
   const shared = sharing.share?.state === "active" || sharing.share?.state === "needs_recheck";
   const record = handoff.record;
 
@@ -52,8 +56,19 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
       setRequired(true); setNotice(NOT_READY_AFTER_CHAT);
       return;
     }
-    if (record.state !== "completed" || shared || !sharing.shareKnown) return;
+    if (record.state !== "completed" || shared) return;
+    if (!sharing.shareKnown) {
+      // A failed share read must not leave a finished setup stuck: retry it once per request.
+      if (shareRetried.current !== record.requestId && sharing.actionState !== "loading") {
+        shareRetried.current = record.requestId;
+        void sharing.refreshShare();
+      }
+      return;
+    }
     handledCompletion.current = record.requestId;
+    // The share changed after this completion (for example the owner stopped it): never re-share.
+    if (sharing.share && Date.parse(sharing.share.updatedAt) >= Date.parse(record.updatedAt)) return;
+    attempt.current += 1;
     setPending({ organizationId: record.organizationId, reason: "completion" });
     void sharing.recheck({ organizationId: record.organizationId });
   }, [record, shared, sharing]);
@@ -64,12 +79,19 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     if (!pending || sharing.state === "checking" || sharing.state === "loading" || creating.current) return;
     if (sharing.state === "ready") {
       creating.current = true;
-      void sharing.createShare({ organizationId: pending.organizationId }).then(async (created) => {
+      const mine = attempt.current;
+      const wanted = () => attempt.current === mine;
+      void sharing.createShare({ organizationId: pending.organizationId }, { shouldContinue: wanted }).then(async (created) => {
         creating.current = false;
+        if (!created) { if (wanted()) setPending(null); return; }
+        // Cancel raced a successful share: undo it rather than leave access on.
+        if (!wanted()) { await sharing.stopShare(); return; }
         setPending(null);
-        if (!created) return;
         setRequired(false); setNotice(null);
-        if (pending.reason === "completion") { setDone(true); await handoff.markApplied(); }
+        if (pending.reason === "completion") {
+          setDone(true);
+          if (!await handoff.markApplied()) await handoff.markApplied();
+        }
       });
       return;
     }
@@ -97,6 +119,7 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     runningOrganizationId: running ? record!.organizationId : null,
     share(organizationId: string) {
       setNotice(null); setDone(false);
+      attempt.current += 1;
       setPending({ organizationId, reason: "owner" });
       void sharing.recheck({ organizationId });
     },
@@ -108,12 +131,16 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
       if (!ok) { await handoff.cancel(); setNotice("Couldn’t start the chat. Try again."); }
     },
     async cancel() {
+      attempt.current += 1;
       setNotice(null); setRequired(false); setPending(null);
       if (running) await handoff.cancel();
     },
     async stop() {
+      attempt.current += 1;
       setDone(false); setNotice(null);
-      await sharing.stopShare();
+      const stopped = await sharing.stopShare();
+      // Retire any saved completion so it can never turn sharing back on.
+      if (stopped && record && record.state !== "cancelled") await handoff.cancel();
     },
     dismissDone: () => setDone(false),
   };
