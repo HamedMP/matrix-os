@@ -252,20 +252,34 @@ export class TerminalWorkspaceStore {
     return workspace ? structuredClone(workspace) : undefined;
   }
 
-  async activateTab(refInput: TerminalRef, runtimeIds: { tabId: number; paneId: string }): Promise<TerminalTab> {
+  /** The store's clock, for callers that mark a boundary before a later write. */
+  currentTime(): Date {
+    return this.now();
+  }
+
+  /**
+   * `launchedAt` is when the runtime started the pane's command, read from
+   * `currentTime()` before the adapter call; without it the activation time is used.
+   */
+  async activateTab(
+    refInput: TerminalRef,
+    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date },
+  ): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const zellijTabId = z.number().int().min(0).parse(runtimeIds.tabId);
     const zellijPaneId = z.string().regex(/^terminal_[0-9]+$/).parse(runtimeIds.paneId);
     const now = this.now().toISOString();
+    const paneAssignedAt = runtimeIds.launchedAt ? z.date().parse(runtimeIds.launchedAt).toISOString() : now;
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = zellijTabId;
       // Re-activating the same pane (startup reconcile, ensure) keeps its time, so
-      // its earlier status reports stay valid; a different pane is a new program.
+      // its earlier status reports stay valid; a different pane is a new program,
+      // timed from its launch so reports made while the adapter names it count.
       // A tab from older state keeps no time until its pane changes.
-      if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = now;
+      if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";

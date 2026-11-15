@@ -138,6 +138,25 @@ describe("terminal workspace store", () => {
     expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]).not.toHaveProperty("zellijPaneAssignedAt");
   });
 
+  // Fault detected (#3297 review): the pane time was the activation time, after the
+  // command had already started, so a hook's first report was dropped as stale.
+  it("records the launch boundary passed for a new pane instead of the activation time", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspaces-"));
+    homes.push(homePath);
+    let now = new Date("2026-11-11T10:00:00.000Z");
+    const store = new TerminalWorkspaceStore({ homePath, now: () => now });
+    const workspace = await store.ensureWorkspace();
+    const tab = await store.createTab(workspace.id, { name: "pane", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    const launchedAt = store.currentTime();
+    now = new Date("2026-11-11T10:00:03.000Z");
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_7", launchedAt });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:00:00.000Z");
+    // Re-activating the same pane keeps the recorded boundary.
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_7", launchedAt: new Date("2026-11-11T10:00:09.000Z") });
+    expect((await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneAssignedAt).toBe("2026-11-11T10:00:00.000Z");
+  });
+
   it("does not stamp a pane time on a tab from older state when its pane is refreshed", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-workspaces-"));
     homes.push(homePath);

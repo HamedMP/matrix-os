@@ -268,7 +268,7 @@ export class TerminalRuntime {
       }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
       let stagedTab: TerminalTab | undefined = existing;
-      let runtimeIds: { tabId: number; paneId: string } | undefined;
+      let runtimeIds: { tabId: number; paneId: string; launchedAt?: Date } | undefined;
       let createdRuntimeTab = false;
       let sessionName: string | undefined;
       let startupCommand: string[] = [];
@@ -295,11 +295,16 @@ export class TerminalRuntime {
           ? await this.zellij.findTabByInternalName?.(stagedWorkspace.zellijSessionName, internalTab.zellijTabName)
           : undefined;
         if (!runtimeIds) {
-          runtimeIds = await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
-            internalName: internalTab.zellijTabName,
-            cwd: internalTab.cwd,
-            ...(startupCommand?.length ? { command: startupCommand } : {}),
-          });
+          // The command starts inside createTab: mark the pane's start before it.
+          const launchedAt = this.store.currentTime();
+          runtimeIds = {
+            ...await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
+              internalName: internalTab.zellijTabName,
+              cwd: internalTab.cwd,
+              ...(startupCommand?.length ? { command: startupCommand } : {}),
+            }),
+            launchedAt,
+          };
           createdRuntimeTab = true;
         }
         const tab = await this.store.activateTab({ workspaceId, tabId: stagedTab.id }, runtimeIds);
@@ -401,7 +406,7 @@ export class TerminalRuntime {
           await this.store.markTabExited({ workspaceId, tabId: tab.id });
           continue;
         }
-        let ids = recoveredTabs
+        let ids: { tabId: number; paneId: string; launchedAt?: Date } | undefined = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
         if (tab.status === "starting" && tab.startupCommand === undefined) {
@@ -414,21 +419,29 @@ export class TerminalRuntime {
           continue;
         }
         if (!ids && tab.nativeHost) {
-          ids = await this.zellij.createTab(workspace.zellijSessionName, {
-            internalName: tab.zellijTabName, cwd: tab.cwd,
-            command: await this.nativeHosts!.attachCommand(tab.nativeHost),
-          });
+          const command = await this.nativeHosts!.attachCommand(tab.nativeHost);
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName, cwd: tab.cwd, command,
+            }),
+            launchedAt,
+          };
         }
         if (!ids) {
           if (tab.status !== "starting") {
             await this.store.markTabExited({ workspaceId, tabId: tab.id });
             continue;
           }
-          ids = await this.zellij.createTab(workspace.zellijSessionName, {
-            internalName: tab.zellijTabName,
-            cwd: tab.cwd,
-            ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
-          });
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName,
+              cwd: tab.cwd,
+              ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
+            }),
+            launchedAt,
+          };
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }

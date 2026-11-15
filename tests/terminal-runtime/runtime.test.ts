@@ -11,6 +11,7 @@ import {
   type ZellijRuntimeAdapter,
 } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
+import { createTerminalAgentStatusIndex, writeTerminalPaneStatus } from "../../packages/terminal-runtime/src/agent-status.js";
 
 const homes: string[] = [];
 
@@ -203,6 +204,33 @@ class FakeZellij implements ZellijRuntimeAdapter {
 }
 
 describe("project-scoped terminal runtime", () => {
+  // Fault detected (#3297 review): a hook that reports `blocked` while the adapter is
+  // still naming the new pane lost that status, so sends bypassed the approval prompt.
+  it("keeps a status the new tab's program reported before its pane was activated", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    let now = new Date("2026-11-11T10:00:00.000Z");
+    const zellij = new FakeZellij();
+    const store = new TerminalWorkspaceStore({ homePath, now: () => now });
+    const createRuntimeTab = zellij.createTab.bind(zellij);
+    zellij.createTab = async (sessionName, input) => {
+      const ids = await createRuntimeTab(sessionName, input);
+      // The command is running: its hook reports before createTab returns.
+      await writeTerminalPaneStatus({
+        homePath, sessionName, paneId: ids.paneId.slice("terminal_".length),
+        status: "blocked", source: "hook", now: () => now,
+      });
+      now = new Date("2026-11-11T10:00:02.000Z");
+      return ids;
+    };
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace();
+    const tab = await runtime.createTab(workspace.id, { name: "agent", cwd: "", command: ["claude"] });
+    const index = createTerminalAgentStatusIndex({ homePath, store });
+    await expect(index.list()).resolves.toMatchObject([{ ref: { workspaceId: workspace.id, tabId: tab.id }, status: "blocked" }]);
+    await runtime.shutdown();
+  });
+
   it("keeps a unique persisted incarnation when a tab ID is reused in the same millisecond", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
