@@ -40,7 +40,7 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
   {
     id: "websockets",
     label: "Main, sync, forward, onboarding, and vocal WebSockets",
-    paths: ["/ws", "/ws/forward", "/ws/onboarding", "/ws/vocal"],
+    paths: ["/ws", "/ws/forward", "/ws/onboarding", "/ws/vocal", "/ws/voice/live", "/api/voice/live/status"],
     plannedModule: "server/websockets.ts",
   },
   {

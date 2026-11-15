@@ -271,6 +271,7 @@ import { createManagedFeatureRestartCoordinator } from "./managed-feature-restar
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
+import { registerVoiceLiveRoutes } from "./server/voice-live-routes.js";
 import {
   createShellRoutes,
   ShellPreferencesStore,
@@ -1349,6 +1350,12 @@ export async function createGateway(config: GatewayConfig) {
     app, upgradeWebSocket, homePath, geminiLiveConnection, readinessService,
     captureGatewayProductEvent, nativeProviderProfileGuard,
   });
+  const voiceLiveRoutes = registerVoiceLiveRoutes({
+    app, upgradeWebSocket, connection: geminiLiveConnection, chatRepository,
+    getOrchestrator: () => canonicalChatOrchestrator,
+    getCatalog: principal => canonicalChatProviderCatalog.getCatalog(principal),
+    getPrincipal: requireRequestPrincipal,
+  });
 
   registerGatewayProjectFileRoutes(app, {
     homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
@@ -1898,6 +1905,7 @@ export async function createGateway(config: GatewayConfig) {
       await backgroundChatProjection.close();
       await slackRuntime?.close();
       slackRuntime = undefined;
+      await voiceLiveRoutes.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close())]);
