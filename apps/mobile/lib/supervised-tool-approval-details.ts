@@ -38,9 +38,12 @@ function labelFromKey(key: string): string {
 }
 
 function fieldFor(key: string, value: unknown): ApprovalDetailField | null {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === undefined) return null;
   const named = NAMED[key];
   const label = named?.label ?? labelFromKey(key);
+  // Shown, not dropped: an empty replacement deletes the text it replaces.
+  if (value === "") return { key, label, value: "Empty", code: false };
+  if (value === null) return { key, label, value: "None", code: false };
   if (typeof value === "string") return { key, label, value, code: named?.code ?? true };
   if (typeof value === "boolean") return { key, label, value: value ? "Yes" : "No", code: false };
   if (typeof value === "number") return { key, label, value: String(value), code: false };

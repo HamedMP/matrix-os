@@ -20,9 +20,18 @@ describe("approvalDetailFields", () => {
     ]);
   });
 
-  it("lays out nested values as indented code and leaves empty ones out", () => {
-    expect(approvalDetailFields(JSON.stringify({ edits: [{ old_string: "a" }], note: null }))).toEqual([
+  it("lays out nested values as indented code", () => {
+    expect(approvalDetailFields(JSON.stringify({ edits: [{ old_string: "a" }] }))).toEqual([
       { key: "edits", label: "Edits", value: "[\n  {\n    \"old_string\": \"a\"\n  }\n]", code: true },
+    ]);
+  });
+
+  it("keeps empty inputs in view, since an empty replacement deletes text", () => {
+    expect(approvalDetailFields(JSON.stringify({ file_path: "~/notes/todo.md", old_string: "draft", new_string: "", note: null }))).toEqual([
+      { key: "file_path", label: "File", value: "~/notes/todo.md", code: true },
+      { key: "old_string", label: "Text to replace", value: "draft", code: true },
+      { key: "new_string", label: "New text", value: "Empty", code: false },
+      { key: "note", label: "Note", value: "None", code: false },
     ]);
   });
 
