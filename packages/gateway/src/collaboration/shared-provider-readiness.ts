@@ -20,7 +20,7 @@ export async function sharedNativeSelectionReady(
   driverKind: CanonicalProviderDriverKind,
 ): Promise<boolean> {
   if (!providerCatalog) return false;
-  const catalog = await providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+  const catalog = await providerCatalog.getCatalog({ userId: ownerId, source: "jwt" }, selection);
   const validated = validateChatProviderSelection({ catalog, selection, requirements: SHARED_RUN_SELECTION_REQUIREMENTS });
   return validated.ok && (validated.instance.driverKind === driverKind
     || driverKind === "claude_code" && validated.instance.driverKind === "kernel");
