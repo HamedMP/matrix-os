@@ -52,18 +52,40 @@ describe("org link contract", () => {
 });
 
 describe("main-process router", () => {
-  it("delivers to a ready window, holds a cold-start link once, and ignores other deep links", () => {
-    let ready = false;
-    const deliver = vi.fn(() => ready);
-    const router = createSharedAppDeepLinks({ schemes: SCHEMES, deliver });
+  it("holds a link until the renderer takes it, then sends later links, and ignores other deep links", () => {
+    const send = vi.fn(() => true);
+    const router = createSharedAppDeepLinks({ schemes: SCHEMES, send });
     expect(router.handle("matrixos://auth?status=approved")).toBe(false);
     expect(router.handle(`matrixos://shared-app/${SCOPE}`)).toBe(true);
+    expect(send).not.toHaveBeenCalled();
     expect(router.take()).toEqual({ scopeId: SCOPE });
     expect(router.take()).toBeNull();
-    ready = true;
     router.handle(`matrixos://shared-app/${SCOPE}?expectedShareRevision=2`);
-    expect(deliver).toHaveBeenLastCalledWith({ scopeId: SCOPE, expectedShareRevision: "2" });
+    expect(send).toHaveBeenLastCalledWith({ scopeId: SCOPE, expectedShareRevision: "2" });
     expect(router.take()).toBeNull();
+  });
+
+  it("sends a link that arrives while the page still loads once the renderer listens", () => {
+    // Fault: gating on webContents.isLoading() stored the link after the renderer's only take, so it never opened.
+    const send = vi.fn(() => true);
+    const router = createSharedAppDeepLinks({ schemes: SCHEMES, send });
+    expect(router.take()).toBeNull();
+    router.handle(`matrixos://shared-app/${SCOPE}`);
+    expect(send).toHaveBeenCalledWith({ scopeId: SCOPE });
+  });
+
+  it("holds links again after the renderer reloads, and when no main window exists", () => {
+    let windowAlive = true;
+    const send = vi.fn(() => windowAlive);
+    const router = createSharedAppDeepLinks({ schemes: SCHEMES, send });
+    router.take();
+    router.rendererReset();
+    router.handle(`matrixos://shared-app/${SCOPE}`);
+    expect(send).not.toHaveBeenCalled();
+    expect(router.take()).toEqual({ scopeId: SCOPE });
+    windowAlive = false;
+    router.handle(`matrixos://shared-app/${SCOPE}`);
+    expect(router.take()).toEqual({ scopeId: SCOPE });
   });
 
   it("lets only the main window take the pending link", async () => {

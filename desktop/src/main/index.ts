@@ -184,9 +184,9 @@ function focusMainWindow(): void {
 // Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
 const sharedAppDeepLinks = createSharedAppDeepLinks({
   schemes: channelIdentity.deepLinkSchemes,
-  deliver: (link) => {
+  send: (link) => {
     const win = mainWindow;
-    if (!win || win.isDestroyed() || win.webContents.isLoading()) return false;
+    if (!win || win.isDestroyed()) return false;
     sendEvent("deeplink:shared-app", link);
     return true;
   },
@@ -836,6 +836,9 @@ if (!gotLock) {
           height: requestedBounds.height,
         });
         mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
+        // A reloaded or crashed renderer must take held org links again before they are sent.
+        mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("render-process-gone", () => sharedAppDeepLinks.rendererReset());
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
@@ -844,6 +847,7 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
+          sharedAppDeepLinks.rendererReset();
         });
       };
 

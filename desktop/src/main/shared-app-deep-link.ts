@@ -5,30 +5,41 @@ import type { SharedAppDeepLink } from "../shared/shared-app-deep-link-ipc";
 /**
  * Routes `matrixos://shared-app/<scopeId>?…` (spec 2693 phase 4) to the main
  * window. The renderer opens the app only if the member's shared-app directory
- * lists that scope; the platform re-checks membership on launch. A link that
- * arrives before the renderer listens is held (one at a time) for it to take.
+ * lists that scope; the platform re-checks membership on launch.
+ *
+ * Delivery follows the renderer, not the page's load state: the renderer
+ * subscribes to the event and then takes any held link, so after its first
+ * take every link is sent at once. Until then (and again after a reload or
+ * crash) a link is held, one at a time, for the next take.
  */
 export function createSharedAppDeepLinks(options: {
   schemes: readonly string[];
-  /** Returns true when the main renderer received the event. */
-  deliver: (link: SharedAppDeepLink) => boolean;
+  /** Sends the event to the main renderer; false when there is no live main window. */
+  send: (link: SharedAppDeepLink) => boolean;
 }) {
   let pending: SharedAppDeepLink | null = null;
+  let listening = false;
   return {
-    /** True when `url` was a shared-app link (valid or held); false for other deep links. */
+    /** True when `url` was a shared-app link (sent or held); false for other deep links. */
     handle(url: string): boolean {
       const parsed = parseSharedAppDesktopUrl(url, options.schemes);
       if (!parsed) return false;
       const link: SharedAppDeepLink = { scopeId: parsed.scopeId,
         ...(parsed.expectedBuildId ? { expectedBuildId: parsed.expectedBuildId } : {}),
         ...(parsed.expectedShareRevision ? { expectedShareRevision: parsed.expectedShareRevision } : {}) };
-      pending = options.deliver(link) ? null : link;
+      pending = listening && options.send(link) ? null : link;
       return true;
     },
+    /** The renderer is subscribed once it takes: later links are sent directly. */
     take(): SharedAppDeepLink | null {
+      listening = true;
       const link = pending;
       pending = null;
       return link;
+    },
+    /** The main renderer reloaded, crashed or closed: hold links until it takes again. */
+    rendererReset(): void {
+      listening = false;
     },
   };
 }

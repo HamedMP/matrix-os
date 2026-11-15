@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CollaborationIdSchema, CollaborationRevisionSchema } from "./collaboration.js";
+import { CollaborationIdSchema, CollaborationRevisionSchema } from "#collaboration";
 
 /**
  * Org link for an organization-shared app (spec 2693 phase 4).
