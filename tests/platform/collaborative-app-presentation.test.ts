@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import type { KyselyPlugin, PluginTransformQueryArgs, PluginTransformResultArgs, QueryResult, RootOperationNode, UnknownRow } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -38,6 +39,18 @@ function png(fill: number, size = 64): Uint8Array {
   return bytes;
 }
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+/** Counts image bytes Postgres actually returns, whichever query the routes choose to issue. */
+class BlobReadCounter implements KyselyPlugin {
+  bytes = 0;
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode { return args.node; }
+  async transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>> {
+    for (const row of args.result.rows) {
+      for (const value of Object.values(row)) if (value instanceof Uint8Array) this.bytes += value.byteLength;
+    }
+    return args.result;
+  }
+}
 const runtimeHeaders = (runtimeId = "runtime_owner") => ({
   authorization: `Bearer ${runtimeToken}`,
   "x-matrix-runtime-id": runtimeId,
@@ -50,6 +63,8 @@ describe("shared app presentation: owner publication to recipient launcher", () 
   let routes: Hono;
   const currentMemberships = new Set<string>();
   let metadataRevision = 1;
+  let clock = now.getTime();
+  const blobReads = new BlobReadCounter();
 
   async function applyApp(next: Partial<typeof app> = {}) {
     metadataRevision += 1;
@@ -103,7 +118,9 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     metadataRevision = 0;
     fixture = await createPlatformCollaborationTestDatabase();
     await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
-    repository = new PlatformCollaborationRepository(fixture.collaborationDb, { now: () => now });
+    clock = now.getTime();
+    blobReads.bytes = 0;
+    repository = new PlatformCollaborationRepository(fixture.collaborationDb.withPlugin(blobReads), { now: () => now });
     sessions = new CollaborativeAppLaunchSessions({
       db: fixture.collaborationDb,
       open: async () => ({ request: async () => new Response("<main></main>"), close: async () => undefined }),
@@ -124,7 +141,7 @@ describe("shared app presentation: owner publication to recipient launcher", () 
       resolveInvitationIdentifier: async () => null,
       listOrganizationIds: async () => [organizationId],
       isCurrentOrganizationMember: async ({ actorId, organizationId: requested }) => currentMemberships.has(`${actorId}:${requested}`),
-      now: () => now,
+      now: () => new Date(clock),
     }));
     currentMemberships.add(`${member}:${organizationId}`);
     await applyApp();
@@ -333,5 +350,48 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     }
     expect(warn).toHaveBeenCalled();
     fixture = await createPlatformCollaborationTestDatabase();
+  });
+
+  it("revalidates artwork without reading its bytes and reads each digest from the database at most once", async () => {
+    const icon = png(15, 256 * 1024);
+    await publishArtwork(icon);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    const etag = `"${sha256(icon)}"`;
+    blobReads.bytes = 0;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect((await routes.request(iconUrl, { headers: { "x-test-actor": member, "if-none-match": etag } })).status).toBe(304);
+    }
+    expect(blobReads.bytes).toBe(0);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const served = await routes.request(iconUrl, { headers: { "x-test-actor": member } });
+      expect(new Uint8Array(await served.arrayBuffer())).toEqual(icon);
+    }
+    expect(blobReads.bytes).toBe(icon.byteLength);
+
+    // Cached bytes never bypass the per-request membership and share checks.
+    currentMemberships.delete(`${member}:${organizationId}`);
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member } })).status).toBe(404);
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member, "if-none-match": etag } })).status).toBe(404);
+  });
+
+  it("bounds the artwork bytes one member can download per minute, not only the request count", async () => {
+    const icon = png(16, 4 * 1024 * 1024);
+    await publishArtwork(icon);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    let served = 0;
+    let status = 200;
+    for (let attempt = 0; attempt < 100 && status === 200; attempt += 1) {
+      const response = await routes.request(iconUrl, { headers: { "x-test-actor": member } });
+      status = response.status;
+      if (status === 200) served += (await response.arrayBuffer()).byteLength;
+    }
+    expect(status).toBe(429);
+    expect(served).toBeLessThanOrEqual(64 * 1024 * 1024);
+    // Revalidation stays cheap and available while the byte budget is spent.
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member, "if-none-match": `"${sha256(icon)}"` } })).status).toBe(304);
+    clock += 61_000;
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member } })).status).toBe(200);
   });
 });

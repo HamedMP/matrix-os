@@ -18,6 +18,13 @@ import type {
 } from "./app-presentation-repository.js";
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+/** Full artwork downloads one member may receive per minute; revalidations (304) are free. */
+export const ARTWORK_READ_BYTES_PER_MINUTE = 64 * 1024 * 1024;
+const ARTWORK_READ_WINDOW_MS = 60_000;
+const ARTWORK_BUDGET_MAX_ACTORS = 10_000;
+/** Digest-keyed bytes are immutable, so a bounded cache spares repeated database blob reads. */
+const ARTWORK_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const ARTWORK_CACHE_MAX_ENTRIES = 256;
 // Artwork is replaced only by a new digest URL, so a strong validator needs no extra state.
 const ARTWORK_HEADERS = {
   "Cache-Control": "private, no-cache",
@@ -48,7 +55,11 @@ export function registerSharedAppPresentationRoutes(app: Hono, options: {
   /** Fresh current-membership admission to an active share, or null. */
   admit(actorId: string, scopeId: string): Promise<unknown>;
   allowArtworkRead(actorId: string): boolean;
+  now?: () => number;
 }): void {
+  const now = options.now ?? (() => Date.now());
+  const readBudget = new ArtworkByteBudget(now);
+  const cache = new ArtworkBytesCache();
   app.put(
     "/internal/collaboration/shared-apps/:scopeId/presentation",
     bodyLimit({ maxSize: COLLABORATION_HTTP_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) }),
@@ -111,24 +122,93 @@ export function registerSharedAppPresentationRoutes(app: Hono, options: {
     const sha256 = Sha256Schema.safeParse(c.req.param("sha256"));
     if (!scopeId.success || !sha256.success) return safeJson(c, "Invalid request", 422);
     try {
-      // Membership is rechecked on every view, including revalidations that end in 304.
+      // Membership, the active share, and the current digest are checked on every view, before
+      // any image bytes are read; a revalidation never loads the image at all.
       if (!await options.admit(actorId, scopeId.data)) return safeJson(c, "Collaboration resource not found", 404);
-      const artwork = await options.presentations.getArtwork(scopeId.data, sha256.data);
+      const artwork = await options.presentations.describeArtwork(scopeId.data, sha256.data);
       if (!artwork) return safeJson(c, "Collaboration resource not found", 404);
       const etag = `"${sha256.data}"`;
-      for (const [name, value] of Object.entries(ARTWORK_HEADERS)) c.header(name, value);
-      c.header("ETag", etag);
       if (c.req.header("if-none-match")?.split(",").some((candidate) => candidate.trim() === etag)) {
+        for (const [name, value] of Object.entries(ARTWORK_HEADERS)) c.header(name, value);
+        c.header("ETag", etag);
         return c.body(null, 304);
       }
+      if (!readBudget.reserve(actorId, artwork.byteLength)) return safeJson(c, "Too many collaboration requests", 429);
+      const key = `${scopeId.data}:${sha256.data}`;
+      let bytes = cache.get(key);
+      if (!bytes) {
+        const stored = await options.presentations.readArtworkBytes(scopeId.data, sha256.data);
+        if (!stored || stored.byteLength !== artwork.byteLength) return safeJson(c, "Collaboration resource not found", 404);
+        cache.set(key, stored);
+        bytes = stored;
+      }
+      for (const [name, value] of Object.entries(ARTWORK_HEADERS)) c.header(name, value);
+      c.header("ETag", etag);
       c.header("Content-Type", artwork.contentType);
-      c.header("Content-Length", String(artwork.bytes.byteLength));
-      return c.body(artwork.bytes as Uint8Array<ArrayBuffer>, 200);
+      c.header("Content-Length", String(bytes.byteLength));
+      return c.body(bytes as Uint8Array<ArrayBuffer>, 200);
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app artwork read failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Collaboration unavailable", 503);
     }
   });
+}
+
+/** Per-member sliding-window budget of artwork bytes served, capped in actors tracked. */
+class ArtworkByteBudget {
+  private readonly reads = new Map<string, Array<{ at: number; bytes: number }>>();
+
+  constructor(private readonly now: () => number) {}
+
+  reserve(actorId: string, bytes: number): boolean {
+    const at = this.now();
+    const cutoff = at - ARTWORK_READ_WINDOW_MS;
+    for (const [actor, entries] of this.reads) {
+      const live = entries.filter((entry) => entry.at > cutoff);
+      if (live.length === 0) this.reads.delete(actor);
+      else if (live.length !== entries.length) this.reads.set(actor, live);
+    }
+    const entries = this.reads.get(actorId) ?? [];
+    const used = entries.reduce((total, entry) => total + entry.bytes, 0);
+    if (used + bytes > ARTWORK_READ_BYTES_PER_MINUTE) return false;
+    if (!this.reads.has(actorId) && this.reads.size >= ARTWORK_BUDGET_MAX_ACTORS) {
+      this.reads.delete(this.reads.keys().next().value!);
+    }
+    this.reads.delete(actorId);
+    this.reads.set(actorId, [...entries, { at, bytes }]);
+    return true;
+  }
+}
+
+/** LRU of immutable digest-keyed artwork, bounded in total bytes and entries. */
+class ArtworkBytesCache {
+  private readonly entries = new Map<string, Uint8Array>();
+  private bytes = 0;
+
+  get(key: string): Uint8Array | undefined {
+    const value = this.entries.get(key);
+    if (!value) return undefined;
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: Uint8Array): void {
+    if (value.byteLength > ARTWORK_CACHE_MAX_BYTES) return;
+    const previous = this.entries.get(key);
+    if (previous) {
+      this.entries.delete(key);
+      this.bytes -= previous.byteLength;
+    }
+    while (this.entries.size > 0
+      && (this.bytes + value.byteLength > ARTWORK_CACHE_MAX_BYTES || this.entries.size >= ARTWORK_CACHE_MAX_ENTRIES)) {
+      const [oldestKey, oldest] = this.entries.entries().next().value!;
+      this.entries.delete(oldestKey);
+      this.bytes -= oldest.byteLength;
+    }
+    this.entries.set(key, value);
+    this.bytes += value.byteLength;
+  }
 }
 
 async function readJson(c: Context): Promise<unknown> {

@@ -65,7 +65,12 @@ serve. Shared launch targets also used `appId` as the `name`.
    `/api/collaboration/shared-apps/:scopeId/artwork/:sha256`. The digest in the
    path is the cache key: a new icon gets a new URL, and an older digest returns
    404. Responses use `Cache-Control: private, no-cache` with a strong ETag, so
-   every view revalidates membership. A 304 avoids the bytes. SVG is served as
+   every view revalidates membership. Membership, the active share, and the
+   current digest are checked from a byte-free descriptor before any image is
+   read, so a 304 never loads the blob. Full downloads are capped at 64 MiB per
+   member per minute (on top of 600 requests per minute). Bytes come from a
+   bounded per-instance LRU (64 MiB, 256 entries) keyed by scope and digest, so
+   repeated reads don't re-read Postgres. SVG is served as
    `image/svg+xml` with `nosniff` and `default-src 'none'; sandbox`, so even
    direct navigation cannot run script or fetch resources. Clients render all
    artwork only through `<img>`.
@@ -84,7 +89,7 @@ serve. Shared launch targets also used `appId` as the `name`.
 | --- | --- | --- | --- |
 | `PUT /internal/collaboration/shared-apps/:scopeId/presentation` | Owner runtime: `x-matrix-runtime-id` + runtime bearer | UUID scope; strict body; directory row is an active `current_membership` app whose owner, runtime, and `app_id` match | 96 KiB body; 200 `{ artworkRequired }`; 404 when not shared; generic errors |
 | `PUT /internal/collaboration/shared-apps/:scopeId/artwork/:sha256` | Owner runtime: same | Hex digest; allowlisted `content-type`; byte SHA-256 = path digest; sniffed type and length = declared presentation; share still active | 4 MiB `bodyLimit`; 204; 409 on mismatch, stale, or scriptable SVG; 413 when too large; 415 for other types |
-| `GET /api/collaboration/shared-apps/:scopeId/artwork/:sha256` | Signed-in actor (platform cookie or bearer) | UUID scope, hex digest; fresh current membership of the share's organization; share active; digest is current and bytes are stored | Per-actor rate limit; `private, no-cache`, ETag/304, `nosniff`, `default-src 'none'; sandbox` CSP; 404 for every unauthorized or stale case |
+| `GET /api/collaboration/shared-apps/:scopeId/artwork/:sha256` | Signed-in actor (platform cookie or bearer) | UUID scope, hex digest; fresh current membership of the share's organization; share active; digest is current and bytes are stored | 600 requests and 64 MiB of artwork bytes per actor per minute; checks run before any blob read; 304 reads no bytes; `private, no-cache`, ETag, `nosniff`, `default-src 'none'; sandbox` CSP; 404 for every unauthorized or stale case |
 | `GET /api/collaboration/shared-apps[/:scopeId]?presentation=1` | Existing signed-in actor | Existing checks, unchanged | Adds the optional `presentation` field only when requested |
 
 No `Cross-Origin-Resource-Policy` restriction is set on artwork, because the
