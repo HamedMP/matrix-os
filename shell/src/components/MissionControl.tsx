@@ -16,6 +16,8 @@ import { Launchpad } from "./launchpad/Launchpad";
 import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import { openSharedLauncherApp, useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
 import { useLauncherShareContext } from "@/hooks/useLauncherShareContext";
+import { useLauncherFilter } from "@/hooks/useLauncherFilter";
+import { LauncherFilterChips } from "@matrix-os/ui/share";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import {
   XIcon,
@@ -176,10 +178,6 @@ export function MissionControl({
           </button>
         </div>
 
-        <p className="px-6 pb-4 text-sm text-white/80">
-          Open an installed app, or choose Create app to start in Chat.
-        </p>
-
         {provision.active && (
           <div className="flex items-center gap-2 mx-6 mb-3 px-3 py-1.5 rounded-lg bg-muted/50 text-xs text-muted-foreground">
             <Loader2Icon className="size-3 animate-spin" />
@@ -251,9 +249,11 @@ function LauncherGrid({
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
   visible: boolean;
   closingRef: React.RefObject<boolean>;
-  shareContext: Pick<ReturnType<typeof useLauncherShareContext>, "organizationFor" | "isNewShared">;
+  shareContext: Pick<ReturnType<typeof useLauncherShareContext>, "organizationFor" | "isNewShared" | "organizations">;
 }) {
-  const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps);
+  const launcherFilter = useLauncherFilter(apps, shareContext.organizations);
+  const shownApps = apps.filter(launcherFilter.matches);
+  const { mainApps, generatedApps, gameApps } = groupLauncherApps(shownApps);
   const [placementError, setPlacementError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -336,6 +336,8 @@ function LauncherGrid({
           {placementError}
         </p>
       ) : null}
+      <LauncherFilterChips chips={launcherFilter.chips} value={launcherFilter.filter} onChange={launcherFilter.setFilter} className="mb-2" />
+      <p className="mb-4 text-sm text-white/80">{launcherFilter.hint(shownApps.length)}</p>
       {mainApps.length > 0 && (
         <>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">

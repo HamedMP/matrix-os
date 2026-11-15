@@ -11,6 +11,8 @@ export const SEEN_SHARED_APPS_PATH = "system/share/seen-shared-apps.json";
 export const SEEN_SHARED_APPS_MAX = 500;
 const SeenSchema = z.strictObject({ version: z.literal(1), seen: z.array(z.string().min(1).max(128)).max(SEEN_SHARED_APPS_MAX) });
 const blobPath = `/api/files/blob?path=${encodeURIComponent(SEEN_SHARED_APPS_PATH)}`;
+// The list is rewritten on every open; the blob route refuses overwrites without force.
+const blobWritePath = `${blobPath}&force=true`;
 
 function notFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -21,7 +23,7 @@ function notFound(error: unknown): boolean {
 /** Best-effort write; a failure only means the dot may show again. Never throws. */
 function save(api: HandoffFileApi, seen: string[]) {
   try {
-    void Promise.resolve(api.put(blobPath, { version: 1, seen })).catch((error: unknown) => {
+    void Promise.resolve(api.put(blobWritePath, { version: 1, seen })).catch((error: unknown) => {
       console.warn("[launcher] seen shared apps not saved", error instanceof Error ? error.name : "UnknownError");
     });
   } catch (error: unknown) {

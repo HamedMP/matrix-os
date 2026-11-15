@@ -72,18 +72,24 @@ describe("new shared apps", () => {
   const missing = () => Promise.reject(Object.assign(new Error("missing"), { category: "notFound" }));
 
   it("baselines existing shared apps as seen, marks later ones new until opened", async () => {
-    const api = { get: vi.fn(missing), put: vi.fn(async () => ({ ok: true })) };
+    let stored: unknown = null;
+    // Mirrors the gateway blob route: replacing an existing file needs force=true.
+    const api = { get: vi.fn(missing), put: vi.fn(async (path: string, body: unknown) => {
+      if (stored !== null && !path.includes("force=true")) throw Object.assign(new Error("file_exists"), { status: 409 });
+      stored = body; return { ok: true };
+    }) };
     const { result, rerender } = renderHook(({ ids, ready }) => useSeenSharedApps({ api, scopeIds: ids, ready }), { initialProps: { ids: ["scope-a"], ready: false } });
     expect(result.current.isNew("scope-a")).toBe(false);
     expect(api.get).not.toHaveBeenCalled();
     rerender({ ids: ["scope-a"], ready: true });
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/files/blob?path=system%2Fshare%2Fseen-shared-apps.json", { version: 1, seen: ["scope-a"] }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/files/blob?path=system%2Fshare%2Fseen-shared-apps.json&force=true", { version: 1, seen: ["scope-a"] }));
     rerender({ ids: ["scope-a", "scope-b"], ready: true });
     expect(result.current.isNew("scope-a")).toBe(false);
     expect(result.current.isNew("scope-b")).toBe(true);
     act(() => result.current.markSeen("scope-b"));
     expect(result.current.isNew("scope-b")).toBe(false);
-    expect(api.put).toHaveBeenLastCalledWith(expect.any(String), { version: 1, seen: ["scope-a", "scope-b"] });
+    expect(api.put).toHaveBeenLastCalledWith(expect.stringContaining("force=true"), { version: 1, seen: ["scope-a", "scope-b"] });
+    await waitFor(() => expect(stored).toEqual({ version: 1, seen: ["scope-a", "scope-b"] }));
   });
 
   it("reads the saved list and never throws when saving fails", async () => {

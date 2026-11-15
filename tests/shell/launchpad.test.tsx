@@ -259,6 +259,16 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html", expect.any(Object));
   });
 
+  it("offers the same app filters in the classic Web Canvas grid", async () => {
+    setDesign("flat");
+    await renderLauncher();
+    expect(screen.getByRole("group", { name: "Filter apps" })).toBeTruthy();
+    expect(screen.getByText("Open an installed app, or choose Create app to start in Chat.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mine" }));
+    expect(screen.getByRole("button", { name: "Mine" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Apps you made.")).toBeTruthy();
+  });
+
   it("renders Launchpad instead of the classic grid under macos-glass", async () => {
     setDesign("macos-glass");
     const { container } = await renderLauncher();
