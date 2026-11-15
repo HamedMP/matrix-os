@@ -77,23 +77,28 @@ export function createTerminalWaiter(options: {
     return tab;
   }
 
-  async function screenText(ref: TerminalRef): Promise<string> {
+  async function screenRead(ref: TerminalRef): Promise<{ text: string; source: "live" | "snapshot" }> {
     // The live screen first: a background tab's snapshot can stop updating.
     const live = await captureTerminalScreen(options.runtime, ref, WAIT_OUTPUT_HISTORY_LINES);
-    if (live) return [...live.scrollback, ...live.viewport].map(visibleTerminalText).join("\n");
+    if (live) return { text: [...live.scrollback, ...live.viewport].map(visibleTerminalText).join("\n"), source: "live" };
     const snapshot = z.object({
       viewport: z.array(z.string()).max(200),
       scrollback: z.array(z.string()).max(100_000),
     }).safeParse(await options.runtime.getSnapshot(ref));
     // Match what the terminal shows: snapshot rows keep their colour codes.
-    return snapshot.success ? [...snapshot.data.scrollback, ...snapshot.data.viewport].map(visibleTerminalText).join("\n") : "";
+    const text = snapshot.success ? [...snapshot.data.scrollback, ...snapshot.data.viewport].map(visibleTerminalText).join("\n") : "";
+    return { text, source: "snapshot" };
   }
 
   async function run(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalWaitResult> {
     const deadline = now() + input.timeoutMs;
     // A follow-up request continues the caller's baseline, so text printed between
     // two check-ins still counts as new.
-    let baseline = input.output ? input.seen ?? countOccurrences(await screenText(ref), input.output) : 0;
+    const first = input.output && input.seen === undefined ? await screenRead(ref) : undefined;
+    let baseline = input.output ? input.seen ?? countOccurrences(first!.text, input.output) : 0;
+    // Counts compare only between reads of one source: a frozen snapshot can lack text
+    // the live screen shows, so a change of source starts a new baseline.
+    let source = first?.source;
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
     for (;;) {
@@ -102,8 +107,11 @@ export function createTerminalWaiter(options: {
       const tab = await findTab(ref);
       if (tab.status === "exited" || tab.status === "failed") return { reason: "exited", exitCode: tab.exitCode ?? null };
       if (input.output) {
-        const count = countOccurrences(await screenText(ref), input.output);
-        if (count > baseline) return { reason: "output" };
+        const read = await screenRead(ref);
+        const count = countOccurrences(read.text, input.output);
+        const sameSource = source === undefined || source === read.source;
+        source = read.source;
+        if (sameSource && count > baseline) return { reason: "output" };
         // A read holds only recent history: matches that scrolled out (or a cleared
         // screen) lower the count, so the baseline drops with it and the next match
         // still counts. Missed only if an old match leaves and a new one arrives

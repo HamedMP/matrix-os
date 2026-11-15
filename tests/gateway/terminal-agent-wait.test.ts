@@ -127,6 +127,23 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { output: "ready", timeoutMs: 1_000 })).resolves.toEqual({ reason: "timeout", seen: 0 });
   });
 
+  // Fault detected (review of #3297): one failed live capture fell back to an older
+  // snapshot without the match, which lowered the baseline; when capture recovered the
+  // same old text looked new and the wait returned before anything was printed.
+  it("does not count old text as new when a read falls back to the snapshot and back", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["boot"]],
+      captures: [
+        { viewport: ["ready old"], scrollback: [] },
+        null as never,
+        { viewport: ["ready old"], scrollback: [] },
+        { viewport: ["ready old"], scrollback: [] },
+      ],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 2_000 })).resolves.toMatchObject({ reason: "timeout" });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });
