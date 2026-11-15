@@ -51,6 +51,32 @@ async function run(name: "read" | "send" | "keys" | "interrupt" | "get" | "wait"
 // Fault detected: an agent following `hc --skill` habits in a Matrix terminal cannot
 // read a helper's output or steer it from the CLI.
 describe("matrix shell agent verbs", () => {
+  // Fault detected: labels set with `matrix shell label` were invisible to `get`, so an
+  // orchestrator could not see which helper had which role.
+  it("shows a terminal's labels with its state", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    gateway((url) => url.endsWith("/agent")
+      ? json({ agent: { labels: { team: "infra", role: "review" } } })
+      : json({ tab: { id: TAB_ID, name: "review" }, state: "live", agentStatus: "idle" }));
+
+    await run("get", { json: false });
+
+    expect(logs).toEqual(["review live idle role=review team=infra"]);
+  });
+
+  it("still shows a terminal's state when its agent record is unavailable", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    gateway((url) => url.endsWith("/agent")
+      ? json({ error: { code: "not_found" } }, 404)
+      : json({ tab: { id: TAB_ID, name: "review" }, state: "live" }));
+
+    await run("get", { json: false });
+
+    expect(logs).toEqual(["review live"]);
+  });
+
   it("reads a named tab's screen and history by line count", async () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));

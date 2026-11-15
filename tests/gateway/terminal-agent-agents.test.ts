@@ -290,10 +290,12 @@ describe("terminal agents: limits, vanished children and admission", () => {
     const state = new Map<string, string>();
     await h.agents.supervise(state);
 
-    h.tabs.set(child.ref.tabId, { ...h.tabs.get(child.ref.tabId), status: "exited", exitCode: 0 });
+    h.tabs.set(child.ref.tabId, { ...h.tabs.get(child.ref.tabId), status: "exited", exitCode: 3 });
     await h.agents.supervise(state);
+    // Fault detected (pr-3300 preview): the note said only "exited", so the parent had
+    // to look the helper up again to learn whether it failed.
     expect(h.sends.filter((send) => send.tabId === parentId).map((send) => send.text)).toEqual([
-      `<matrix from="${child.ref.tabId} review">exited</matrix>`,
+      `<matrix from="${child.ref.tabId} review">exited with code 3</matrix>`,
     ]);
   });
 
@@ -506,8 +508,81 @@ describe("terminal agents: reports, notes and shutdown", () => {
 // helper to be ready made `run` fail after the helper had started, inviting a retry
 // that would start a second copy.
 describe("terminal agents: readiness failures", () => {
-  it("returns the started helper with an unsent first message when a readiness check fails", async () => {
+  // Fault detected: one failed runtime read right after the helper started gave up on
+  // readiness at once, so a template's task was never sent to a helper that became ready.
+  it("keeps waiting through a transient readiness failure and sends the task", async () => {
     const h = await harness();
+    let now = 0;
+    let reads = 0;
+    const flaky = createTerminalAgents({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+        }] as never,
+        ensureWorkspace: async () => ({ id: workspaceId }) as never,
+        createTab: async () => {
+          const tab = { id: `tt_${"8".repeat(32)}`, workspaceId, name: "fix", cwd: "", status: "running", revision: 1, order: 8,
+            accessScope: "owner", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z" };
+          h.tabs.set(tab.id, tab);
+          return tab as never;
+        },
+        terminateTab: async () => undefined,
+        getSnapshot: async () => {
+          reads += 1;
+          if (reads === 2) throw new Error("runtime busy");
+          return { viewport: ["bash-5.2$"] };
+        },
+      },
+      verbs: h.verbs as never,
+      status: { list: async () => new Map(), get: async () => undefined },
+      registry: h.registry,
+      templates: createTerminalTemplates({ homePath: h.home }),
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
+    });
+    const result = await flaky.run({ name: "fix", cwd: "", argv: ["bash"], task: "echo go", noParent: true });
+    expect(result.firstMessage).toEqual({ sent: true });
+    expect(h.sends).toEqual([{ tabId: `tt_${"8".repeat(32)}`, text: "echo go" }]);
+  });
+
+  // Fault detected: a helper's screen came from the cached snapshot, which zellij stops
+  // updating once another tab is created, so readiness never settled.
+  it("judges readiness from the live screen when the runtime can capture it", async () => {
+    const h = await harness();
+    let now = 0;
+    const live = createTerminalAgents({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+        }] as never,
+        ensureWorkspace: async () => ({ id: workspaceId }) as never,
+        createTab: async () => {
+          const tab = { id: `tt_${"7".repeat(32)}`, workspaceId, name: "fix", cwd: "", status: "running", revision: 1, order: 7,
+            accessScope: "owner", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z" };
+          h.tabs.set(tab.id, tab);
+          return tab as never;
+        },
+        terminateTab: async () => undefined,
+        // Frozen before the program drew anything.
+        getSnapshot: async () => ({ viewport: [] }),
+        captureScreen: async () => ({ viewport: ["bash-5.2$"], scrollback: [] }),
+      },
+      verbs: h.verbs as never,
+      status: { list: async () => new Map(), get: async () => undefined },
+      registry: h.registry,
+      templates: createTerminalTemplates({ homePath: h.home }),
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
+    });
+    const result = await live.run({ name: "fix", cwd: "", argv: ["bash"], task: "echo go", noParent: true });
+    expect(result.firstMessage).toEqual({ sent: true });
+  });
+
+  it("returns the started helper with an unsent first message when readiness checks keep failing", async () => {
+    const h = await harness();
+    let now = 0;
     const failing = createTerminalAgents({
       runtime: {
         listWorkspaces: async () => [{
@@ -528,9 +603,10 @@ describe("terminal agents: readiness failures", () => {
       status: { list: async () => new Map(), get: async () => undefined },
       registry: h.registry,
       templates: createTerminalTemplates({ homePath: h.home }),
-      sleep: async () => undefined,
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
     });
-    const result = await failing.run({ name: "fix", cwd: "", argv: ["pi"], task: "fix it", noParent: true });
+    const result = await failing.run({ name: "fix", cwd: "", argv: ["pi"], task: "fix it", noParent: true, readyTimeoutMs: 5_000 });
     expect(result.ref.tabId).toBe(`tt_${"9".repeat(32)}`);
     expect(result.firstMessage).toEqual({ sent: false, reason: "not_ready" });
     expect(h.sends).toEqual([]);

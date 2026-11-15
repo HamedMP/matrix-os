@@ -54,15 +54,31 @@ function verb<T extends Record<string, unknown>>(
   });
 }
 
+/** Labels are extra: a gateway without agent records, or a failed lookup, shows none. */
+async function terminalLabels(client: TerminalAgentClient, ref: Parameters<TerminalAgentClient["get"]>[0]): Promise<Record<string, string>> {
+  try {
+    return (await client.describe(ref)).labels;
+  } catch (error: unknown) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "not_found" || code === "request_failed") return {};
+    throw error;
+  }
+}
+
 export const shellGetCommand = verb(
   { name: "get", description: "Show one terminal's state, agent status and exit code" },
   {},
   async ({ client, ref }) => {
-    const facts = await client.get(ref);
+    const [facts, labels] = await Promise.all([client.get(ref), terminalLabels(client, ref)]);
     const tab = (facts.tab ?? {}) as Record<string, unknown>;
     const status = typeof facts.agentStatus === "string" ? ` ${facts.agentStatus}` : "";
     const exit = typeof tab.exitCode === "number" ? ` exit ${tab.exitCode}` : "";
-    return { data: facts, text: `${String(tab.name ?? ref.tabId)} ${String(facts.state ?? "")}${status}${exit}`.trim() };
+    const labelText = Object.entries(labels).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => ` ${key}=${value}`).join("");
+    return {
+      data: { ...facts, labels },
+      text: `${String(tab.name ?? ref.tabId)} ${String(facts.state ?? "")}${status}${exit}${labelText}`.trim(),
+    };
   },
 );
 

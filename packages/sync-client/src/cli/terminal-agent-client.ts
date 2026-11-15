@@ -25,6 +25,8 @@ export interface TerminalAgentClient {
   templates(): Promise<Array<{ name: string; description: string }>>;
   run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   label(ref: TerminalRef, input: { set?: Record<string, string>; remove?: string[] }): Promise<Record<string, unknown>>;
+  /** The agent facts recorded for a terminal: its labels (empty when it has none). */
+  describe(ref: TerminalRef): Promise<{ labels: Record<string, string> }>;
   report(input: { caller: TerminalCaller; text: string }): Promise<Record<string, unknown>>;
   waitChildren(input: { caller: TerminalCaller; mode: "any" | "all"; timeoutMs: number; cursor?: string }): Promise<TerminalWaitOutput>;
 }
@@ -170,6 +172,14 @@ export function createTerminalAgentClient(options: {
     // Template launches wait up to 60 s for the agent to be ready for its first message.
     run: (input) => request("/api/terminal/agents/run", { method: "POST", body: input }, SEND_TIMEOUT_MS),
     label: (ref, input) => request(`${tabPath(ref)}/labels`, { method: "PATCH", body: input }),
+    async describe(ref) {
+      const payload = await request(`${tabPath(ref)}/agent`);
+      const agent = payload.agent as { labels?: unknown } | null | undefined;
+      const labels = agent && typeof agent.labels === "object" && agent.labels !== null ? agent.labels : {};
+      return {
+        labels: Object.fromEntries(Object.entries(labels).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+      };
+    },
     report: (input) => request("/api/terminal/agents/report", { method: "POST", body: input }, SEND_TIMEOUT_MS),
     async waitChildren(input) {
       const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);

@@ -100,7 +100,9 @@ export const shellRunCommand = command(
     const { shell, agents } = await clients(args);
     const { project } = await resolveWorkspace(shell, args.project);
     const template = explicitCommand ? undefined : (await agents.templates()).find((candidate) => candidate.name === words[0]);
-    const caller = args["no-parent"] === true ? undefined : terminalCallerFromEnv();
+    // citty reads `--no-parent` as the negation `parent: false`, not as `no-parent`.
+    const noParent = args["no-parent"] === true || (args as Record<string, unknown>).parent === false;
+    const caller = noParent ? undefined : terminalCallerFromEnv();
     const task = template ? words.slice(1).join(" ") : undefined;
     const result = await agents.run({
       ...(project ? { projectId: project.id } : {}),
@@ -110,7 +112,7 @@ export const shellRunCommand = command(
       ...(template ? { template: template.name } : { argv: words }),
       ...(task ? { task } : {}),
       ...(caller ? { caller } : {}),
-      ...(args["no-parent"] === true ? { noParent: true } : {}),
+      ...(noParent ? { noParent: true } : {}),
       ...(args["outlive-parent"] === true ? { outliveParent: true } : {}),
       ...(listOf(args.label).length ? { labels: parseLabels(listOf(args.label)) } : {}),
     });

@@ -7,7 +7,7 @@ import { MAX_TERMINAL_LABELS, TerminalLabelKeySchema, TerminalLabelValueSchema }
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { reportPredatesSend, terminalRefKey } from "./status-source.js";
 import type { TerminalTemplates } from "./templates.js";
-import { TERMINAL_SEND_TEXT_MAX_CHARS, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
+import { captureTerminalScreen, TERMINAL_SEND_TEXT_MAX_CHARS, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
 import { TerminalWaitCapacityError } from "./wait.js";
 
 const READY_TIMEOUT_MS = 60_000;
@@ -38,6 +38,7 @@ export interface TerminalAgentRuntime {
   createTab(workspaceId: string, input: { name: string; cwd: string; command?: string[]; accessScope?: TerminalTab["accessScope"] }): Promise<TerminalTab>;
   terminateTab(ref: TerminalRef, expectedIncarnation?: string): Promise<void>;
   getSnapshot(ref: TerminalRef): Promise<unknown>;
+  captureScreen?(ref: TerminalRef, lines: number): Promise<unknown>;
   resolvePane?(input: { sessionName: string; paneId: string }): Promise<TerminalRef | null>;
 }
 
@@ -124,6 +125,9 @@ export function createTerminalAgents(options: {
   }
 
   async function screenText(ref: TerminalRef): Promise<string> {
+    // The live screen first: zellij stops updating the snapshot of a tab nobody views.
+    const live = await captureTerminalScreen(options.runtime, ref, 0);
+    if (live) return live.viewport.join("\n");
     const parsed = z.object({ viewport: z.array(z.string()).max(200) }).safeParse(await options.runtime.getSnapshot(ref));
     return parsed.success ? parsed.data.viewport.join("\n") : "";
   }
@@ -131,14 +135,29 @@ export function createTerminalAgents(options: {
   /** Wait until a just-started agent can take input, then send its first message once. */
   async function deliverFirstMessage(ref: TerminalRef, text: string, readyTimeoutMs: number): Promise<TerminalFirstMessage> {
     const started = now();
-    let screen = await screenText(ref);
+    let screen = "";
     let screenSince = now();
+    let failures = 0;
     while (now() - started < readyTimeoutMs) {
-      const tab = await findTab(ref);
+      let tab: TerminalTab | undefined;
+      let status: TerminalAgentStatus | undefined;
+      let current: string;
+      try {
+        tab = await findTab(ref);
+        status = tab ? (await options.status.get(ref))?.status : undefined;
+        current = tab ? await screenText(ref) : "";
+      } catch (error: unknown) {
+        // A busy or restarting runtime is not a verdict on the helper: look again until
+        // the deadline. Logged once per launch so the cause shows up without flooding.
+        if (failures === 0) {
+          console.warn("[gateway] terminal readiness check failed", error instanceof Error ? error.name : "unknown_error");
+        }
+        failures += 1;
+        await sleep(READY_POLL_MS);
+        continue;
+      }
       if (!tab || tab.status === "exited" || tab.status === "failed") return { sent: false, reason: "finished" };
-      const status = (await options.status.get(ref))?.status;
       if (status === "blocked") return { sent: false, reason: "blocked" };
-      const current = await screenText(ref);
       if (current !== screen) {
         screen = current;
         screenSince = now();
@@ -393,17 +412,19 @@ export function createTerminalAgents(options: {
         const all = new Set<string>();
         // Every listed tab's name, finished ones included: a note about an exited helper names it.
         const names = new Map<string, string>();
+        const exitCodes = new Map<string, number>();
         for (const workspace of await options.runtime.listWorkspaces()) {
           for (const tab of workspace.tabs) {
             const key = terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
             all.add(key);
             names.set(key, tab.name);
+            if (typeof tab.exitCode === "number") exitCodes.set(key, tab.exitCode);
             if (tab.status !== "exited" && tab.status !== "failed") live.set(key, tab);
           }
         }
-        return { live, all, names };
+        return { live, all, names, exitCodes };
       };
-      const { live, all, names } = await tabKeys();
+      const { live, all, names, exitCodes } = await tabKeys();
       const records = await options.registry.list();
       const statuses = await options.status.list();
       // Records kept even though their tab is gone: a note to the parent is still owed.
@@ -450,7 +471,9 @@ export function createTerminalAgents(options: {
         if (word === "removed" && previous === "exited") continue;
         if (word !== "blocked" && word !== "error" && word !== "exited" && word !== "removed") continue;
         const name = childTab?.name ?? names.get(key) ?? record.ref.tabId;
-        const text = word === "exited" || word === "removed" ? "exited"
+        const exitCode = exitCodes.get(key);
+        const text = word === "exited" || word === "removed"
+          ? exitCode === undefined ? "exited" : `exited with code ${exitCode}`
           : word === "blocked" ? "is blocked and needs a person; read its screen" : "reported an error; read its screen";
         if (!await note(record, key, name, text) && word === "removed") pending.add(key);
       }

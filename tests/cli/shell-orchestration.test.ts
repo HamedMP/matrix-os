@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runCommand } from "citty";
 import { shellCommand } from "../../packages/sync-client/src/cli/commands/shell.js";
 
 const roots: string[] = [];
@@ -82,6 +83,17 @@ describe("matrix shell orchestration", () => {
     process.env.ZELLIJ_PANE_ID = "4";
     const calls = gateway(() => json({ tab: { id: TAB_ID } }, 201));
     await run("run", { _: ["bun", "test"], name: "tests", "no-parent": true });
+    expect(calls[0]?.body).toEqual({ name: "tests", cwd: "", argv: ["bun", "test"], noParent: true });
+  });
+
+  // Fault detected: citty parses `--no-parent` as `parent: false`, so the flag typed on
+  // the command line was ignored and every helper got the calling terminal as parent.
+  it("honors --no-parent as typed on the command line", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    process.env.ZELLIJ_SESSION_NAME = SESSION;
+    process.env.ZELLIJ_PANE_ID = "4";
+    const calls = gateway(() => json({ tab: { id: TAB_ID } }, 201));
+    await runCommand(shellCommand, { rawArgs: ["run", "--dev", "--token", "tok", "--no-parent", "--name", "tests", "--", "bun", "test"] });
     expect(calls[0]?.body).toEqual({ name: "tests", cwd: "", argv: ["bun", "test"], noParent: true });
   });
 
