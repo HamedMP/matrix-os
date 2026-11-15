@@ -109,32 +109,42 @@ export class CollaborativeAppPresentationRepository {
 
   /**
    * Atomically reserves `bytes` of one member's fleet-wide artwork budget for the current fixed
-   * window; every worker shares the same row, so the bound does not multiply per worker. Expired
-   * windows are swept in bounded batches as new reads are recorded.
+   * window. Every worker shares the same row, so the bound does not multiply per worker. The
+   * reservation is one single-row upsert, so it holds no other locks; cleanup runs afterwards.
    */
   async reserveArtworkReadBytes(input: { actorId: string; bytes: number; limit: number; windowMs: number; now: number }): Promise<boolean> {
     if (input.bytes <= 0 || input.bytes > input.limit) return false;
-    const windowStart = new Date(Math.floor(input.now / input.windowMs) * input.windowMs);
-    return this.db.transaction().execute(async (trx) => {
-      const reserved = await trx.insertInto("collaboration_app_artwork_reads")
-        .values({ actor_id: input.actorId, window_start: windowStart.toISOString(), bytes: input.bytes })
-        .onConflict((conflict) => conflict.columns(["actor_id", "window_start"])
-          .doUpdateSet({ bytes: sql<number>`collaboration_app_artwork_reads.bytes + excluded.bytes` })
-          .where(sql<boolean>`collaboration_app_artwork_reads.bytes + excluded.bytes <= ${input.limit}`))
-        .returning("bytes")
-        .executeTakeFirst();
-      if (!reserved) return false;
-      await trx.deleteFrom("collaboration_app_artwork_reads")
-        .where("actor_id", "=", input.actorId)
-        .where("window_start", "<", windowStart.toISOString())
-        .execute();
+    const windowStart = new Date(Math.floor(input.now / input.windowMs) * input.windowMs).toISOString();
+    const reserved = await this.db.insertInto("collaboration_app_artwork_reads")
+      .values({ actor_id: input.actorId, window_start: windowStart, bytes: input.bytes })
+      .onConflict((conflict) => conflict.columns(["actor_id", "window_start"])
+        .doUpdateSet({ bytes: sql<number>`collaboration_app_artwork_reads.bytes + excluded.bytes` })
+        .where(sql<boolean>`collaboration_app_artwork_reads.bytes + excluded.bytes <= ${input.limit}`))
+      .returning("bytes")
+      .executeTakeFirst();
+    if (!reserved) return false;
+    await this.sweepExpiredArtworkReads(input.actorId, windowStart);
+    return true;
+  }
+
+  /**
+   * Best-effort, bounded removal of expired budget windows, this member's first. Rows another
+   * request holds are skipped rather than waited for, so concurrent sweeps can neither block
+   * nor deadlock each other, and a failed sweep never fails the artwork read.
+   */
+  private async sweepExpiredArtworkReads(actorId: string, windowStart: string): Promise<void> {
+    try {
       await sql`DELETE FROM collaboration_app_artwork_reads
         WHERE (actor_id, window_start) IN (
           SELECT actor_id, window_start FROM collaboration_app_artwork_reads
-          WHERE window_start < ${windowStart.toISOString()} LIMIT ${EXPIRED_WINDOW_SWEEP_LIMIT}
-        )`.execute(trx);
-      return true;
-    });
+          WHERE window_start < ${windowStart}
+          ORDER BY (actor_id = ${actorId}) DESC, window_start
+          LIMIT ${EXPIRED_WINDOW_SWEEP_LIMIT}
+          FOR UPDATE SKIP LOCKED
+        )`.execute(this.db);
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] artwork budget sweep failed", error instanceof Error ? error.name : "UnknownError");
+    }
   }
 
   private currentArtwork(scopeId: string, sha256: string) {

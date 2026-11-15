@@ -72,8 +72,11 @@ serve. Shared launch targets also used `appId` as the `name`.
    requests per minute). The budget is one Postgres row per member and window,
    reserved with a single conditional upsert that every worker shares, so it
    cannot multiply per worker. A fixed window can admit up to twice the budget
-   across a window boundary. Expired windows are deleted for the member on
-   each reservation, plus a bounded sweep of 100 other expired rows. Bytes come
+   across a window boundary. The reservation is a single-row upsert and holds
+   no other locks. Afterwards, a separate best-effort sweep deletes up to 100
+   expired rows (this member's first) chosen with `FOR UPDATE SKIP LOCKED`, so
+   concurrent sweeps never wait on or deadlock each other, and a failed sweep
+   never fails the read. Bytes come
    from a bounded per-worker LRU (64 MiB, 256 entries) keyed by scope and
    digest. Concurrent cold reads of one digest share a single database read
    (at most 64 distinct reads in flight per worker; beyond that, 503). SVG is served as
