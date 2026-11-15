@@ -27,6 +27,8 @@ export interface SharePanelProps {
   ownerInitial: string;
   onClose: () => void;
   organization?: ShareOrganizationSlot | null;
+  /** Visitor submissions view for apps with public forms (host-rendered). */
+  submissions?: ReactNode;
 }
 
 function defaultTab(pageMode: PageMode, organization: ShareOrganizationSlot | null | undefined): ShareTab {
@@ -44,14 +46,15 @@ function usePublicDraft(share: ShareController, appName: string) {
   return { draft, setDraft: (next: Partial<PublicDraft>) => setEdits((current) => ({ ...current, ...next })) };
 }
 
-export function SharePanel({ share, appSlug, appName, client, ownerInitial, onClose, organization }: SharePanelProps) {
+export function SharePanel({ share, appSlug, appName, client, ownerInitial, onClose, organization, submissions }: SharePanelProps) {
   const [chosenTab, setChosenTab] = useState<ShareTab | null>(null);
   const tab: ShareTab = chosenTab === "organization" && !organization ? "private" : chosenTab ?? defaultTab(share.pageMode, organization);
   const [inviteDraft, setInviteDraft] = useState("");
   const [linksOpen, setLinksOpen] = useState(false);
   const { draft, setDraft } = usePublicDraft(share, appName);
   const slugState = useSlugAvailability({ client, appSlug, slug: draft.slug, currentSlug: share.site?.slug ?? null, conflict: share.slugConflict });
-  const publish = () => void share.request({ to: "public", metadata: { title: draft.title.trim() || appName, description: draft.description.trim(), slug: draft.slug || null } });
+  const metadata = { title: draft.title.trim() || appName, description: draft.description.trim(), slug: draft.slug || null };
+  const publish = () => void share.request({ to: "public", metadata });
   const confirm = async () => {
     const target = share.pendingSwitch?.to;
     if (!await share.confirmSwitch()) return;
@@ -75,7 +78,8 @@ export function SharePanel({ share, appSlug, appName, client, ownerInitial, onCl
       </ShareTabsContent>
       {organization ? <ShareTabsContent value="organization" className="outline-none">{organization.content}</ShareTabsContent> : null}
       <ShareTabsContent value="public" className="outline-none">
-        <PublicTab share={share} draft={draft} setDraft={setDraft} slugState={slugState} onPublish={publish} />
+        <PublicTab share={share} draft={draft} setDraft={setDraft} slugState={slugState} onPublish={publish}
+          onSaveDetails={() => void share.saveDetails(metadata)} submissions={submissions} />
       </ShareTabsContent>
       {share.pendingSwitch && share.pageMode !== "none" ? <ModeSwitchConfirm
         current={share.pageMode} target={share.pendingSwitch.to} invitedCount={share.invitations.length}

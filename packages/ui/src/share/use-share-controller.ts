@@ -12,7 +12,7 @@ export type ShareModeRequest =
   | { to: "private_link" }
   | { to: "public"; metadata: PublicMetadata };
 
-export type ShareOperation = "load" | "invite" | "invite_change" | "link_create" | "link_revoke" | "publish" | "unpublish" | "switch";
+export type ShareOperation = "load" | "invite" | "invite_change" | "link_create" | "link_revoke" | "publish" | "update" | "save" | "unpublish" | "stop" | "switch";
 
 interface ShareView {
   site: SiteRecord | null;
@@ -90,10 +90,14 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     return () => { current = false; controller.abort(); };
   }, [appSlug, client, emailInvites, reload]);
 
-  /** Runs one owner operation at a time and keeps errors allowlisted. */
+  /**
+   * Runs one owner operation at a time and keeps errors allowlisted. Nothing
+   * runs until the current publication is known: replacing an access mode
+   * needs a successful read first.
+   */
   async function run(operation: ShareOperation, work: (signal: AbortSignal) => Promise<void>): Promise<boolean> {
     const controller = lifecycle.current;
-    if (!controller || controller.signal.aborted || busy.current) return false;
+    if (!controller || controller.signal.aborted || busy.current || view.loading || view.loadFailed) return false;
     busy.current = true;
     patch({ operation, error: null });
     try {
@@ -103,6 +107,9 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       if (controller.signal.aborted || isAbortError(error)) return false;
       console.warn(`[share] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
       patch({ error: { operation, message: shareErrorMessage(error) } });
+      // Another window or device changed the publication: re-read it so the
+      // next attempt carries the current revision.
+      if (errorStatus(error) === 409) setReload((value) => value + 1);
       return false;
     } finally {
       busy.current = false;
@@ -184,6 +191,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   }
 
   function request(next: ShareModeRequest): Promise<boolean> {
+    if (view.loading || view.loadFailed) return Promise.resolve(false);
     const target: PageModeTarget = next.to;
     if (needsModeSwitchConfirm(pageMode, target)) { patch({ pendingSwitch: next, error: null }); return Promise.resolve(false); }
     const operation: ShareOperation = next.to === "private_email" ? "invite" : next.to === "private_link" ? "link_create" : "publish";
@@ -203,6 +211,34 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     pageMode,
     emailInvitesAvailable: emailInvites !== null,
     retry: () => { setView(initialView()); setReload((value) => value + 1); },
+    /** Silent re-read (e.g. when the popover opens) so mutations use the current revision. */
+    refresh: () => setReload((value) => value + 1),
+    /** Redeploys the app's current files, keeping access mode and details. */
+    publishUpdate: () => run("update", async (signal) => {
+      const site = view.site;
+      if (!client || !site || site.status !== "published") return;
+      const reviewedConfig = await client.getConfig(appSlug, signal);
+      patch({ site: await client.deploy(appSlug, { title: site.title, description: site.description, slug: site.slug, accessMode: site.accessMode, baseRevision: site.revision, reviewedConfig }, signal) });
+    }),
+    /** Saves friendly path, title and description of a published app. */
+    saveDetails: (metadata: PublicMetadata) => run("save", async (signal) => {
+      const site = view.site;
+      if (!client || !site || site.status !== "published") return;
+      try {
+        patch({ site: await client.update(appSlug, { ...metadata, accessMode: site.accessMode, baseRevision: site.revision }, signal), slugConflict: null });
+      } catch (error: unknown) {
+        if (errorStatus(error) === 409 && metadata.slug && metadata.slug !== site.slug) patch({ slugConflict: metadata.slug });
+        throw error;
+      }
+    }),
+    /** Ends all private access: email invites and grants, or one-time links and viewer sessions. */
+    stopSharing: () => run("stop", async (signal) => {
+      await leaveEmail(signal);
+      const site = view.site;
+      if (client && site && site.status === "published") {
+        patch({ site: await client.unpublish(appSlug, site.revision, signal), links: [], linksNextCursor: null, freshLinks: {} });
+      }
+    }),
     request,
     confirmSwitch,
     cancelSwitch: () => patch({ pendingSwitch: null }),

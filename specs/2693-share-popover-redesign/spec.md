@@ -65,11 +65,11 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 
 - Org picker: Select with initial avatar, name, member count (`OrganizationManagementSummary.memberCount`); static with one org; the tab is hidden with none.
 - **Share with {Org}** rechecks 2689 readiness for that org (`POST …/readiness/check`). `ready` → preflight + share at once. `blocked`/`stale` → the two-step card. Readiness is the single gate; the server preflight re-enforces it.
-- **Start in Chats** writes the handoff record (below) as `running`, opens Matrix Chats on a new chat and sends:
+- **Start in Chats** writes the handoff record (below) as `running`, opens Matrix Chats on a new chat with this first message ready in the composer (the owner sends it with their usual provider and model; Web uses the Create-app draft path, Electron the visible Chat draft):
   `/matrix-collaborative-app-builder @{App}` + "{Org} members will use this app together…" + `Share handoff: app <slug>, organization <orgId>, request <uuid>.`
 - **Completion event** — `~/system/share/collaborative/<appSlug>.json`, schema `CollaborativeHandoffRecordSchema` (`packages/contracts/src/collaborative-app-handoff.ts`):
   `{ version: 1, event: "collaborative_app.preparation", requestId, appSlug, organizationId, state, updatedAt }`, `state ∈ running | completed | failed | cancelled | applied`, ≤2 KiB, no secrets.
-  The builder skill (`skills/matrix/collaborative-app-builder/SKILL.md`, "Share popover handoff") rewrites it as `completed` after Build passed + owner preflight, or `failed`. The window-header host (mounted while the app window is open, so the popover may be closed) re-reads the record every 5 s while `running` (max 30 min; reopening Share resumes), ignores a different `requestId`, rechecks readiness, and creates the share only on `ready`; it then writes `applied` so a later Stop sharing is never undone. A completion with readiness still failing shows "Claude finished, but the app isn’t ready to share yet."
+  The builder skill (`skills/matrix/collaborative-app-builder/SKILL.md`, "Share popover handoff") rewrites it as `completed` after Build passed + owner preflight, or `failed`. The window-header host (mounted while the app window is open, so the popover may be closed) re-reads the record every 5 s while `running` for 30 min, then once a minute while the app window stays open, ignores a different `requestId`, rechecks readiness, and creates the share only on `ready`; it then writes `applied` so a later Stop sharing is never undone. A completion with readiness still failing shows "Claude finished, but the app isn’t ready to share yet."
 - Shared: "{Org} link · Opens it in the Matrix app" + Copy (phase 2 copies `/shared/app/<scopeId>?…` on the current origin; phase 4 swaps in the hand-off page), "Stop sharing with {Org}" (`DELETE …/share` with share/binding revisions).
 - The previous Electron "Share with your org" section is removed; Web keeps the existing in-app readiness bar in `AppViewer` (it also refreshes the owner participant context) until a follow-up routes that refresh through the popover.
 
@@ -102,6 +102,10 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share. **Done.**
 3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips. **Done.**
 4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`). **Done.**
+
+## Public documentation
+
+Separate docs PR in `FinnaAI/matrix-os-site` under `content/docs/`: the Share popover (Private, Organization, Public), one access mode at a time and the switch confirm, making an app collaborative from Chats, the launcher filters, the org link hand-off, and the current limitation that email invitations are a preview until 2691 ships. Owner: ENG-490 assignee; tracked on the ticket.
 
 ## Acceptance (phase 1)
 

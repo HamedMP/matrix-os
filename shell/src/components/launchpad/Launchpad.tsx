@@ -1,9 +1,7 @@
 "use client";
 import { SharedAppBadge, SharedAppDirectoryNotice } from "@matrix-os/ui/collaborative-app-sharing";
-import {
-  LauncherFilterChips, NewAppDot, effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter, sharedTileLabel,
-  type LauncherFilter, type ShareOrganization,
-} from "@matrix-os/ui/share";
+import { LauncherFilterChips, NewAppDot, sharedTileLabel, type ShareOrganization } from "@matrix-os/ui/share";
+import { useLauncherFilter } from "@/hooks/useLauncherFilter";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -92,14 +90,7 @@ export function Launchpad({
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
   const orderedApps = [...groups.mainApps, ...groups.generatedApps, ...groups.gameApps];
-  const mainPaths = new Set(groups.mainApps.map((app) => app.path));
-  const filterEntry = (app: AppEntry) => ({
-    organizationId: app.sharedAppTarget?.organizationId ?? null,
-    mine: !app.sharedAppTarget && !mainPaths.has(app.path) && app.path !== "__create-app__",
-  });
-  const chips = launcherFilterChips(orderedApps.map(filterEntry), organizations);
-  const [chosenFilter, setChosenFilter] = useState<LauncherFilter>("all");
-  const filter = effectiveLauncherFilter(chosenFilter, chips);
+  const launcherFilter = useLauncherFilter(orderedApps, organizations);
   const organizationFor = (app: AppEntry) => organizations.find((item) => item.organizationId === app.sharedAppTarget?.organizationId) ?? null;
 
   const [query, setQuery] = useState("");
@@ -107,7 +98,7 @@ export function Launchpad({
   const [contextMenu, setContextMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [placementPending, setPlacementPending] = useState(false);
-  const filteredApps = filterLaunchpadApps(orderedApps.filter((app) => matchesLauncherFilter(filterEntry(app), filter)), query);
+  const filteredApps = filterLaunchpadApps(orderedApps.filter(launcherFilter.matches), query);
 
   // Viewport-derived page size. window is only read inside this effect
   // (SSR-safe); until it runs, everything renders on a single page.
@@ -218,9 +209,9 @@ export function Launchpad({
           </div>
         </div>
 
-        <LauncherFilterChips chips={chips} value={filter} className="px-6 pb-3" onChange={(next) => { setChosenFilter(next); setPageIndex(0); }} />
+        <LauncherFilterChips chips={launcherFilter.chips} value={launcherFilter.filter} className="px-6 pb-3" onChange={(next) => { launcherFilter.setFilter(next); setPageIndex(0); }} />
         <p className="px-6 pb-4 text-center text-sm text-white/80">
-          {launcherFilterHint(filter, filteredApps.length, chips, "Open an installed app, or choose Create app to start in Chat.")}
+          {launcherFilter.hint(filteredApps.length)}
         </p>
 
         {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes Launchpad only when the empty area around the grid (not a tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}

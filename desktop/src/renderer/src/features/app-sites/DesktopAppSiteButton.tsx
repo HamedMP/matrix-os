@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
 import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
+import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
 import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -43,7 +44,7 @@ export function DesktopAppSiteButton({
   const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch });
   return (
     <AppSiteSharePopover
-      onOpenChange={setOpen}
+      onOpenChange={(next) => { if (next) share.refresh(); setOpen(next); }}
       portalContainer={portalContainer}
       trigger={(
         <Button
@@ -67,6 +68,8 @@ export function DesktopAppSiteButton({
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
+          submissions={client && share.site?.status === "published" && share.site.config.forms.length > 0
+            ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

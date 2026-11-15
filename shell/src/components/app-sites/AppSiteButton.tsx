@@ -8,6 +8,7 @@ import { useAppSiteOwnerIdentity } from "./AppSiteOwnerIdentity";
 import { webSiteClient } from "./web-site-client";
 import { appDisplayName, ownerInitial } from "./share-identity";
 import { useWebShareOrganization } from "./use-web-share-organization";
+import { SiteSubmissionsSection } from "./SiteSubmissionsSection";
 
 // TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
 const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(process.env.NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
@@ -30,7 +31,11 @@ export function AppSiteButton({
   const organization = useWebShareOrganization(appSlug, name);
   const [resolvedPortalContainer, setResolvedPortalContainer] = useState<HTMLElement | null>(portalContainer ?? null);
   const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) setResolvedPortalContainer(portalContainerRef?.current ?? portalContainer ?? null);
+    if (nextOpen) {
+      setResolvedPortalContainer(portalContainerRef?.current ?? portalContainer ?? null);
+      // Re-read on open so changes from another window or device are not stale.
+      share.refresh();
+    }
     setOpen(nextOpen);
   };
   return (
@@ -59,6 +64,8 @@ export function AppSiteButton({
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
+          submissions={share.site?.status === "published" && share.site.config.forms.length > 0
+            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>
