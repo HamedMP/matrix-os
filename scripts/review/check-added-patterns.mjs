@@ -9,6 +9,9 @@
 //   node scripts/review/check-added-patterns.mjs --base <ref>   # <ref>...HEAD
 //   node scripts/review/check-added-patterns.mjs                # merge-base(origin/main)..working tree
 //   --pr-size  also enforce the PR size limit over the same range
+//   --only pr-size  run only the PR size limit (CI runs it for docs-only PRs too)
+//   --filter-exceptions <rule>  read rg-style `path:line:text` hits on stdin and
+//                               print those without a valid exception
 //
 // Exceptions go on the offending line or the line above it:
 //   // pattern-allow <rule>: <reason> (expires YYYY-MM-DD, approved-by <human>)
@@ -20,6 +23,8 @@ const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SKIPPED_PATH = /(?:^|\/)(?:node_modules|dist|\.next|vendor|coverage)\/|\.min\.js$|\.d\.ts$/;
 // The bash scanner already rejects bare catches in these files wholesale.
 const BASH_CATCH_SCOPE = /^(?:packages|shell)\/.+(?<!\.test|\.spec)\.ts$/;
+// The single-line patterns section 1 of check-patterns.sh greps for, per hit kind.
+const BASH_CATCH_PATTERN = { "bare-catch": /catch\s*\{/, "empty-catch-handler": /\.catch\(\s*\(\s*\)\s*=>/ };
 const EXCEPTION = /pattern-allow ([a-z-]+):\s*(.*?)\s*\(expires (\d{4}-\d{2}-\d{2}), approved-by ([\w.-]+)\)/;
 
 function git(args) {
@@ -39,11 +44,21 @@ export function resolveRange(base) {
   if (tryGit(["rev-parse", "--is-inside-work-tree"]) !== "true") return { skip: "not a git work tree" };
   if (base) {
     if (!tryGit(["rev-parse", "--verify", `${base}^{commit}`])) return { error: `diff base '${base}' not found` };
-    return { diffArgs: [`${base}...HEAD`], includeUntracked: false };
+    // Line numbers come from the committed HEAD, so file contents must too.
+    return { diffArgs: [`${base}...HEAD`], includeUntracked: false, readFile: readCommitted };
   }
   const upstream = tryGit(["merge-base", "origin/main", "HEAD"]);
   if (!upstream) return { skip: "origin/main is not available; run git fetch origin main" };
-  return { diffArgs: [upstream], includeUntracked: true };
+  return { diffArgs: [upstream], includeUntracked: true, readFile: readText };
+}
+
+function readCommitted(path) {
+  try {
+    return git(["cat-file", "blob", `HEAD:${path}`]);
+  } catch (error) {
+    if (error && typeof error === "object" && "status" in error) return null;
+    throw error;
+  }
 }
 
 function untrackedFiles() {
@@ -64,14 +79,41 @@ function readText(path) {
   }
 }
 
+const C_ESCAPES = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+
+// Decode a path git printed in C-style quotes, e.g. "b/caf\303\251.mjs".
+export function unquoteGitPath(raw) {
+  if (!raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  const bytes = [];
+  const body = raw.slice(1, -1);
+  for (let i = 0; i < body.length; i += 1) {
+    if (body[i] !== "\\") {
+      bytes.push(...Buffer.from(body[i], "utf8"));
+      continue;
+    }
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (octal) {
+      bytes.push(parseInt(octal[0], 8));
+      i += 3;
+    } else {
+      bytes.push(C_ESCAPES[body[i + 1]] ?? body.charCodeAt(i + 1));
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 // Map of path -> Set of 1-based added line numbers.
 export function addedLines(range) {
   const out = new Map();
-  const diff = git(["diff", "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMR", ...range.diffArgs]);
+  const diff = git([
+    "diff", "-U0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--diff-filter=ACMR",
+    ...range.diffArgs,
+  ]);
   let current = null;
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ ")) {
-      current = line === "+++ /dev/null" ? null : line.slice(6);
+      current = line === "+++ /dev/null" ? null : unquoteGitPath(line.slice(4)).slice(2);
       if (current && !out.has(current)) out.set(current, new Set());
       continue;
     }
@@ -98,6 +140,20 @@ export function addedLines(range) {
 // newlines, so code-shaped text in prose, prompts, or fixtures is ignored.
 // Single and double quoted strings end at a newline, which bounds the damage
 // from JSX text such as `Don't`.
+// Keywords after which `/` starts a regex literal rather than a division.
+const REGEX_KEYWORDS = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await",
+]);
+
+function wordBefore(text, index) {
+  let end = index;
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  let start = end;
+  while (start > 0 && /[\w$]/.test(text[start - 1])) start -= 1;
+  if (start > 0 && text[start - 1] === ".") return ""; // a property such as obj.return
+  return text.slice(start, end);
+}
+
 export function maskSource(text) {
   const out = text.split("");
   const blank = (from, to) => {
@@ -165,7 +221,11 @@ export function maskSource(text) {
       lastSignificant = ch;
       continue;
     }
-    if (ch === "/" && (lastSignificant === "" || "(,=:[!&|?{};+-*%<>~^".includes(lastSignificant))) {
+    const regexAllowed =
+      lastSignificant === "" ||
+      "(,=:[!&|?{};+-*%<>~^".includes(lastSignificant) ||
+      (/[\w$]/.test(lastSignificant) && REGEX_KEYWORDS.has(wordBefore(text, i)));
+    if (ch === "/" && regexAllowed) {
       let j = i + 1;
       let inClass = false;
       while (j < text.length && text[j] !== "\n" && (inClass || text[j] !== "/")) {
@@ -273,15 +333,16 @@ const CATCH_FIX = {
   "unused-catch-binding": "catch binding is never read",
 };
 
-function checkSwallowedErrors(added, today, report) {
+function checkSwallowedErrors(added, readFile, today, report) {
   for (const [path, lineSet] of added) {
     if (!SOURCE_FILE.test(path) || SKIPPED_PATH.test(path) || lineSet.size === 0) continue;
-    const text = readText(path);
+    const text = readFile(path);
     if (text === null) continue;
     const lines = text.split("\n");
     for (const hit of findSwallowedErrors(text)) {
       if (!lineSet.has(hit.line)) continue;
-      if (hit.kind !== "unused-catch-binding" && BASH_CATCH_SCOPE.test(path)) continue;
+      // Section 1 of check-patterns.sh reports this exact line (and applies the same exceptions).
+      if (BASH_CATCH_SCOPE.test(path) && BASH_CATCH_PATTERN[hit.kind]?.test(lines[hit.line - 1] ?? "")) continue;
       const exception = exceptionFor(lines, hit.line, "swallowed-error", today);
       if (exception?.valid) continue;
       const detail = exception ? ` (${exception.why})` : "";
@@ -338,10 +399,10 @@ export const FILE_LIMITS = { split: 2000, plan: 1000 };
 const GENERATED_PATH = /(?:^|\/)(?:fixtures|generated|__generated__)\//;
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|e2e)\.[cm]?[jt]sx?$/;
 
-function checkLargeFiles(stats, today, report) {
+function checkLargeFiles(stats, readFile, today, report) {
   for (const { path, added, deleted } of stats) {
     if (added <= deleted || !SOURCE_FILE.test(path) || SKIPPED_PATH.test(path) || GENERATED_PATH.test(path)) continue;
-    const text = readText(path);
+    const text = readFile(path);
     if (text === null) continue;
     const lines = lineCount(text);
     if (lines <= FILE_LIMITS.plan) continue;
@@ -370,7 +431,7 @@ function checkLargeFiles(stats, today, report) {
   }
 }
 
-export function run({ base = null, prSize = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+export function run({ base = null, prSize = false, only = null, today = new Date().toISOString().slice(0, 10) } = {}) {
   const findings = { violations: [], warnings: [], notices: [] };
   const report = {
     violation: (rule, message) => findings.violations.push({ rule, message }),
@@ -382,19 +443,55 @@ export function run({ base = null, prSize = false, today = new Date().toISOStrin
     findings.notices.push(`added-line checks skipped: ${range.skip}`);
     return findings;
   }
-  checkSwallowedErrors(addedLines(range), today, report);
   const stats = changedFileStats(range);
-  checkLargeFiles(stats, today, report);
+  if (only === "pr-size") {
+    checkPrSize(stats, report);
+    return findings;
+  }
+  checkSwallowedErrors(addedLines(range), range.readFile, today, report);
+  checkLargeFiles(stats, range.readFile, today, report);
   if (prSize) checkPrSize(stats, report);
   return findings;
 }
 
+// Keeps rg-style `path:line:text` hits that have no valid exception, so the
+// bash scanner and this script make the same exception decision.
+export function filterExceptions(hits, rule, today = new Date().toISOString().slice(0, 10)) {
+  const cache = new Map();
+  const kept = [];
+  for (const hit of hits) {
+    const m = /^(.*?):(\d+):/.exec(hit);
+    if (!m) {
+      kept.push(hit);
+      continue;
+    }
+    if (!cache.has(m[1])) cache.set(m[1], readText(m[1])?.split("\n") ?? null);
+    const lines = cache.get(m[1]);
+    const exception = lines ? exceptionFor(lines, Number(m[2]), rule, today) : null;
+    if (exception?.valid) continue;
+    kept.push(exception ? `${hit} (${exception.why})` : hit);
+  }
+  return kept;
+}
+
 function main(argv) {
+  const filterIndex = argv.indexOf("--filter-exceptions");
+  if (filterIndex !== -1) {
+    const hits = readFileSync(0, "utf8").split("\n").filter(Boolean);
+    for (const hit of filterExceptions(hits, argv[filterIndex + 1])) console.log(hit);
+    return 0;
+  }
   const baseIndex = argv.indexOf("--base");
   const base = baseIndex === -1 ? null : argv[baseIndex + 1];
+  const onlyIndex = argv.indexOf("--only");
+  const only = onlyIndex === -1 ? null : argv[onlyIndex + 1];
+  if (only !== null && only !== "pr-size") {
+    console.error(`check-added-patterns: unknown --only rule '${only}'`);
+    return 2;
+  }
   let findings;
   try {
-    findings = run({ base, prSize: argv.includes("--pr-size") });
+    findings = run({ base, prSize: argv.includes("--pr-size"), only });
   } catch (error) {
     console.error(`check-added-patterns: ${error instanceof Error ? error.message : String(error)}`);
     return 2;

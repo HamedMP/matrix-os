@@ -116,13 +116,28 @@ echo ""
 
 header "1. Error Handling — bare/empty catch blocks"
 
+ADDED_PATTERNS="$(dirname "${BASH_SOURCE[0]}")/check-added-patterns.mjs"
+# Drop hits carrying a valid `pattern-allow swallowed-error` marker; the
+# added-line checks apply the same exception rule.
+allow_swallowed_errors() {
+  if [[ -z "$1" ]]; then
+    return
+  fi
+  printf '%s\n' "$1" | node "$ADDED_PATTERNS" --filter-exceptions swallowed-error || {
+    echo "Error: swallowed-error exception filter failed" >&2
+    exit 2
+  }
+}
+
 MATCHES=$(rg_scan 'catch\s*\{' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(allow_swallowed_errors "$MATCHES")
 if [[ -n "$MATCHES" ]]; then
   violation "Bare catch {} blocks (CLAUDE.md: every catch must check error type)"
   printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 MATCHES=$(rg_scan '\.catch\(\s*\(\s*\)\s*=>' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(allow_swallowed_errors "$MATCHES")
 if [[ -n "$MATCHES" ]]; then
   violation "Empty .catch(() => ...) — error param ignored (CLAUDE.md: no bare catch)"
   printf '%s\n' "$MATCHES" | head -20 || true
@@ -262,7 +277,7 @@ if $PR_MODE || [[ -z "$DIFF_BASE" ]]; then
   ADDED_ARGS+=(--pr-size)
 fi
 ADDED_STATUS=0
-ADDED_OUTPUT=$(node "$(dirname "${BASH_SOURCE[0]}")/check-added-patterns.mjs" ${ADDED_ARGS[@]+"${ADDED_ARGS[@]}"}) || ADDED_STATUS=$?
+ADDED_OUTPUT=$(node "$ADDED_PATTERNS" ${ADDED_ARGS[@]+"${ADDED_ARGS[@]}"}) || ADDED_STATUS=$?
 if [[ $ADDED_STATUS -gt 1 ]]; then
   echo "Error: added-line checks failed to run (exit $ADDED_STATUS)" >&2
   exit 2

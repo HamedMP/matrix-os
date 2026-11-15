@@ -28,7 +28,8 @@ function scanChange(
     commit = true,
     args = ["--diff", "origin/main"],
     rename,
-  }: { commit?: boolean; args?: string[]; rename?: [string, string] } = {},
+    afterCommit = {},
+  }: { commit?: boolean; args?: string[]; rename?: [string, string]; afterCommit?: Record<string, string> } = {},
 ) {
   const repo = mkdtempSync(join(tmpdir(), "matrix-added-patterns-"));
   repos.push(repo);
@@ -45,6 +46,7 @@ function scanChange(
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "-q", "-m", "change"]);
   }
+  writeFiles(repo, afterCommit);
   return spawnSync("bash", [scanner, ...args], { cwd: repo, encoding: "utf8", timeout: 20_000 });
 }
 
@@ -166,6 +168,62 @@ describe("added-line swallowed-error rule", () => {
     expect(allowed.status).toBe(0);
     expect(expired.status).toBe(1);
     expect(expired.stdout).toContain("exception expired on 2020-01-01");
+  });
+
+  it("reads a regex literal after return, so a `}` inside it does not end the catch body", () => {
+    const result = scanChange({}, {
+      "scripts/regex-return.mjs": [
+        "export function check(value) {",
+        "  try { return run(value); } catch (error) { return /[}]/.test(value) || log(error); }",
+        "}",
+        "export const half = (total) => total / 2 / 1;",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("[swallowed-error]");
+  });
+
+  it("lets a dated, approved exception unblock a bare catch in packages/ TypeScript", () => {
+    const allowLine =
+      "// pattern-allow swallowed-error: optional module probe (expires 2999-01-01, approved-by hamedmp)";
+    const allowed = scanChange({}, {
+      "packages/gateway/src/probe.ts": `${allowLine}\ntry { require("optional-dep"); } catch { optional = false; }\n`,
+    });
+    const expired = scanChange({}, {
+      "packages/gateway/src/probe.ts": `${allowLine.replace("2999", "2020")}\ntry { require("optional-dep"); } catch { optional = false; }\n`,
+    });
+
+    expect(allowed.status, allowed.stdout).toBe(0);
+    expect(allowed.stdout).not.toContain("Bare catch {} blocks");
+    expect(expired.status).toBe(1);
+    expect(expired.stdout).toContain("Bare catch {} blocks");
+  });
+
+  it("rejects a bare catch whose brace is on the next line in packages/ TypeScript", () => {
+    const result = scanChange({}, {
+      "packages/gateway/src/multiline.ts": ["try {", "  run();", "} catch", "{", "  return null;", "}"].join("\n"),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("VIOLATION [swallowed-error] packages/gateway/src/multiline.ts:3: catch without a binding");
+  });
+
+  it("checks committed lines with --diff even when local edits move them", () => {
+    const committed = "export const a = 1;\ntry { run(); } catch { /* new */ }\n";
+    const result = scanChange({}, { "scripts/moved.mjs": committed }, {
+      afterCommit: { "scripts/moved.mjs": `// local note\n// another\n${committed}` },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("scripts/moved.mjs:2: catch without a binding drops the error");
+  });
+
+  it("checks files whose paths git quotes, such as non-ASCII names", () => {
+    const result = scanChange({}, { "scripts/café.mjs": "try { run(); } catch { /* new */ }\n" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("scripts/café.mjs:1: catch without a binding drops the error");
   });
 
   it("checks uncommitted and untracked work in the default local mode", () => {
