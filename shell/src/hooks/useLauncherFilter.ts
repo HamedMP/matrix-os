@@ -4,6 +4,7 @@ import {
   effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter,
   type LauncherFilter, type ShareOrganization,
 } from "@matrix-os/ui/share";
+import { isOsViewFixedAppPath } from "@matrix-os/contracts";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import type { AppEntry } from "@/hooks/useWindowManager";
 
@@ -17,7 +18,8 @@ export function useLauncherFilter(apps: AppEntry[], organizations: ShareOrganiza
   const mainPaths = new Set(groupLauncherApps(apps).mainApps.map((app) => app.path));
   const entry = (app: AppEntry) => ({
     organizationId: app.sharedAppTarget?.organizationId ?? null,
-    mine: !app.sharedAppTarget && !mainPaths.has(app.path) && app.path !== "__create-app__",
+    // Built-ins (Notes, Whiteboard, …) are never "mine": the same rule as Electron Desktop.
+    mine: !app.sharedAppTarget && !mainPaths.has(app.path) && !isOsViewFixedAppPath(app.path) && app.path !== "__create-app__",
   });
   const chips = launcherFilterChips(apps.map(entry), organizations);
   const [chosen, setChosen] = useState<LauncherFilter>("all");

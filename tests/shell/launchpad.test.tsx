@@ -259,6 +259,15 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onAddToDesktop).toHaveBeenCalledWith("apps/notes/index.html", expect.any(Object));
   });
 
+  it("keeps built-in Notes out of Mine, matching Electron Desktop", async () => {
+    // Fault: Web counted built-in apps (Notes, Whiteboard) as apps the owner made.
+    setDesign("flat");
+    await renderLauncher({ apps: [...defaultApps, { name: "Sales CRM", path: "apps/sales-crm/index.html", iconUrl: "/icons/crm.png" }] });
+    fireEvent.click(screen.getByRole("button", { name: "Mine" }));
+    expect(screen.queryByRole("button", { name: "Sales CRM" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Notes" })).toBeNull();
+  });
+
   it("offers the same app filters in the classic Web Canvas grid", async () => {
     setDesign("flat");
     await renderLauncher();

@@ -16,3 +16,4 @@ export {
 } from "./launcher-filter";
 export { LauncherFilterChips, NewAppDot } from "./LauncherFilterChips";
 export { useSeenSharedApps, SEEN_SHARED_APPS_PATH } from "./use-seen-shared-apps";
+export { useOpenCount } from "./use-open-count";

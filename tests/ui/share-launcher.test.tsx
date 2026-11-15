@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SharedAppBadge } from "../../packages/ui/src/collaboration/SharedAppBadge";
 import {
   LauncherFilterChips, effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter, organizationColor,
-  useSeenSharedApps, type LauncherFilter,
+  useOpenCount, useSeenSharedApps, type LauncherFilter,
 } from "../../packages/ui/src/share/index";
 
 // Outcome: members find org-shared apps in the launcher (org badge, new dot,
@@ -65,6 +65,21 @@ describe("shared app badge", () => {
   it("keeps the generic badge when the org is unknown", () => {
     render(<SharedAppBadge />);
     expect(screen.getByRole("img", { name: "Shared app" })).toBeTruthy();
+  });
+});
+
+describe("launcher open count", () => {
+  // Outcome: org memberships are re-read each time the launcher opens (refresh key).
+  it("increments only on closed-to-open transitions", () => {
+    const { result, rerender } = renderHook(({ open }) => useOpenCount(open), { initialProps: { open: false } });
+    expect(result.current).toBe(0);
+    rerender({ open: true });
+    expect(result.current).toBe(1);
+    rerender({ open: true });
+    expect(result.current).toBe(1);
+    rerender({ open: false });
+    rerender({ open: true });
+    expect(result.current).toBe(2);
   });
 });
 
