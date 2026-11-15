@@ -24,7 +24,11 @@ function writeFiles(root: string, files: Record<string, string>) {
 function scanChange(
   base: Record<string, string>,
   change: Record<string, string>,
-  { commit = true, args = ["--diff", "origin/main"] }: { commit?: boolean; args?: string[] } = {},
+  {
+    commit = true,
+    args = ["--diff", "origin/main"],
+    rename,
+  }: { commit?: boolean; args?: string[]; rename?: [string, string] } = {},
 ) {
   const repo = mkdtempSync(join(tmpdir(), "matrix-added-patterns-"));
   repos.push(repo);
@@ -35,6 +39,7 @@ function scanChange(
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "base"]);
   git(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  if (rename) git(repo, ["mv", ...rename]);
   writeFiles(repo, change);
   if (commit) {
     git(repo, ["add", "-A"]);
@@ -168,5 +173,63 @@ describe("added-line swallowed-error rule", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("scripts/draft.mjs:1: .catch(() => ...) drops the error");
+  });
+});
+
+function manyFiles(count: number, linesEach = 1) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < count; i += 1) files[`docs/part-${i}.md`] = "line\n".repeat(linesEach);
+  return files;
+}
+
+describe("PR size rule", () => {
+  it("rejects a PR with 53 files like #3062", () => {
+    const result = scanChange({}, manyFiles(53), { args: ["--diff", "origin/main", "--pr"] });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("VIOLATION [pr-size] this change touches 53 files with 53 additions");
+    expect(result.stdout).toContain("gh stack init / gh stack add");
+  });
+
+  it("rejects a fixture reformat that pushes a PR past 3000 additions like #3142", () => {
+    const result = scanChange({}, { "tests/platform/fixtures/platform-schema-baseline.json": "{}\n".repeat(3001) }, {
+      args: ["--diff", "origin/main", "--pr"],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("this change touches 1 files with 3001 additions");
+  });
+
+  it("accepts a PR at the limits and ignores the lockfile", () => {
+    const result = scanChange({}, { ...manyFiles(50, 60), "pnpm-lock.yaml": "lock\n".repeat(9000) }, {
+      args: ["--diff", "origin/main", "--pr"],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("[pr-size]");
+  });
+
+  it("counts a rename once and its unchanged lines not at all", () => {
+    const result = scanChange(manyFiles(1, 4000), {}, {
+      args: ["--diff", "origin/main", "--pr"],
+      rename: ["docs/part-0.md", "docs/moved.md"],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("[pr-size]");
+  });
+
+  it("skips the size limit on CI push ranges, which can hold several merged PRs", () => {
+    const result = scanChange({}, manyFiles(53));
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("[pr-size]");
+  });
+
+  it("enforces the size limit in the default local mode", () => {
+    const result = scanChange({}, manyFiles(51), { commit: false, args: [] });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("this change touches 51 files");
   });
 });

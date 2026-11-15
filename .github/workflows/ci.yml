@@ -263,7 +263,7 @@ jobs:
           COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
+            ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }} --pr
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
             BEFORE="$COVERAGE_BASE_SHA"
             if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then

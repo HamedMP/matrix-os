@@ -13,6 +13,7 @@
 #   ./scripts/review/check-patterns.sh              # scan all packages
 #   ./scripts/review/check-patterns.sh --diff main   # scan only files changed vs main
 #   ./scripts/review/check-patterns.sh --strict       # treat warnings as errors
+#   ./scripts/review/check-patterns.sh --diff origin/main --pr  # also enforce PR size
 #
 # Section 9 runs scripts/review/check-added-patterns.mjs, which applies
 # repo-wide rules to added lines only: against --diff <base>...HEAD, or with
@@ -29,6 +30,7 @@ RESET='\033[0m'
 SCAN_PATHS="packages shell"
 DIFF_BASE=""
 STRICT=false
+PR_MODE=false
 NO_RG_FILES=false
 VIOLATIONS=0
 WARNINGS=0
@@ -37,9 +39,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --diff)  DIFF_BASE="$2"; shift 2 ;;
     --strict) STRICT=true; shift ;;
+    --pr) PR_MODE=true; shift ;;
     --help)
-      echo "Usage: $0 [--diff <base-branch>] [--strict]"
+      echo "Usage: $0 [--diff <base-branch>] [--pr] [--strict]"
       echo "  --diff <branch>  Only scan files changed vs <branch>"
+      echo "  --pr             Enforce the PR size limit over the --diff range (always on without --diff)"
       echo "  --strict         Treat warnings as errors"
       exit 0 ;;
     *) echo "Unknown option: $1"; exit 2 ;;
@@ -247,11 +251,15 @@ fi
 # PASS 3: Repo-wide rules on added lines (scripts/review/check-added-patterns.mjs)
 # ═══════════════════════════════════════════════════════════════
 
-header "9. Added lines — repo-wide rules (swallowed errors)"
+header "9. Added lines — repo-wide rules (swallowed errors, PR size)"
 
 ADDED_ARGS=()
 if [[ -n "$DIFF_BASE" ]]; then
   ADDED_ARGS+=(--base "$DIFF_BASE")
+fi
+# CI push ranges can span several merged PRs, so size is checked per PR only.
+if $PR_MODE || [[ -z "$DIFF_BASE" ]]; then
+  ADDED_ARGS+=(--pr-size)
 fi
 ADDED_STATUS=0
 ADDED_OUTPUT=$(node "$(dirname "${BASH_SOURCE[0]}")/check-added-patterns.mjs" ${ADDED_ARGS[@]+"${ADDED_ARGS[@]}"}) || ADDED_STATUS=$?

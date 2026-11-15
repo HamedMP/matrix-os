@@ -8,6 +8,7 @@
 // Usage:
 //   node scripts/review/check-added-patterns.mjs --base <ref>   # <ref>...HEAD
 //   node scripts/review/check-added-patterns.mjs                # merge-base(origin/main)..working tree
+//   --pr-size  also enforce the PR size limit over the same range
 //
 // Exceptions go on the offending line or the line above it:
 //   // pattern-allow <rule>: <reason> (expires YYYY-MM-DD, approved-by <human>)
@@ -294,7 +295,46 @@ function checkSwallowedErrors(added, today, report) {
   }
 }
 
-export function run({ base = null, today = new Date().toISOString().slice(0, 10) } = {}) {
+// [{ path, added, deleted }] for every changed file, renames counted once.
+export function changedFileStats(range) {
+  const raw = git(["diff", "--numstat", "-z", "-M", "--no-ext-diff", ...range.diffArgs]).split("\0");
+  const stats = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(raw[i]);
+    if (!m) continue;
+    let path = m[3];
+    if (path === "") {
+      path = raw[i + 2];
+      i += 2;
+    }
+    stats.push({ path, added: m[1] === "-" ? 0 : Number(m[1]), deleted: m[2] === "-" ? 0 : Number(m[2]) });
+  }
+  if (range.includeUntracked) {
+    for (const path of untrackedFiles()) {
+      const text = readText(path);
+      stats.push({ path, added: text === null ? 0 : lineCount(text), deleted: 0 });
+    }
+  }
+  return stats;
+}
+
+export const PR_LIMITS = { files: 50, additions: 3000 };
+const PR_SIZE_IGNORED = /(?:^|\/)pnpm-lock\.yaml$/;
+
+function checkPrSize(stats, report) {
+  const counted = stats.filter((s) => !PR_SIZE_IGNORED.test(s.path));
+  const additions = counted.reduce((sum, s) => sum + s.added, 0);
+  if (counted.length <= PR_LIMITS.files && additions <= PR_LIMITS.additions) return;
+  report.violation(
+    "pr-size",
+    `this change touches ${counted.length} files with ${additions} additions ` +
+      `(limit ${PR_LIMITS.files} files / ${PR_LIMITS.additions} additions, pnpm-lock.yaml excluded). ` +
+      "Split it into GitHub native stack layers with gh stack init / gh stack add (docs/dev/stacked-prs.md); " +
+      "for a stack layer, check it with --diff <parent-branch>.",
+  );
+}
+
+export function run({ base = null, prSize = false, today = new Date().toISOString().slice(0, 10) } = {}) {
   const findings = { violations: [], warnings: [], notices: [] };
   const report = {
     violation: (rule, message) => findings.violations.push({ rule, message }),
@@ -307,6 +347,7 @@ export function run({ base = null, today = new Date().toISOString().slice(0, 10)
     return findings;
   }
   checkSwallowedErrors(addedLines(range), today, report);
+  if (prSize) checkPrSize(changedFileStats(range), report);
   return findings;
 }
 
@@ -315,7 +356,7 @@ function main(argv) {
   const base = baseIndex === -1 ? null : argv[baseIndex + 1];
   let findings;
   try {
-    findings = run({ base });
+    findings = run({ base, prSize: argv.includes("--pr-size") });
   } catch (error) {
     console.error(`check-added-patterns: ${error instanceof Error ? error.message : String(error)}`);
     return 2;
