@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseSharedAppDesktopUrl, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
-import { createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "../../desktop/src/main/shared-app-deep-link";
+import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "../../desktop/src/main/shared-app-deep-link";
 
 // Outcome: a copied org link opens the shared app in the Matrix desktop app.
 // Faults: accepting a malformed or foreign deep link, leaking display hints
@@ -86,6 +86,27 @@ describe("main-process router", () => {
     windowAlive = false;
     router.handle(`matrixos://shared-app/${SCOPE}`);
     expect(router.take()).toEqual({ scopeId: SCOPE });
+  });
+
+  it("reopens a closed main window for an org link and holds the link for its renderer", () => {
+    // Fault: with only the Terminal window open, focusing a missing main window did nothing and the link never opened.
+    let mainOpen = false;
+    const focusMainWindow = vi.fn();
+    const reopenMainWindow = vi.fn(() => { mainOpen = true; });
+    const router = createSharedAppDeepLinks({ schemes: SCHEMES, send: vi.fn(() => true) });
+    const handle = createDesktopDeepLinkHandler({
+      isDeepLink: (url) => url.startsWith("matrixos://"), hasMainWindow: () => mainOpen,
+      focusMainWindow, reopenMainWindow, links: router,
+    });
+    handle("https://example.com/not-ours");
+    expect(reopenMainWindow).not.toHaveBeenCalled();
+    handle(`matrixos://shared-app/${SCOPE}`);
+    expect(reopenMainWindow).toHaveBeenCalledTimes(1);
+    expect(focusMainWindow).not.toHaveBeenCalled();
+    expect(router.take()).toEqual({ scopeId: SCOPE });
+    handle("matrixos://auth?status=approved");
+    expect(focusMainWindow).toHaveBeenCalledTimes(1);
+    expect(reopenMainWindow).toHaveBeenCalledTimes(1);
   });
 
   it("lets only the main window take the pending link", async () => {

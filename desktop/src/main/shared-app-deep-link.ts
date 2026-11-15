@@ -44,6 +44,27 @@ export function createSharedAppDeepLinks(options: {
   };
 }
 
+/**
+ * Routes any Matrix deep link: focuses the main window, or reopens it through
+ * the app's single-flight path when it was closed (Terminal can keep Electron
+ * running without it), then hands the link to the shared-app router, which
+ * holds it until the reopened renderer takes it.
+ */
+export function createDesktopDeepLinkHandler(options: {
+  isDeepLink(url: string): boolean;
+  hasMainWindow(): boolean;
+  focusMainWindow(): void;
+  reopenMainWindow(): void;
+  links: { handle(url: string): boolean };
+}) {
+  return (url: string): void => {
+    if (!options.isDeepLink(url)) return;
+    if (options.hasMainWindow()) options.focusMainWindow();
+    else options.reopenMainWindow();
+    options.links.handle(url);
+  };
+}
+
 export function registerSharedAppDeepLinkIpc(ipc: {
   handle(channel: string, listener: (event: unknown, payload: unknown) => Promise<unknown>): void;
 }, options: { isMainWindowSender(event: unknown): boolean; take(): SharedAppDeepLink | null }): void {

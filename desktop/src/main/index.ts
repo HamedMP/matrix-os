@@ -91,7 +91,7 @@ import { installBrowserProductSessionCookie } from "./embeds/browser-product-ses
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
 import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
-import { createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
+import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -197,11 +197,17 @@ const sharedAppDeepLinks = createSharedAppDeepLinks({
   if (coldStartLink) sharedAppDeepLinks.handle(coldStartLink);
 }
 
-function handleDeepLink(url: string): void {
-  if (!isMatrixOsDeepLink(url)) return;
-  focusMainWindow();
-  sharedAppDeepLinks.handle(url);
-}
+/** Set once the app is ready: reopens the main window through the single-flight path. */
+let restoreMainWindowForDeepLink: (() => void) | null = null;
+
+const handleDeepLink = createDesktopDeepLinkHandler({
+  isDeepLink: isMatrixOsDeepLink,
+  hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
+  focusMainWindow,
+  // Before the app is ready the startup path opens the main window itself.
+  reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
+  links: sharedAppDeepLinks,
+});
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -859,6 +865,9 @@ if (!gotLock) {
         if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return Promise.resolve(); }
         reopening ??= (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow()).finally(() => { reopening = null; });
         return reopening;
+      };
+      restoreMainWindowForDeepLink = () => {
+        void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
       };
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
