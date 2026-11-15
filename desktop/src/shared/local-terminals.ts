@@ -3,7 +3,7 @@
 // herdr-core socket, its path, or raw JSON-RPC.
 import { z } from "zod/v4";
 
-export const LOCAL_TERMINAL_VERSION = "0.1.21";
+export const LOCAL_TERMINAL_VERSION = "0.1.19";
 export const LOCAL_TERMINAL_SESSION_PREFIX = "local:";
 // Terminals are not count-capped. This bounds one listing, and matches the
 // most the core reports.
