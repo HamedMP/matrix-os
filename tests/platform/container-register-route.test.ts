@@ -28,7 +28,8 @@ describe('POST /internal/containers/:handle/register', () => {
       machineId: 'ctr-1', clerkUserId: 'user_alice', handle: 'alice', status: 'starting', imageVersion: null,
       provisionedAt: NOW.toISOString(), substrate: 'container', generation: 2, runtimeTokenEpoch: 2,
     });
-    await db.executor.updateTable('user_machines').set({ started_at: NOW }).where('machine_id', '=', 'ctr-1').execute();
+    await db.executor.updateTable('user_machines').set({ started_at: NOW, substrate_ref: 'mvm-ctr-1' })
+      .where('machine_id', '=', 'ctr-1').execute();
   });
   afterEach(async () => { await destroyTestPlatformDb(db); });
 
@@ -148,6 +149,20 @@ describe('POST /internal/containers/:handle/register', () => {
   it('is unavailable when the platform secret is not configured', async () => {
     const response = await register(app({ platformSecret: '' }), BODY);
     expect(response.status).toBe(503);
+  });
+
+  it('asks a runtime that registers before its unit is recorded to retry, and keeps it starting', async () => {
+    await db.executor.updateTable('user_machines').set({ substrate_ref: null }).where('machine_id', '=', 'ctr-1').execute();
+    const routes = app();
+    const early = await register(routes, BODY);
+    expect(early.status).toBe(503);
+    expect(early.headers.get('retry-after')).toBe('1');
+    expect(await early.json()).toEqual({ error: 'retry' });
+    expect((await getUserMachine(db, 'ctr-1'))?.status).toBe('starting');
+    expect(onRegistered).not.toHaveBeenCalled();
+
+    await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-ctr-1' }).where('machine_id', '=', 'ctr-1').execute();
+    expect((await register(routes, BODY)).status).toBe(200);
   });
 
   it('asks the runtime to retry when post-registration setup fails, without leaking the cause', async () => {

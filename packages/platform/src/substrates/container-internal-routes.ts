@@ -111,6 +111,11 @@ export function createContainerInternalRoutes(deps: ContainerInternalRoutesDeps)
     const outcome = await deps.lifecycle.markRegistered(runtime.machineId, parsed.data.generation, {
       imageVersion: parsed.data.bundleVersion,
     });
+    if (outcome === 'unit_pending') {
+      // The gateway answered before the platform recorded its unit; registering then would fence it.
+      c.header('Retry-After', '1');
+      return c.json({ error: 'retry' }, 503);
+    }
     if (outcome !== 'ok') return c.json({ error: outcome }, 409);
     if (deps.onRegistered) {
       try {
