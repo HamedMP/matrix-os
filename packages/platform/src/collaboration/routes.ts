@@ -157,6 +157,7 @@ export function createPlatformCollaborationRoutes(options: {
     resolveActor: (c) => resolveValidatedActor(c, options.resolveActor),
     admit: (actorId, scopeId) => admitCollaborativeApp(options, actorId, scopeId),
     allowArtworkRead: (actorId) => appArtworkLimit.allow(actorId),
+    now: routeNow,
   });
 
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));

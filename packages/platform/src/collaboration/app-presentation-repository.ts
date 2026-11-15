@@ -6,6 +6,7 @@ import type {
 import type { CollaborationPlatformDatabase } from "./database.js";
 
 const MAX_LISTED_SCOPES = 100;
+const EXPIRED_WINDOW_SWEEP_LIMIT = 100;
 
 export interface CollaborativeAppPresentationOwner {
   scopeId: string;
@@ -87,20 +88,73 @@ export class CollaborativeAppPresentationRepository {
     });
   }
 
-  /** Current artwork for an active share; membership is the caller's responsibility. */
-  async getArtwork(scopeId: string, sha256: string): Promise<{ contentType: CollaborativeAppArtworkContentType; bytes: Uint8Array } | null> {
-    const row = await this.db.selectFrom("collaboration_app_presentations as presentation")
+  /**
+   * The current artwork's type and size for an active share, without reading its bytes, so a
+   * revalidation or a refused read never loads an image. Membership is the caller's responsibility.
+   */
+  async describeArtwork(scopeId: string, sha256: string): Promise<{ contentType: CollaborativeAppArtworkContentType; byteLength: number } | null> {
+    const row = await this.currentArtwork(scopeId, sha256)
+      .select(["presentation.artwork_content_type", "presentation.artwork_byte_length"])
+      .executeTakeFirst();
+    return row?.artwork_content_type && row.artwork_byte_length
+      ? { contentType: row.artwork_content_type, byteLength: Number(row.artwork_byte_length) }
+      : null;
+  }
+
+  /** The current artwork's bytes, under the same active-share and current-digest conditions. */
+  async readArtworkBytes(scopeId: string, sha256: string): Promise<Uint8Array | null> {
+    const row = await this.currentArtwork(scopeId, sha256).select("presentation.artwork_bytes").executeTakeFirst();
+    return row?.artwork_bytes ? new Uint8Array(row.artwork_bytes) : null;
+  }
+
+  /**
+   * Atomically reserves `bytes` of one member's fleet-wide artwork budget for the current fixed
+   * window. Every worker shares the same row, so the bound does not multiply per worker. The
+   * reservation is one single-row upsert, so it holds no other locks; cleanup runs afterwards.
+   */
+  async reserveArtworkReadBytes(input: { actorId: string; bytes: number; limit: number; windowMs: number; now: number }): Promise<boolean> {
+    if (input.bytes <= 0 || input.bytes > input.limit) return false;
+    const windowStart = new Date(Math.floor(input.now / input.windowMs) * input.windowMs).toISOString();
+    const reserved = await this.db.insertInto("collaboration_app_artwork_reads")
+      .values({ actor_id: input.actorId, window_start: windowStart, bytes: input.bytes })
+      .onConflict((conflict) => conflict.columns(["actor_id", "window_start"])
+        .doUpdateSet({ bytes: sql<number>`collaboration_app_artwork_reads.bytes + excluded.bytes` })
+        .where(sql<boolean>`collaboration_app_artwork_reads.bytes + excluded.bytes <= ${input.limit}`))
+      .returning("bytes")
+      .executeTakeFirst();
+    if (!reserved) return false;
+    await this.sweepExpiredArtworkReads(input.actorId, windowStart);
+    return true;
+  }
+
+  /**
+   * Best-effort, bounded removal of expired budget windows, this member's first. Rows another
+   * request holds are skipped rather than waited for, so concurrent sweeps can neither block
+   * nor deadlock each other, and a failed sweep never fails the artwork read.
+   */
+  private async sweepExpiredArtworkReads(actorId: string, windowStart: string): Promise<void> {
+    try {
+      await sql`DELETE FROM collaboration_app_artwork_reads
+        WHERE (actor_id, window_start) IN (
+          SELECT actor_id, window_start FROM collaboration_app_artwork_reads
+          WHERE window_start < ${windowStart}
+          ORDER BY (actor_id = ${actorId}) DESC, window_start
+          LIMIT ${EXPIRED_WINDOW_SWEEP_LIMIT}
+          FOR UPDATE SKIP LOCKED
+        )`.execute(this.db);
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] artwork budget sweep failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
+  private currentArtwork(scopeId: string, sha256: string) {
+    return this.db.selectFrom("collaboration_app_presentations as presentation")
       .innerJoin("collaboration_directory as directory", "directory.scope_id", "presentation.scope_id")
-      .select(["presentation.artwork_content_type", "presentation.artwork_bytes"])
       .where("presentation.scope_id", "=", scopeId)
       .where("presentation.artwork_sha256", "=", sha256)
       .where("presentation.artwork_bytes", "is not", null)
       .where("directory.app_state", "=", "active")
-      .whereRef("directory.app_id", "=", "presentation.app_id")
-      .executeTakeFirst();
-    return row?.artwork_bytes && row.artwork_content_type
-      ? { contentType: row.artwork_content_type, bytes: new Uint8Array(row.artwork_bytes) }
-      : null;
+      .whereRef("directory.app_id", "=", "presentation.app_id");
   }
 
   /** Presentations for listed shares; an entry whose app changed since publication has none. */
