@@ -12,6 +12,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
 import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
+import { useTerminalAgentEvents } from "../../desktop/src/renderer/src/stores/terminal-agent-events";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
 const installedAgents = {
@@ -247,6 +248,30 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("button", { name: "Open matrix-open" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open matrix-bg" })).toBeTruthy();
     expect(screen.queryByText("Workspace Only")).toBeNull();
+  });
+
+  // Fault detected: a remote agent waiting on the person shows no status in the Electron
+  // Terminal sidebar, or a finished-history entry keeps showing a stale dot.
+  it("overlays live agent status from the events stream onto remote tab rows", () => {
+    const workspaceId = `tws_${"0".repeat(32)}`;
+    const blocked = `${workspaceId}:tt_${"a".repeat(32)}`;
+    const closed = `${workspaceId}:tt_${"b".repeat(32)}`;
+    useShellSessions.setState({ sessions: [
+      { name: blocked, subtitle: "review", status: "active" },
+      { name: closed, subtitle: "build", status: "active" },
+    ] as never });
+    useTerminalAgentEvents.setState({ connected: true, tabs: {
+      [blocked]: { ref: { workspaceId, tabId: `tt_${"a".repeat(32)}` }, name: "review", cwd: "", state: "live", agentStatus: "blocked" },
+      [closed]: { ref: { workspaceId, tabId: `tt_${"b".repeat(32)}` }, name: "build", cwd: "", state: "finished", agentStatus: "working" },
+    } });
+
+    renderTab();
+
+    const row = screen.getByRole("button", { name: "Open review" });
+    expect(row.querySelector('[data-agent-status="waiting"]')?.getAttribute("title")).toBe("Needs you");
+    expect(screen.getByRole("button", { name: "Open build" }).querySelector("[data-agent-status]")).toBeNull();
+    act(() => { useTerminalAgentEvents.setState({ tabs: {} }); });
+    expect(row.querySelector("[data-agent-status]")).toBeNull();
   });
 
   it("does not duplicate the Mission Control breadcrumb inside the Terminal surface", () => {

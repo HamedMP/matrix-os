@@ -1,4 +1,4 @@
-import type { TerminalAttention } from "@matrix-os/ui/terminal-agents";
+import type { TerminalAttention } from "./attention.js";
 
 export const DONE_TIMEOUT_MS = 12_000;
 

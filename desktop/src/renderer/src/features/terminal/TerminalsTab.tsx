@@ -21,6 +21,8 @@ import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { DesktopTerminalSharing } from "./DesktopTerminalSharing";
 import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
+import { useTerminalAgentEvents } from "../../stores/terminal-agent-events";
+import { mergeTerminalAgentStatus } from "@matrix-os/ui/terminal-agents";
 import {
   parseTerminalAgentStatuses,
   terminalAgentCreateOptions,
@@ -97,6 +99,8 @@ export default function TerminalsTab({
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
+  const agentTabs = useTerminalAgentEvents((s) => s.tabs);
+  const listedShells = useMemo(() => mergeTerminalAgentStatus(shells, agentTabs), [shells, agentTabs]);
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
@@ -369,7 +373,7 @@ export default function TerminalsTab({
       <TerminalSessionSidebar
         showHeader={false}
         {...controls}
-        sessions={shells}
+        sessions={listedShells}
         selectedName={selectedName}
         creating={creating}
         disabled={!api}
@@ -449,6 +453,7 @@ export default function TerminalsTab({
             <RetainedPane
               as="section"
               key={sessionName}
+              data-terminal-session={sessionName}
               active={active && selected}
               visible={visible && selected}
               className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"
