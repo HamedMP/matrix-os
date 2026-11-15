@@ -31,31 +31,40 @@ it("omits git details that could not be read", async () => {
 });
 
 it("starts banner text after the macOS window buttons and keeps the strip draggable", () => {
-  render(<StatusBanner platform="MacIntel">label</StatusBanner>);
+  render(<StatusBanner fullText="label" platform="MacIntel">label</StatusBanner>);
   const banner = screen.getByRole("status");
   expect(banner.style.paddingLeft).toBe(`${MAC_TRAFFIC_LIGHT_INSET_PX}px`);
   expect(banner.className).toContain("titlebar-drag");
   cleanup();
-  render(<StatusBanner platform="Win32">label</StatusBanner>);
+  render(<StatusBanner fullText="label" platform="Win32">label</StatusBanner>);
   expect(screen.getByRole("status").style.paddingLeft).toBe("");
 });
 
 it("keeps Windows banner text clear of the native caption buttons on the right", () => {
-  render(<StatusBanner platform="Win32">label</StatusBanner>);
+  render(<StatusBanner fullText="label" platform="Win32">label</StatusBanner>);
   const banner = screen.getByRole("status");
   expect(banner.className).toContain(WINDOWS_CAPTION_INSET_CLASS);
   expect(banner.style.paddingLeft).toBe("");
   cleanup();
-  render(<StatusBanner platform="MacIntel">label</StatusBanner>);
+  render(<StatusBanner fullText="label" platform="MacIntel">label</StatusBanner>);
   expect(screen.getByRole("status").className).not.toContain(WINDOWS_CAPTION_INSET_CLASS);
 });
 
 it("pins banner text to the right edge so it never crowds the macOS window buttons", () => {
   for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
-    render(<StatusBanner platform={platform}>label</StatusBanner>);
+    render(<StatusBanner fullText="label" platform={platform}>label</StatusBanner>);
     const banner = screen.getByRole("status");
     expect(banner.className).toContain("text-right");
     expect(banner.className).toContain("truncate");
     cleanup();
   }
+});
+
+it("exposes the full banner text as a tooltip so truncated branch and origin details stay readable", async () => {
+  mocks.invoke.mockResolvedValue({ label: "PR #3314 · Core MCP approvals", sha: "abc123def456", branch: "feat/core-mcp",
+    platformOrigin: "https://pr-3314-preview.matrix-os.com", apiOrigin: null });
+  render(<DevRunBanner />);
+  const banner = await screen.findByRole("status");
+  expect(banner.getAttribute("title")).toBe("Dev build · PR #3314 · Core MCP approvals · feat/core-mcp @ abc123def456 · https://pr-3314-preview.matrix-os.com");
+  expect(banner.getAttribute("title")).toBe(banner.textContent);
 });

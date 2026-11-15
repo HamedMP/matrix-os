@@ -14,7 +14,8 @@ export function DevRunBanner() {
   }, []);
   if (!run) return null;
   const source = [run.branch, run.sha].filter(Boolean).join(" @ ");
-  return <StatusBanner>
+  const fullText = [`Dev build · ${run.label}`, source || null, run.platformOrigin, run.apiOrigin ? `API ${run.apiOrigin}` : null].filter(Boolean).join(" · ");
+  return <StatusBanner fullText={fullText}>
     <strong>Dev build · {run.label}</strong>
     {source ? <span className="font-mono"> · {source}</span> : null}
     {run.platformOrigin ? <span> · {run.platformOrigin}</span> : null}

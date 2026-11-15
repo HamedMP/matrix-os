@@ -13,10 +13,13 @@ function BoundPreviewBanner({ preview }: { preview: DesktopPreviewSummary }) {
   useEffect(() => {
     if (status === "signed-in" && organization && organizationId !== organization.organizationId) select(organization.organizationId);
   }, [status, organization, organizationId, select]);
-  return <StatusBanner>
-    <strong>Collaboration preview · {preview.role === "owner" ? "Owner" : "Member"} · PR #{preview.pr}</strong>
-    <span> · {preview.sourceSha.slice(0, 12)} · {status === "signed-in" ? handle : preview.handle}</span>
-    <span> · {status === "signed-in" ? organization?.name ?? "Organization unavailable" : `Sign in with the ${preview.role} test account`}</span>
+  const title = `Collaboration preview · ${preview.role === "owner" ? "Owner" : "Member"} · PR #${preview.pr}`;
+  const identity = `${preview.sourceSha.slice(0, 12)} · ${status === "signed-in" ? handle : preview.handle}`;
+  const account = status === "signed-in" ? organization?.name ?? "Organization unavailable" : `Sign in with the ${preview.role} test account`;
+  return <StatusBanner fullText={`${title} · ${identity} · ${account}`}>
+    <strong>{title}</strong>
+    <span> · {identity}</span>
+    <span> · {account}</span>
   </StatusBanner>;
 }
 export function PreviewPairBanner() {
