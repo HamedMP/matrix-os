@@ -1,6 +1,7 @@
 "use client";
 import { Check, ExternalLink, Link2 } from "lucide-react";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "../Select";
+import * as SelectPrimitive from "@radix-ui/react-select";
+import { Select, SelectContent, SelectGroup, SelectLabel, SelectTrigger } from "../Select";
 import { InlineError, ShareButton, Spinner } from "./share-controls";
 import { membersLabel, organizationColor, organizationInitial, type ShareOrganization } from "./organization-identity";
 import type { OrganizationShareFlow } from "./use-organization-share-flow";
@@ -24,18 +25,20 @@ function OrganizationPicker({ organizations, selected, onSelect, disabled }: {
     </span>
   </>;
   const box = "flex h-12 w-full items-center gap-2.5 rounded-lg border border-[var(--share-border)] bg-[var(--share-bg)] px-3 shadow-xs";
-  // One org: static summary, no chevron (design).
-  if (organizations.length === 1) return <div className={box} aria-label={`Share in ${selected.name}`}>{summary}</div>;
-  return <Select value={selected.organizationId} onValueChange={onSelect} disabled={disabled}>
+  // One org, or an org pinned by a live share / running setup: static summary, no chevron (design).
+  if (organizations.length === 1 || disabled) return <div className={box} aria-label={`Share in ${selected.name}`}>{summary}</div>;
+  return <Select value={selected.organizationId} onValueChange={onSelect}>
     <SelectTrigger aria-label={`Share in ${selected.name}, change organization`} className={`${box} h-12 text-[var(--share-fg)]`}>{summary}</SelectTrigger>
-    <SelectContent position="popper" sideOffset={4} className="matrix-share">
+    <SelectContent position="popper" sideOffset={4} className="matrix-share w-[var(--radix-select-trigger-width)] rounded-lg">
       <SelectGroup>
-        <SelectLabel className="text-xs font-medium text-[var(--share-subtle-fg)]">Share in</SelectLabel>
-        {organizations.map((organization) => <SelectItem key={organization.organizationId} value={organization.organizationId} className="h-9">
+        <SelectLabel className="px-2 py-1.5 text-xs font-medium text-[var(--share-subtle-fg)]">Share in</SelectLabel>
+        {organizations.map((organization) => <SelectPrimitive.Item key={organization.organizationId} value={organization.organizationId}
+          className="relative flex h-9 cursor-default select-none items-center gap-2 rounded-[4px] pl-2 pr-8 text-[13px] text-[var(--share-fg)] outline-none data-[highlighted]:bg-[var(--share-muted)] data-[state=checked]:bg-[var(--share-muted)]">
           <OrgAvatar organization={organization} size="sm" />
-          <span className="min-w-0 flex-1 truncate text-[13px]">{organization.name}</span>
+          <SelectPrimitive.ItemText asChild><span className="min-w-0 flex-1 truncate">{organization.name}</span></SelectPrimitive.ItemText>
           <span className="text-xs text-[var(--share-subtle-fg)]">{organization.memberCount}</span>
-        </SelectItem>)}
+          <SelectPrimitive.ItemIndicator className="absolute right-2 flex items-center"><Check aria-hidden="true" className="size-3.5" strokeWidth={2.4} /></SelectPrimitive.ItemIndicator>
+        </SelectPrimitive.Item>)}
       </SelectGroup>
     </SelectContent>
   </Select>;
