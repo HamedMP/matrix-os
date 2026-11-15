@@ -1,25 +1,39 @@
 "use client";
 import { useState, type RefObject } from "react";
+import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
 import { AppSiteSharePopover } from "./AppSiteSharePopover";
 import { useAppSiteOwnerIdentity } from "./AppSiteOwnerIdentity";
-import { AppSiteSharePanel } from "./AppSiteSharePanel";
 import { webSiteClient } from "./web-site-client";
+import { appDisplayName, ownerInitial } from "./share-identity";
+import { SiteSubmissionsSection } from "./SiteSubmissionsSection";
+
+// TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
+const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(process.env.NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
+
 export function AppSiteButton({
   appSlug,
+  appName,
   portalContainer,
   portalContainerRef,
 }: {
   appSlug: string;
+  appName?: string;
   portalContainer?: HTMLElement | null;
   portalContainerRef?: RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = useState(false);
   const ownerIdentity = useAppSiteOwnerIdentity();
+  const name = appDisplayName(appSlug, appName);
+  const share = useShareController({ appSlug, appName: name, client: webSiteClient, emailInvites });
   const [resolvedPortalContainer, setResolvedPortalContainer] = useState<HTMLElement | null>(portalContainer ?? null);
   const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) setResolvedPortalContainer(portalContainerRef?.current ?? portalContainer ?? null);
+    if (nextOpen) {
+      setResolvedPortalContainer(portalContainerRef?.current ?? portalContainer ?? null);
+      // Re-read on open so changes from another window or device are not stale.
+      share.refresh();
+    }
     setOpen(nextOpen);
   };
   return (
@@ -32,19 +46,23 @@ export function AppSiteButton({
         <Button
           size="sm"
           variant="outline"
-          className="h-7 border-border bg-background px-2.5 text-xs text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
+          className="h-7 gap-1.5 border-border bg-background px-2.5 text-xs text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
         >
-          Publish app
+          <ShareTriggerLabel pageMode={share.pageMode} orgShared={false} />
         </Button>
       )}
     >
       {open ? (
-        <AppSiteSharePanel
+        <SharePanel
           key={appSlug}
+          share={share}
           appSlug={appSlug}
+          appName={name}
           client={webSiteClient}
-          ownerIdentity={ownerIdentity}
+          ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
+          submissions={share.site
+            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>
