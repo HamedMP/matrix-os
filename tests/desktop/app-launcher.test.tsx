@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
+import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events";
+import SurfaceIcon from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceIcon";
 
 describe("AppLauncher", () => {
   beforeEach(() => {
@@ -55,6 +57,110 @@ describe("AppLauncher", () => {
     expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "app", slug: "shared-tasks-lab", sharedAppTarget: target }),
     ]));
+  });
+
+  it.each(["surface", "launchpad"] as const)("shows the owner's shared app name and platform artwork in the %s launcher", async (presentation) => {
+    const iconPath = `/api/collaboration/shared-apps/10000000-0000-4000-8000-000000000001/artwork/${"c".repeat(64)}`;
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+      presentation: { name: "Sprint Board", iconUrl: iconPath },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppLauncher presentation={presentation} />);
+    const tile = await screen.findByRole("button", { name: "Sprint Board" });
+    expect(fetchMock.mock.calls.map(([input]) => String(input)))
+      .toContainEqual("https://platform.test/api/collaboration/shared-apps?limit=100&presentation=1");
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    // The renderer is cross-origin: artwork is requested from the platform, where the trusted core adds auth.
+    const artwork = tile.querySelector("img");
+    expect(artwork?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
+
+    fireEvent.error(artwork!);
+    const fallback = screen.getByRole("button", { name: "Sprint Board" });
+    expect(fallback.querySelector("img")).toBeNull();
+    expect(fallback.textContent).toContain("S");
+    expect(fallback.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+
+    fireEvent.click(fallback);
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "app", title: "Sprint Board", sharedAppTarget: target }),
+    ]));
+  });
+
+  it("keeps the owner's shared artwork on the running app's taskbar tab, separate from a same-slug own app", async () => {
+    const iconPath = `/api/collaboration/shared-apps/10000000-0000-4000-8000-000000000001/artwork/${"c".repeat(64)}`;
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+      presentation: { name: "Sprint Board", iconUrl: iconPath },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    render(<AppLauncher presentation="launchpad" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sprint Board" }));
+    useTabs.getState().openTab({ kind: "app", slug: "shared-tasks-lab", title: "Shared Tasks Lab", icon: "https://platform.test/icons/own.png" });
+
+    const tabs = useTabs.getState().tabs.filter((tab) => tab.kind === "app");
+    const sharedTab = tabs.find((tab) => tab.sharedAppTarget?.scopeId === target.scopeId)!;
+    const ownTab = tabs.find((tab) => !tab.sharedAppTarget)!;
+    const shared = render(<SurfaceIcon tab={sharedTab} size={44} />);
+    expect(shared.container.querySelector("img")?.getAttribute("src")).toBe(`https://platform.test${iconPath}`);
+    const own = render(<SurfaceIcon tab={ownTab} size={44} />);
+    expect(own.container.querySelector("img")?.getAttribute("src")).toBe("https://platform.test/icons/own.png");
+
+    // The artwork follows the current platform host instead of a URL captured at launch.
+    act(() => { useConnection.setState({ platformHost: "https://other-platform.test" }); });
+    expect(shared.container.querySelector("img")?.getAttribute("src")).toBe(`https://other-platform.test${iconPath}`);
+    // A revoked or stale digest falls back to the surface glyph.
+    fireEvent.error(shared.container.querySelector("img")!);
+    expect(shared.container.querySelector("img")).toBeNull();
+    expect(shared.container.querySelector("svg")).toBeTruthy();
+  });
+
+  it("retries shared artwork whenever its URL changes, including a URL that failed earlier", async () => {
+    const base = "/api/collaboration/shared-apps/10000000-0000-4000-8000-000000000001/artwork/";
+    const target = (digest: string) => ({
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+      presentation: { name: "Sprint Board", iconUrl: `${base}${digest}` },
+    });
+    let current = target("a".repeat(64));
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [current] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    render(<AppLauncher presentation="launchpad" />);
+    const tile = await screen.findByRole("button", { name: "Sprint Board" });
+    fireEvent.error(tile.querySelector("img")!);
+    expect(screen.getByRole("button", { name: "Sprint Board" }).querySelector("img")).toBeNull();
+
+    current = target("b".repeat(64));
+    notifyCollaborationDiscoveryChanged();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sprint Board" }).querySelector("img")?.getAttribute("src"))
+      .toBe(`https://platform.test${base}${"b".repeat(64)}`));
+    current = target("a".repeat(64));
+    notifyCollaborationDiscoveryChanged();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sprint Board" }).querySelector("img")?.getAttribute("src"))
+      .toBe(`https://platform.test${base}${"a".repeat(64)}`));
   });
 
   it.each(["loading", "offline"])("opens shared apps while the installed catalog is %s", async (status) => {

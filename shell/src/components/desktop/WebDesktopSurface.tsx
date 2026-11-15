@@ -29,8 +29,10 @@ import {
   SquareTerminal,
   type LucideIcon,
 } from "@/lib/hugeicons";
+import { SharedAppBadge } from "@matrix-os/ui/collaborative-app-sharing";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { getGatewayUrl } from "@/lib/gateway";
+import { windowAppEntry } from "@/lib/window-app-entry";
 import { WebDesktopHeader } from "./WebDesktopHeader";
 import type { WebDesktopSettingsSection } from "./WebDesktopControls";
 
@@ -101,16 +103,39 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   return DEFAULT_APPEARANCE;
 }
 
-function DesktopAppIcon({ app, className = "", unframed = false }: { app: AppEntry; className?: string; unframed?: boolean }) {
-  const appearance = desktopAppearanceForApp(app);
-  const Glyph = appearance.icon;
-  const iconUrl = osViewIconUrlForApp(app, getGatewayUrl());
+/**
+ * A shared app is never matched to a built-in by name and resolves artwork only from its
+ * owner's presentation; without artwork it shows the owner's initial, not a generic glyph.
+ */
+function desktopIconSource(app: AppEntry) {
+  if (app.sharedAppTarget) return { shared: true, appearance: DEFAULT_APPEARANCE, iconUrl: app.iconUrl };
+  return { shared: false, appearance: desktopAppearanceForApp(app), iconUrl: osViewIconUrlForApp(app, getGatewayUrl()) };
+}
+
+function DesktopIconFallback({ app, shared, Glyph, unframed }: { app: AppEntry; shared: boolean; Glyph: LucideIcon; unframed: boolean }) {
+  if (shared) return <span aria-hidden="true" className="text-[0.95em] font-semibold leading-none">{app.name.charAt(0).toUpperCase()}</span>;
+  return <Glyph className={unframed ? "size-full" : "size-[48%]"} aria-hidden="true" />;
+}
+
+function DesktopAppIcon({ app, className = "", unframed = false, sharedBadge = false }: {
+  app: AppEntry;
+  className?: string;
+  unframed?: boolean;
+  /** Marks an owner's shared app the way every launcher does. */
+  sharedBadge?: boolean;
+}) {
+  const { shared, appearance, iconUrl } = desktopIconSource(app);
   const { showImage, onError } = useIconWithFallback(iconUrl);
+  const framed = !showImage && (!unframed || shared);
+  const badged = sharedBadge && shared;
+  const frameClass = framed
+    ? `border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]${unframed ? " rounded-[13px]" : ""}`
+    : "border-0 shadow-none";
   return (
     <span
       data-desktop-app-icon
-      className={`flex items-center justify-center overflow-hidden ${showImage || unframed ? "border-0 shadow-none" : "border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]"} ${className}`}
-      style={{ background: showImage || unframed ? "transparent" : appearance.color, color: unframed ? "inherit" : appearance.iconColor }}
+      className={`flex items-center justify-center ${badged ? "overflow-visible" : "overflow-hidden"} ${frameClass} ${className}`}
+      style={framed ? { background: appearance.color, color: appearance.iconColor } : { background: "transparent", color: "inherit" }}
     >
       {showImage && iconUrl ? (
         // Gateway-owned app icons can change at runtime and are already
@@ -118,8 +143,9 @@ function DesktopAppIcon({ app, className = "", unframed = false }: { app: AppEnt
         // eslint-disable-next-line @next/next/no-img-element
         <img src={iconUrl} alt="" className="size-full object-contain" draggable={false} onError={onError} />
       ) : (
-        <Glyph className={unframed ? "size-full" : "size-[48%]"} aria-hidden="true" />
+        <DesktopIconFallback app={app} shared={shared} Glyph={appearance.icon} unframed={unframed} />
       )}
+      {badged ? <SharedAppBadge /> : null}
     </span>
   );
 }
@@ -310,9 +336,7 @@ export function WebDesktopSurface({
   const filesWindow = windows.find((windowRecord) => windowRecord.path === "__file-browser__");
   const otherRunningWindows = windows.filter((windowRecord) => windowRecord.path !== "__file-browser__");
   const renderWindowIcon = (windowRecord: AppWindow, large = false) => {
-    const app = apps.find((candidate) => (
-      windowRecord.path === candidate.path || windowRecord.path.startsWith(`${candidate.path}:`)
-    )) ?? { name: windowRecord.title, path: windowRecord.path };
+    const app = windowAppEntry(windowRecord, apps);
     return (
       <DesktopAppIcon
         app={app}
@@ -409,9 +433,7 @@ export function WebDesktopSurface({
             <span aria-hidden="true" className="mx-0.5 h-12.5 w-px shrink-0 bg-border" />
             <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {otherRunningWindows.map((windowRecord) => {
-                const app = apps.find((candidate) => (
-                  windowRecord.path === candidate.path || windowRecord.path.startsWith(`${candidate.path}:`)
-                )) ?? { name: windowRecord.title, path: windowRecord.path };
+                const app = windowAppEntry(windowRecord, apps);
                 return (
                   <TaskbarButton
                     key={windowRecord.id}
@@ -423,6 +445,7 @@ export function WebDesktopSurface({
                     <DesktopAppIcon
                       app={app}
                       unframed
+                      sharedBadge
                       className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
                     />
                   </TaskbarButton>

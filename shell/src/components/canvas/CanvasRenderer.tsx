@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { windowAppEntry } from "@/lib/window-app-entry";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 import { useCanvasLabels } from "@/stores/canvas-labels";
 import { CanvasTransform } from "./CanvasTransform";
@@ -175,7 +176,7 @@ export function CanvasRenderer({ children, apps = [] }: CanvasRendererProps = {}
               panY={panY}
               viewportWidth={viewportWidth}
               viewportHeight={viewportHeight}
-              iconUrl={apps.find((app) => app.path === win.path)?.iconUrl}
+              iconUrl={windowAppEntry(win, apps).iconUrl}
             />
           );
         })}

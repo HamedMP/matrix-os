@@ -6,6 +6,7 @@ import { useSharedAppDirectory } from "../../packages/ui/src/collaboration/useSh
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events.js";
 import { SharedAppDirectoryNotice } from "../../packages/ui/src/collaboration/SharedAppDirectoryNotice.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
+import { sharedLauncherAppEntry } from "../../shell/src/hooks/useSharedLauncherApps.js";
 
 const target = {
   scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
@@ -22,7 +23,7 @@ it("loads every metadata page and removes a stopped share on discovery refresh",
     : path.includes("cursor=") ? { items: [target] } : { items: [], nextCursor: "next" }) };
   const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
   await waitFor(() => expect(result.current.items).toEqual([target]));
-  expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared-apps?limit=100&cursor=next");
+  expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared-apps?limit=100&presentation=1&cursor=next");
   shared = false;
   act(() => notifyCollaborationDiscoveryChanged());
   await waitFor(() => expect(result.current.items).toEqual([]));
@@ -93,6 +94,21 @@ it("marks and opens a shared app in the Web Mobile launcher", () => {
   expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
   fireEvent.click(tile);
   expect(open).toHaveBeenCalledWith(app);
+});
+
+it("shows the owner's shared app name and artwork in the Web Mobile launcher", () => {
+  const iconUrl = `/api/collaboration/shared-apps/${target.scopeId}/artwork/${"c".repeat(64)}`;
+  const entry = sharedLauncherAppEntry({ ...target, presentation: { name: "Sprint Board", iconUrl } });
+  const app = { ...entry, id: entry.path, iconSlug: "apps" };
+  render(<MobileLauncher apps={[app]} onOpen={vi.fn()} onOpenSettings={() => undefined}
+    openStackCount={0} onShowSwitcher={() => undefined} onCloseAll={() => undefined} />);
+  const tile = screen.getByRole("button", { name: /Sprint Board/ });
+  expect(tile.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
+  expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+
+  // An older platform omits presentation: the slug name and the generic apps icon remain.
+  const legacy = sharedLauncherAppEntry(target);
+  expect(legacy).toEqual({ name: "Shared tasks lab", path: `__shared-app__:${target.scopeId}`, sharedAppTarget: target });
 });
 
 it("keeps a large directory usable and loads additional pages on demand", async () => {

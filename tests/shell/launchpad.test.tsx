@@ -118,6 +118,53 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onOpenApp).not.toHaveBeenCalled();
     expect(handlers.onClose).toHaveBeenCalled();
   });
+  it.each(["flat", "macos-glass"])("shows the owner's shared app name and artwork with the badge in %s", async (style) => {
+    setDesign(style);
+    const iconUrl = `/api/collaboration/shared-apps/${sharedTarget.scopeId}/artwork/${"c".repeat(64)}`;
+    const presented = { ...sharedTarget, presentation: { name: "Sprint Board", iconUrl } };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ items: [presented] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => useWindowManager.setState({ windows: [] }));
+    await renderLauncher({ actorId: "user_member" });
+    const tile = await screen.findByRole("button", { name: "Sprint Board" });
+    expect(fetchMock.mock.calls.map(([input]) => String(input)))
+      .toContainEqual(expect.stringContaining("/api/collaboration/shared-apps?limit=100&presentation=1"));
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    const artwork = tile.querySelector("img");
+    expect(artwork?.getAttribute("src")).toBe(iconUrl);
+    expect(screen.queryByRole("button", { name: "Shared tasks lab" })).toBeNull();
+
+    // Broken or revoked artwork keeps the owner's name, the badge, and a letter tile.
+    fireEvent.error(artwork!);
+    const fallback = screen.getByRole("button", { name: "Sprint Board" });
+    expect(fallback.querySelector("img")).toBeNull();
+    expect(fallback.textContent).toContain("S");
+    expect(fallback.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+
+    fireEvent.click(fallback);
+    expect(useWindowManager.getState().windows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Sprint Board shared by Owner", sharedAppTarget: presented }),
+    ]));
+  });
+
+  it("keeps discovering shared apps from a platform that predates presentation", async () => {
+    setDesign("macos-glass");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => String(input).includes("presentation=1")
+      ? new Response(JSON.stringify({ error: "Invalid request" }), { status: 422, headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ items: [sharedTarget] }), { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLauncher({ actorId: "user_member" });
+    const tile = await screen.findByRole("button", { name: "Shared tasks lab" });
+    expect(tile.querySelector('[aria-label="Shared app"]')).toBeTruthy();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
+      expect.stringContaining("/api/collaboration/shared-apps?limit=100&presentation=1"),
+      expect.stringMatching(/\/api\/collaboration\/shared-apps\?limit=100$/),
+    ]));
+  });
+
   // Reset before (not after) each test: removing the attribute while a
   // launcher is still mounted would fire useThemeStyle's MutationObserver
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.

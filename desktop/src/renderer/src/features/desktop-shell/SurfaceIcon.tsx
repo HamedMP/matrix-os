@@ -14,9 +14,11 @@ import {
   UsersIcon,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
+import { sharedAppPresentation } from "@matrix-os/ui/collaborative-app-sharing";
 import { bundledDesktopIconForPath } from "./bundled-app-icons";
 import { useState } from "react";
 import type { Tab, TabKind } from "../../stores/tabs";
+import { useConnection } from "../../stores/connection";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 const SURFACE_ICON: Record<TabKind, LucideIcon> = {
@@ -43,14 +45,18 @@ export default function SurfaceIcon({
   tab,
   size = 18,
 }: {
-  tab: Pick<Tab, "kind" | "icon" | "title" | "appIdentity" | "slug">;
+  tab: Pick<Tab, "kind" | "icon" | "title" | "appIdentity" | "slug"> & Partial<Pick<Tab, "sharedAppTarget">>;
   size?: number;
 }) {
   // Plugins and Settings reuse one settings surface; its title identifies the
   // current destination without retaining stale bundled artwork on the tab.
   const isPlugins = tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps");
   const Icon = isPlugins ? Blocks : SURFACE_ICON[tab.kind];
-  const explicitIcon = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
+  const platformHost = useConnection((state) => state.platformHost);
+  // A shared app's artwork is the owner's presentation, re-derived for the current platform host on every render.
+  const explicitIcon = tab.sharedAppTarget
+    ? (platformHost ? sharedAppPresentation(tab.sharedAppTarget, platformHost).iconUrl ?? null : null)
+    : tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   const product = tab.kind === "app" ? nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "") : null;
   const paths: Partial<Record<TabKind,string>> = { home: "__browser__", browser: "__browser__", work: "__chat__", chat: "__chat__", terminal: "__terminal__", terminals: "__terminal__", files: "__file-browser__", editor: "__editor__", notes: "apps/notes/index.html", settings: "__settings__" };
   const path = product?.path ?? (isPlugins ? "__plugins__" : paths[tab.kind]);
