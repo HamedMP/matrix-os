@@ -9,6 +9,7 @@ import {
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   canonicalChatApprovalOutcome,
+  supervisedToolApproval,
   createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionErrorKind, browserPermissionOutcome, browserCanonicalDecision, BrowserGrantViewSchema,
   type BrowserPermissionChoice, type BrowserGrantView,
   type CanonicalChatApprovalDecision,
@@ -16,6 +17,7 @@ import {
 } from "@matrix-os/contracts";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { SUBMITTED_NOTE, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard";
 
 export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettled, grantRefreshKey }: {
   approval: CanonicalChatApprovalView;
@@ -27,6 +29,8 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
 }) {
   const { getToken } = useAuth();
   const [submitting, setSubmitting] = useState(false);
+  // The decision being sent, so its own button shows the spinner.
+  const [sending, setSending] = useState<CanonicalChatApprovalDecision | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undo] = useState(createBrowserGrantUndoTracker);
@@ -40,7 +44,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
   const requestIds = useRef<Partial<Record<CanonicalChatApprovalDecision | BrowserPermissionChoice, string>>>({});
   useEffect(() => {
     const current = {}; scope.current = current; inFlight.current = false;
-    setGrant(null); setSubmitting(false); setSubmitted(false); setError(null); requestIds.current = {};
+    setGrant(null); setSubmitting(false); setSending(null); setSubmitted(false); setError(null); requestIds.current = {};
     return () => { if (scope.current === current) scope.current = {}; };
   }, [chatId, gatewayUrl, approval.approvalId, approval.runId, getToken]);
   useEffect(() => {
@@ -63,6 +67,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
     const current = scope.current;
     inFlight.current = true;
     setSubmitting(true);
+    setSending(decision);
     setError(null);
     try {
       const token = await getToken();
@@ -83,11 +88,15 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       if (scope.current === current) {
         if (browserChoice) setGrantRefresh(value => value + 1);
         try { await onSettled(); } catch (_error) { if (scope.current === current) setError("Could not refresh chat. Try again."); }
-        if (scope.current === current) { inFlight.current = false; setSubmitting(false); }
+        if (scope.current === current) { inFlight.current = false; setSubmitting(false); setSending(null); }
       }
     }
   }
   if (approval.pending && RoutineActionIdSchema.safeParse(approval.approvalId).success) return <NativeRoutineActionConfirmation challengeId={approval.approvalId} gatewayUrl={gatewayUrl}/>;
+  // A Supervised-mode tool request draws Desktop's card; other approvals keep the generic one.
+  const tool = approval.browserApproval ? null : supervisedToolApproval(approval);
+  if (tool) return <SupervisedToolApprovalCard approval={tool} sending={submitting ? sending : null} submitted={submitted}
+    error={error} onDecision={decision => void submit(decision)}/>;
   return <View style={styles.card}>
     <Text style={styles.text}>{approval.title}</Text>
     <Text style={styles.text}>{approval.description}</Text>
@@ -98,7 +107,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
         onPress={() => void submit(choice.canonical, approval.browserApproval ? choice.decision as BrowserPermissionChoice : undefined)}>
         <Text style={styles.text}>{choice.label}</Text>
       </Pressable>)}
-    </View> : <Text style={styles.text}>{approval.browserApproval ? browserPermissionOutcome(approval, clock, submitted) : approval.pending ? "Decision submitted. Waiting for confirmation." : canonicalChatApprovalOutcome(approval.decision)}</Text>}
+    </View> : <Text style={styles.text}>{approval.browserApproval ? browserPermissionOutcome(approval, clock, submitted) : approval.pending ? SUBMITTED_NOTE : canonicalChatApprovalOutcome(approval.decision)}</Text>}
     {grant?.state === "active" && !approval.browserGrant ? <Text style={styles.text}>Browser access is saved for this Chat</Text> : null}
     {grant?.state === "active" ? <Pressable accessibilityRole="button" disabled={submitting} style={styles.button} onPress={() => void (async () => {
       if (inFlight.current) return; const current = scope.current; inFlight.current = true; setSubmitting(true); setError(null);

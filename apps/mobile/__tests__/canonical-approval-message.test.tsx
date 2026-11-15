@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
+import { supervisedToolApprovalCopy, type CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 
 jest.mock("expo/fetch", () => ({ fetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
 const mockRoutineAuth = { userId: "owner-a", sessionId: "session-a", token: null as Promise<string> | null };
@@ -229,4 +230,110 @@ it.each(["owner", "session", "computer", "unmount"])("actual Native card prevent
   else mounted.rerender(<CanonicalApprovalMessage {...props} gatewayUrl={change === "computer" ? "https://app.matrix-os.com/vm/other-pc" : props.gatewayUrl} approval={renderedApproval}/>);
   await act(async () => { finish("new-session-token"); await Promise.resolve(); });
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+});
+
+describe("supervised tool approval (Native Mobile)", () => {
+  // The exact shape the Claude built-in tool approval control sends: the subject in
+  // curly quotes after " · ", and the tool input as JSON after the summary.
+  const command = "cd ~/matrix/specs && cat 2692-chat-permission-recovery/spec.md | head -40";
+  const input = { command, description: "Review spec scaffolding" };
+  const summary = supervisedToolApprovalCopy("Bash").summary;
+  const bash = {
+    ...approval,
+    approvalId: "tool_test",
+    title: `Run a command · “${command.slice(0, 80)}”`,
+    description: `${summary}\n\n${JSON.stringify(input)}`,
+    allowedDecisions: ["approve", "decline", "cancel"] as CanonicalChatApprovalDecision[],
+  };
+  const accepted = (decision: string) => ({ ok: true, json: async () => ({ approvalId: "tool_test", decision, submission: "accepted" }) } as Response);
+
+  it("shows the request in Desktop's words instead of the raw tool input", () => {
+    render(<CanonicalApprovalMessage {...props} approval={bash} />);
+    expect(screen.getByText("Needs your approval")).toBeTruthy();
+    expect(screen.getByText(`Run a command · ${command}`)).toBeTruthy();
+    expect(screen.getByText(command)).toBeTruthy();
+    expect(screen.getByText(summary)).toBeTruthy();
+    expect(screen.getByText("Allow once")).toBeTruthy();
+    expect(screen.getByText("Not now")).toBeTruthy();
+    expect(screen.queryByText(/"command"/)).toBeNull();
+    // Desktop offers no Cancel, and the generic labels are gone.
+    for (const label of ["Approve", "Decline", "Cancel"]) expect(screen.queryByText(label)).toBeNull();
+  });
+
+  it("opens and closes formatted details from See details", () => {
+    render(<CanonicalApprovalMessage {...props} approval={bash} />);
+    expect(screen.queryByText("Review spec scaffolding")).toBeNull();
+    fireEvent.press(screen.getByText("See details"));
+    expect(screen.getByText("Command")).toBeTruthy();
+    expect(screen.getAllByText(command)).toHaveLength(2);
+    expect(screen.getByText("Description")).toBeTruthy();
+    expect(screen.getByText("Review spec scaffolding")).toBeTruthy();
+    expect(screen.queryByText(/[{}]/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Hide details" }).props.accessibilityState).toMatchObject({ expanded: true });
+    fireEvent.press(screen.getByText("Hide details"));
+    expect(screen.queryByText("Review spec scaffolding")).toBeNull();
+    expect(screen.getByText("See details")).toBeTruthy();
+  });
+
+  it.each([["Allow once", "approve"], ["Not now", "decline"]] as const)("%s sends the %s decision Desktop sends", async (label, decision) => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(accepted(decision));
+    render(<CanonicalApprovalMessage {...props} approval={bash} />);
+    fireEvent.press(screen.getByText(label));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://app.matrix-os.com/vm/pr-1580/api/chats/chat_test/runs/run_test/approvals/tool_test");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ decision });
+    await screen.findByText("Decision submitted. Waiting for confirmation.");
+    expect(screen.queryByText("Allow once")).toBeNull();
+    expect(screen.queryByText("Not now")).toBeNull();
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("keeps both choices available after a failed decision, without the server's words", async () => {
+    jest.spyOn(global, "fetch").mockRejectedValue(new Error("private upstream token"));
+    render(<CanonicalApprovalMessage {...props} approval={bash} />);
+    fireEvent.press(screen.getByText("Allow once"));
+    await screen.findByText("Could not submit approval. Try again.");
+    expect(screen.getByText("Allow once")).toBeTruthy();
+    expect(screen.getByText("Not now")).toBeTruthy();
+    expect(screen.queryByText("private upstream token")).toBeNull();
+  });
+
+  it.each([
+    [{ decision: "approve" as const }, "Command allowed"],
+    [{ decision: "decline" as const }, "Command not allowed"],
+    [{ decision: "cancel" as const }, "Command was not used"],
+  ])("draws a settled request as one line: %o", (settled, line) => {
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, ...settled, pending: false }} />);
+    expect(screen.getByText(line)).toBeTruthy();
+    expect(screen.queryByText("Needs your approval")).toBeNull();
+    expect(screen.queryByText("Allow once")).toBeNull();
+  });
+
+  it("says when a request expired and that nothing ran", () => {
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, pending: false, decision: "cancel", reason: "expired" }} />);
+    expect(screen.getByText("Request expired")).toBeTruthy();
+    expect(screen.getByText("No answer within 10 minutes, so the command was not run.")).toBeTruthy();
+    expect(screen.queryByText("See details")).toBeNull();
+    expect(screen.queryByText("Allow once")).toBeNull();
+  });
+
+  it("offers no details when the computer withheld them", () => {
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, title: "Run a command", description: summary }} />);
+    expect(screen.getByText("Run a command")).toBeTruthy();
+    expect(screen.queryByText("See details")).toBeNull();
+  });
+
+  it("shows details that are not a JSON object as they came", () => {
+    const cut = `${JSON.stringify(input).slice(0, 30)}`;
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, description: `${summary}\n\n${cut}` }} />);
+    fireEvent.press(screen.getByText("See details"));
+    expect(screen.getByText(cut)).toBeTruthy();
+  });
+
+  it("keeps a web search query in quotes and plain type", () => {
+    const search = supervisedToolApprovalCopy("WebSearch");
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, title: `${search.title} · “matrix os pricing”`, description: search.summary }} />);
+    expect(screen.getByText(`${search.title} · “matrix os pricing”`)).toBeTruthy();
+    expect(screen.getByText(search.summary)).toBeTruthy();
+  });
 });
