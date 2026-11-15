@@ -323,7 +323,9 @@ export default function AppLauncher({
           />
         </div>
         {presentation === "launchpad" ? <>
-          <LauncherFilterChips chips={chips} value={filter} className="mt-3" onChange={(next) => { setChosenFilter(next); setActive(0); }} />
+          <div data-launchpad-interactive={presentation === "launchpad" || undefined}>
+            <LauncherFilterChips chips={chips} value={filter} className="mt-3" onChange={(next) => { setChosenFilter(next); setActive(0); }} />
+          </div>
           <p className="mt-3 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
             {launcherFilterHint(filter, filtered.length, chips, "Open an installed app, or choose Create app to start in Chat.")}
           </p>

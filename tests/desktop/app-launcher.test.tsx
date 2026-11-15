@@ -4,6 +4,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLauncher from "../../desktop/src/renderer/src/features/embeds/AppLauncher";
+import DesktopLaunchpad from "../../desktop/src/renderer/src/features/desktop-shell/DesktopLaunchpad";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
@@ -55,6 +56,30 @@ describe("AppLauncher", () => {
     expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "app", slug: "shared-tasks-lab", sharedAppTarget: target }),
     ]));
+  });
+
+  it("filters apps in the Electron Desktop launchpad without dismissing it", async () => {
+    // Fault: chip pointer events reach the launchpad backdrop, which closes before the filter applies.
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    })));
+    const onClose = vi.fn();
+    render(<DesktopLaunchpad open onClose={onClose} osViewMode="desktop" onSwitchOsView={vi.fn()} />);
+    await screen.findByRole("button", { name: "Shared tasks lab" });
+    const mine = screen.getByRole("button", { name: /^Mine/ });
+    fireEvent.pointerDown(mine);
+    fireEvent.click(mine);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mine.getAttribute("aria-pressed")).toBe("true");
   });
 
   it.each(["loading", "offline"])("opens shared apps while the installed catalog is %s", async (status) => {
