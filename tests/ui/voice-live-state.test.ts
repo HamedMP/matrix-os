@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialVoiceLiveState, parseVoiceLiveFrame, reduceVoiceLive, voiceLiveErrorMessage } from "../../shell/src/lib/voice-live-state.js";
+import { initialVoiceLiveState, parseVoiceLiveFrame, reduceVoiceLive, voiceLiveErrorMessage } from "../../packages/ui/src/voice-live/state.js";
 
 const ready = reduceVoiceLive(initialVoiceLiveState, { type: "session.ready", chatId: "chat_voice" });
 

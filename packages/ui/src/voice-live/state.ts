@@ -88,7 +88,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   voice_unavailable: "Voice is not set up on this computer yet.",
   unauthorized: "Sign in again to use voice.",
   audio_backpressure: "Audio fell behind. Try again.",
-  microphone_denied: "Microphone access is blocked. Allow it in your browser settings.",
+  microphone_denied: "Microphone access is blocked. Allow microphone access and try again.",
 };
 
 export function voiceLiveErrorMessage(code: string | null): string {
