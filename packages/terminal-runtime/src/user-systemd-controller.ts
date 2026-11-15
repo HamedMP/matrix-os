@@ -1,3 +1,4 @@
+import { validateTerminalClosureIfPresent } from "./generation-closure.mjs";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -147,6 +148,7 @@ export async function loadInstalledTerminalRuntimeGeneration(
     if ((await readFile(join(generationDir, "GENERATION"), "utf8")).trim() !== parsed.data) {
       throw new TerminalRuntimeUnavailableError();
     }
+    await validateTerminalClosureIfPresent(generationDir, parsed.data);
     const currentStats = await lstat(join(terminalRuntimeRoot, "current"));
     if (!currentStats.isSymbolicLink()) throw new TerminalRuntimeUnavailableError();
     const [currentReal, generationReal] = await Promise.all([

@@ -12,8 +12,8 @@
   },
   "scripts": {
     "dev": "pnpm run build:native && tsx watch src/main.ts",
-    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && pnpm run build:native && pnpm --dir ../.. --filter '@matrix-os/terminal-runtime' build && tsc && cp src/coding-agents/*.mjs dist/coding-agents/",
-    "build:native": "node native/build.mjs"
+    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && pnpm run build:native && pnpm --dir ../.. --filter '@matrix-os/terminal-runtime' build && tsc && cp src/coding-agents/*.mjs dist/coding-agents/ && cp src/chat/hermes-routine-tool.py dist/chat/",
+    "build:native": "node native/build.mjs && node native/build-terminal-writer.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.0",
@@ -53,6 +53,7 @@
     "prom-client": "^15.1.3",
     "glob": "^13.0.6",
     "semver": "^7.7.0",
+    "smol-toml": "1.9.1",
     "undici": "7.30.1",
     "ws": "^8.19.0",
     "yaml": "2.8.3",

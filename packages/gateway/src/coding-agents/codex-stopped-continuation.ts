@@ -1,3 +1,4 @@
+import { nativeCodexRoutineAdmission } from "../chat/codex-routine-source.js";
 import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
 import { isSessionStopConfirmed } from "./session-start-cleanup-proof.js";
@@ -90,6 +91,7 @@ export async function recoverStoppedCodexContinuation(
       };
       recoverySignal.throwIfAborted();
       await admission.validate(principal.userId, binding, sessionId);
+      nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
       const session = await recoverCodexWorkspace({ ...runtime, startSession: scope.startSession },
         { ...context, signal: recoverySignal, resumeState: recoveredState }, sessionId, prompt,
         browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);

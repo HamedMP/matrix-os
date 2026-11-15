@@ -1,5 +1,11 @@
 import { z } from "zod/v4";
-import { MANAGED_WORKERS_AI_MODEL_IDS, managedWorkersAiModel } from "@matrix-os/contracts";
+import {
+  BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES,
+  BOT_INFERENCE_TEXT_MAX_BYTES,
+  MANAGED_WORKERS_AI_MODEL_IDS,
+  managedWorkersAiModel,
+  validateBotImageInferenceBody,
+} from "@matrix-os/contracts";
 import { BoundedJsonSchema } from "./funded-relay-request.js";
 
 const Text = z.string().max(1024 * 1024);
@@ -8,11 +14,16 @@ const ToolCall = z.object({
   id: z.string().min(1).max(256), type: z.literal("function"),
   function: z.object({ name: Name, arguments: Text }).strict(),
 }).strict();
-// Remote images/audio and server-side tools are deliberately not accepted:
-// these routes have unreviewed fetching and charging semantics.
-const Content = z.union([Text, z.array(z.object({ type: z.literal("text"), text: Text }).strict()).max(1024)]);
+const TextPart = z.object({ type: z.literal("text"), text: Text }).strict();
+const ImagePart = z.object({ type: z.literal("image_url"), image_url: z.object({
+  url: z.string().max(Math.ceil(BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES / 3) * 4 + 64),
+  detail: z.enum(["auto", "high", "low"]).optional(),
+}).strict() }).strict();
+const Content = z.union([Text, z.array(TextPart).max(1024)]);
+const UserContent = z.union([Text, z.array(z.discriminatedUnion("type", [TextPart, ImagePart])).max(1024)]);
 const Message = z.discriminatedUnion("role", [
-  z.object({ role: z.enum(["system", "developer", "user"]), content: Content }).strict(),
+  z.object({ role: z.enum(["system", "developer"]), content: Content }).strict(),
+  z.object({ role: z.literal("user"), content: UserContent }).strict(),
   z.object({ role: z.literal("assistant"), content: Content.nullable().optional(),
     reasoning_content: Text.nullable().optional(), tool_calls: z.array(ToolCall).max(256).optional(),
   }).strict(),
@@ -56,8 +67,16 @@ export function serializeFundedOpenAiRequest(value: unknown) {
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
   const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
   const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
-  return { request, body: JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
-    ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false }) };
+  const body = JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
+    ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false });
+  const hasImages = parsed.messages.some(message => message.role === "user" && Array.isArray(message.content)
+    && message.content.some(part => part.type === "image_url"));
+  // The managed Bot validator accepts only local PNG/JPEG/WebP data URLs.
+  // Match the funded Chat attachment cap before obtaining policy or credit.
+  if (hasImages && (!model.vision || !validateBotImageInferenceBody(
+    body, BOT_INFERENCE_TEXT_MAX_BYTES, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES,
+  ).valid)) throw new Error("Unsupported funded AI image input");
+  return { request, body };
 }
 
 /** Both account and gateway come from the validated operator configuration,

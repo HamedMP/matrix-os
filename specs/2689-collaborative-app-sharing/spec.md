@@ -87,7 +87,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - **FR-001**: Matrix MUST define a collaborative app as an exact app version whose bounded capability declaration matches its immutable build, owner-backed data schema, Matrix bridge/runtime compatibility, revisioned mutation path, participant identity, provider policy, and update propagation. Release qualification MUST prove the resulting path with two normally authenticated Matrix accounts.
 - **FR-002**: Readiness MUST name each missing capability, bind to the exact app identity and version, and become invalid after a relevant app or runtime change.
 - **FR-003**: Any current organization member MUST be able to share an app they own directly from the app with one selected organization. Creating or sharing a project, obtaining organization-admin approval, choosing per-member grants, or assigning app roles MUST NOT be required.
-- **FR-004**: Every current member of the selected organization, including a guest, MUST be able to discover the share in **Shared with me** and open the creator-hosted app without a separate invitation, acceptance step, copied installation, or the creator's personal app session.
+- **FR-004**: Every current member of the selected organization, including a guest, MUST be able to discover the share in the app launcher alongside their other apps, with a shared icon badge, and open the creator-hosted app without a separate invitation, acceptance step, copied installation, or the creator's personal app session. Shared apps MUST NOT appear as app cards in Chat's shared list. Existing app deep links remain supported.
 - **FR-005**: A recipient opening the app MUST see the creator's existing app records and later confirmed changes in that same app database. V1 does not filter individual app records by recipient.
 - **FR-006**: Every launch, asset, data read, data write, and update MUST verify that the app is currently shared with the actor's organization and that the actor is a current member. No second app-specific permission check is required.
 - **FR-007**: Every current organization member, including a guest, MUST be able to use the app's full declared functionality. Matrix MUST NOT add Viewer/Editor modes, per-member grants, admin approval, or per-record filtering to V1 shared apps.
@@ -99,6 +99,10 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - **FR-013**: App replacement or deletion MUST NOT inherit a prior organization share merely by reusing a slug. The owner remains responsible for the app's saved data and recovery in V1.
 - **FR-014**: The share flow MUST explain that existing app records will be visible, that the creator hosts the app and its data, that all current organization members can use it, and what stopping the share does.
 - **FR-015**: Public app publication, Gallery installation, and private live sharing MUST be presented as distinct actions and data scopes.
+
+#### Electron owner flow
+
+The existing **Publish app** control opens one contained owner popover. Within it, a separate **Share with your org** section shows the active organization, readiness and its corrective action, a readiness check, and an enabled share action only for a ready exact build. An active share shows its organization and **Stop sharing**, even when the current organization selection changes. The section explains that current members, including guests, can use existing owner data and that the app stays on the owner's Matrix. Missing membership, unavailable requests, and pending actions have explicit states. Organization sharing uses the owner collaboration gateway and never invokes Matrix.page publication. The native embedded view detaches while this popover is open so its controls remain visible.
 
 ### Key Entities
 

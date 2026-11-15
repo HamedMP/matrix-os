@@ -121,6 +121,21 @@ sudo() { python3 -I -c """ + shlex.quote(adapter) + "; }\n" + function + startup
         startup = self.agent[self.agent.index('# ── Main loop'):]
         self.assertLess(startup.index('recover_interrupted_update'), startup.index('reconcile_browser_host_bootstrap'))
 
+    def test_dev_first_upgrade_installs_only_after_explicit_opt_in(self):
+        self.old_install_and_commit()
+        environment = self.host / 'opt/matrix/env/host.env'
+        dev = self.environment.replace('MATRIX_RUNTIME_SLOT=primary', 'MATRIX_RUNTIME_SLOT=dev')
+        environment.write_text(dev)
+        skipped = self.startup()
+        self.assertNotIn('NATIVE ', skipped.stdout)
+        self.assertFalse((self.host / 'usr/local/libexec/matrix-browser-runtime.py').exists())
+        environment.write_text(dev + 'MATRIX_BROWSER_DEV_SETUP=true\n')
+        started = self.startup()
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertIn('NATIVE /usr/bin/systemctl start --no-block matrix-browser-runtime.service', started.stdout)
+        self.assertEqual((self.host / 'usr/local/libexec/matrix-browser-runtime.py').read_bytes(), self.helper)
+        self.assertNotIn('NATIVE ', self.startup().stdout)
+
     def test_unhealthy_new_startup_defers_without_affecting_core(self):
         self.old_install_and_commit()
         startup = self.startup(healthy=False)

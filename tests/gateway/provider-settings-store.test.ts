@@ -18,7 +18,13 @@ import {
   type ProviderLoginCoordinator,
   type ProviderSettingsRuntimeCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { bindNativeAccountMetadata, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
+import type { ClaudeNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/claude-native-account-metadata.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
+import { bindOwnerRouteToChatModel, resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
+import { claudeFallbackCatalog } from "../../packages/gateway/src/chat/claude-model-catalog.js";
+import { OWNER_OPENAI_MODEL_IDS } from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
@@ -161,7 +167,11 @@ describe("ProviderSettingsStore", () => {
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
+    onFundingSummaryRead?: () => void;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
+    prepareSharedAiRouteChange?: () => Promise<void>;
+    claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
+    codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -174,8 +184,12 @@ describe("ProviderSettingsStore", () => {
       accountLifecycle: options.withLifecycle === false ? undefined : lifecycle,
       loginCoordinator: options.withLogin === false ? undefined : login,
       runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
+      ...(options.prepareSharedAiRouteChange ? { prepareSharedAiRouteChange: options.prepareSharedAiRouteChange } : {}),
+      ...(options.claudeNativeAccountMetadataReader ? { claudeNativeAccountMetadataReader: options.claudeNativeAccountMetadataReader } : {}),
+      ...(options.codexNativeAccountMetadataReader ? { codexNativeAccountMetadataReader: options.codexNativeAccountMetadataReader } : {}),
       fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
         getFundingSummary: vi.fn(async () => {
+          options.onFundingSummaryRead?.();
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
           return options.fundingSummary!;
         }),
@@ -190,6 +204,333 @@ describe("ProviderSettingsStore", () => {
       idGenerator: () => `generated_${++nextId}`,
     });
   }
+
+  it("drains shared project AI before persisting a route-authority mutation", async () => {
+    const prepareSharedAiRouteChange = vi.fn(async () => undefined);
+    const store = createStore({ prepareSharedAiRouteChange });
+    const snapshot = await store.getSnapshot();
+    await store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "drain_shared_ai_before_budget_change",
+      monthlyBudgetMicrousd: 7_000_000,
+    });
+    expect(prepareSharedAiRouteChange).toHaveBeenCalledOnce();
+  });
+
+  it("binds the saved Settings revision to the canonical collaboration snapshot", async () => {
+    const store = createStore();
+    const initial = await store.getSnapshot();
+    await store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: initial.revision,
+      idempotencyKey: "advance_settings_revision_for_collaboration",
+      monthlyBudgetMicrousd: 7_000_000,
+    });
+
+    const collaboration = await store.getCanonicalCollaborationSnapshot();
+
+    expect(collaboration.revision).toBe(1);
+    expect(collaboration.active).toEqual({
+      providerInstanceId: "kernel_owner",
+      accessSourceId: "owner_anthropic_profile",
+      modelId: "claude-opus-5",
+    });
+    expect(canonical.revision).toBe(7);
+  });
+
+  it("uses the saved Claude subscription instead of credential-priority owner key inventory", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null,
+      action: "retry" as const, safeReason: "unknown" as const };
+    canonical.accessSources.push(
+      { ...profile, ...unknown, id: "owner_claude_profile" },
+      { ...profile, id: "owner_anthropic_key", fundingKind: "owner_api_key" },
+    );
+    canonical.accounts.push({ ...account, ...unknown, id: "owner_claude_profile" });
+    canonical.instances.push(
+      { ...ownerInstance, id: "claude_native", driverId: "claude_code", accountId: "owner_claude_profile",
+        accessSourceId: "owner_claude_profile", readiness: unknown, defaultModelId: null },
+      { ...ownerInstance, id: "kernel_key", accessSourceId: "owner_anthropic_key" },
+    );
+    for (const model of canonical.models) {
+      model.eligibleAccessSourceIds.push("owner_claude_profile", "owner_anthropic_key");
+      const policy = model.dataPolicies.find((candidate) => candidate.accessSourceId === "owner_anthropic_profile")!;
+      model.dataPolicies.push(
+        { ...policy, accessSourceId: "owner_claude_profile" },
+        { ...policy, accessSourceId: "owner_anthropic_key" },
+      );
+    }
+    canonical.active = {
+      providerInstanceId: "kernel_key",
+      accessSourceId: "owner_anthropic_key",
+      modelId: "claude-opus-5",
+    };
+    const metadata = bindNativeAccountMetadata({
+      accountLabel: "owner@example.test",
+      authMethod: "terminal",
+      connectionDetails: { email: "owner@example.test", planName: "Claude Max" },
+      checkedAt: NOW.toISOString(),
+      staleAfter: new Date(NOW.getTime() + 30_000).toISOString(),
+    }, async () => true, "claude-owner-principal");
+    const store = createStore({ claudeNativeAccountMetadataReader: async () => metadata });
+    await store.getSnapshot();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      harnesses: Array<{ harness: string; accessSourceId: string | null; selectedAccountId: string | null }>;
+    };
+    const claude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    claude.accessSourceId = "owner_claude_profile";
+    claude.selectedAccountId = "owner_claude_profile";
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    const collaboration = await store.getCanonicalCollaborationSnapshot();
+    expect(collaboration).toMatchObject({
+      active: {
+        providerInstanceId: "claude_native",
+        accessSourceId: "owner_claude_profile",
+        modelId: "claude-opus-5",
+      },
+      accessSources: expect.arrayContaining([expect.objectContaining({
+        id: "owner_claude_profile",
+        state: "ready",
+      })]),
+      instances: expect.arrayContaining([expect.objectContaining({
+        id: "claude_native",
+        readiness: expect.objectContaining({ state: "ready" }),
+      })]),
+    });
+    expect(resolveCurrentOwnerRoute(collaboration, NOW.getTime())).not.toBeNull();
+  });
+
+  it("uses the saved Codex route when the live inventory still prefers Claude", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const model = canonical.models.find((candidate) => candidate.id === "claude-opus-5")!;
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      accessSources: [...canonical.accessSources, {
+        ...profile,
+        id: "owner_openai_profile",
+        vendor: "openai",
+        fundingKind: "owner_api_key",
+        eligibleModelIds: ["gpt-5"],
+      }],
+      accounts: [...canonical.accounts, {
+        ...account,
+        id: "owner_codex",
+        vendor: "openai",
+      }],
+      drivers: [...canonical.drivers, {
+        ...canonical.drivers.find((driver) => driver.id === "claude_code")!,
+        id: "codex",
+        displayName: "Codex",
+      }],
+      instances: [...canonical.instances, {
+        ...ownerInstance,
+        id: "codex_owner",
+        driverId: "codex",
+        vendor: "openai",
+        accountId: "owner_codex",
+        accessSourceId: "owner_openai_profile",
+        modelIds: ["gpt-5"],
+        defaultModelId: "gpt-5",
+      }],
+      models: [...canonical.models, {
+        ...model,
+        id: "gpt-5",
+        vendor: "openai",
+        eligibleAccessSourceIds: ["owner_openai_profile"],
+        dataPolicies: [{
+          accessSourceId: "owner_openai_profile",
+          route: "owner_direct",
+          disclosureKey: "owner-openai",
+        }],
+      }],
+      active: {
+        providerInstanceId: "kernel_owner",
+        accessSourceId: "owner_anthropic_profile",
+        modelId: "claude-opus-5",
+      },
+    });
+    const store = createStore();
+    await store.getSnapshot();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      harnesses: Array<{
+        harness: string;
+        enabled: boolean;
+        enablementOrigin?: "generated_default" | "owner_configuration";
+      }>;
+    };
+    const claude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
+    Object.assign(claude, { enabled: false, enablementOrigin: "owner_configuration" });
+    Object.assign(codex, { enabled: true, enablementOrigin: "owner_configuration" });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: {
+        providerInstanceId: "codex_owner",
+        accessSourceId: "owner_openai_profile",
+        modelId: "gpt-5",
+      },
+    });
+
+    // Both agents are usable; the Chat binding, not a global default, chooses
+    // the route. This is the production failure when inventory.active is empty.
+    Object.assign(claude, { enabled: true, enablementOrigin: "owner_configuration" });
+    // Production Settings offers provider-default, independently of native
+    // model/list IDs such as gpt-5. Do not insert native IDs into Settings.
+    const settingsModel = OWNER_OPENAI_MODEL_IDS[0];
+    Object.assign(codex, { route: { kind: "fixed", providerId: "openai", modelId: settingsModel } });
+    canonical.accessSources.find((source) => source.id === "owner_openai_profile")!.eligibleModelIds = [settingsModel];
+    const codexInstance = canonical.instances.find((instance) => instance.id === "codex_owner")!;
+    Object.assign(codexInstance, { modelIds: [settingsModel], defaultModelId: settingsModel });
+    canonical.models.find((model) => model.id === "gpt-5")!.id = settingsModel;
+    canonical.active = { providerInstanceId: null, accessSourceId: null, modelId: null };
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    for (const [driverKind, modelId, providerInstanceId, accessSourceId] of [
+      ["codex", "gpt-5", "codex_owner", "owner_openai_profile"],
+      ["claude_code", "claude-sonnet-5", "kernel_owner", "owner_anthropic_profile"],
+    ] as const) {
+      const snapshot = await store.getCanonicalCollaborationSnapshot({
+        collaborationChatRoute: { driverKind, modelId },
+      });
+      expect(snapshot.active).toEqual({ providerInstanceId, accessSourceId,
+        modelId: driverKind === "codex" ? settingsModel : "claude-opus-5" });
+      expect(bindOwnerRouteToChatModel(resolveCurrentOwnerRoute(snapshot, NOW.getTime()), { driverKind, modelId }))
+        .toMatchObject({ providerInstanceId, providerAccessSourceId: accessSourceId, modelId });
+    }
+    for (const modelId of ["default", "opus", "sonnet"]) {
+      expect(claudeFallbackCatalog().models.map((model) => model.id)).toContain(modelId);
+      const snapshot = await store.getCanonicalCollaborationSnapshot({
+        collaborationChatRoute: { driverKind: "claude_code", modelId },
+      });
+      expect(snapshot.active).toEqual({
+        providerInstanceId: "kernel_owner", accessSourceId: "owner_anthropic_profile", modelId: "claude-opus-5",
+      });
+      expect(snapshot.models.some((model) => model.id === modelId)).toBe(false);
+      expect(bindOwnerRouteToChatModel(resolveCurrentOwnerRoute(snapshot, NOW.getTime()), {
+        driverKind: "claude_code", modelId,
+      })?.modelId).toBe(modelId);
+    }
+    // A bound Chat must never switch to the other ready agent when its own is off.
+    claude.enabled = false;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot({
+      collaborationChatRoute: { driverKind: "claude_code", modelId: "claude-sonnet-5" },
+    })).resolves.toMatchObject({ active: { providerInstanceId: null, accessSourceId: null, modelId: null } });
+  });
+
+  it("uses a verified consent-bound Codex subscription when raw inventory readiness is unknown", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const model = canonical.models.find((candidate) => candidate.id === "claude-opus-5")!;
+    const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null,
+      action: "retry" as const, safeReason: "unknown" as const };
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      accessSources: [...canonical.accessSources, { ...profile, ...unknown, id: "owner_openai_profile",
+        vendor: "openai", fundingKind: "owner_account", eligibleModelIds: ["gpt-5"] }],
+      accounts: [...canonical.accounts, { ...account, ...unknown, id: "owner_codex", vendor: "openai",
+        authMethod: "provider_profile" }],
+      drivers: [...canonical.drivers, { ...canonical.drivers.find((driver) => driver.id === "claude_code")!,
+        id: "codex", displayName: "Codex" }],
+      instances: [...canonical.instances, { ...ownerInstance, id: "codex_owner", driverId: "codex", vendor: "openai",
+        accountId: "owner_codex", accessSourceId: "owner_openai_profile", modelIds: ["gpt-5"],
+        defaultModelId: null, readiness: unknown }],
+      models: [...canonical.models, { ...model, id: "gpt-5", vendor: "openai",
+        eligibleAccessSourceIds: ["owner_openai_profile"], dataPolicies: [{ accessSourceId: "owner_openai_profile",
+          route: "owner_direct", disclosureKey: "owner-openai" }] }],
+    });
+    const metadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
+      { account: { type: "chatgpt", email: "owner@example.test", planType: "pro" } }, {}, NOW,
+    )!, async () => true, "private-owner-principal");
+    const onFundingSummaryRead = vi.fn();
+    const store = createStore({ codexNativeAccountMetadataReader: async () => metadata,
+      fundingSummary: new Error("Matrix funding unavailable"), onFundingSummaryRead });
+    await store.getSnapshot();
+    onFundingSummaryRead.mockClear();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      revision: number;
+      harnesses: Array<{ harness: string; enabled: boolean; enablementOrigin?: "generated_default" | "owner_configuration";
+        nativeAccountGeneration?: string; nativeAccountConsentRevision?: number }>;
+    };
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "claude")!, {
+      enabled: false, enablementOrigin: "owner_configuration",
+    });
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "codex")!, {
+      enabled: true, enablementOrigin: "owner_configuration",
+      nativeAccountGeneration: nativeAccountPrincipalFingerprint(metadata)!,
+      nativeAccountConsentRevision: saved.revision,
+    });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    const admittedSnapshot = await store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true });
+    expect(admittedSnapshot).toMatchObject({
+      active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
+    });
+    const admittedRoute = resolveCurrentOwnerRoute(admittedSnapshot, NOW.getTime());
+    expect(admittedRoute).not.toBeNull();
+    expect(onFundingSummaryRead).not.toHaveBeenCalled();
+
+    const savedClaude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    savedClaude.enabled = true;
+    canonical.active = { providerInstanceId: null, accessSourceId: null, modelId: null };
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot({
+      suppressFundedProbes: true,
+      collaborationChatRoute: { driverKind: "codex", modelId: "gpt-5" },
+    })).resolves.toMatchObject({
+      active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
+    });
+    savedClaude.enabled = false;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    const replacementMetadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
+      { account: { type: "chatgpt", email: "replacement@example.test", planType: "pro" } }, {}, NOW,
+    )!, async () => true, "private-owner-principal-replacement");
+    const replacementGeneration = nativeAccountPrincipalFingerprint(replacementMetadata)!;
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "codex")!, {
+      nativeAccountGeneration: replacementGeneration,
+      nativeAccountConsentRevision: saved.revision,
+    });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    const replacementStore = createStore({ codexNativeAccountMetadataReader: async () => replacementMetadata,
+      fundingSummary: new Error("Matrix funding unavailable"), onFundingSummaryRead });
+    const replacementSnapshot = await replacementStore.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true });
+    const replacementRoute = resolveCurrentOwnerRoute(replacementSnapshot, NOW.getTime());
+    expect(replacementRoute).not.toBeNull();
+    expect(replacementRoute?.routeGeneration).not.toBe(admittedRoute?.routeGeneration);
+
+    const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
+    delete codex.nativeAccountGeneration; delete codex.nativeAccountConsentRevision;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true })).resolves.toMatchObject({
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+    });
+  });
+
+  it("keeps the provider inventory readable without falling back when the saved route expires", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    const savedInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    savedInstance.readiness = { ...ready, state: "expired", action: "connect", safeReason: "auth" };
+    savedInstance.defaultModelId = null;
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+      accessSources: expect.arrayContaining([
+        expect.objectContaining({ id: "matrix_included", state: "ready" }),
+      ]),
+      instances: expect.arrayContaining([
+        expect.objectContaining({ id: "kernel_owner", readiness: expect.objectContaining({ state: "expired" }) }),
+      ]),
+    });
+  });
 
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
     const store = createStore();

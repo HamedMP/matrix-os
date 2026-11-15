@@ -3,6 +3,7 @@ import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React, { StrictMode, type ReactNode } from "react";
+import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -589,4 +590,173 @@ it("loads unread results beyond the first page", async () => {
   await act(async () => { result.current.setUnreadOnly?.(true); });
   await waitFor(() => expect(result.current.conversations.map(item => item.id)).toEqual(["chat_first", "chat_second"]));
   unmount();
+});
+
+it("only submits a selected skill to its bound project and requests that checkout explicitly", async () => {
+  const chat = { ...record("chat_project_skill", "Project chat", 1), projectId: "proj_one" };
+  const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [chat] });
+    if (url.includes("/api/chats/chat_project_skill?")) return Response.json({
+      ...detail("chat_project_skill", "Project chat", 1), record: chat,
+    });
+    if (url.includes("/api/chats/chat_project_skill/turns") && init?.method === "POST") {
+      return Response.json({ error: "fixture rejection" }, { status: 400 });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages[0]?.content).toBe("Project chat"));
+
+  const options = { instanceId: "pi_default", model: "anthropic:claude-sonnet-5", interactionMode: "default", permissionMode: "supervised" };
+  await act(async () => {
+    expect(await result.current.submitMessage("Read .agents/skills/review/SKILL.md", undefined, {
+      ...options, projectSkillProjectId: "proj_two",
+    })).toBe(false);
+  });
+  expect(fetchFn.mock.calls.some(([url]) => url.includes("/turns"))).toBe(false);
+
+  await act(async () => {
+    await result.current.submitMessage("Read .agents/skills/review/SKILL.md", undefined, {
+      ...options, projectSkillProjectId: "proj_one",
+    });
+  });
+  const sent = fetchFn.mock.calls.find(([url]) => url.includes("/turns"));
+  expect(JSON.parse(String(sent?.[1]?.body))).toMatchObject({
+    executionRoot: { kind: "project", projectId: "proj_one" },
+    parts: [{ type: "text", text: "Read .agents/skills/review/SKILL.md" }],
+  });
+});
+
+it.each(["primary checkout", "other project", "worktree"] as const)(
+  "queues a skill-only draft only for the active run's primary checkout (%s)",
+  async (scope) => {
+    const { snapshot } = createCanonicalChatFixture("running");
+    const { project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const projectId = project!.projectId;
+    const root = { kind: "project" as const, projectId };
+    const current = { chat, projectId, activeRun };
+    const runs = scope === "worktree" ? snapshot.runs.map(run => ({
+      ...run, executionRoot: { kind: "worktree", projectId, worktreeId: "worktree_one" },
+    })) : snapshot.runs;
+    const prompt = "Read .agents/skills/review/SKILL.md";
+    const queued: CanonicalChatQueuedTurn = {
+      id: "qturn_project_skill", chatId: chat.id, clientRequestId: "req_project_skill", position: 1,
+      parts: [{ type: "text", text: prompt }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default", permissionMode: "supervised", executionRoot: root,
+      createdAt: chat.createdAt, updatedAt: chat.updatedAt,
+    };
+    let queuedTurns: CanonicalChatQueuedTurn[] = [];
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+      if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
+        record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities, runs, queuedTurns,
+      });
+      if (new URL(url).pathname === `/api/chats/${chat.id}/queued-turns` && init?.method === "POST") {
+        queuedTurns = [queued];
+        return Response.json({ queuedTurn: queued, queueDepth: 1 }, { status: 201 });
+      }
+      if (url.includes(`/api/chats/${chat.id}/turns`) && init?.method === "POST") {
+        return Response.json({ error: "Unexpected direct turn" }, { status: 400 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubLegacyChatFetch(fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    expect(result.current.busy).toBe(true);
+    expect(result.current.projectSkillRootAvailable).toBe(scope !== "worktree");
+
+    let accepted: unknown;
+    await act(async () => {
+      accepted = await result.current.submitMessage(prompt, undefined, {
+        instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+        clientRequestId: "req_project_skill", projectSkillProjectId: scope === "other project" ? "proj_other" : projectId,
+      });
+    });
+    const admissions = fetchFn.mock.calls.filter(([url, init]) => init?.method === "POST" && /\/(queued-)?turns(?:\?|$)/.test(url));
+    if (scope === "primary checkout") {
+      expect(admissions.map(([url]) => new URL(url).pathname)).toEqual([`/api/chats/${chat.id}/queued-turns`]);
+      expect(JSON.parse(String(admissions[0]?.[1]?.body))).toMatchObject({
+        clientRequestId: "req_project_skill", executionRoot: root, parts: [{ type: "text", text: prompt }],
+      });
+      expect(accepted).toBe(true);
+      expect(result.current.queuedTurns).toEqual([queued]);
+    } else {
+      expect(admissions).toEqual([]);
+      expect(accepted).toBe(false);
+    }
+  },
+);
+
+it("withholds primary checkout skills after a worktree run", async () => {
+  const { snapshot } = createCanonicalChatFixture("completed");
+  const { project, providerBinding: _binding, activeRun: _active, ...chat } = snapshot.chat;
+  const projectId = project!.projectId;
+  const current = { chat, projectId };
+  const fetchFn = vi.fn(async (url: string) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
+      record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities,
+      runs: snapshot.runs.map(run => ({ ...run, executionRoot: { kind: "worktree", projectId, worktreeId: "worktree_one" } })),
+    });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+  expect(result.current.chatProjectId).toBe(projectId);
+  expect(result.current.projectSkillRootAvailable).toBe(false);
+  await act(async () => {
+    expect(await result.current.submitMessage("Read the selected skill.", undefined, {
+      instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+      projectSkillProjectId: projectId,
+    })).toBe(false);
+  });
+  expect(fetchFn.mock.calls.some(([url]) => url.includes("/turns"))).toBe(false);
+});
+
+it("cleans an attachment uploaded before a project Skill's Chat moved", async () => {
+  const chatId = "chat_project_skill";
+  let current = { ...record(chatId, "Project chat", 1), projectId: "proj_one" };
+  let finishUpload!: (response: Response) => void;
+  let uploadedPath: string | null = null;
+  const upload = new Promise<Response>(resolve => { finishUpload = resolve; });
+  const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes(`/api/chats/${chatId}?`)) return Response.json({ ...detail(chatId, "Project chat"), record: current });
+    if (url.includes(`/api/chats/${chatId}/project`) && init?.method === "PATCH") {
+      current = { ...record(chatId, "Project chat", 2), projectId: "proj_two" };
+      return Response.json(current);
+    }
+    if (url.includes("/api/files/blob?")) {
+      const path = new URL(url).searchParams.get("path");
+      if (init?.method === "PUT") { uploadedPath = path; return upload; }
+      if (init?.method === "DELETE") return Response.json({ ok: true, path, deleted: true });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages[0]?.content).toBe("Project chat"));
+  let submission!: Promise<unknown>;
+  act(() => {
+    submission = Promise.resolve(result.current.submitMessage("Read the selected skill.", [{
+      name: "notes.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
+    }], {
+      instanceId: "pi_default", model: "anthropic:claude-sonnet-5", interactionMode: "default", permissionMode: "supervised",
+      projectSkillProjectId: "proj_one",
+    }));
+  });
+  await waitFor(() => expect(uploadedPath).toBeTruthy());
+  await act(async () => { expect(await result.current.setChatProject?.("proj_two")).toBe(true); });
+  await act(async () => {
+    finishUpload(Response.json({ ok: true, path: uploadedPath, size: 5 }));
+    expect(await submission).toBe(false);
+  });
+  expect(fetchFn.mock.calls.some(([url]) => url.includes("/turns"))).toBe(false);
+  const deletion = fetchFn.mock.calls.find(([, init]) => init?.method === "DELETE");
+  expect(deletion?.[0] && new URL(deletion[0]).searchParams.get("path")).toBe(uploadedPath);
 });

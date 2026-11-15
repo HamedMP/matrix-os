@@ -32,7 +32,7 @@ export const REMAINING_POSTGRES_FILES = [
 const testFile = /\.(?:test|integration)\.tsx?$/;
 const fixtureDefinitions = new Set(['tests/gateway/collaboration-test-support.ts',
   'tests/platform/collaboration-test-support.ts', 'tests/gateway/bots/bot-state-support.ts']);
-const environmentNames = new Set(['MATRIX_TEST_POSTGRES_URL', 'CHAT_TEST_DATABASE_URL']);
+const environmentNames = new Set(['MATRIX_TEST_POSTGRES_URL', 'CHAT_TEST_DATABASE_URL', 'MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL']);
 const realFactory = /^createReal[A-Za-z]*(?:Database|Db)$/;
 
 function sourceInventory(root, directory = 'tests', files = new Map()) {
@@ -105,10 +105,17 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
   const steps = workflow?.jobs?.['funded-postgres']?.steps ?? [];
   // Recognize canonical command lines, not a filename mentioned by echo/comment.
   // Dynamic shell selection is deliberately not evidence of a hosted assignment.
-  const commands = steps.filter(step => step.if !== false && !['false', '${{ false }}'].includes(step.if))
+  const patterns = steps.filter(step => step.if !== false && !['false', '${{ false }}'].includes(step.if))
     .flatMap(step => [...String(step.run ?? '').replace(/\\\r?\n/g, ' ').matchAll(/(?:^|\n)[ \t]*pnpm[ \t]+exec[ \t]+vitest[ \t]+run[ \t]+([^\n]+)/g)]
-      .map(match => match[1].split('#')[0])).join('\n');
-  const patterns = [...commands.matchAll(/(?:^|\s)(tests\/[a-zA-Z0-9_./*?-]+\.test\.tsx?)(?=\s|$)/g)].map(match => match[1]);
+      .flatMap(match => {
+        const command = match[1].split('#')[0].trim();
+        const unitPatterns = [...command.matchAll(/(?:^|\s)(tests\/[a-zA-Z0-9_./*?-]+\.test\.tsx?)(?=\s|$)/g)].map(value => value[1]);
+        // Integration files are excluded by the default config. Count only this
+        // dedicated real-DB lane with its explicit URL mapping and worker bounds.
+        const routine = command.match(/^--config vitest\.routine-cli-integration\.config\.ts (tests\/gateway\/bots\/routine-cli-[a-z0-9*-]+\.postgres\.integration\.ts) --maxWorkers=1 --no-file-parallelism$/);
+        return routine && step.env?.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL === '${{ env.MATRIX_TEST_POSTGRES_URL }}'
+          ? [...unitPatterns, routine[1]] : unitPatterns;
+      }));
   if (!patterns.length) throw Error('Funded PostgreSQL hosted selection is missing');
   const fundedFiles = [...sources.keys()].filter(file => patterns.some(pattern => path.matchesGlob(file, pattern)));
   const funded = new Set(fundedFiles), collaboration = new Set(collaborationFiles), remaining = new Set(remainingFiles);

@@ -1,3 +1,5 @@
+import { ROUTINE_CLI_REQUEST_PREFIX } from "./routine-cli-proposal-identity.js";
+import type { RoutineCliProposalRuntime } from "./routine-cli-proposals.js";
 import { BotInteractionError } from "./interactions.js";
 import { createBotInteractionsRepository } from "./repositories/interactions.js";
 import type { BotStateTransaction } from "./events.js";
@@ -6,12 +8,17 @@ import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js"
 /** One transaction decides whether this message continues a waiting task. */
 export async function beginBotTask(tx: BotStateTransaction, input: {
   ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string; backgroundTaskId?: string;
-}): Promise<{ task: BotTask; continued: boolean }> {
+}, trusted?: { beginRoutineProposal?: RoutineCliProposalRuntime["beginWithin"] }): Promise<{ task: BotTask; continued: boolean }> {
   const tasks = createBotTasksRepository(tx.db);
   const admitted = await tx.db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
-    .select("chat_runs.client_request_id").where("chat_runs.id", "=", input.runId)
+    .innerJoin("chat_turns as turn", "turn.id", "chat_runs.turn_id")
+    .select(["chat_runs.client_request_id", "turn.client_request_id as original_request_id"]).where("chat_runs.id", "=", input.runId)
     .where("chat_runs.chat_id", "=", input.chatId).where("chats.owner_type", "=", "personal")
     .where("chats.owner_id", "=", input.ownerId).executeTakeFirst();
+  if (admitted?.client_request_id.startsWith(ROUTINE_CLI_REQUEST_PREFIX) || admitted?.original_request_id.startsWith(ROUTINE_CLI_REQUEST_PREFIX)) {
+    if (input.backgroundTaskId || !trusted?.beginRoutineProposal) throw new BotInteractionError("conflict");
+    return trusted.beginRoutineProposal(tx, input);
+  }
   if (input.backgroundTaskId) {
     const claimed = await tasks.get({ ownerId: input.ownerId, taskId: input.backgroundTaskId }, tx.db);
     if (!claimed || claimed.botId !== input.botId || claimed.chatId !== input.chatId

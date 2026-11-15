@@ -70,6 +70,16 @@ it("keeps a known no-effect pause refusal observable so Pi can take a fresh snap
   browser.execute.mockRejectedValueOnce(new SharedBrowserError("browser_changed", true));
   await expect(tools.dispatch(binding, request("browser_unknown"), new AbortController().signal)).rejects.toThrow();
 });
+it("continues a Pi turn without Browser if its scoped capability expired before setup", async () => {
+  const { tools, authority, browser } = setup();
+  authority.mockResolvedValue({ permissionMode: "supervised" });
+  Object.assign(browser, { authorizeAction: vi.fn(async () => {}), allowsSupervisedRun: vi.fn(() => false) });
+  await expect(tools.open(binding, () => undefined)).resolves.toBeUndefined();
+  expect(browser.openRun).not.toHaveBeenCalled();
+  await expect(tools.dispatch(binding, request("browser_expired"), new AbortController().signal)).rejects.toThrow();
+  expect(browser.execute).not.toHaveBeenCalled();
+  await tools.closeRun(binding.runId);
+});
 it("returns actionable tab capacity guidance to Pi without asking the owner to resume", async () => {
   const { tools, browser } = setup();
   const { SharedBrowserError } = await import("../../../packages/gateway/src/shared-browser/broker.js");

@@ -4,6 +4,26 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./held-launch-channel": {
+      "types": "./src/held-launch-channel.ts",
+      "development": "./src/held-launch-channel.ts",
+      "default": "./dist/held-launch-channel.js"
+    },
+    "./workspace-launch-protocol": {
+      "types": "./src/workspace-launch-protocol.ts",
+      "development": "./src/workspace-launch-protocol.ts",
+      "default": "./dist/workspace-launch-protocol.js"
+    },
+    "./generation-closure": {
+      "types": "./src/generation-closure.d.mts",
+      "development": "./src/generation-closure.mjs",
+      "default": "./dist/generation-closure.mjs"
+    },
+    "./generation-lock": {
+      "types": "./src/generation-lock.ts",
+      "development": "./src/generation-lock.ts",
+      "default": "./dist/generation-lock.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
@@ -28,10 +48,25 @@
       "types": "./src/user-systemd-controller.ts",
       "development": "./src/user-systemd-controller.ts",
       "default": "./dist/user-systemd-controller.js"
+    },
+    "./native-host-descriptor": {
+      "types": "./src/native-host-descriptor.ts",
+      "development": "./src/native-host-descriptor.ts",
+      "default": "./dist/native-host-descriptor.js"
+    },
+    "./native-host-unit": {
+      "types": "./src/native-host-unit.ts",
+      "development": "./src/native-host-unit.ts",
+      "default": "./dist/native-host-unit.js"
+    },
+    "./native-host-lifecycle": {
+      "types": "./src/native-host-lifecycle.ts",
+      "development": "./src/native-host-lifecycle.ts",
+      "default": "./dist/native-host-lifecycle.js"
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && cp src/*.mjs dist/"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

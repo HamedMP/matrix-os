@@ -407,7 +407,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign -dv --verbose=4 "$app_path" 2>&1 \
             | grep "Authority=Developer ID Application" >/dev/null
-          xcrun stapler validate "$app_path"
+          bash scripts/release/stapler-validate-with-retry.sh "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
           # Local terminals run this binary: it must be the pinned version and
           # carry a valid Developer ID signature inside the notarized app.

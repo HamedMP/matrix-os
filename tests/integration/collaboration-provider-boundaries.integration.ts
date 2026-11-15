@@ -23,6 +23,8 @@ import {
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "../../packages/scope-runtime/src/profile";
+import { resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const REPO_ROOT = resolve(__dirname, "../..");
 const PROBE_TIMEOUT_MS = 120_000;
@@ -210,6 +212,38 @@ describe("S00 provider boundary probes: pinned versions (always run)", () => {
     expect(worker).toContain('"exec"');
     expect(worker).toContain('"--json"');
     expect(worker).toContain('cwd: "/workspace"');
+  });
+
+  it("projects only route provenance and never owner account details or credentials", () => {
+    const base = makeAiProviderSnapshot();
+    const ownerOnlyMarker = "owner-private-account-marker";
+    const snapshot = {
+      ...base,
+      accounts: base.accounts.map((account, index) => index === 0
+        ? { ...account, accountLabel: ownerOnlyMarker }
+        : account),
+      instances: base.instances.map((instance) => ({
+        ...instance,
+        id: "claude_code_default",
+        driverId: "claude_code",
+      })),
+      active: {
+        providerInstanceId: "claude_code_default",
+        accessSourceId: "matrix_included",
+        modelId: "claude-sonnet-5",
+      },
+    };
+    const decision = resolveCurrentOwnerRoute(snapshot, Date.parse("2026-08-29T21:00:01.000Z"));
+    expect(decision).not.toBeNull();
+    expect(JSON.stringify(decision)).not.toContain(ownerOnlyMarker);
+    expect(decision).not.toHaveProperty("accountId");
+    expect(decision).not.toHaveProperty("credential");
+
+    const unavailable = {
+      ...snapshot,
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+    };
+    expect(resolveCurrentOwnerRoute(unavailable, Date.parse("2026-08-29T21:00:01.000Z"))).toBeNull();
   });
 });
 

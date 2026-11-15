@@ -2,15 +2,15 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.4.2
+version: 1.5.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
-related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
+related_skills: [matrix-collaborative-app-builder, matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
+    related_skills: [matrix-collaborative-app-builder, matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 ---
 
 # Matrix App Builder
@@ -18,6 +18,14 @@ metadata:
 ## When to Use
 
 Use this when the user asks to build, create, fix, redesign, or publish a Matrix OS app.
+
+For a shared/team app, or converting a personal app for organization use, load
+`matrix-collaborative-app-builder` from the installed catalog. If collaboration
+seems useful but the customer has not indicated intent (for example a team-shaped
+CRM or project board), ask once: “Will you use this yourself, or should your
+organization use it together?” Reuse an answer already given. An explicitly
+personal-only request skips this question. Collaboration changes the data workflow;
+keep this skill's design, packaging and visual verification guidance.
 
 ## Non-Negotiables
 

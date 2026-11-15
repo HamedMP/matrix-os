@@ -96,3 +96,33 @@ it("keeps a visible unfocused Web Chat rail fresh and pauses only when its host 
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   expect(tasks.mock.calls.length).toBeGreaterThan(hiddenReads);
 });
+
+it("wires only the current verified project's skill inventory into Web Chat", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  catalog.instances[0]!.skills = [{ id: "global", displayName: "Global review", description: "Review changes", invocation: "/global" }];
+  const fetchFn = vi.fn(async (url: string) => {
+    if (url.endsWith("/api/projects/proj_one/agent-context")) return Response.json({
+      instructions: [], configFiles: [], skills: [{ source: ".agents/skills", name: "project-review" }],
+      mcpServers: [], incompleteSources: [],
+    });
+    if (url.endsWith("/api/workspace/projects")) return Response.json({ projects: [] });
+    return Response.json(catalog);
+  });
+  vi.stubGlobal("fetch", fetchFn);
+  const submit = vi.fn();
+  const chat = (available: boolean) => <ChatApp messages={[]} sessionId="chat_project_skill" busy={false} connected conversations={[]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} authorityKey="runtime_one"
+    gatewayUrl={window.location.origin} isCurrentAuthority={() => true}
+    chatProjectId="proj_one" projectSkillRootAvailable={available} />;
+  const view = render(chat(true));
+  const input = screen.getByRole("textbox", { name: "Message chat" });
+  fireEvent.change(input, { target: { value: "/" } });
+  expect(await screen.findByRole("option", { name: /project-review/i })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /\/global/ })).toBeNull();
+  expect(fetchFn.mock.calls.filter(([url]) => url.endsWith("/agent-context"))).toHaveLength(1);
+
+  view.rerender(chat(false));
+  expect(screen.queryByRole("option", { name: /project-review|\/global/i })).toBeNull();
+  expect(fetchFn.mock.calls.filter(([url]) => url.endsWith("/agent-context"))).toHaveLength(1);
+  expect(submit).not.toHaveBeenCalled();
+});

@@ -16,10 +16,11 @@ import type {
   CollaborationSourceSelection,
 } from "@matrix-os/contracts";
 import type { ReadinessProbes } from "./readiness-evaluator.js";
+import type { CollaborationChatProviderRoute } from "../ai-providers/snapshot-read-options.js";
 
 export interface OwnerProviderSnapshotSource {
   /** The owner's current Provider V3 snapshot; throws when it cannot be read. */
-  getSnapshotV3(ownerId: string): Promise<AiProviderSnapshotV3>;
+  getSnapshotV3(ownerId: string, chatRoute?: CollaborationChatProviderRoute): Promise<AiProviderSnapshotV3>;
 }
 
 export type OwnerSourceResolution =

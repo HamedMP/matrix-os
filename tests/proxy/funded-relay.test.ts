@@ -923,3 +923,150 @@ describe("funded relay bounded resources", () => {
     await relay.close();
   });
 });
+
+describe("Funded AI pricing registry admission", () => {
+  it.each([204, 503])("preserves upstream failure handling when a 5xx report receives %s", async (reportStatus) => {
+    const reports: unknown[] = [];
+    const terminalOutcomes: unknown[] = [];
+    const statuses = [429, 503, 503];
+    let requests = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.endsWith("/pricing-reviews")) {
+        return json({
+          contractVersion: 1,
+          reviews: [{
+            modelId: CANONICAL_MODEL,
+            version: "anthropic-2026-08-31-standard",
+            reviewedAt: "2026-08-30T19:00:00.000Z",
+            validThrough: "2026-08-30T21:00:00.000Z",
+            sourceDigest: "a".repeat(64),
+            blockedAt: null,
+          }],
+        });
+      }
+      if (url.endsWith("/pricing-route-failure")) {
+        expect(url).toBe(PLATFORM_URL + "/internal/ai/funded/pricing-route-failure");
+        expect(init).toMatchObject({ method: "POST", redirect: "error", signal: expect.any(AbortSignal) });
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer " + RELAY_TOKEN);
+        reports.push(body);
+        return new Response(null, { status: reportStatus });
+      }
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/authorize")) {
+        const authorized = authorizationResponse(body.requestId, `reservation_${requests}`);
+        authorized.reservation.maxCostMicrousd = body.maxCostMicrousd;
+        return json(authorized);
+      }
+      if (url.endsWith("/start")) {
+        return json({ ...startResponse(`request_${requests}`, body.reservationId), executionId: body.executionId });
+      }
+      if (url.endsWith("/terminal")) {
+        terminalOutcomes.push(body.outcome);
+        return json({ contractVersion: 1, outcomeAccepted: true, usageKnown: false, receivedAt: NOW.toISOString() });
+      }
+      if (url === GATEWAY_URL + "/v1/messages") {
+        return json({ type: "error", error: { type: "api_error", message: "Unavailable" } }, statuses.shift());
+      }
+      throw new Error("Unexpected transport");
+    });
+    const relay = configuredRelay(fetchMock, {
+      pricingRegistryEnabled: true, reservationMode: "usage", requestIdFactory: () => `request_${++requests}`,
+    });
+    const app = new Hono();
+    relay.register(app);
+    try {
+      expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+      expect(reports).toEqual([]);
+      expect((await app.request("/v1/messages", fundedRequest())).status).toBe(502);
+      expect((await app.request("/v1/messages", fundedRequest())).status).toBe(502);
+      expect(terminalOutcomes).toEqual(["usage_unknown", "usage_unknown", "usage_unknown"]);
+      expect(reports).toEqual([{
+        modelId: CANONICAL_MODEL, version: "anthropic-2026-08-31-standard", observedAt: NOW.toISOString(),
+      }]);
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it.each(["before dispatch", "after dispatch"])("settles correctly when pricing changes %s", async (phase) => {
+    let currentTime = NOW;
+    let platformStarted = false;
+    const events: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      expect(init?.redirect).toBe("error");
+      if (url.endsWith("/pricing-reviews")) {
+        expect(init?.method).toBe("GET");
+        expect(headers.get("authorization")).toBe("Bearer " + RELAY_TOKEN);
+        events.push("pricing");
+        return json({
+          contractVersion: 1,
+          reviews: [{
+            modelId: CANONICAL_MODEL,
+            version: "anthropic-2026-08-31-standard",
+            reviewedAt: "2026-08-30T19:00:00.000Z",
+            validThrough: "2026-08-30T20:00:05.000Z",
+            sourceDigest: "a".repeat(64),
+            blockedAt: phase === "before dispatch" && platformStarted ? NOW.toISOString() : null,
+          }],
+        });
+      }
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/authorize")) {
+        const authorized = authorizationResponse("request_123");
+        authorized.reservation.maxCostMicrousd = JSON.parse(String(init?.body)).maxCostMicrousd;
+        return json(authorized);
+      }
+      if (url.endsWith("/start")) {
+        platformStarted = true;
+        events.push("start");
+        return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId });
+      }
+      if (url.endsWith("/finalize")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          reservationId: "reservation_123",
+          tokenId: "credential_123",
+          mode: "exact",
+          actualCostMicrousd: phase === "before dispatch" ? 0 : 2_100,
+          ...(phase === "before dispatch" ? { customerCharge: "waived" } : {}),
+        });
+        events.push("finalize");
+        return json(finalizationResponse({
+          requestId: "request_123", actualCostMicrousd: body.actualCostMicrousd, finalizationMode: "exact",
+        }));
+      }
+      if (url === GATEWAY_URL + "/v1/messages") {
+        events.push("generate");
+        currentTime = new Date("2026-08-30T20:00:06.000Z");
+        return json({ id: "msg_1", type: "message", model: NATIVE_MODEL,
+          usage: { input_tokens: 1_000, output_tokens: 10 } });
+      }
+      throw new Error("Unexpected transport");
+    });
+    const relay = createFundedRelay({
+      ...resolveFundedRelayConfig(enabledEnv({
+        MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
+      }))!,
+      fetch: fetchMock,
+      now: () => currentTime,
+      requestIdFactory: () => "request_123",
+    });
+    const app = new Hono();
+    relay.register(app);
+    try {
+      const response = await app.request("/v1/messages", fundedRequest());
+      expect(response.status).toBe(phase === "before dispatch" ? 503 : 200);
+      await response.text();
+      await vi.waitFor(() => expect(events).toContain("finalize"));
+      expect(events).toEqual(phase === "before dispatch"
+        ? ["pricing", "start", "pricing", "finalize"]
+        : ["pricing", "start", "pricing", "generate", "finalize"]);
+    } finally {
+      await relay.close();
+    }
+  });
+});

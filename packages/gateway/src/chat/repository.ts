@@ -7,7 +7,13 @@ import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
-import { admitChatTurn } from "./turn-admission-repository.js";
+import {
+  NativeScheduledSourceSchema, readNativeScheduledCheckpoint, readNativeScheduledSource,
+  type NativeScheduledCheckpoint, type NativeScheduledSource, type NativeScheduledSourceRecord,
+} from "./native-scheduled-source.js";
+import type { ClaudeNativeRecoveryAdmissionFence } from "./claude-native-recovery-store.js";
+import { SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
+import { admitNativeScheduledChatTurn, admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
@@ -90,6 +96,7 @@ import {
   type SharedAiCapability,
   type SharedAiCapabilityProjection,
   type CanonicalSharedProviderAuthority,
+  type SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -127,6 +134,7 @@ export type {
   SharedAiCapability,
   SharedAiCapabilityProjection,
   CanonicalSharedProviderAuthority,
+  SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
@@ -417,6 +425,11 @@ export class ChatRepository {
   /** Installed by the collaboration runtime before accepting shared requests. */
   setSharedAuthorizer(authorize: import("../collaboration/shared-chat-authority.js").SharedChatAuthorizer): void {
     this.queue.setSharedAuthorizer(authorize);
+  }
+
+  /** Installed with the shared runtime so queued project work can revalidate its exact owner route. */
+  setSharedProviderAuthorityResolver(resolve: SharedProviderAuthorityResolver): void {
+    this.queue.setSharedProviderAuthorityResolver(resolve);
   }
 
   constructor(
@@ -1017,6 +1030,52 @@ export class ChatRepository {
     }, ownerInput, input);
   }
 
+  /** Server-only source lookup; the write path revalidates it under the same Chat lock. */
+  async getNativeScheduledSource(ownerInput: ChatOwner, chatId: string, sourceValue: NativeScheduledSource): Promise<NativeScheduledSourceRecord | null> {
+    const owner = validateOwner(ownerInput);
+    const source = NativeScheduledSourceSchema.parse(sourceValue);
+    CanonicalChatIdSchema.parse(chatId);
+    return this.transact(async trx => {
+      const chat = await selectOwnedChat(trx, owner, chatId);
+      if (!chat) return null;
+      return { chat: await toPrincipalRecord(trx, owner, chat), ...await readNativeScheduledSource(trx, owner, chat, source) };
+    });
+  }
+
+  /** Read a recoverable run without fabricating a scheduled callback or granting execution. */
+  async getClaudeNativeRecoveryCheckpoint(
+    ownerInput: ChatOwner,
+    chatId: string,
+    checkpoint: NativeScheduledCheckpoint,
+    { includeHistory = false } = {},
+  ): Promise<(NativeScheduledSourceRecord & {
+    history?: { chatId: string; throughSeq: number; messages: CanonicalChatMessage[] };
+  }) | null> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    return this.transact(async trx => {
+      await sql`SET LOCAL lock_timeout = '2s'`.execute(trx);
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      if (!chat) return null;
+      const source = await readNativeScheduledCheckpoint(trx, owner, chat, checkpoint, { requireLatestRun: true });
+      const record = { chat: await toPrincipalRecord(trx, owner, chat), ...source };
+      if (!includeHistory) return record;
+      const throughSeq = record.chat.chat.messageCount;
+      const rows = await trx.selectFrom("chat_messages").selectAll()
+        .where("chat_id", "=", chatId).where("seq", "<=", throughSeq).where("state", "=", "committed")
+        .where("role", "in", ["user", "assistant"]).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
+      return { ...record, history: { chatId, throughSeq, messages: rows.reverse().map(toMessage) } };
+    });
+  }
+
+  async admitNativeScheduledTurn(owner: ChatOwner, input: AdmitTurnInput, source: NativeScheduledSource,
+    recovery?: ClaudeNativeRecoveryAdmissionFence): Promise<AdmittedTurn> {
+    return admitNativeScheduledChatTurn({ transact: operation => this.transact(operation),
+      appendOutbox: (...args) => this.appendOutbox(...args), selectOwnedChat, hydrateAdmission,
+      toPrincipalRecord, activeRunQuery, postgresUniqueConstraint, preview }, owner, input, source, recovery);
+  }
+
   async enqueueQueuedTurn(
     owner: ChatOwner,
     input: EnqueueQueuedTurnInput,
@@ -1428,7 +1487,7 @@ export class ChatRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
-  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
+  }) {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }
 

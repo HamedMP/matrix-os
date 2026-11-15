@@ -32,7 +32,12 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
   const errorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-funded-ai-relay",
   });
-  const relay = createFundedRelay(config);
+  const now = options.now ?? (() => new Date());
+  const relay = createFundedRelay({
+    ...config,
+    ...(options.fetchFn ? { fetch: options.fetchFn } : {}),
+    ...(options.now ? { now: options.now } : {}),
+  });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/ready", async (c) => {
@@ -45,16 +50,19 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     }
     const model = c.req.query("model");
     if ((!model || !isManagedWorkersAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
-    const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
-    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews)) {
+    const initial = await relay.pricingReviewsFor(model, c.req.raw.signal);
+    if (!initial || !isFundedModelPriceCurrent(model, now(), initial)) {
       return c.json({ ready: false }, 503);
     }
     const probed = await probeFundedModel(config, model, options.fetchFn, {
       probeId: c.req.header("x-matrix-readiness-probe-id"),
       traceId: c.req.header("x-cloud-trace-context")?.split("/")[0],
     });
-    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews);
-    return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
+    const current = probed ? await relay.pricingReviewsFor(model, c.req.raw.signal) : null;
+    const priceValidThrough = current && isFundedModelPriceCurrent(model, now(), current)
+      ? fundedModelPriceValidThrough(model, current) : undefined;
+    return priceValidThrough
+      ? c.json({ ready: true, priceValidThrough }, 200) : c.json({ ready: false }, 503);
   });
   relay.register(app);
   let closing: Promise<boolean> | undefined;

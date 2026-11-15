@@ -58,6 +58,10 @@ const capabilitySnapshot = {
   approvals: true, userInput: false, resume: true, cancellation: true, steering: "none" as const,
   worktrees: "none" as const, interactionModes: ["default"], permissionModes: ["supervised"],
 };
+const acceptedOwnerRoute = {
+  providerAccessSourceId: "owner_anthropic_profile",
+  routeGeneration: "a".repeat(64),
+};
 
 describe("shared coding execution (S09)", () => {
   let fixture: CollaborationTestDatabase;
@@ -70,6 +74,12 @@ describe("shared coding execution (S09)", () => {
     await repository.bootstrap();
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
+    repository.setSharedProviderAuthorityResolver(async ({ driverKind, selection }) => ({
+      driverKind,
+      selection,
+      currentOwnerRoute: true,
+      ...acceptedOwnerRoute,
+    }));
     loss = new CollaborationRunLossRepository(fixture.db, { now: () => new Date(now) });
   });
 
@@ -85,6 +95,26 @@ describe("shared coding execution (S09)", () => {
   });
 
   describe("run control actors", () => {
+    it("rejects queued project work when the owner switches accounts without changing the model", async () => {
+      await repository.enqueueSharedQueuedTurn(
+        owner,
+        aiRequest(67, collaborationActors.editor, 1, true),
+      );
+      repository.setSharedProviderAuthorityResolver(async ({ driverKind, selection }) => ({
+        driverKind,
+        selection,
+        currentOwnerRoute: true,
+        providerAccessSourceId: "owner_anthropic_second_profile",
+        routeGeneration: "b".repeat(64),
+      }));
+
+      await expect(claim("owner_route_changed", true)).resolves.toBeNull();
+      await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+        .resolves.toMatchObject([{ state: "unavailable" }]);
+      await expect(fixture.db.selectFrom("chat_runs").select("id")
+        .where("chat_id", "=", collaborationIds.chat).execute()).resolves.toEqual([]);
+    });
+
     it("rejects member submission before queueing when the effective policy is owner-only", async () => {
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
@@ -100,7 +130,7 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
-    it("lets a directly granted project Contributor prompt through real authorization and the owner's saved AI policy", async () => {
+    it("lets an organization project member prompt through real authorization and the owner's current AI route", async () => {
       const parentId = "79000000-0000-4000-8000-000000000998";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -114,13 +144,6 @@ describe("shared coding execution (S09)", () => {
         .where("scope_id", "=", collaborationIds.scope).execute();
       await fixture.db.deleteFrom("collaboration_members")
         .where("scope_id", "=", parentId).where("actor_id", "=", collaborationActors.editor).execute();
-      await fixture.db.insertInto("collaboration_grants").values({
-        id: "79000000-0000-4000-8000-000000000997", scope_id: parentId,
-        organization_id: "org_collaboration_primary", audience_kind: "member",
-        audience_actor_id: collaborationActors.editor, preset: "contributor", state: "active",
-        policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null,
-        revision: 1, created_by: collaborationActors.owner, created_at: now, updated_at: now, revoked_at: null,
-      }).execute();
       await fixture.db.updateTable("collaboration_scopes")
         .set({ parent_scope_id: parentId, membership_mode: "inherited" })
         .where("id", "=", collaborationIds.scope).execute();
@@ -138,38 +161,26 @@ describe("shared coding execution (S09)", () => {
         now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition, capabilities,
       });
       repository.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
+      await fixture.db.updateTable("chats").set({
+        current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+        bound_driver_kind: "codex",
+        bound_instance_id: "codex_default",
+        bound_at_turn_id: "cturn_previous_owner_route",
+      }).where("id", "=", collaborationIds.chat).execute();
 
-      const eligibility = new OwnerAccountEligibility({
-        snapshots: { async getSnapshotV3() { return ownerProviderSnapshot(); } },
-      });
-      const policies = new CollaborationExecutionPolicyRepository(fixture.db, {
-        now: () => new Date(now), eligibility,
-        organizationAiSubmission: { async resolve() { return "members"; } },
-      });
-      await policies.put({
-        scopeId: parentId,
-        actorId: collaborationActors.owner,
-        request: {
-          clientRequestId: uuid(66), expectedRevision: "0",
-          accessSourceId: "owner_anthropic_profile", providerInstanceId: "claude_shared",
-          submitMode: "owner_only", acknowledgeProviderTerms: true,
-          allowedModelIds: ["claude-opus-4-6"],
-        },
-        payloadHash: "6".repeat(64),
-      });
-      const ownerSource = new SharedRunOwnerSource({
-        policies,
-        eligibility,
-        bindings: new CollaborationRunBindingRepository(fixture.db, { now: () => new Date(now), eligibility }),
-      });
       const requestDispatch = vi.fn(async () => undefined);
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
         resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
         resolveEligibility: async () => collaborationExecutionEligibility(),
         resolveResourceRevision: async () => 1,
-        resolveEffectiveSubmitMode: (scopeId) => policies.effectiveSubmitMode(scopeId),
-        resolveOwnerSourceAdmission: (scopeId, ownerId) => ownerSource.admission({ scopeId, ownerId }),
+        resolveOwnerSourceAdmission: async () => "ready",
+        resolveCanonicalProviderAuthority: async () => ({
+          driverKind: "claude_code",
+          selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+          currentOwnerRoute: true,
+          ...acceptedOwnerRoute,
+        }),
         requestDispatch,
         createQueuedTurnId: () => "qturn_default_contributor_prompt",
       });
@@ -189,9 +200,32 @@ describe("shared coding execution (S09)", () => {
         },
       });
       expect(requestDispatch).toHaveBeenCalledWith(collaborationIds.scope, collaborationIds.chat);
+
+      await expect(repository.claimNextQueuedTurn(owner, {
+        chatId: collaborationIds.chat,
+        collaborationScopeId: collaborationIds.scope,
+        turnId: "cturn_default_contributor_prompt",
+        runId: "run_default_contributor_prompt",
+        messageId: "msg_default_contributor_prompt",
+        claimedAt: now,
+      })).resolves.toMatchObject({
+        run: {
+          driverKind: "claude_code",
+          instanceId: "claude_shared",
+          selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        },
+      });
+      await expect(fixture.db.selectFrom("chats")
+        .select(["bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+        .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+        .resolves.toEqual({
+          bound_driver_kind: "claude_code",
+          bound_instance_id: "claude_shared",
+          bound_at_turn_id: "cturn_default_contributor_prompt",
+        });
     });
 
-    it("lets a directly granted project contributor queue and control an inherited Chat prompt", async () => {
+    it("keeps inherited Chat control organization-wide when a historical member grant is narrowed", async () => {
       const parentId = "79000000-0000-4000-8000-000000000999";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -237,7 +271,7 @@ describe("shared coding execution (S09)", () => {
         role: actorId === collaborationActors.owner ? "owner" as const : "editor" as const,
       });
       repository.setSharedAuthorizer(authorize);
-      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor));
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor, 1, true));
       const commands = createCommands(undefined, authorize);
       const cancelled = await commands.cancel(control(collaborationActors.editor, queued.id, 71, 71, await revision()));
       expect(cancelled.request?.state).toBe("cancelled");
@@ -246,18 +280,18 @@ describe("shared coding execution (S09)", () => {
       ]);
       await fixture.db.updateTable("collaboration_grants").set({ preset: "viewer", updated_at: now })
         .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
-      await expect(repository.enqueueSharedQueuedTurn(
+      const ignoredLegacyGrant = await repository.enqueueSharedQueuedTurn(
         owner,
-        aiRequest(78, collaborationActors.editor, await revision()),
-      )).rejects.toMatchObject({ code: "forbidden" });
-      await fixture.db.updateTable("collaboration_grants").set({ preset: "contributor", updated_at: now })
-        .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
+        aiRequest(78, collaborationActors.editor, await revision(), true),
+      );
+      expect(ignoredLegacyGrant.requestingActorId).toBe(collaborationActors.editor);
+      await commands.cancel(control(collaborationActors.editor, ignoredLegacyGrant.id, 79, 79, await revision()));
       await fixture.db.updateTable("collaboration_resource_bindings")
         .set({ readiness: "blocked", blocker: "test_blocked" })
         .where("resource_scope_id", "=", collaborationIds.scope).execute();
       await expect(repository.enqueueSharedQueuedTurn(
         owner,
-        aiRequest(77, collaborationActors.editor, await revision()),
+        aiRequest(77, collaborationActors.editor, await revision(), true),
       )).rejects.toMatchObject({ code: "unavailable" });
     });
 
@@ -484,6 +518,53 @@ describe("shared coding execution (S09)", () => {
       const marked = await markLostSharedRunsOnStartup({ db: fixture.db, loss, batchSize: 1 });
       expect(new Set(marked)).toEqual(new Set([first.run.id, second!.run.id]));
       expect(await markLostSharedRunsOnStartup({ db: fixture.db, loss, batchSize: 1 })).toEqual([]);
+    });
+
+    it("interrupts only the departed actor's active runs during member revocation", async () => {
+      const secondChat = "chat_collaboration_revocation_secondary";
+      const secondScope = "10000000-0000-4000-8000-000000000078";
+      await seedSecondarySharedChat(fixture, { chatId: secondChat, scopeId: secondScope, tag: "3" });
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(28, collaborationActors.editor));
+      await repository.enqueueSharedQueuedTurn(owner, {
+        ...aiRequest(29, otherEditor),
+        chatId: secondChat,
+        scopeId: secondScope,
+      });
+      const departed = await claim("member_departed");
+      const retained = await repository.claimNextQueuedTurn(owner, {
+        chatId: secondChat,
+        turnId: "cturn_member_retained",
+        runId: "run_member_retained",
+        messageId: "msg_member_retained",
+        claimedAt: now,
+      });
+      const cancelSharedRun = vi.fn(async (
+        runOwner: typeof owner,
+        _scopeId: string,
+        chatId: string,
+        runId: string,
+        options?: { sharedRequestState?: "cancelled" | "interrupted" },
+      ) => {
+        await repository.finishRun(runOwner, {
+          chatId,
+          runId,
+          outcome: "aborted",
+          completedAt: now,
+          ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+        });
+      });
+
+      await expect(interruptActiveSharedRuns({
+        db: fixture.db,
+        loss,
+        reason: "run_unit_exit",
+        orchestrator: { cancelSharedRun },
+        requestingActorId: collaborationActors.editor,
+      })).resolves.toEqual([departed.run.id]);
+
+      expect(cancelSharedRun).toHaveBeenCalledOnce();
+      expect(await fixture.db.selectFrom("chat_runs").select("status")
+        .where("id", "=", retained!.run.id).executeTakeFirstOrThrow()).toEqual({ status: "accepted" });
     });
 
     it("classifies isolated runtime failures into the frozen loss reasons", () => {
@@ -890,7 +971,7 @@ function runInput(instanceId = "claude_shared", model = "claude-opus-4-6") {
   };
 }
 
-function aiRequest(index: number, actorId: string, expectedRevision = 1) {
+function aiRequest(index: number, actorId: string, expectedRevision = 1, currentOwnerRoute = false) {
   return {
     chatId: collaborationIds.chat, scopeId: collaborationIds.scope,
     queuedTurnId: `qturn_s09_${index}_${actorId}`, clientRequestId: uuid(index),
@@ -898,6 +979,14 @@ function aiRequest(index: number, actorId: string, expectedRevision = 1) {
     payloadHash: index.toString(16).padStart(64, "0"), expectedRevision,
     parts: [{ type: "text" as const, text: `Request ${index}` }],
     interactionMode: "default", permissionMode: "supervised", capabilitySnapshot, acceptedAt: now,
+    ...(currentOwnerRoute ? {
+      canonicalProviderAuthority: {
+        driverKind: "claude_code" as const,
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        currentOwnerRoute: true as const,
+        ...acceptedOwnerRoute,
+      },
+    } : {}),
   };
 }
 
@@ -954,6 +1043,7 @@ async function seedSecondarySharedChat(
   await fixture.db.insertInto("collaboration_members").values([
     { ...member(collaborationActors.owner, "owner"), scope_id: input.scopeId },
     { ...member(collaborationActors.editor, "editor"), scope_id: input.scopeId },
+    { ...member(otherEditor, "editor"), scope_id: input.scopeId },
   ]).execute();
 }
 

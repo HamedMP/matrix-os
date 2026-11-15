@@ -2,6 +2,7 @@ import type { ShellBootstrapSnapshot } from "@/lib/shell-snapshot-cache";
 import { catalogAppLaunchPath } from "@/lib/app-catalog-launch";
 import { resolveCatalogIconUrl } from "@/api/apps";
 import { nameToSlug } from "@/lib/utils";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 export interface MobileApp {
   id: string;
@@ -9,6 +10,7 @@ export interface MobileApp {
   path: string;
   iconSlug: string;
   iconUrl?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 export function mobileAppsFromBootstrap(

@@ -7,6 +7,7 @@ import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
 } from "./authority.js";
+import { BridgeJsonError, toBridgeJson } from "./bridge-json.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -68,13 +69,13 @@ function projectNamespace(scopeId: string, appId: string): string {
 }
 
 function jsonValue(value: unknown): unknown {
-  const parsed = z.json().safeParse(value);
-  if (!parsed.success) throw new ProjectAppAdapterError("unavailable");
-  const encoded = JSON.stringify(parsed.data);
-  if (Buffer.byteLength(encoded, "utf8") > MAX_RESULT_BYTES) {
+  try {
+    return toBridgeJson(value, MAX_RESULT_BYTES);
+  } catch (error: unknown) {
+    if (!(error instanceof BridgeJsonError)) throw error;
+    console.warn("[collaboration-project-app] bridge result rejected", error.reason);
     throw new ProjectAppAdapterError("unavailable");
   }
-  return parsed.data;
 }
 
 function jsonb(value: unknown) {
@@ -151,24 +152,16 @@ export function createProjectAppAdapter(options: {
       .where("id", "=", context.scopeId);
     scopeQuery = requireWrite ? scopeQuery.forUpdate() : scopeQuery.forShare();
     const scope = await scopeQuery.executeTakeFirst();
-    let memberQuery = trx.selectFrom("collaboration_members").selectAll()
-      .where("scope_id", "=", context.membershipScopeId)
-      .where("actor_id", "=", context.actorId);
-    memberQuery = requireWrite ? memberQuery.forUpdate() : memberQuery.forShare();
-    const member = await memberQuery.executeTakeFirst();
-    const expired = member?.expires_at && new Date(member.expires_at).getTime() <= now().getTime();
     if (!scope || scope.kind !== "project" || scope.lifecycle !== "shared"
       || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
       || scope.authority_runtime_id !== context.authorityRuntimeId
       || Number(scope.authority_generation) !== context.authorityGeneration
-      || Number(scope.auth_epoch) !== context.authEpoch
-      || (member !== undefined && (member.status !== "accepted" || expired))) {
+      || Number(scope.auth_epoch) !== context.authEpoch) {
       throw new ProjectAppAdapterError("not_found");
     }
-    // S04 grants do not create legacy member rows. The scope lock and epoch
-    // fence serialize grant mutation against this transaction; the fresh
-    // authorization above resolved the grant to `context.role`.
-    if (requireWrite && (context.role === "viewer" || (member && !["owner", "editor"].includes(member.role)))) {
+    // Fresh organization membership is resolved before the transaction. Historical project
+    // member/grant rows are intentionally not a second authority source at this fence.
+    if (requireWrite && context.role === "viewer") {
       throw new ProjectAppAdapterError("forbidden");
     }
   }

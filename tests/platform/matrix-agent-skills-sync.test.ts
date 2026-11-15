@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadSkills } from "../../packages/kernel/src/skills.js";
 
 function writeSkill(root: string, dirName: string, skillName: string): void {
   const skillDir = join(root, dirName);
@@ -57,6 +58,31 @@ function extractHermesFallbackSkillList(script: string): string[] {
 }
 
 describe("Matrix coding-agent skill sync", () => {
+  it("ships the collaborative builder and its runnable example to every local harness", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-collaborative-skill-${Date.now()}`), { recursive: true }));
+    try {
+      execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), join(process.cwd(), "skills/matrix")], {
+        env: { ...process.env, HOME: join(root, "cli"), MATRIX_HOME: join(root, "matrix"),
+          HERMES_HOME: join(root, "hermes"), MATRIX_AGENT_SKILLS_ROOT: join(root, "agent"),
+          MATRIX_SKILL_TARGETS: "matrix,claude,codex,hermes,agent" },
+        stdio: "pipe",
+      });
+      for (const destination of ["matrix/.agents/skills", "cli/.claude/skills", "cli/.agents/skills", "hermes/skills", "agent"]) {
+        const installed = join(root, destination, "matrix-collaborative-app-builder");
+        expect(existsSync(join(installed, "SKILL.md"))).toBe(true);
+        expect(existsSync(join(installed, "assets/team-tracker/src/App.tsx"))).toBe(true);
+        expect(existsSync(join(installed, "references/conversion.md"))).toBe(true);
+      }
+      const discovered = loadSkills(join(root, "matrix"));
+      expect(discovered.find((skill) => skill.name === "matrix-collaborative-app-builder"))
+        .toMatchObject({ triggers: expect.arrayContaining(["collaborative app"]), related_skills: expect.arrayContaining(["matrix-app-builder"]) });
+      expect(discovered.find((skill) => skill.name === "matrix-app-builder")?.related_skills)
+        .toContain("matrix-collaborative-app-builder");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("projects canonical Hermes-format skills into Matrix, Claude, Codex, and Hermes locations", () => {
     const root = resolve(mkdirSync(join(tmpdir(), `matrix-skills-sync-${Date.now()}`), { recursive: true }));
     const source = join(root, "skills", "matrix");

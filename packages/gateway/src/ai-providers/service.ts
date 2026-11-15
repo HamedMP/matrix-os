@@ -486,6 +486,9 @@ export class AiProviderService implements AiProviderSnapshotReader {
         vendor: "anthropic",
         accountLabel: null,
         eligibleModelIds: eligibleModelsForSource("owner_anthropic_key", catalog).map((model) => model.id),
+        ...(credentials.ownerApiKey.credentialGeneration
+          ? { credentialGeneration: credentials.ownerApiKey.credentialGeneration }
+          : {}),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, apiKeyReadiness),
       sourceFromReadiness({

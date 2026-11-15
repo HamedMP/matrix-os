@@ -1,6 +1,9 @@
 import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
-import { createSharedFundedProbeCache, fundedProbeCacheKey, SHARED_FUNDED_HEALTH_TTL_MS } from "./ai-funded-shared-probe-cache.js";
+import {
+  createSharedFundedProbeCache, fundedProbeCacheKey, REVIEWED_FUNDED_HEALTH_TTL_MS,
+  SHARED_FUNDED_HEALTH_TTL_MS, type SharedProbeAttempt,
+} from "./ai-funded-shared-probe-cache.js";
 import { sql } from "kysely";
 import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -15,12 +18,18 @@ const NEGATIVE_TTL_MS = 5_000;
 // Admit one complete bounded text catalog plus the owner-funded Jev probe.
 const MAX_PENDING_BUDGET_OPERATIONS = Math.max(8, FUNDED_PROBE_MODELS.length + 1);
 const MAX_WAITERS_PER_MODEL = 32;
+const MAX_EXPEDITED_PER_DAY = 200;
+const MAX_EXPEDITED_PER_MINUTE = 2;
 const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
 export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
-export interface FundedModelProbeService { readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
+export interface FundedModelProbeService {
+  readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>;
+  probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>;
+  invalidateAfterUpstreamFailure?(modelId: string, version: string, observedAt: Date): Promise<void>;
+}
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
   const dailyLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT);
@@ -34,10 +43,14 @@ export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit
 /** One conditional UPSERT atomically admits both daily and minute count.
  * PostgreSQL's conflicting-row lock serializes reservations across replicas. */
 export async function reserveFundedModelProbe(input: {
-  db: PlatformDB; now?: Date; dailyLimit: number; minuteLimit: number; deadlineMs?: number;
+  db: PlatformDB; now?: Date; dailyLimit: number; minuteLimit: number; deadlineMs?: number; expedited?: boolean;
 }): Promise<boolean> {
   if (!Number.isSafeInteger(input.dailyLimit) || input.dailyLimit <= 0
     || !Number.isSafeInteger(input.minuteLimit) || input.minuteLimit <= 0) return false;
+  const retryCount = input.expedited ? 1 : 0;
+  const retryDailyLimit = Math.min(MAX_EXPEDITED_PER_DAY, Math.floor(input.dailyLimit / 6));
+  const retryMinuteLimit = Math.min(MAX_EXPEDITED_PER_MINUTE, input.minuteLimit - FUNDED_PROBE_MODELS.length);
+  if (retryCount && (retryDailyLimit <= 0 || retryMinuteLimit <= 0)) return false;
   if (pendingBudgetOperations.size >= MAX_PENDING_BUDGET_OPERATIONS) return false;
   const deadlineMs = Math.min(1_500, Math.max(1, input.deadlineMs ?? 1_500));
   const operation = (async () => {
@@ -47,8 +60,10 @@ export async function reserveFundedModelProbe(input: {
       bucket as (select to_char(observed_at at time zone 'UTC', 'YYYY-MM-DD') as day_start,
         to_char(observed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI') as minute_start from clock)
       insert into ai_funded_model_probe_budget
-        (budget_key, day_start, daily_limit, day_used, minute_start, minute_limit, minute_used)
-      select 'global', bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1 from bucket
+        (budget_key, day_start, daily_limit, day_used, minute_start, minute_limit, minute_used,
+          retry_day_start, retry_day_used, retry_minute_start, retry_minute_used)
+      select 'global', bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1,
+        bucket.day_start, ${retryCount}, bucket.minute_start, ${retryCount} from bucket
       on conflict (budget_key) do update
         set day_start = excluded.day_start,
             daily_limit = excluded.daily_limit,
@@ -60,7 +75,17 @@ export async function reserveFundedModelProbe(input: {
               when ai_funded_model_probe_budget.minute_start = excluded.minute_start
                 then ai_funded_model_probe_budget.minute_used + 1
               else 1
-            end
+            end,
+            retry_day_start = case when excluded.retry_day_used = 1 then excluded.retry_day_start
+              else ai_funded_model_probe_budget.retry_day_start end,
+            retry_day_used = case when excluded.retry_day_used = 0 then ai_funded_model_probe_budget.retry_day_used
+              when ai_funded_model_probe_budget.retry_day_start = excluded.retry_day_start
+                then ai_funded_model_probe_budget.retry_day_used + 1 else 1 end,
+            retry_minute_start = case when excluded.retry_minute_used = 1 then excluded.retry_minute_start
+              else ai_funded_model_probe_budget.retry_minute_start end,
+            retry_minute_used = case when excluded.retry_minute_used = 0 then ai_funded_model_probe_budget.retry_minute_used
+              when ai_funded_model_probe_budget.retry_minute_start = excluded.retry_minute_start
+                then ai_funded_model_probe_budget.retry_minute_used + 1 else 1 end
         where (ai_funded_model_probe_budget.day_start < excluded.day_start
           or (ai_funded_model_probe_budget.day_start = excluded.day_start
             and ai_funded_model_probe_budget.daily_limit = excluded.daily_limit
@@ -70,6 +95,14 @@ export async function reserveFundedModelProbe(input: {
           and (ai_funded_model_probe_budget.minute_start < excluded.minute_start
             or (ai_funded_model_probe_budget.minute_start = excluded.minute_start
               and ai_funded_model_probe_budget.minute_used < excluded.minute_limit))
+          and (excluded.retry_day_used = 0 or (
+            (ai_funded_model_probe_budget.retry_day_start < excluded.retry_day_start
+              or (ai_funded_model_probe_budget.retry_day_start = excluded.retry_day_start
+                and ai_funded_model_probe_budget.retry_day_used < ${retryDailyLimit}))
+            and (ai_funded_model_probe_budget.retry_minute_start < excluded.retry_minute_start
+              or (ai_funded_model_probe_budget.retry_minute_start = excluded.retry_minute_start
+                and ai_funded_model_probe_budget.retry_minute_used < ${retryMinuteLimit}))
+          ))
       returning day_used
     `.execute(input.db.executor);
     return admitted.rows.length === 1;
@@ -129,9 +162,12 @@ export function createFundedModelProbeService(input: {
   budgetDeadlineMs?: number;
   reserveProbe?: typeof reserveFundedModelProbe;
   credentials?: JevProbeCredentials;
+  readPricingReview?: (modelId: string, signal: AbortSignal) => Promise<{ version: string; validThrough: string } | null>;
 }): FundedModelProbeService {
   const now = input.now ?? (() => new Date());
-  const shared = createSharedFundedProbeCache({ db: input.db, now, dbDeadlineMs: input.budgetDeadlineMs });
+  const readPricingReview = input.readPricingReview;
+  const reviewed = readPricingReview !== undefined;
+  const shared = createSharedFundedProbeCache({ db: input.db, now, dbDeadlineMs: input.budgetDeadlineMs, reviewed });
   const MAX_KEYS = 128;
   const cache = new Map<string, FundedModelProbeResult>();
   interface PendingProbe {
@@ -159,6 +195,19 @@ export function createFundedModelProbeService(input: {
     const checked = now().getTime();
     return { ready: false, checkedAt: new Date(checked).toISOString(), staleAfter: new Date(checked + NEGATIVE_TTL_MS).toISOString() };
   };
+  async function readProbeIdentity(modelId: string, signal: AbortSignal) {
+    const review = readPricingReview
+      ? await probeWithSignal(() => readPricingReview(modelId, signal), signal)
+      : undefined;
+    const expiry = review ? Date.parse(review.validThrough) : Number.POSITIVE_INFINITY;
+    if (reviewed && (!review?.version || !Number.isFinite(expiry) || expiry <= now().getTime())) return null;
+    return {
+      expiry,
+      version: review?.version,
+      key: fundedProbeCacheKey({ modelId, relayOrigin: base!.origin, controlToken: input.relayControlToken!,
+        dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, review: review ?? undefined }),
+    };
+  }
   const hasActiveWaiter = (entry: PendingProbe): boolean => {
     const current = Date.now();
     return [...entry.waiters.values()].some((waiter) => current < waiter.deadlineAtMs && !waiter.signal?.aborted);
@@ -201,14 +250,30 @@ export function createFundedModelProbeService(input: {
     });
   }
   return {
+    async invalidateAfterUpstreamFailure(modelId, version, observedAt) {
+      if (!enabled || !reviewed || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return;
+      const observedMs = observedAt.getTime();
+      const currentMs = now().getTime();
+      if (!Number.isSafeInteger(observedMs) || observedMs < currentMs - REVIEWED_FUNDED_HEALTH_TTL_MS
+        || observedMs > currentMs + 5_000) return;
+      const signal = AbortSignal.timeout(1_500);
+      const identity = await readProbeIdentity(modelId, signal);
+      if (identity?.version === version) {
+        await shared.invalidate(identity.key, Math.min(observedMs, currentMs), signal);
+      }
+    },
     async readCached(modelId, call = {}) {
       if (!enabled || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
       const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
       if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
       const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
-      const key = fundedProbeCacheKey({ modelId, relayOrigin: base!.origin,
-        controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
-      return shared.readCached(key, signal, unavailable);
+      try {
+        const identity = await readProbeIdentity(modelId, signal);
+        return identity ? await shared.readCached(identity.key, signal, unavailable) : unavailable();
+      } catch (error: unknown) {
+        console.warn("[funded-ai] Cached pricing review unavailable:", error instanceof Error ? error.name : typeof error);
+        return unavailable();
+      }
     },
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
@@ -228,9 +293,14 @@ export function createFundedModelProbeService(input: {
       };
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
-        const performProbe = async (): Promise<FundedModelProbeResult> => {
+        const identity = runtime ? undefined : await readProbeIdentity(modelId, entry.controller.signal);
+        if (identity === null) return unavailable();
+        const reviewedExpiry = identity?.expiry ?? Number.POSITIVE_INFINITY;
+        const performProbe = async (attempt?: SharedProbeAttempt): Promise<FundedModelProbeResult> => {
+          if (reviewedExpiry <= now().getTime()) return unavailable();
           const admitted = await (input.reserveProbe ?? reserveFundedModelProbe)({ db: input.db,
-            dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs });
+            dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs,
+            ...(attempt?.expedited ? { expedited: true } : {}) });
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
           if (!admitted) {
             const result = unavailable();
@@ -247,6 +317,8 @@ export function createFundedModelProbeService(input: {
                 fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
             } else {
               const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
+              if (reviewedExpiry <= now().getTime()) return unavailable();
+              attempt?.recordDispatch();
               entry.probeId = probeId;
               const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
               console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId: model }));
@@ -266,18 +338,19 @@ export function createFundedModelProbeService(input: {
           }
           const checked = now().getTime();
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
-          const priceExpiry = Date.parse(priceValidThrough ?? "");
+          const priceExpiry = Math.min(Date.parse(priceValidThrough ?? ""), reviewedExpiry);
           const ready = Number.isFinite(priceExpiry) && priceExpiry > checked;
-          const result = { ready, ...(ready ? { priceValidThrough } : {}), checkedAt: new Date(checked).toISOString(),
-            staleAfter: new Date(ready ? Math.min(checked + (runtime ? POSITIVE_TTL_MS : SHARED_FUNDED_HEALTH_TTL_MS), priceExpiry)
+          const healthTtl = runtime ? POSITIVE_TTL_MS : reviewed ? REVIEWED_FUNDED_HEALTH_TTL_MS : SHARED_FUNDED_HEALTH_TTL_MS;
+          const result = { ready, ...(ready ? { priceValidThrough: new Date(priceExpiry).toISOString() } : {}),
+            checkedAt: new Date(checked).toISOString(),
+            staleAfter: new Date(ready ? Math.min(checked + healthTtl, priceExpiry)
               : checked + NEGATIVE_TTL_MS).toISOString() };
           if (runtime) remember(model, result);
           return result;
         };
-        if (runtime) return performProbe();
-        const key = fundedProbeCacheKey({ modelId: model, relayOrigin: base!.origin,
-          controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
-        return shared.probe(key, entry.controller.signal, performProbe, unavailable);
+        return identity
+          ? shared.probe(identity.key, entry.controller.signal, performProbe, unavailable)
+          : performProbe();
       })().finally(() => { if (inFlight.get(model) === entry) inFlight.delete(model); });
       return join(model, entry, call, windowMs);
     },

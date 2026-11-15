@@ -67,6 +67,8 @@ export interface AgentLaunchInput {
   providerThreadId?: string;
   /** Credential-free bootstrap nonce, supplied only by internal Chat admission. */
   codexBrowserAttemptId?: string;
+  /** Internal enablement only; no source authority or proof is serialized. */
+  codexRoutinePrivate?: true;
   codexExecutable?: string;
   /** Server-owned exact native admission only; never accepted from renderer DTOs. */
   nativeCodexSubscription?: NativeCodexSubscriptionLaunch;
@@ -107,6 +109,7 @@ const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
   new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
 );
 const CodexAppServerConfigSchema = z.object({
+  routinePrivate: z.literal(true).optional(),
   nativeSubscription: z.literal(true).optional(),
   expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
@@ -447,6 +450,7 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     ? "danger-full-access"
     : sandbox?.mode ?? "workspace-write";
   return CodexAppServerConfigSchema.parse({
+    ...(input.codexRoutinePrivate ? { routinePrivate: true } : {}),
     ...(input.nativeCodexSubscription ? { nativeSubscription: true, expectedNativePrincipal: input.nativeCodexSubscription.expectedPrincipalFingerprint,
       expectedNativeConsent: { revision: input.nativeCodexSubscription.expectedConsentRevision,
         harnessInstanceId: input.nativeCodexSubscription.expectedHarnessInstanceId, accountId: input.nativeCodexSubscription.expectedAccountId,

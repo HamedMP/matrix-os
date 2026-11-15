@@ -1,7 +1,10 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
+import {
+  MatrixAnthropicConnectionSchema,
+  MatrixAnthropicCredentialGenerationSchema,
+} from "#matrix-anthropic-connection";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -104,6 +107,8 @@ export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(64),
   /** Fresh policy inventory for internal catalog projection; never execution authority. */
   discoverableModelIds: z.array(ProviderModelReferenceSchema).max(64).optional(),
+  /** Opaque owner-key incarnation used to fence work accepted before key replacement. */
+  credentialGeneration: MatrixAnthropicCredentialGenerationSchema.optional(),
   policyVersion: AiPolicyVersionSchema,
   localObservation: AiProviderLocalObservationSchema.optional(),
 }).strict().superRefine((source, ctx) => {

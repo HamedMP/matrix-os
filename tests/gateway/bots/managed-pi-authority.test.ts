@@ -48,7 +48,7 @@ async function setup(permissionMode = "full_access", supervisedBrowser = false) 
   const renewRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, renewRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
   const roots = { resolve: vi.fn(async (): Promise<ResolvedChatExecutionRoot> => { throw new Error("Unexpected project" ); }) };
-  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call", "github.developer"], roots });
+  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser: () => supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call", "github.developer"], roots });
   const input = { ownerId: OWNER, chatId: "chat_authority", runId: result.run.id, resolved: resolveManagedPiRoute(snapshot, selection) };
   return { db, admission, registry, input, createRuntime, renewRuntime, stopRuntime, roots, home };
 }

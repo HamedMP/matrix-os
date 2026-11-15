@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CollaborationGrantSchema, CollaborationProjectAccessPresentationSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
+import { CollaborationProjectAccessPresentationSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CollaborativeAppReadinessRepository } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-repository.js";
@@ -27,7 +27,6 @@ vi.mock("../../packages/gateway/src/collaboration/filesystem-incarnation.js", as
 
 const ownerId = "user_capability_owner";
 const memberId = "user_capability_member";
-const secondMemberId = "user_capability_second_member";
 const outsiderId = "user_capability_outsider";
 const organizationId = "org_capability_routes";
 const scopeId = "10000000-0000-4000-8000-00000000a915";
@@ -50,32 +49,19 @@ describe("collaboration capability HTTP routes", () => {
   let resourceDriver: ReturnType<typeof createOwnerResourceDriver>;
   /** The board app's registry identity, reassigned when a test re-registers the app. */
   let appRegistration: string;
-  let membershipDelayMs: number;
-  let activeMembershipChecks: number;
-  let maxActiveMembershipChecks: number;
   let participantLookupFailureActorId: string | null;
 
   beforeEach(async () => {
     portableIdentity.value = "a".repeat(64);
-    membershipDelayMs = 0;
-    activeMembershipChecks = 0;
-    maxActiveMembershipChecks = 0;
     participantLookupFailureActorId = null;
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     runtime = await createGatewayCollaboration({
       organizationMembershipSource: {
         async assertMembership({ actorId, organizationId: requested }) {
-          activeMembershipChecks += 1;
-          maxActiveMembershipChecks = Math.max(maxActiveMembershipChecks, activeMembershipChecks);
-          try {
-            if (membershipDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, membershipDelayMs));
-            return requested === organizationId && actorId !== outsiderId
-              ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
-              : { member: false };
-          } finally {
-            activeMembershipChecks -= 1;
-          }
+          return requested === organizationId && actorId !== outsiderId
+            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
+            : { member: false };
         },
       },
       db: fixture.db,
@@ -158,18 +144,21 @@ describe("collaboration capability HTTP routes", () => {
     });
   }
 
-  it("creates a preset grant through the owner route and lists the exact contract projection", async () => {
-    const path = `/api/collaboration/scopes/${scopeId}/grants`;
-    const response = await signed({ actorId: ownerId, method: "POST", path, body: {
-      clientRequestId: randomUUID(), expectedRevision: "1",
-      audience: { kind: "member", actorId: memberId }, preset: "viewer",
-    } });
-    expect(response.status).toBe(201);
-    const created = CollaborationGrantSchema.parse(await response.json());
-    expect(created).toMatchObject({ scopeId, organizationId, audience: { kind: "member", actorId: memberId }, preset: "viewer", state: "pending" });
-    const listed = await signed({ actorId: ownerId, method: "GET", path });
-    expect(listed.status).toBe(200);
-    expect(await listed.json()).toEqual([created]);
+  it("projects one role-free organization-wide rule for owners and active members", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const ownerResponse = await signed({ actorId: ownerId, method: "GET", path });
+    expect(ownerResponse.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await ownerResponse.json())).toEqual({
+      scopeId,
+      organization: { id: organizationId },
+      owner: { actorId: ownerId, displayName: ownerId },
+      lifecycle: "shared",
+      accessMode: "organization_full_access",
+      canAdministerShare: true,
+    });
+    const memberResponse = await signed({ actorId: memberId, method: "GET", path });
+    expect(memberResponse.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await memberResponse.json()).canAdministerShare).toBe(false);
     expect((await signed({ actorId: outsiderId, method: "GET", path })).status).toBe(404);
   });
 
@@ -245,123 +234,13 @@ describe("collaboration capability HTTP routes", () => {
     expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toEqual([]);
   });
 
-  it("projects activated and explicit project access for the owner with inherited precedence", async () => {
-    const now = new Date();
-    const organizationGrantId = randomUUID();
-    const directGrantId = randomUUID();
-    await fixture.db.insertInto("collaboration_grants").values([{
-      id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
-      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }, {
-      id: directGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "member", audience_actor_id: memberId, preset: "contributor", state: "pending",
-      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }, {
-      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "member", audience_actor_id: secondMemberId, preset: "contributor", state: "active",
-      policy_version: "v1", source_id: null, legacy_ceiling: null,
-      expires_at: new Date(now.getTime() - 1_000), revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }]).execute();
-    await fixture.db.insertInto("collaboration_grant_activations").values({
-      grant_id: organizationGrantId, actor_id: memberId, state: "active", decided_at: now,
-      membership_evidence_epoch: 1,
-    }).execute();
-
+  it("ignores participant lookup failures outside the bounded owner projection", async () => {
+    participantLookupFailureActorId = ownerId;
     const path = `/api/collaboration/scopes/${scopeId}/project/access`;
     const response = await signed({ actorId: ownerId, method: "GET", path });
     expect(response.status).toBe(200);
-    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json())).toMatchObject({
-      owner: { actorId: ownerId },
-      generalAccess: { grantId: organizationGrantId, preset: "viewer" },
-      people: [{ actor: { actorId: memberId }, status: "active", effectivePreset: "viewer", inherited: true,
-        directGrant: { grantId: directGrantId, preset: "contributor" } }],
-    });
-    expect((await signed({ actorId: memberId, method: "GET", path })).status).toBe(403);
-  });
-
-  it("keeps a pending direct grant manageable when its member has no Matrix profile", async () => {
-    const grantPath = `/api/collaboration/scopes/${scopeId}/grants`;
-    const created = await signed({ actorId: ownerId, method: "POST", path: grantPath, body: {
-      clientRequestId: randomUUID(), expectedRevision: "1",
-      audience: { kind: "member", actorId: memberId }, preset: "viewer",
-    } });
-    expect(created.status).toBe(201);
-    participantLookupFailureActorId = memberId;
-
-    const response = await signed({
-      actorId: ownerId,
-      method: "GET",
-      path: `/api/collaboration/scopes/${scopeId}/project/access`,
-    });
-
-    expect(response.status).toBe(200);
-    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).people).toEqual([
-      expect.objectContaining({
-        actor: { actorId: memberId, displayName: "Organization member" },
-        status: "pending",
-        directGrant: expect.objectContaining({ preset: "viewer" }),
-      }),
-    ]);
-  });
-
-  it("bounds parallel access checks while presenting larger project audiences", async () => {
-    const now = new Date();
-    const memberIds = Array.from({ length: 12 }, (_, index) => `user_capability_batch_${index}`);
-    await fixture.db.insertInto("collaboration_grants").values(memberIds.map((actorId) => ({
-      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "member" as const, audience_actor_id: actorId, preset: "viewer" as const, state: "active" as const,
-      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }))).execute();
-    membershipDelayMs = 10;
-
-    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
-    const response = await signed({ actorId: ownerId, method: "GET", path });
-
-    expect(response.status).toBe(200);
-    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).people).toHaveLength(memberIds.length);
-    expect(maxActiveMembershipChecks).toBeGreaterThan(1);
-    expect(maxActiveMembershipChecks).toBeLessThanOrEqual(8);
-    expect(activeMembershipChecks).toBe(0);
-  });
-
-  it("bounds a full activation audience while retaining every manageable direct grant", async () => {
-    const now = new Date();
-    const organizationGrantId = randomUUID();
-    const directGrantId = randomUUID();
-    const directActorId = "user_capability_direct_beyond_activation_cap";
-    const activatedActorIds = Array.from({ length: 1_000 }, (_, index) => `user_capability_activation_${index}`);
-    await fixture.db.insertInto("collaboration_grants").values([{
-      id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
-      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }, {
-      id: directGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "member", audience_actor_id: directActorId, preset: "contributor", state: "pending",
-      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
-      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
-    }]).execute();
-    await fixture.db.insertInto("collaboration_grant_activations").values(activatedActorIds.map((actorId) => ({
-      grant_id: organizationGrantId, actor_id: actorId, state: "active" as const, decided_at: now,
-      membership_evidence_epoch: 1,
-    }))).execute();
-
-    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
-    const response = await signed({ actorId: ownerId, method: "GET", path });
-
-    expect(response.status).toBe(200);
-    const presentation = CollaborationProjectAccessPresentationSchema.parse(await response.json());
-    expect(presentation.people).toHaveLength(1_000);
-    expect(presentation.people).toContainEqual(expect.objectContaining({
-      actor: expect.objectContaining({ actorId: directActorId }),
-      status: "pending",
-      directGrant: expect.objectContaining({ grantId: directGrantId }),
-    }));
+    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).owner)
+      .toEqual({ actorId: ownerId, displayName: "Organization member" });
   });
 
   it("rejects every new standalone live scope", async () => {
@@ -386,77 +265,27 @@ describe("collaboration capability HTTP routes", () => {
     }
   });
 
-  it("patches and revokes an owner grant with expected scope and grant revisions", async () => {
-    const path = `/api/collaboration/scopes/${scopeId}/grants`;
-    const createdResponse = await signed({ actorId: ownerId, method: "POST", path, body: {
-      clientRequestId: randomUUID(), expectedRevision: "1",
-      audience: { kind: "member", actorId: memberId }, preset: "viewer",
-    } });
-    expect(createdResponse.status).toBe(201);
-    const created = CollaborationGrantSchema.parse(await createdResponse.json());
-    const grantPath = `${path}/${created.id}`;
-    const patchedResponse = await signed({ actorId: ownerId, method: "PATCH", path: grantPath, body: {
-      clientRequestId: randomUUID(), expectedRevision: "2", expectedGrantRevision: "1", preset: "contributor",
-    } });
-    expect(patchedResponse.status).toBe(200);
-    const patched = CollaborationGrantSchema.parse(await patchedResponse.json());
-    expect(patched).toMatchObject({ id: created.id, preset: "contributor", revision: "2" });
-    const revokedResponse = await signed({ actorId: ownerId, method: "DELETE", path: grantPath,
-      deleteConditions: { clientRequestId: randomUUID(), expectedRevision: "3", expectedMemberRevision: "2" },
-    });
-    expect(revokedResponse.status).toBe(200);
-    const revoked = CollaborationGrantSchema.parse(await revokedResponse.json());
-    expect(revoked).toMatchObject({ id: created.id, state: "revoked", revision: "3" });
-    expect((await signed({ actorId: ownerId, method: "GET", path })).status).toBe(200);
-  });
-
-  it("rejects legacy actor proof alone for pending organization grant acceptance", async () => {
-    const created = await signed({ actorId: ownerId, method: "POST",
-      path: `/api/collaboration/scopes/${scopeId}/grants`, body: {
+  it("rejects every legacy project grant and activation route", async () => {
+    const base = `/api/collaboration/scopes/${scopeId}/grants`;
+    const grantId = randomUUID();
+    const responses = [
+      await signed({ actorId: ownerId, method: "GET", path: base }),
+      await signed({ actorId: ownerId, method: "POST", path: base, body: {
         clientRequestId: randomUUID(), expectedRevision: "1",
         audience: { kind: "organization" }, preset: "viewer",
-      },
-    });
-    expect(created.status).toBe(201);
-    const grant = CollaborationGrantSchema.parse(await created.json());
-    const path = `/api/collaboration/scopes/${scopeId}/grants/${grant.id}/accept`;
-    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(401);
-    expect(await fixture.db.selectFrom("collaboration_grant_activations").select("grant_id")
-      .where("grant_id", "=", grant.id).execute()).toEqual([]);
-  });
-
-  it("accepts the exact organization grant using a pending direct session without legacy actor proof", async () => {
-    const created = await signed({ actorId: ownerId, method: "POST",
-      path: `/api/collaboration/scopes/${scopeId}/grants`, body: {
-        clientRequestId: randomUUID(), expectedRevision: "1",
-        audience: { kind: "organization" }, preset: "viewer",
-      },
-    });
-    const grant = CollaborationGrantSchema.parse(await created.json());
-    const path = `/api/collaboration/scopes/${scopeId}/grants/${grant.id}/accept`;
-    const sessionId = randomUUID();
-    const directSession = {
-      protocolVersion: 2, id: sessionId, actorId: memberId, organizationId,
-      scopeId, pendingGrantId: grant.id, runtimeId,
-      authorityGeneration: 1, purpose: "direct_session", proofKeyThumbprint: "a".repeat(43),
-      issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
-      evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(), renewAfter: new Date(Date.now() + 240_000).toISOString(),
-    } as const;
-    const authenticate = vi.spyOn(runtime.directSessions, "authenticate").mockResolvedValue(directSession);
-    const headers = {
-      "content-type": "application/json",
-      "x-matrix-collaboration-session": sessionId,
-      "x-matrix-collaboration-request": Buffer.from(JSON.stringify({ signature: {}, proof: "a".repeat(86) })).toString("base64url"),
-    };
-    const wrong = await app.request(`/api/collaboration/scopes/${scopeId}/grants/${randomUUID()}/accept`, { method: "POST", headers, body: "{}" });
-    expect(wrong.status).toBe(404);
-    authenticate.mockResolvedValueOnce({ ...directSession, pendingGrantId: randomUUID() });
-    const mismatched = await app.request(path, { method: "POST", headers, body: "{}" });
-    expect(mismatched.status).toBe(404);
-    const accepted = await app.request(path, { method: "POST", headers, body: "{}" });
-    expect(accepted.status).toBe(200);
-    expect(await accepted.json()).toEqual({ state: "active" });
-    expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ method: "POST", path, body: new TextEncoder().encode("{}") }));
+      } }),
+      await signed({ actorId: ownerId, method: "PATCH", path: `${base}/${grantId}`, body: {
+        clientRequestId: randomUUID(), expectedRevision: "1", expectedGrantRevision: "1", preset: "contributor",
+      } }),
+      await signed({ actorId: ownerId, method: "DELETE", path: `${base}/${grantId}`,
+        deleteConditions: { clientRequestId: randomUUID(), expectedRevision: "1", expectedMemberRevision: "1" } }),
+      await signed({ actorId: memberId, method: "POST", path: `${base}/${grantId}/accept`, body: {} }),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "conflict" });
+    }
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id").where("scope_id", "=", scopeId).execute()).toEqual([]);
   });
 
 

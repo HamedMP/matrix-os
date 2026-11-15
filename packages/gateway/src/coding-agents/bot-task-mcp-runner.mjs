@@ -5,8 +5,12 @@ if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !==
 const token = process.env.MATRIX_BOT_TASK_TOKEN;
 if (!token || !/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid task bridge');
 const send = async (action, payload) => {
+  const tool = action === 'call' ? payload.tool : undefined;
+  // The host validates the intent and still caps the wait at the original native child lifetime.
+  const ownerDecision = typeof tool?.requestId === 'string' && (tool.capability === 'routine.propose'
+    || tool.capability === 'routine.control' && tool.args?.operation === 'control');
   const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ action, ...payload }), redirect: 'error', signal: AbortSignal.timeout(60000) });
+    body: JSON.stringify({ action, ...payload }), redirect: 'error', signal: AbortSignal.timeout(ownerDecision ? 120_000 : 60_000) });
   if (!response.ok) throw new Error('Task action unavailable');
   if (!response.body) throw new Error('Task response unavailable');
   const reader = response.body.getReader(); const chunks = []; let bytes = 0;

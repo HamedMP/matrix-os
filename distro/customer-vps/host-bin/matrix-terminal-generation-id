@@ -13,6 +13,136 @@ for asset in "$@"; do
   }
 done
 
+# Existing updater versions pass these same three paths. A v2 closure next to
+# them upgrades validation atomically; legacy directories keep the exact old ID.
+generation_dir="$(dirname "$1")"
+if [ -e "$generation_dir/closure.json" ] || [ -L "$generation_dir/closure.json" ]; then
+  [ "$(basename "$1")" = zellij ] && [ "$(basename "$2")" = matrix-terminal-user-keeper.mjs ] &&
+    [ "$(basename "$3")" = matrix-terminal-attach.mjs ] &&
+    [ "$(dirname "$2")" = "$generation_dir" ] && [ "$(dirname "$3")" = "$generation_dir" ] || exit 1
+  exec python3 - "$generation_dir" <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+MAX_FILES = 512
+MAX_FILE = 256 * 1024 * 1024
+REQUIRED = {"node", "zellij", "matrix-terminal-user-keeper.mjs", "matrix-terminal-attach.mjs", "terminal-host.mjs", "terminal-service.mjs", "terminal-io-attach.mjs", "terminal-protocol.mjs", "generation-closure.mjs", "terminal-writer.node", "node_modules/node-pty/package.json", "node_modules/node-pty/lib/index.js", "node_modules/node-pty/lib/unixTerminal.js", "node_modules/node-pty/build/Release/pty.node", "node_modules/node-addon-api/package.json"}
+
+def fail():
+    raise ValueError("invalid terminal closure")
+
+def regular(path, limit=MAX_FILE):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit or info.st_mode & 0o7022 or info.st_uid not in (0, os.geteuid()):
+            fail()
+        return os.fdopen(fd, "rb"), info
+    except Exception:
+        os.close(fd)
+        raise
+
+def small(path, limit):
+    handle, _ = regular(path, limit)
+    with handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        fail()
+    return data
+
+def safe_path(path):
+    return isinstance(path, str) and len(path) <= 240 and all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) and part not in (".", "..") for part in path.split("/"))
+
+def check(root):
+    data = small(os.path.join(root, "closure.json"), 262144)
+    value = json.loads(data)
+    if not isinstance(value, dict) or set(value) != {"version", "runtime", "assets"} or value["version"] != 2:
+        fail()
+    runtime = value["runtime"]
+    if not isinstance(runtime, dict) or set(runtime) != {"version", "modules", "napi", "platform", "arch", "libc", "nodePty", "nodeAddonApi", "writerNapi", "protocol"}:
+        fail()
+    patterns = {"version": r"24\.[0-9]+\.[0-9]+", "modules": r"[1-9][0-9]{0,3}", "napi": r"[1-9][0-9]{0,2}", "libc": r"(glibc:[0-9]+\.[0-9]+|musl)", "nodeAddonApi": r"7\.1\.[0-9]+"}
+    if any(not isinstance(runtime.get(key), str) or not re.fullmatch(pattern, runtime[key]) for key, pattern in patterns.items()) or runtime["platform"] != "linux" or runtime["arch"] not in ("x64", "arm64") or runtime["nodePty"] != "1.1.0" or runtime["writerNapi"] != 8 or runtime["protocol"] != 1:
+        fail()
+    assets = value["assets"]
+    if not isinstance(assets, list) or len(assets) > MAX_FILES:
+        fail()
+    names = []
+    total = 0
+    for asset in assets:
+        if not isinstance(asset, dict) or set(asset) != {"path", "sha256", "size", "mode"} or not safe_path(asset["path"]) or asset["path"] in ("GENERATION", "closure.json"):
+            fail()
+        if not isinstance(asset["sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", asset["sha256"]) or type(asset["size"]) is not int or not 0 <= asset["size"] <= MAX_FILE or asset["mode"] not in (0o644, 0o755):
+            fail()
+        names.append(asset["path"])
+        total += asset["size"]
+    if names != sorted(set(names)) or not REQUIRED.issubset(names) or total > 512 * 1024 * 1024:
+        fail()
+    if any(asset["mode"] != 0o755 for asset in assets if asset["path"] in ("node", "zellij")):
+        fail()
+    encoded = (json.dumps(value, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    if encoded != data:
+        fail()
+    generation = "gen_" + hashlib.sha256(b"matrix-terminal-generation-v2\n" + data).hexdigest()
+    if small(os.path.join(root, "GENERATION"), 256).decode().strip() != generation:
+        fail()
+    discovered = []
+    visited = 0
+    def walk(relative):
+        nonlocal visited
+        visited += 1
+        if visited > MAX_FILES * 2:
+            fail()
+        path = os.path.join(root, relative)
+        info = os.lstat(path)
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_mode & 0o7022 or info.st_uid not in (0, os.geteuid()):
+            fail()
+        with os.scandir(path) as entries:
+            count = 0
+            for entry in entries:
+                count += 1
+                name = relative + "/" + entry.name if relative else entry.name
+                if count > MAX_FILES or not safe_path(name) or entry.is_symlink():
+                    fail()
+                if entry.is_dir(follow_symlinks=False):
+                    walk(name)
+                elif entry.is_file(follow_symlinks=False):
+                    if name not in ("GENERATION", "closure.json"):
+                        discovered.append(name)
+                        if len(discovered) > MAX_FILES:
+                            fail()
+                else:
+                    fail()
+    walk("")
+    if sorted(discovered) != names:
+        fail()
+    for asset in assets:
+        handle, info = regular(os.path.join(root, asset["path"]))
+        with handle:
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := handle.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_FILE:
+                    fail()
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+        if size != info.st_size or (info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or size != asset["size"] or stat.S_IMODE(info.st_mode) != asset["mode"] or digest.hexdigest() != asset["sha256"]:
+            fail()
+    return generation
+
+try:
+    print(check(sys.argv[1]))
+except (OSError, ValueError, TypeError, KeyError):
+    print("matrix-terminal-generation-id: invalid runtime closure", file=sys.stderr)
+    sys.exit(1)
+PY
+fi
+
 {
   for asset in "$@"; do
     sha256sum "$asset" | awk '{print $1}'

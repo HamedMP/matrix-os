@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,9 @@ import {
 const RUNTIME_ID = "rt_0123456789abcdef0123456789abcdef";
 const OTHER_RUNTIME_ID = "rt_fedcba9876543210fedcba9876543210";
 const GENERATION = "gen_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const LEGACY_ASSETS = ["zellij", "matrix-terminal-user-keeper.mjs", "matrix-terminal-attach.mjs"];
+const legacyHashes = LEGACY_ASSETS.map(name => createHash("sha256").update(name + "\n").digest("hex"));
+const INSTALLED_LEGACY_GENERATION = "gen_" + createHash("sha256").update(legacyHashes.join("\n") + "\n").digest("hex");
 
 describe("user-systemd terminal runtime", () => {
   let homePath: string;
@@ -37,21 +41,17 @@ describe("user-systemd terminal runtime", () => {
     userUnitRoot: string;
   }> {
     const terminalRuntimeRoot = join(homePath, "terminal-runtime");
-    const generationDir = join(terminalRuntimeRoot, "generations", GENERATION);
+    const generationDir = join(terminalRuntimeRoot, "generations", INSTALLED_LEGACY_GENERATION);
     const userUnitRoot = join(homePath, "systemd-user");
     await mkdir(generationDir, { recursive: true });
     await mkdir(userUnitRoot, { recursive: true });
-    for (const asset of [
-      "zellij",
-      "matrix-terminal-user-keeper.mjs",
-      "matrix-terminal-attach.mjs",
-    ]) {
+    for (const asset of LEGACY_ASSETS) {
       const path = join(generationDir, asset);
       await writeFile(path, `${asset}\n`);
       await chmod(path, 0o755);
     }
-    await writeFile(join(generationDir, "GENERATION"), `${GENERATION}\n`);
-    await symlink(join("generations", GENERATION), join(terminalRuntimeRoot, "current"));
+    await writeFile(join(generationDir, "GENERATION"), `${INSTALLED_LEGACY_GENERATION}\n`);
+    await symlink(join("generations", INSTALLED_LEGACY_GENERATION), join(terminalRuntimeRoot, "current"));
     await writeFile(join(userUnitRoot, "matrix-zellij@.service"), "[Service]\n");
     await writeFile(join(userUnitRoot, "matrix-terminal.slice"), "[Slice]\n");
     return { terminalRuntimeRoot, userUnitRoot };
@@ -60,10 +60,10 @@ describe("user-systemd terminal runtime", () => {
   it("loads only an exact generation marker from the installed app", async () => {
     const appDir = join(homePath, "installed-app");
     await mkdir(appDir);
-    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${INSTALLED_LEGACY_GENERATION}\n`);
     const prerequisites = await installRuntimeActivationPrerequisites();
 
-    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).resolves.toBe(GENERATION);
+    await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).resolves.toBe(INSTALLED_LEGACY_GENERATION);
     await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), "../../unsafe\n");
     await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(
       "Terminal runtime unavailable",
@@ -75,7 +75,7 @@ describe("user-systemd terminal runtime", () => {
     const terminalRuntimeRoot = join(homePath, "missing-terminal-runtime");
     const userUnitRoot = join(homePath, "missing-systemd-user");
     await mkdir(appDir);
-    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${INSTALLED_LEGACY_GENERATION}\n`);
 
     await expect(loadInstalledTerminalRuntimeGeneration(appDir, {
       terminalRuntimeRoot,
@@ -86,9 +86,9 @@ describe("user-systemd terminal runtime", () => {
   it("rejects incomplete or symlink-substituted activation prerequisites", async () => {
     const appDir = join(homePath, "incomplete-activation");
     await mkdir(appDir);
-    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${GENERATION}\n`);
+    await writeFile(join(appDir, "TERMINAL_RUNTIME_GENERATION"), `${INSTALLED_LEGACY_GENERATION}\n`);
     const prerequisites = await installRuntimeActivationPrerequisites();
-    const generationDir = join(prerequisites.terminalRuntimeRoot, "generations", GENERATION);
+    const generationDir = join(prerequisites.terminalRuntimeRoot, "generations", INSTALLED_LEGACY_GENERATION);
 
     await rm(join(generationDir, "matrix-terminal-user-keeper.mjs"));
     await expect(loadInstalledTerminalRuntimeGeneration(appDir, prerequisites)).rejects.toThrow(

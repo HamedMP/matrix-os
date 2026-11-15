@@ -226,6 +226,27 @@ describe("bot broker actions", () => {
     expect(checkpoints).toHaveLength(60); expect(checkpoints.every(checkpoint => checkpoint.phase === "observed_complete")).toBe(true);
   });
 
+  it("keeps a delegated routine mutation alive past the generic dispatch deadline", async () => {
+    binding.capabilities = ["routine.control", "artifact.read"];
+    const { actions } = setup({ toolTimeoutMs: 5, tools: { dispatch: async () => {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return { result: { ok: true, content: [{ type: "text", text: "owner decided" }] } };
+    } } });
+    const signal = new AbortController().signal;
+    const control = {
+      capability: "routine.control", toolCallId: "native_pause", routineRequestId: REQUEST_ID,
+      args: { operation: "control", routineId: `rt_${"a".repeat(24)}`, baseRevision: 1, status: "paused" },
+    } as const satisfies BotToolRequest;
+
+    await expect(actions.callTool(binding, control, signal)).resolves.toMatchObject({ ok: true });
+    await expect(actions.handleFrame(tool({ ...control, toolCallId: "canonical_pause" })))
+      .resolves.toMatchObject({ ok: false, code: "timeout" });
+    await expect(actions.callTool(binding, { capability: "routine.control", toolCallId: "native_list", args: { operation: "list" } }, signal))
+      .rejects.toMatchObject({ code: "timeout" });
+    await expect(actions.callTool(binding, { capability: "artifact.read", toolCallId: "native_read", args: { relPath: "draft.txt" } }, signal))
+      .rejects.toMatchObject({ code: "timeout" });
+  });
+
   it("records refusals as complete, and failures and timeouts as effect unknown", async () => {
     let mode: "refuse" | "throw" | "hang" = "refuse";
     const { actions } = setup({

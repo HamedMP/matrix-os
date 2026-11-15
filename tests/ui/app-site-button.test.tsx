@@ -9,7 +9,7 @@ import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 
 const fixture = vi.hoisted(() => {
   const client = { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => null) };
-  const connection = { api: {} as object | null, runtimeSlot: "primary", authGeneration: 0, email: "owner@example.com" as string | null, userId: "user_owner" as string | null };
+  const connection = { api: { forRuntime: () => null } as object | null, runtimeSlot: "primary", authGeneration: 0, email: "owner@example.com" as string | null, userId: "user_owner" as string | null };
   return { client, connection, acquire: vi.fn(), release: vi.fn() };
 });
 vi.mock("../../shell/src/components/app-sites/web-site-client", () => ({ webSiteClient: fixture.client }));
@@ -18,7 +18,7 @@ vi.mock("../../desktop/src/renderer/src/stores/connection", () => ({ useConnecti
 vi.mock("../../desktop/src/renderer/src/stores/ui", () => ({ useUi: (select: (state: { acquireRendererOverlay: () => void; releaseRendererOverlay: () => void }) => unknown) => select({ acquireRendererOverlay: fixture.acquire, releaseRendererOverlay: fixture.release }) }));
 beforeEach(() => {
   vi.clearAllMocks();
-  fixture.connection.api = {}; fixture.connection.runtimeSlot = "primary"; fixture.connection.authGeneration = 0;
+  fixture.connection.api = { forRuntime: () => null }; fixture.connection.runtimeSlot = "primary"; fixture.connection.authGeneration = 0;
   fixture.connection.email = "owner@example.com"; fixture.connection.userId = "user_owner";
 });
 afterEach(cleanup);

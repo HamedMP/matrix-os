@@ -43,7 +43,7 @@ const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover
 
 function accessCoverage(kind: Scope["kind"], resourceLabel: string): string {
   if (kind === "project") {
-    return "Sharing is limited to current members of your organization. Access applies to this whole project and its future project-owned contents; external references and unrelated resources stay outside the share.";
+    return "Every active organization member can work in this whole project and its future project-owned contents. External references and unrelated resources stay outside the share.";
   }
   if (kind === "folder") return "Access covers this folder and its contents only. Other folders, Chats and apps stay outside the share.";
   if (kind === "file" || kind === "app") {
@@ -63,7 +63,7 @@ function useScopeReadiness(api: CollaborationApi, scope: Scope, refreshVersion: 
   const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
   const awaitingShare = projectAwaitingShare(scope);
   useEffect(() => {
-    if ((scope.kind !== "project" && scope.kind !== "chat") || awaitingShare) return;
+    if (scope.kind !== "chat" || scope.membershipMode === "inherited" || awaitingShare) return;
     let active = true;
     void Promise.resolve().then(() => api.post(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/policy/preflight`, {}))
       .then((value) => {
@@ -110,6 +110,25 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     const next = await onRefresh();
     setCurrentMembers(next.members);
   };
+  if (scope.kind === "project") {
+    return <Dialog open onClose={onClose} aria-label="Project access"
+      className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
+      style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
+        borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Project access</h2>
+          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
+            {accessCoverage(scope.kind, resourceLabel)}
+          </p>
+        </div>
+        <button type="button" className={buttonClass} onClick={onClose}>Close</button>
+      </div>
+      <p className="rounded-xl border p-4 text-sm">
+        There are no project roles or individual grants. The owner controls sharing and their Provider Settings; organization membership controls who can work here.
+      </p>
+    </Dialog>;
+  }
   const dialogLabel = allowNewGrants ? "Invite collaborators" : "Manage legacy live access";
   return <Dialog open onClose={onClose} aria-label={dialogLabel}
     className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
@@ -125,7 +144,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
     {readiness ? <ReadinessSummary readiness={readiness} /> : null}
-    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope}
+    {!projectAwaitingShare(scope) && scope.membershipMode !== "inherited" ? <ContributorAiSettings api={api} scope={scope}
       onPolicyUpdated={() => setReadinessVersion((version) => version + 1)} /> : null}
     <ScopeAccess api={api} scope={scope} onRefresh={refresh} allowNewGrants={allowNewGrants} />
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
@@ -148,9 +167,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       </div>
     </section>
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-      {scope.kind === "project"
-        ? "Removing a collaborator revokes the whole project membership without changing independently shared external items."
-        : "Removing a collaborator does not revoke snapshot links. Revoking a snapshot link does not remove collaborators."}
+      Removing a collaborator does not revoke snapshot links. Revoking a snapshot link does not remove collaborators.
     </p>
   </Dialog>;
 }

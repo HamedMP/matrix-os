@@ -1,5 +1,11 @@
 # App Generation Knowledge
 
+For team/shared apps or converting an existing app, load the installed
+`matrix-collaborative-app-builder`. If likely useful but unspecified, ask once
+whether the customer wants personal or organization use; skip explicit personal-only
+requests. Follow the collaboration bridge, data-preserving conversion, readiness,
+organization selection and two-account verification workflow in that skill.
+
 ## Default: Apps In `~/apps/<slug>/`
 
 The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server. CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite apps by default; use Matrix bridge APIs for data instead of creating a Next.js server.

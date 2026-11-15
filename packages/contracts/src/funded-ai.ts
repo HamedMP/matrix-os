@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
+import { LEGACY_MANAGED_WORKERS_AI_MODEL_IDS } from "#funded-workers-models";
 export * from "#funded-ai-execution-recovery";
 export * from "#funded-workers-models";
 
@@ -295,13 +296,23 @@ export type FundedAiChatAvailability = z.infer<typeof FundedAiChatAvailabilitySc
 
 /** Separate from the v1 funding summary so older strict clients keep working. */
 export const FundedAiRouteReadinessRequestSchema = z.object({ modelId: z.literal(JEV_MODEL_ID).optional() }).strict();
+/** An absent or unknown catalog header requests only the incumbent model set. */
+export const FUNDED_AI_READINESS_CATALOG = {
+  header: "x-matrix-funded-readiness-catalog-version",
+  version: "2",
+  maxModels: 11,
+} as const;
+export const FUNDED_AI_LEGACY_READINESS_MODEL_IDS = [
+  ...LEGACY_MANAGED_WORKERS_AI_MODEL_IDS,
+  "anthropic/claude-sonnet-5",
+] as const;
 export const FundedAiRouteReadinessReceiptSchema = z.object({
   contractVersion: z.literal(1),
   globalRevision: RevisionSchema,
   runtimeRevision: RevisionSchema,
   checkedAt: IsoTimestampSchema,
   staleAfter: IsoTimestampSchema,
-  readyModelIds: z.array(ProviderModelReferenceSchema).max(10)
+  readyModelIds: z.array(ProviderModelReferenceSchema).max(FUNDED_AI_READINESS_CATALOG.maxModels)
     .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
 }).strict().superRefine((value, ctx) => {
   const checked = Date.parse(value.checkedAt);

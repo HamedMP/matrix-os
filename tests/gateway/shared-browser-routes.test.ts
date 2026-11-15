@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deriveAppSessionKey, signAppSession } from "../../packages/gateway/src/app-runtime/app-session.js";
 import { registerBrowserLabRoutes } from "../../packages/gateway/src/browser-lab/routes.js";
+import { openNativeSharedBrowserRun } from "../../packages/gateway/src/chat/native-shared-browser-run.js";
 import { createSharedBrowserBroker, SharedBrowserError } from "../../packages/gateway/src/shared-browser/broker.js";
 
 const cleanups:Array<()=>Promise<void>>=[];
@@ -27,6 +28,23 @@ describe("owner viewer and run-bound shared Chrome routes",()=>{
     expect((await s.app.request("/apps/browser-lab/api/agent-action",{method:"POST",headers:{cookie:s.cookie},body:'{"action":"snapshot"}'})).status).toBe(401);
     expect((await s.agent({action:"snapshot"})).status).toBe(200);expect(s.driver.execute).toHaveBeenCalledOnce();
     s.controller.abort();expect((await s.agent({action:"snapshot"})).status).toBe(401);
+  });
+  it("reports missing supervised approval authority without requesting a handoff", async () => {
+    const s = setup();
+    const lease = openNativeSharedBrowserRun({ broker: s.broker, gatewayPort: 4000, harness: "claude_code" }, {
+      owner: { type: "personal", ownerId: "owner" }, chatId: "chat-1", runId: "run-supervised",
+      permissionMode: "supervised", interactionMode: "default", signal: s.controller.signal,
+    })!;
+    const response = await s.agent({ action: "snapshot" }, lease.token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: false,
+      content: "Browser approvals are unavailable for this Chat.",
+    });
+    expect(s.broker.status().phase).toBe("idle");
+    expect(s.driver.execute).not.toHaveBeenCalled();
+    const viewer = await s.app.request("/apps/browser-lab/api/browser-status", { headers: { cookie: s.cookie } });
+    expect(await viewer.json()).toMatchObject({ humanControlAvailable: true });
   });
   it("keeps watching read-only without implicitly taking over the agent",async()=>{
     const s=setup();await s.agent({action:"snapshot"});
