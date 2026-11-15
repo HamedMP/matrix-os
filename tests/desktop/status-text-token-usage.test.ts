@@ -123,3 +123,22 @@ describe("status text tokens", () => {
     expect(findings).toEqual([]);
   });
 });
+
+describe("interactive highlight surfaces", () => {
+  // Electron Desktop's --accent is its near-white primary fill; highlighting a row
+  // or button with it hides the light label. Highlights use --bg-hover instead.
+  const ACCENT_HIGHLIGHT = /(?<![\w-])(?:focus|hover|focus-visible|data-\[highlighted\]):bg-accent(?![\w-])/g;
+
+  it("detects accent fills used as hover and focus highlights", () => {
+    const sample = `<a className="focus:bg-accent" /><b className="hover:bg-accent underline" /><i className="focus:bg-[var(--bg-hover,var(--accent))] hover:bg-accent-hover" />`;
+    expect(sample.match(ACCENT_HIGHLIGHT)).toEqual(["focus:bg-accent", "hover:bg-accent"]);
+  });
+
+  it("keeps Electron Desktop and shared UI highlights off the accent fill", () => {
+    const findings = ROOTS.flatMap((root) => collectSources(root)).flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      return [...source.matchAll(ACCENT_HIGHLIGHT)].map((match) => `${path.relative(path.resolve(import.meta.dirname, "../.."), file)}:${lineOf(source, match.index!)} ${match[0]}`);
+    });
+    expect(findings).toEqual([]);
+  });
+});

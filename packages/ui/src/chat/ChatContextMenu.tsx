@@ -6,7 +6,7 @@ import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
 export type ChatContextMenuAction = { label: string; disabled?: boolean; danger?: boolean; onSelect?: () => void; children?: ChatContextMenuAction[] };
 
-const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40";
+const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40";
 function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContextMenuAction[]; zIndex: number; Menu?: typeof ContextMenu | typeof DropdownMenu }) {
   return items.map(item => item.children ? <Menu.Sub key={item.label}>
     <Menu.SubTrigger disabled={item.disabled} className={`${menuItemClass} flex items-center gap-3`}>
@@ -66,11 +66,11 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
           borderColor: "var(--border-default, var(--border))",
         }}>
           {primaryAction ? <Menu.Item disabled={primaryAction.disabled} onSelect={primaryAction.onSelect}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40">{primaryAction.label}</Menu.Item> : null}
+            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40">{primaryAction.label}</Menu.Item> : null}
           {selectedText && <Menu.Item disabled={feedback === "pending"}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent"
+            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
             onSelect={(event) => copy(selectedText, "selected text", event)}>Copy selected text</Menu.Item>}
-          <Menu.Item disabled={feedback === "pending"} className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent"
+          <Menu.Item disabled={feedback === "pending"} className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
             onSelect={(event) => copy(chatId, "chat ID", event)}>Copy chat ID</Menu.Item>
           {feedback && <div className="px-2.5 py-1.5 text-xs" role={feedback === "failed" ? "alert" : "status"}>
             {feedback === "failed" ? `Could not copy ${copyTarget}. Try again.`
