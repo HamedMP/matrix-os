@@ -375,6 +375,28 @@ describe("ProviderSettingsStore", () => {
         modelId: "gpt-5",
       },
     });
+
+    // Both agents are usable; the Chat binding, not a global default, chooses
+    // the route. This is the production failure when inventory.active is empty.
+    Object.assign(claude, { enabled: true, enablementOrigin: "owner_configuration" });
+    canonical.active = { providerInstanceId: null, accessSourceId: null, modelId: null };
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    for (const [driverKind, modelId, providerInstanceId, accessSourceId] of [
+      ["codex", "gpt-5", "codex_owner", "owner_openai_profile"],
+      ["claude_code", "claude-sonnet-5", "kernel_owner", "owner_anthropic_profile"],
+    ] as const) {
+      const snapshot = await store.getCanonicalCollaborationSnapshot({
+        collaborationChatRoute: { driverKind, modelId },
+      });
+      expect(snapshot.active).toEqual({ providerInstanceId, accessSourceId, modelId });
+      expect(resolveCurrentOwnerRoute(snapshot, NOW.getTime())?.modelId).toBe(modelId);
+    }
+    // A bound Chat must never switch to the other ready agent when its own is off.
+    claude.enabled = false;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot({
+      collaborationChatRoute: { driverKind: "claude_code", modelId: "claude-sonnet-5" },
+    })).resolves.toMatchObject({ active: { providerInstanceId: null, accessSourceId: null, modelId: null } });
   });
 
   it("uses a verified consent-bound Codex subscription when raw inventory readiness is unknown", async () => {
@@ -429,6 +451,19 @@ describe("ProviderSettingsStore", () => {
     const admittedRoute = resolveCurrentOwnerRoute(admittedSnapshot, NOW.getTime());
     expect(admittedRoute).not.toBeNull();
     expect(onFundingSummaryRead).not.toHaveBeenCalled();
+
+    const savedClaude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    savedClaude.enabled = true;
+    canonical.active = { providerInstanceId: null, accessSourceId: null, modelId: null };
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot({
+      suppressFundedProbes: true,
+      collaborationChatRoute: { driverKind: "codex", modelId: "gpt-5" },
+    })).resolves.toMatchObject({
+      active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
+    });
+    savedClaude.enabled = false;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
 
     const replacementMetadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
       { account: { type: "chatgpt", email: "replacement@example.test", planType: "pro" } }, {}, NOW,
