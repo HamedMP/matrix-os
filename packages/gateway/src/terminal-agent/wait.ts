@@ -94,11 +94,17 @@ export function createTerminalWaiter(options: {
     const deadline = now() + input.timeoutMs;
     // A follow-up request continues the caller's baseline, so text printed between
     // two check-ins still counts as new.
-    const first = input.output && input.seen === undefined ? await screenRead(ref) : undefined;
-    let baseline = input.output ? input.seen ?? countOccurrences(first!.text, input.output) : 0;
-    // Counts compare only between reads of one source: a frozen snapshot can lack text
-    // the live screen shows, so a change of source starts a new baseline.
-    let source = first?.source;
+    // One baseline per read source: a frozen snapshot can lack text the live screen
+    // shows, so counts compare only with the last read of the same source. A check-in's
+    // `seen` applies to whichever source the first read comes from.
+    const baselines: Partial<Record<"live" | "snapshot", number>> = {};
+    let pendingSeen = input.seen;
+    let lastSource: "live" | "snapshot" | undefined;
+    if (input.output && pendingSeen === undefined) {
+      const first = await screenRead(ref);
+      baselines[first.source] = countOccurrences(first.text, input.output);
+      lastSource = first.source;
+    }
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
     for (;;) {
@@ -109,21 +115,25 @@ export function createTerminalWaiter(options: {
       if (input.output) {
         const read = await screenRead(ref);
         const count = countOccurrences(read.text, input.output);
-        const sameSource = source === undefined || source === read.source;
-        source = read.source;
-        if (sameSource && count > baseline) return { reason: "output" };
+        lastSource = read.source;
+        if (pendingSeen !== undefined) {
+          baselines[read.source] = pendingSeen;
+          pendingSeen = undefined;
+        }
+        const baseline = baselines[read.source];
+        if (baseline !== undefined && count > baseline) return { reason: "output" };
         // A read holds only recent history: matches that scrolled out (or a cleared
         // screen) lower the count, so the baseline drops with it and the next match
         // still counts. Missed only if an old match leaves and a new one arrives
         // between two polls 500 ms apart, i.e. thousands of lines in that time.
-        baseline = count;
+        baselines[read.source] = count;
       } else {
         lastStatus = (await options.status.get(ref))?.status;
         if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
       }
       const remaining = deadline - now();
       if (remaining <= 0) {
-        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: baseline } : {}) };
+        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: (lastSource ? baselines[lastSource] : undefined) ?? pendingSeen ?? 0 } : {}) };
       }
       await sleep(Math.min(pollMs, remaining), signal);
     }

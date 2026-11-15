@@ -144,6 +144,21 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { output: "ready", timeoutMs: 2_000 })).resolves.toMatchObject({ reason: "timeout" });
   });
 
+  // Fault detected (review of #3297): a message printed while the live capture was
+  // failing became part of the recovered read's new baseline, so the wait missed it.
+  it("sees a message printed while the live capture was failing once it recovers", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["boot"]],
+      captures: [
+        { viewport: ["boot"], scrollback: [] },
+        null as never,
+        { viewport: ["boot", "ready on :3000"], scrollback: [] },
+      ],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });
