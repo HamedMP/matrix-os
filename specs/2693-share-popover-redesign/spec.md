@@ -75,6 +75,10 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips.
 4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`).
 
+## Public documentation
+
+Separate docs PR in `FinnaAI/matrix-os-site` under `content/docs/`: the Share popover (Private, Organization, Public), one access mode at a time and the switch confirm, making an app collaborative from Chats, the launcher filters, the org link hand-off, and the current limitation that email invitations are a preview until 2691 ships. Owner: ENG-490 assignee; tracked on the ticket.
+
 ## Acceptance (phase 1)
 
 - Every phase 1 artboard state is reachable: S1, S1b, S2, S8, S8b, S9, S10.

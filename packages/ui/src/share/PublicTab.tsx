@@ -1,5 +1,5 @@
 "use client";
-import { useId } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Check, ChevronRight, Globe } from "lucide-react";
 import { SHARE_DESCRIPTION_MAX, SHARE_TITLE_MAX, metadataSummary, normalizeSlugInput, slugBlocksPublish, type SlugState } from "./share-model";
 import { InlineError, ShareButton, ShareCollapsible, ShareCollapsibleContent, ShareCollapsibleTrigger, ShareInput, ShareTextarea, Spinner } from "./share-controls";
@@ -14,13 +14,38 @@ export interface PublicDraft {
   metaOpen: boolean;
 }
 
-export function PublicTab({ share, draft, setDraft, slugState, onPublish }: {
+export function PublicTab({ share, draft, setDraft, slugState, onPublish, onSaveDetails, submissions }: {
   share: ShareController; draft: PublicDraft; setDraft: (patch: Partial<PublicDraft>) => void; slugState: SlugState; onPublish: () => void;
+  onSaveDetails: () => void;
+  /** Host-supplied visitor submissions view for apps with public forms. */
+  submissions?: ReactNode;
+}) {
+  if (share.pageMode === "public" && share.site) {
+    return <LivePublic share={share} draft={draft} setDraft={setDraft} slugState={slugState} onSaveDetails={onSaveDetails} submissions={submissions} />;
+  }
+  const blocked = slugBlocksPublish(slugState);
+  const publishing = share.operation === "publish";
+  return <div className="flex flex-col gap-3.5">
+    <SlugField share={share} draft={draft} setDraft={setDraft} slugState={slugState} />
+    <MetadataFields draft={draft} setDraft={setDraft} />
+    {share.pendingSwitch ? null : <ShareButton variant="primary" className="-mt-1 font-semibold" disabled={blocked || share.operation !== null || share.loading || share.loadFailed} onClick={onPublish}>
+      {publishing ? <Spinner /> : <Globe aria-hidden="true" className="size-[15px]" />}Publish to web
+    </ShareButton>}
+    {share.error?.operation === "publish" ? <InlineError>{share.error.message}</InlineError> : null}
+    {submissions}
+  </div>;
+}
+
+/** Live app: link, status, publish the latest app version, edit details, unpublish. */
+function LivePublic({ share, draft, setDraft, slugState, onSaveDetails, submissions }: {
+  share: ShareController; draft: PublicDraft; setDraft: (patch: Partial<PublicDraft>) => void; slugState: SlugState; onSaveDetails: () => void; submissions?: ReactNode;
 }) {
   const copy = useCopy();
-  if (share.pageMode === "public" && share.site) {
-    const host = `matrix.page/${share.site.slug ?? share.site.id}`;
-    return <div className="flex flex-col gap-2">
+  const [editing, setEditing] = useState(false);
+  const site = share.site!;
+  const host = `matrix.page/${site.slug ?? site.id}`;
+  const busy = share.operation !== null;
+  return <div className="flex flex-col gap-2">
       <div className="flex h-11 items-center gap-2 rounded-lg border border-[var(--share-border)] bg-[var(--share-panel)] pl-3 pr-1">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-[var(--share-success)]" />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{host}</span>
@@ -28,23 +53,26 @@ export function PublicTab({ share, draft, setDraft, slugState, onPublish }: {
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-[var(--share-success-fg)]">Live · visitors can use, not edit</span>
-        <ShareButton variant="link" className="text-[13px] text-[var(--share-muted-fg)]" disabled={share.operation !== null} onClick={() => void share.unpublish()}>
+        <ShareButton variant="link" className="text-[13px] text-[var(--share-muted-fg)]" disabled={busy} onClick={() => void share.unpublish()}>
           {share.operation === "unpublish" ? <Spinner /> : null}Unpublish
         </ShareButton>
       </div>
-      {share.error?.operation === "unpublish" ? <InlineError>{share.error.message}</InlineError> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <ShareButton size="sm" disabled={busy} onClick={() => void share.publishUpdate()}>
+          {share.operation === "update" ? <Spinner /> : null}Publish latest version
+        </ShareButton>
+        <ShareButton size="sm" variant="ghost" aria-expanded={editing} onClick={() => setEditing((value) => !value)}>Edit details</ShareButton>
+      </div>
+      {editing ? <div className="flex flex-col gap-3 border-t border-[var(--share-border)] pt-3">
+        <SlugField share={share} draft={draft} setDraft={setDraft} slugState={slugState} />
+        <MetadataFields draft={{ ...draft, metaOpen: true }} setDraft={setDraft} />
+        <ShareButton variant="primary" size="sm" className="self-start" disabled={busy || slugBlocksPublish(slugState)} onClick={onSaveDetails}>
+          {share.operation === "save" ? <Spinner /> : null}Save details
+        </ShareButton>
+      </div> : null}
+      {share.error && ["unpublish", "update", "save"].includes(share.error.operation) ? <InlineError>{share.error.message}</InlineError> : null}
+      {submissions}
     </div>;
-  }
-  const blocked = slugBlocksPublish(slugState);
-  const publishing = share.operation === "publish";
-  return <div className="flex flex-col gap-3.5">
-    <SlugField share={share} draft={draft} setDraft={setDraft} slugState={slugState} />
-    <MetadataFields draft={draft} setDraft={setDraft} />
-    {share.pendingSwitch ? null : <ShareButton variant="primary" className="-mt-1 font-semibold" disabled={blocked || share.operation !== null || share.loading} onClick={onPublish}>
-      {publishing ? <Spinner /> : <Globe aria-hidden="true" className="size-[15px]" />}Publish to web
-    </ShareButton>}
-    {share.error?.operation === "publish" ? <InlineError>{share.error.message}</InlineError> : null}
-  </div>;
 }
 
 function SlugField({ share, draft, setDraft, slugState }: { share: ShareController; draft: PublicDraft; setDraft: (patch: Partial<PublicDraft>) => void; slugState: SlugState }) {
