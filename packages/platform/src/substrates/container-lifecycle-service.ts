@@ -152,7 +152,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     generation: number,
     set: Updateable<UserMachinesTable>,
   ): Promise<boolean> {
-    if (set.status === undefined || holdsCompute(set.status)) return transitionWith(db.executor, machineId, from, generation, set);
+    // A stop that could not confirm its unit suspended leaves the interval open: the unit may still run.
+    if (set.status === undefined || holdsCompute(set.status) || set.compute_unconfirmed_until) {
+      return transitionWith(db.executor, machineId, from, generation, set);
+    }
     return closing(machineId, executor => transitionWith(executor, machineId, from, generation, { ...set, metered_since: null }));
   }
 

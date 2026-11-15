@@ -66,14 +66,17 @@ export async function readComputeUsage(executor: Executor, clerkUserId: string, 
     exportWakes: closed?.export_wakes ?? 0,
   };
   const open = await executor.selectFrom('user_machines')
-    .select(['metered_since', 'compute_mode'])
+    .select(['metered_since', 'compute_mode', 'compute_unconfirmed_until'])
     .where('clerk_user_id', '=', clerkUserId).where('substrate', '=', 'container')
     .where('deleted_at', 'is', null).where('metered_since', 'is not', null)
     .execute();
   for (const row of open) {
     if (!row.metered_since) continue;
     const since = Math.max(row.metered_since.getTime(), monthStart.getTime());
-    const elapsed = Math.max(0, at.getTime() - since);
+    // A failed stop's unit counts until its lifetime has certainly ended it.
+    const end = row.compute_unconfirmed_until && row.compute_unconfirmed_until.getTime() < at.getTime()
+      ? row.compute_unconfirmed_until.getTime() : at.getTime();
+    const elapsed = Math.max(0, end - since);
     if (row.compute_mode === 'export_only') usage.exportMs += elapsed;
     else usage.billedMs += elapsed;
   }

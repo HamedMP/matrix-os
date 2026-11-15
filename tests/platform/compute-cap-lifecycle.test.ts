@@ -104,6 +104,37 @@ describe('monthly compute metering and cap', () => {
     expect(await usage()).toMatchObject({ billedMs: 3 * HOUR + 60_000 });
   });
 
+  it('keeps metering a unit whose stop could not suspend it, bounded by the unit lifetime', async () => {
+    const provider = fakeProvider();
+    vi.mocked(provider.suspend).mockRejectedValue(new Error('provider down'));
+    const lifecycle = service(provider);
+    const { generation } = await startAndRegister(lifecycle);
+    advance(HOUR);
+    expect(await lifecycle.stop('ctr-1', generation, AbortSignal.timeout(1_000))).toBe('needs_recovery');
+    advance(2 * HOUR);
+    // The unit may still be running, so its time keeps counting.
+    expect(await usage()).toMatchObject({ billedMs: 3 * HOUR });
+    advance(10 * HOUR);
+    // Its lifetime has certainly ended it eight hours after it started.
+    expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
+
+    vi.mocked(provider.suspend).mockResolvedValue(undefined);
+    await lifecycle.ensureStarted('ctr-1');
+    await lifecycle.drain();
+    advance(HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 9 * HOUR });
+  });
+
+  it('stops metering a failed stop whose unit was confirmed suspended', async () => {
+    const lifecycle = service();
+    const { generation } = await startAndRegister(lifecycle);
+    advance(HOUR);
+    expect(await lifecycle.beginQuiesce('ctr-1', generation)).toBe(true);
+    expect(await lifecycle.recoverAfterFailedStop('ctr-1', generation, 'flush_failed', AbortSignal.timeout(1_000))).toBe(true);
+    advance(5 * HOUR);
+    expect(await usage()).toMatchObject({ billedMs: HOUR });
+  });
+
   it('bills a failed start up to its failure', async () => {
     const provider = fakeProvider();
     vi.mocked(provider.run).mockImplementationOnce(async () => { advance(60_000); throw new Error('boom'); });

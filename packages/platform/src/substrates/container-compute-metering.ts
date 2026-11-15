@@ -10,11 +10,19 @@ import {
  * A claim opens the interval (`metered_since`) and a write that ends compute
  * clears it, each under the row lock in the transaction that changes status,
  * so an interval is closed exactly once however stops and reconciles race.
+ * A stop that could not confirm its unit suspended keeps the interval open,
+ * bounded by `compute_unconfirmed_until`, when the unit's lifetime has
+ * certainly ended it; the next claim or destroy closes it there.
  */
 
 type Executor = PlatformDB['executor'];
 
 export type ClaimOutcome = boolean | 'busy' | { limitResetsAt: string };
+
+/** The end of an open interval: now, or earlier when its unit's lifetime had already ended it. */
+export function boundedEnd(at: Date, unconfirmedUntil: Date | null): Date {
+  return unconfirmedUntil && unconfirmedUntil.getTime() < at.getTime() ? unconfirmedUntil : at;
+}
 
 export function holdsCompute(status: unknown): boolean {
   return (COMPUTE_HOLDING_STATUSES as readonly unknown[]).includes(status);
@@ -32,7 +40,7 @@ export function createComputeMetering(deps: {
   async function closing(machineId: string, write: (executor: Executor) => Promise<boolean>): Promise<boolean> {
     return db.transaction(async (trx) => {
       const locked = await trx.executor.selectFrom('user_machines')
-        .select(['clerk_user_id', 'metered_since', 'compute_mode'])
+        .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container')
         .forUpdate().executeTakeFirst();
       if (!locked) return false;
@@ -42,7 +50,7 @@ export function createComputeMetering(deps: {
           clerkUserId: locked.clerk_user_id,
           mode: locked.compute_mode === 'export_only' ? 'export_only' : 'full',
           openedAt: locked.metered_since,
-          closedAt: now(),
+          closedAt: boundedEnd(now(), locked.compute_unconfirmed_until),
         });
       }
       return written;
@@ -57,7 +65,8 @@ export function createComputeMetering(deps: {
   async function claimStart(machineId: string, from: string, generation: number, exportIntent: boolean): Promise<ClaimOutcome> {
     return db.transaction(async (trx): Promise<ClaimOutcome> => {
       if (deps.maxRunning !== undefined) await lockCapacity(trx.executor, 'running_runtimes');
-      const row = await trx.executor.selectFrom('user_machines').select(['clerk_user_id', 'status', 'generation', 'compute_unconfirmed_until'])
+      const row = await trx.executor.selectFrom('user_machines')
+        .select(['clerk_user_id', 'status', 'generation', 'metered_since', 'compute_mode', 'compute_unconfirmed_until'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .forUpdate().executeTakeFirst();
       if (!row || row.status !== from || row.generation !== generation) return false;
@@ -82,6 +91,15 @@ export function createComputeMetering(deps: {
         .where('status', '=', from).where('generation', '=', generation)
         .returning('machine_id').executeTakeFirst();
       // An export-only wake is spent when claimed, so a failed start cannot be retried for free.
+      // An interval a failed stop left open ends where this claim starts, or where its unit's lifetime did.
+      if (updated && row.metered_since) {
+        await closeComputeInterval(trx.executor, {
+          clerkUserId: row.clerk_user_id,
+          mode: row.compute_mode === 'export_only' ? 'export_only' : 'full',
+          openedAt: row.metered_since,
+          closedAt: boundedEnd(at, row.compute_unconfirmed_until),
+        });
+      }
       if (updated && mode === 'export_only') await recordExportWake(trx.executor, row.clerk_user_id, at);
       return Boolean(updated);
     });
