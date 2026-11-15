@@ -369,3 +369,57 @@ describe('live organization ownership recheck',()=> {
     }finally{await db.destroy();}
   });
 });
+
+describe('free container owner cleanup', () => {
+  const DB_NAME = `mxo_${'a'.repeat(26)}`;
+  const ROLE_NAME = `mxr_${'a'.repeat(26)}`;
+  async function freeOwner(db: PlatformDB, ownerDatabaseDeleted: boolean) {
+    await sql`INSERT INTO user_machines (machine_id,clerk_user_id,handle,status,deleted_at,provisioned_at,substrate,provisioning_class)
+      VALUES ('ctr-owner','user_owner','owner','deleted','2026-10-01','2026-10-01','container','free')`.execute(db.executor);
+    await db.executor.insertInto('container_owner_databases').values({
+      clerk_user_id: 'user_owner', database_name: DB_NAME, role_name: ROLE_NAME, size_limit_bytes: 1024,
+      state: ownerDatabaseDeleted ? 'deleting' : 'active', password_epoch: 1,
+      deleted_at: ownerDatabaseDeleted ? '2026-10-02' : null,
+    }).execute();
+    await db.executor.insertInto('free_tier_invites').values({ clerk_user_id: 'user_owner', invited_by: 'operator' }).execute();
+    await db.executor.insertInto('free_tier_invites').values({ clerk_user_id: 'user_other', invited_by: 'operator' }).execute();
+  }
+  const runtimeCleanup = () => ({
+    fetch: async () => Response.json({ data: [], total_count: 0 }),
+    customerVpsService: { delete: vi.fn() },
+    hetzner: { listServersByLabel: async () => [], getServer: async () => null, deleteServer: vi.fn() },
+  });
+
+  it('drops the owner database and role during runtime cleanup', async () => {
+    const db = await fixture();
+    try {
+      await freeOwner(db, false);
+      const remove = vi.fn(async () => undefined);
+      await createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', ...runtimeCleanup(),
+        containerOwnerDatabases: { remove } }).vps(ctx);
+      expect(remove).toHaveBeenCalledWith('user_owner', expect.any(AbortSignal));
+    } finally { await db.destroy(); }
+  });
+
+  it('fails closed when an owner database exists and cannot be removed', async () => {
+    const db = await fixture();
+    try {
+      await freeOwner(db, false);
+      await expect(createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', ...runtimeCleanup() }).vps(ctx))
+        .rejects.toThrow('Runtime cleanup configuration unavailable');
+      await expect(eraseOwnerPlatformData(db, 'user_owner')).rejects.toThrow('runtime_cleanup_pending');
+      expect(await db.executor.selectFrom('container_owner_databases').select('clerk_user_id').execute()).toHaveLength(1);
+    } finally { await db.destroy(); }
+  });
+
+  it('erases the owner database record and the invite once the database is gone', async () => {
+    const db = await fixture();
+    try {
+      await freeOwner(db, true);
+      await eraseOwnerPlatformData(db, 'user_owner');
+      expect(await db.executor.selectFrom('container_owner_databases').select('clerk_user_id').execute()).toEqual([]);
+      expect(await db.executor.selectFrom('free_tier_invites').select('clerk_user_id').execute())
+        .toEqual([{ clerk_user_id: 'user_other' }]);
+    } finally { await db.destroy(); }
+  });
+});

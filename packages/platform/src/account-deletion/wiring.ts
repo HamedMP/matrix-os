@@ -28,6 +28,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  db:PlatformDB;env:NodeJS.ProcessEnv;customerVpsService?:CustomerVpsService;backgroundWorkersEnabled?:boolean;
  pipedream?:AccountDeletionAdapterOptions['pipedream'];
  customMcp?:AccountDeletionAdapterOptions['customMcp'];
+ containerOwnerDatabases?:AccountDeletionAdapterOptions['containerOwnerDatabases'];
 }):Promise<AccountDeletionRuntime|undefined> {
  const env=input.env;
  if(env.ACCOUNT_DELETION_CONFIGURED!=='true')return undefined;
@@ -46,7 +47,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  if(appleValues.some(Boolean)&&!appleValues.every(Boolean))throw Error('Account deletion Apple configuration unavailable');
  const adapters=createAccountDeletionAdapters({db:input.db,clerkSecretKey,credentialSecret:secret,r2PrefixRoot:root,objectStore:store,sitesObjectStore:sitesStore,env,
  ownerHash:owner=>hashAccountDeletionOwner(owner,secret),
- customerVpsService:input.customerVpsService,
+ customerVpsService:input.customerVpsService,containerOwnerDatabases:input.containerOwnerDatabases,
  hetzner:input.customerVpsService?createHetznerClient(loadCustomerVpsConfig(env)):undefined,
  stripeSecretKey:env.STRIPE_SECRET_KEY,pipedream:input.pipedream,customMcp:input.customMcp,matrixHomeserverUrl:env.MATRIX_HOMESERVER_URL,
  apple:appleValues.every(Boolean)?{teamId:env.APPLE_TEAM_ID!,keyId:env.APPLE_KEY_ID!,privateKey:env.APPLE_PRIVATE_KEY!,

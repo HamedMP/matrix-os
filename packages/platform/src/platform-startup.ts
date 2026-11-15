@@ -1120,8 +1120,12 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  // Created before account deletion, which drops free owners' databases; cleanups run in reverse, so deletion drains first.
+  const containerSubstrate = createConfiguredContainerSubstrate({ db, env: appEnv, microvmsApi: opts.containerProviderClient });
+  registerCustomMcpStartupCleanup(async () => { await containerSubstrate?.shutdown(); });
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
     db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+    containerOwnerDatabases: containerSubstrate?.ownerDatabases,
   });
   registerCustomMcpStartupCleanup(async () => {
     accountDeletion?.stop();
@@ -1130,9 +1134,7 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
-  const containerSubstrate = createConfiguredContainerSubstrate({ db, env: appEnv, microvmsApi: opts.containerProviderClient });
   const freeTierConfig = loadConfiguredFreeTier(appEnv);
-  registerCustomMcpStartupCleanup(async () => { await containerSubstrate?.shutdown(); });
   const app = createPlatformApp({
     accountDeletion,
     db,
