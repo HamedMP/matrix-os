@@ -27,6 +27,7 @@ describe("org link hand-off page", () => {
     expect(screen.getByRole("status").textContent).toContain("Opening in the Matrix app…");
     expect(screen.getByRole("link", { name: /Open in Matrix/ }).getAttribute("href")).toBe(`matrixos://shared-app/${SCOPE}?expectedShareRevision=3`);
     expect(screen.getByRole("link", { name: "Download Matrix" }).getAttribute("href")).toBe("https://matrix-os.com");
+    expect(screen.getByRole("link", { name: "Open in Canary" }).getAttribute("href")).toBe(`matrixos-canary://shared-app/${SCOPE}?expectedShareRevision=3`);
     expect(screen.getByText("Only Finna members can open this app.")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Sales CRM — shared from Finna" })).toBeTruthy();
   });

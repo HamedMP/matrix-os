@@ -32,7 +32,7 @@ export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch 
     orgLink: (share, hints) => {
       const origin = import.meta.env.VITE_CHAT_SHARE_ORIGIN || platformHost;
       if (!origin) return null;
-      return new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedBuildId: share.build.buildId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), origin).toString();
+      return new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), origin).toString();
     },
   });
 }

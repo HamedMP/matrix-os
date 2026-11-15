@@ -36,6 +36,6 @@ export function useWebShareOrganization(appSlug: string, appName: string) {
     },
     // Web hand-off page that opens the desktop app on /shared/app/<scopeId> (phase 4).
     orgLink: (share, hints) => typeof window === "undefined" ? null
-      : new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedBuildId: share.build.buildId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), window.location.origin).toString(),
+      : new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), window.location.origin).toString(),
   });
 }

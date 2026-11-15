@@ -7,6 +7,8 @@ import { CollaborationIdSchema, CollaborationRevisionSchema } from "./collaborat
  * The copied link is a web URL, `https://<app host>/open/shared-app/<scopeId>?…`.
  * That page hands off to the desktop app with `matrixos://shared-app/<scopeId>?…`,
  * which opens the same target as `sharedAppDeepLink` (`/shared/app/<scopeId>`).
+ * Copied links carry `expectedShareRevision` (so a stopped and restarted share
+ * invalidates them) but not the build ID, so app updates do not break links.
  * The link is only an address: the platform still requires current membership
  * in the sharing organization before anything opens. `app` and `org` are
  * display hints for the hand-off page, never used for authorization.
@@ -68,7 +70,14 @@ export function parseSharedAppDesktopUrl(value: string, schemes: readonly string
   const entries = [...url.searchParams.entries()];
   const allowed = new Set(["expectedBuildId", "expectedShareRevision"]);
   if (entries.length > 2 || entries.some(([key]) => !allowed.has(key)) || new Set(entries.map(([key]) => key)).size !== entries.length) return null;
-  const parsed = SharedAppLinkSchema.safeParse({ scopeId: decodeURIComponent(segments[0]!), ...Object.fromEntries(entries) });
+  let scopeId: string;
+  try { scopeId = decodeURIComponent(segments[0]!); }
+  catch (error: unknown) {
+    // `new URL` accepts stray `%` escapes; a malformed link is ignored, never thrown.
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+  const parsed = SharedAppLinkSchema.safeParse({ scopeId, ...Object.fromEntries(entries) });
   return parsed.success ? parsed.data : null;
 }
 

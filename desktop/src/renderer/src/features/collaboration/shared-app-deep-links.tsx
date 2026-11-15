@@ -25,6 +25,7 @@ export function wireSharedAppDeepLinks(): () => void {
 }
 
 export const NOT_SHARED_WITH_YOU = "This app isn’t shared with you. Only members of its organization can open it.";
+export const OUTDATED_LINK = "This link is out of date because sharing was restarted. Open the app from your launcher or ask for a new link.";
 
 /**
  * Opens a pending org link once signed in. The member's shared-app directory is
@@ -38,12 +39,17 @@ export function SharedAppDeepLinkOpener() {
   useEffect(() => {
     if (link && inNoOrganization) { usePendingSharedAppLink.getState().set(null); toast.error(NOT_SHARED_WITH_YOU); return; }
     if (!link || (!directory.loaded && !directory.unavailable)) return;
-    usePendingSharedAppLink.getState().set(null);
-    if (directory.unavailable) { toast.error("Couldn’t open the shared app. Try again."); return; }
+    if (directory.unavailable) { usePendingSharedAppLink.getState().set(null); toast.error("Couldn’t open the shared app. Try again."); return; }
     const target = directory.items.find((item) => item.scopeId === link.scopeId);
+    // Discovery is paged: keep looking before treating a missing scope as no access.
+    if (!target && directory.hasMore) { if (!directory.loading) directory.loadMore(); return; }
+    usePendingSharedAppLink.getState().set(null);
     if (!target) { toast.error(NOT_SHARED_WITH_YOU); return; }
+    // Honour the link's expectations, like the web /shared/app route.
+    if ((link.expectedShareRevision && link.expectedShareRevision !== target.shareRevision)
+      || (link.expectedBuildId && link.expectedBuildId !== target.buildId)) { toast.error(OUTDATED_LINK); return; }
     const tabId = useTabs.getState().openTab({ kind: "app", slug: target.appId, title: sharedAppDisplayName(target.appId), sharedAppTarget: target });
     useDesktopSurfaces.getState().activateSurface(tabId);
-  }, [link, inNoOrganization, directory.loaded, directory.unavailable, directory.items]);
+  }, [link, inNoOrganization, directory]);
   return null;
 }
