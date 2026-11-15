@@ -30,8 +30,6 @@ export function createCanonicalTerminalLaunch(options: {
   runtime: Pick<TerminalWorkspaceRouteRuntime, "listWorkspaces" | "createTab" | "prepareNativeTab" | "completeNativeTab">;
   host?: Pick<ReturnType<typeof createTerminalHostService>, "start">;
   launcher: Pick<ReturnType<typeof createTerminalNativeLauncher>, "build">;
-  /** Trusted composition only. Production interactive equivalence needs private configuration handoff. */
-  interactiveHostEquivalent?: boolean;
   homePath: string; generation: string; computerId: string; ownerIds: readonly string[];
   routines?: { runtime: Pick<RoutineCliRuntime, "register">; binPath: string; endpoint: string;
     isShared(ref: TerminalRef, incarnation: string, trx?: Parameters<RoutineSourceProducer["validateWithin"]>[1]): Promise<boolean> };
@@ -51,14 +49,16 @@ export function createCanonicalTerminalLaunch(options: {
     const ref = { workspaceId, tabId: input.tabId! }, key = keyOf(ref);
     const existing = await readTab(ref);
     if (existing) return existing; // Repeated client tab identity never starts a second native root or restores proof.
-    if (!prepared && (!options.host || options.interactiveHostEquivalent !== true)) return options.runtime.createTab(workspaceId, {
+    const hasNativeTabLifecycle = !!options.runtime.prepareNativeTab && !!options.runtime.completeNativeTab;
+    if (!prepared && (!options.host || !options.routines || !options.computerId || !hasNativeTabLifecycle
+      || !["jwt", "platform-verified"].includes(principal.source))) return options.runtime.createTab(workspaceId, {
       tabId: ref.tabId, name: input.name, cwd: input.cwd, accessScope: "owner", agent: { providerId: input.managedLaunch.harness },
       command: terminalNativeOrdinaryCommand(input.managedLaunch),
     });
     const launch = prepared ? TerminalHostLaunchSchema.parse(prepared.launch) : await options.launcher.build(input.managedLaunch, input.cwd);
     if (!options.host) return options.runtime.createTab(workspaceId, { tabId: ref.tabId, name: input.name, cwd: input.cwd,
       accessScope: "owner", agent: { providerId: input.managedLaunch.harness }, command: agentLaunchTerminalCommand(launch) });
-    if (!options.runtime.prepareNativeTab || !options.runtime.completeNativeTab) throw new TerminalRuntimeError("unavailable");
+    if (!hasNativeTabLifecycle) throw new TerminalRuntimeError("unavailable");
     const controller = new AbortController(); let retained: RetainedTerminalStartup | undefined;
     let source: ReturnType<typeof createTerminalRoutineSource> | undefined, canonical: TerminalTab | undefined;
     let expiry: NodeJS.Timeout | undefined;

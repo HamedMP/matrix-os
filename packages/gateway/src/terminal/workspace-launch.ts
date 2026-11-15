@@ -28,7 +28,7 @@ export async function launchPreparedWorkspaceTerminal(options: {
     || request.kind !== "agent" || !request.agent || ["plan", "review"].includes(request.mode ?? "") || request.sandboxMode === "read_only" || request.sandbox?.mode === "read-only") return undefined;
   // Inheriting or credential-bearing launch specs cannot be serialized into public host descriptors.
   const launch = TerminalHostLaunchSchema.safeParse(options.launch);
-  if (!launch.success) return undefined;
+  if (!launch.success || launch.data.profile) return undefined;
   return launchTerminal({ principal, workspaceId: options.workspaceId, name: request.agent, cwd: options.cwd, harness: request.agent, launch: launch.data,
     policy: { live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full", revision: "workspace-terminal-native-full-v1" } });
 }

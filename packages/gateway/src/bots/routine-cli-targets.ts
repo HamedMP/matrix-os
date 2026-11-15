@@ -1,3 +1,4 @@
+import { isRetainedRoutineCoordinator } from "./retained-routine-preview.js";
 import { RoutineDestinationViewSchema, type RoutineDestinationView } from "@matrix-os/contracts/routine-destination";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
@@ -62,6 +63,7 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
 
   const validateTarget = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope,
     target: { botId: string; chatId: string; bindingCreatedAt?: string }, action: TargetAccess["action"]) => {
+    if (isRetainedRoutineCoordinator(target.botId, target.chatId)) throw new RoutineCliError("target_unavailable");
     if (!deps.canAccessTarget) throw new RoutineCliError("unavailable");
     const owner = { type: "personal" as const, ownerId: configured.ownerId };
     const chatTrx = trx as unknown as Transaction<ChatDatabase>;

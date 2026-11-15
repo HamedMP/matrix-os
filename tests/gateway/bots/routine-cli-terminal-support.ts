@@ -64,7 +64,7 @@ export async function terminalFixture() {
     retire: () => rootSignal.abort(),
     verifyCurrent: async () => { if (!managerCurrent) { current = false; rootSignal.abort(); } return current && !rootSignal.signal.aborted; },
     identity: { type: "terminal.bound", admissionId: "de000000-0000-4000-8000-000000000703", supervisor, host: hostIdentity, root, invocationId: "c".repeat(32), generation } };
-  const coordinator = createCanonicalTerminalLaunch({ interactiveHostEquivalent: true, runtime: terminal,
+  const coordinator = createCanonicalTerminalLaunch({ runtime: terminal,
     host: { start: async input => { const reference = { path: home + "/matrix-terminal-" + "a".repeat(32) + "/io.sock" }; await input.onPrepared?.(reference); port = await input.onBound?.(startup); input.onDispatchSettled?.(); return { reference, status: "running" }; } },
     launcher: { build: async (input) => ({ command: `/fixed/${input.harness}`, args: [], cwd: f.home, env: { HOME: f.home, PATH: "/bin" }, inheritEnv: false }) },
     generation, homePath: home, computerId: scope.computerId, ownerIds: [scope.ownerId],

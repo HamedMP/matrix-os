@@ -5,6 +5,7 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "../chat/database.js";
 import { hasHistoricalThreadSchema } from "./v9-compatibility.js";
+import { canReadRetainedRoutinePreview, RETAINED_ROUTINE_PREVIEW_VERSIONS } from "./retained-routine-preview.js";
 import { BOT_MIGRATIONS, type BotMigration } from "./database-migrations.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
@@ -285,10 +286,15 @@ function assertOrdered(migrations: readonly BotMigration[]): void {
 }
 
 /** Called under the migration lock before any pending DDL can run. */
-async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<void> {
+async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<boolean> {
+  const mayHaveRetainedPreview = migrations === BOT_MIGRATIONS && migrations.length === 15;
   const recorded = await db.selectFrom("bot_schema_migrations").select(["version", "name"])
-    .orderBy("version").limit(migrations.length + 1).execute();
-  for (const row of recorded) {
+    .orderBy("version").limit(migrations.length + 1 + (mayHaveRetainedPreview ? RETAINED_ROUTINE_PREVIEW_VERSIONS.length : 0)).execute();
+  const retainedPreview = mayHaveRetainedPreview && recorded.length === migrations.length + RETAINED_ROUTINE_PREVIEW_VERSIONS.length && recorded.every((row, index) => {
+    const expected = index < migrations.length ? migrations[index] : RETAINED_ROUTINE_PREVIEW_VERSIONS[index - migrations.length];
+    return row.version === expected?.version && row.name === expected.name;
+  });
+  for (const row of retainedPreview ? recorded.slice(0, migrations.length) : recorded) {
     const migration = migrations[row.version - 1];
     if (!migration) throw new BotSchemaError("newer_schema");
     if (row.name !== migration.name) {
@@ -297,13 +303,15 @@ async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrati
       if (!retainedThreadV9 || !(await hasHistoricalThreadSchema(db))) throw new BotSchemaError("invalid_migrations");
     }
   }
+  if (retainedPreview && !await canReadRetainedRoutinePreview(db)) throw new BotSchemaError("newer_schema");
+  return retainedPreview;
 }
 
 /**
  * Applies pending bot migrations. Each version runs in its own transaction
  * under a schema advisory lock, so concurrent gateways apply it once, and a
  * failed version rolls back without undoing earlier ones. Requires the chat
- * schema to exist. Refuses a database migrated by a newer build.
+ * schema to exist. Only the proven dormant retained preview can use v15 while its newer ledger stays intact.
  */
 export async function bootstrapBotDatabase(
   db: Kysely<OwnerBotDatabase>,
@@ -321,7 +329,7 @@ export async function bootstrapBotDatabase(
   for (const migration of migrations) {
     const ran = await db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
-      await assertCompatibleSchema(trx, migrations);
+      if (await assertCompatibleSchema(trx, migrations)) return "retained_preview";
       const existing = await trx.selectFrom("bot_schema_migrations")
         .select("version").where("version", "=", migration.version).executeTakeFirst();
       if (existing) return false;
@@ -329,6 +337,7 @@ export async function bootstrapBotDatabase(
       await trx.insertInto("bot_schema_migrations").values({ version: migration.version, name: migration.name }).execute();
       return true;
     });
+    if (ran === "retained_preview") return { applied };
     if (ran) applied.push(migration.version);
   }
   await db.transaction().execute(async (trx) => {
