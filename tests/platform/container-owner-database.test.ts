@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
 import {
   ContainerOwnerDatabaseError,
   assertOwnerIdentifier,
@@ -198,52 +198,69 @@ describe('container owner databases', () => {
     expect(second.passwordEpoch).toBe(4);
   });
 
-  /** Runs `interleave` once, just before the first statement matching `pattern` reaches the cluster. */
-  function interleaved(pattern: RegExp, interleave: () => Promise<void>) {
+  /**
+   * Starts `interleave` once, just before the first statement matching each
+   * pattern reaches the cluster, and gives it a moment to run. Owner database
+   * work is serialized per owner, so a started operation may instead wait for
+   * the one in progress; `settled` awaits everything that was started.
+   */
+  function interleaved(hooks: Array<[RegExp, () => Promise<unknown>]>) {
     const base = pgliteAdmin(cluster, log);
-    let fired = false;
-    return createContainerOwnerDatabases({
+    const pending = hooks.map(([pattern, run]) => ({ pattern, run, fired: false }));
+    const started: Promise<unknown>[] = [];
+    const owners = createContainerOwnerDatabases({
       db, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3,
       admin: {
         ...base,
         async query(statement, params, s) {
-          if (!fired && pattern.test(statement)) {
-            fired = true;
-            await interleave();
+          for (const hook of pending) {
+            if (hook.fired || !hook.pattern.test(statement)) continue;
+            hook.fired = true;
+            const op = hook.run();
+            started.push(op.catch((error: unknown) => error));
+            await Promise.race([op.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 300))]);
           }
           return base.query(statement, params, s);
         },
       },
     });
+    return { owners, settled: () => Promise.all(started) };
   }
 
   it('a fence that lands while ensure provisions leaves the role unable to log in', async () => {
     const credentials = await service().ensure('user_owner_a', 1, signal());
-    const owners = interleaved(/WITH LOGIN/, () => service().fence('user_owner_a', signal()));
+    const { owners, settled } = interleaved([[/WITH LOGIN/, () => service().fence('user_owner_a', signal())]]);
 
-    await expect(owners.ensure('user_owner_a', 1, signal())).rejects.toMatchObject({ code: 'fenced' });
+    await owners.ensure('user_owner_a', 1, signal()).catch((error: unknown) => error);
+    await settled();
+    const row = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
+    expect(row.state).toBe('fenced');
     expect((await role(cluster, credentials.roleName))?.rolcanlogin).toBe(false);
   });
 
   it('a rotation that lands while ensure provisions leaves the newer password in force', async () => {
     const credentials = await service().ensure('user_owner_a', 1, signal());
-    const owners = interleaved(/WITH LOGIN/, async () => { await service().rotate('user_owner_a', 2, signal()); });
+    const { owners, settled } = interleaved([[/WITH LOGIN/, () => service().rotate('user_owner_a', 2, signal())]]);
 
-    await expect(owners.ensure('user_owner_a', 1, signal())).rejects.toMatchObject({ code: 'stale_generation' });
+    await owners.ensure('user_owner_a', 1, signal()).catch((error: unknown) => error);
+    await settled();
     const newest = service().passwordFor(credentials.roleName, 2);
     const applied = log.filter(s => s.startsWith(`ALTER ROLE "${credentials.roleName}"`) && s.includes(' PASSWORD '));
     expect(applied.at(-1)).toContain(`'${newest}'`);
+    expect((await db.executor.selectFrom('container_owner_databases').select('password_epoch').executeTakeFirstOrThrow())
+      .password_epoch).toBe(2);
   });
 
   it('a delayed removal never tombstones the record that replaced the one it read', async () => {
     const first = await service().ensure('user_owner_a', 1, signal());
     let second: Awaited<ReturnType<ReturnType<typeof service>['ensure']>> | undefined;
-    // The slow removal has read the old row; another removal finishes and the owner comes back.
-    const owners = interleaved(/FROM pg_roles/, async () => {
+    // Another removal and the owner's return race the slow removal.
+    const { owners, settled } = interleaved([[/FROM pg_roles/, async () => {
       await service().remove('user_owner_a', signal());
       second = await service().ensure('user_owner_a', 2, signal());
-    });
+    }]]);
     await owners.remove('user_owner_a', signal());
+    await settled();
 
     expect(second!.databaseName).not.toEqual(first.databaseName);
     const row = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
@@ -325,5 +342,67 @@ describe.skipIf(!realUrl)('container owner databases on a real PostgreSQL server
     }
     const gone = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [first.databaseName], signal());
     expect(gone).toEqual([]);
+  });
+});
+
+describe.skipIf(!realUrl)('container owner database operations across platform instances', () => {
+  let schema: string;
+  let pools: PlatformDB[];
+  let adminPool: pg.Pool;
+  let cluster: Cluster;
+  let log: string[];
+  beforeEach(async () => {
+    schema = `ownerdbserial_${randomUUID().replaceAll('-', '')}`;
+    adminPool = new pg.Pool({ connectionString: realUrl, max: 1 });
+    await adminPool.query(`CREATE SCHEMA "${schema}"`);
+    pools = [];
+    for (let index = 0; index < 2; index += 1) {
+      const url = new URL(realUrl!);
+      url.searchParams.set('options', `-c search_path=${schema}`);
+      const instance = createPlatformDb(url.toString());
+      pools.push(instance);
+      await instance.ready;
+    }
+    cluster = await createTestPGlite();
+    log = [];
+  });
+  afterEach(async () => {
+    for (const instance of pools) await instance.destroy();
+    await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await adminPool.end();
+    await cluster.client.close();
+  });
+
+  it('keeps the role login in step with the record when fence and unfence race a provisioning', async () => {
+    const [a, b] = pools as [PlatformDB, PlatformDB];
+    const other = createContainerOwnerDatabases({ db: b, admin: pgliteAdmin(cluster, log), passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
+    const credentials = await other.ensure('user_owner_a', 1, signal());
+    const started: Promise<unknown>[] = [];
+    const hooks: Array<[RegExp, () => Promise<unknown>]> = [
+      [/WITH LOGIN/, () => other.fence('user_owner_a', signal())],
+      [/" NOLOGIN$/, () => other.unfence('user_owner_a', signal())],
+    ];
+    const base = pgliteAdmin(cluster, log);
+    const owners = createContainerOwnerDatabases({
+      db: a, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3,
+      admin: {
+        ...base,
+        async query(statement, params, s) {
+          const hook = hooks.find(([pattern]) => pattern.test(statement));
+          if (hook) {
+            hooks.splice(hooks.indexOf(hook), 1);
+            const op = hook[1]();
+            started.push(op.catch((error: unknown) => error));
+            await Promise.race([op.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 300))]);
+          }
+          return base.query(statement, params, s);
+        },
+      },
+    });
+
+    await owners.ensure('user_owner_a', 1, signal()).catch((error: unknown) => error);
+    await Promise.all(started);
+    const row = await a.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
+    expect((await role(cluster, credentials.roleName))?.rolcanlogin).toBe(row.state === 'active');
   });
 });

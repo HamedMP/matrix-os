@@ -26,7 +26,7 @@ export interface ContainerOwnerDatabasesTable {
 type Row = Selectable<ContainerOwnerDatabasesTable>;
 
 export type ContainerOwnerDatabaseErrorCode =
-  | 'not_found' | 'fenced' | 'deleting' | 'invalid_identifier' | 'stale_generation';
+  | 'not_found' | 'fenced' | 'deleting' | 'invalid_identifier' | 'stale_generation' | 'busy';
 
 export class ContainerOwnerDatabaseError extends Error {
   constructor(readonly code: ContainerOwnerDatabaseErrorCode) {
@@ -68,6 +68,9 @@ const ROLE_DEFAULTS = [
   "lock_timeout = '10s'",
 ];
 const DUPLICATE_CODES = new Set(['42710', '42P04', '23505']);
+/** How long an owner database operation waits for another one on the same owner. */
+const OWNER_LOCK_WAIT_MS = 30_000;
+const OWNER_LOCK_POLL_MS = 50;
 
 export function assertOwnerIdentifier(value: string, prefix: 'mxo_' | 'mxr_'): string {
   if (!IDENTIFIER.test(value) || !value.startsWith(prefix)) throw new ContainerOwnerDatabaseError('invalid_identifier');
@@ -206,6 +209,33 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     throw new Error('Owner database provisioning did not settle');
   }
 
+  /**
+   * Serializes every operation on one owner's database across platform
+   * instances, with a session advisory lock on one pinned platform
+   * connection. Operations read the record and then write the cluster, so
+   * without it a fence or unfence could interleave with provisioning and
+   * leave the role out of step with the record.
+   */
+  async function serialized<T>(clerkUserId: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    const key = `matrix:container-owner-db:${clerkUserId}`;
+    return db.kysely.connection().execute(async (connection) => {
+      const deadline = Date.now() + OWNER_LOCK_WAIT_MS;
+      for (;;) {
+        signal.throwIfAborted();
+        const lock = await sql<{ locked: boolean }>`SELECT pg_try_advisory_lock(hashtextextended(${key}, 0)) AS locked`
+          .execute(connection);
+        if (lock.rows[0]?.locked) break;
+        if (Date.now() >= deadline) throw new ContainerOwnerDatabaseError('busy');
+        await new Promise(resolve => setTimeout(resolve, OWNER_LOCK_POLL_MS));
+      }
+      try {
+        return await work();
+      } finally {
+        await sql`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`.execute(connection);
+      }
+    });
+  }
+
   async function rotate(clerkUserId: string, generation: number, signal: AbortSignal) {
     assertGeneration(generation);
     const row = await load(clerkUserId);
@@ -225,66 +255,82 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     return { rotated: false, passwordEpoch: newer.password_epoch };
   }
 
+  async function ensureLocked(clerkUserId: string, generation: number, signal: AbortSignal): Promise<OwnerDatabaseCredentials> {
+    const fresh = {
+      clerk_user_id: clerkUserId,
+      database_name: opaqueName('mxo_'),
+      role_name: opaqueName('mxr_'),
+      connection_limit: connectionLimit,
+      size_limit_bytes: deps.sizeLimitBytes,
+      state: 'active' as const,
+      password_epoch: generation,
+    };
+    await db.executor.insertInto('container_owner_databases').values(fresh)
+      .onConflict(oc => oc.column('clerk_user_id').doUpdateSet({
+        database_name: fresh.database_name,
+        role_name: fresh.role_name,
+        connection_limit: connectionLimit,
+        size_limit_bytes: deps.sizeLimitBytes,
+        state: 'active',
+        password_epoch: generation,
+        size_bytes: null,
+        size_measured_at: null,
+        created_at: sql<Date>`now()`,
+        deleted_at: null,
+      }).where('container_owner_databases.deleted_at', 'is not', null))
+      .execute();
+    let row = await load(clerkUserId);
+    if (row.state === 'fenced') throw new ContainerOwnerDatabaseError('fenced');
+    if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
+    await provision(row, signal);
+    row = await settleProvisioned(row, signal);
+    if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
+    if (row.password_epoch < generation) {
+      await rotate(clerkUserId, generation, signal);
+      row = await load(clerkUserId);
+    }
+    return credentials(row);
+  }
+
+  async function fence(clerkUserId: string, signal: AbortSignal): Promise<void> {
+    const row = await load(clerkUserId);
+    await db.executor.updateTable('container_owner_databases').set({ state: 'fenced' })
+      .where('clerk_user_id', '=', clerkUserId).where('state', 'in', ['active', 'fenced']).execute();
+    await admin.query(`ALTER ROLE ${quoteIdentifier(row.role_name, 'mxr_')} NOLOGIN`, [], signal);
+    await terminateSessions(row.role_name, signal);
+  }
+
+  async function unfence(clerkUserId: string, signal: AbortSignal): Promise<void> {
+    const row = await load(clerkUserId);
+    const updated = await db.executor.updateTable('container_owner_databases').set({ state: 'active' })
+      .where('clerk_user_id', '=', clerkUserId).where('state', 'in', ['active', 'fenced'])
+      .returning('state').executeTakeFirst();
+    if (!updated) throw new ContainerOwnerDatabaseError('deleting');
+    await admin.query(`ALTER ROLE ${quoteIdentifier(row.role_name, 'mxr_')} LOGIN`, [], signal);
+  }
+
   return {
     passwordFor,
 
     async ensure(clerkUserId: string, generation: number, signal: AbortSignal): Promise<OwnerDatabaseCredentials> {
       if (!OWNER_ID.test(clerkUserId)) throw new ContainerOwnerDatabaseError('invalid_identifier');
       assertGeneration(generation);
-      const fresh = {
-        clerk_user_id: clerkUserId,
-        database_name: opaqueName('mxo_'),
-        role_name: opaqueName('mxr_'),
-        connection_limit: connectionLimit,
-        size_limit_bytes: deps.sizeLimitBytes,
-        state: 'active' as const,
-        password_epoch: generation,
-      };
-      await db.executor.insertInto('container_owner_databases').values(fresh)
-        .onConflict(oc => oc.column('clerk_user_id').doUpdateSet({
-          database_name: fresh.database_name,
-          role_name: fresh.role_name,
-          connection_limit: connectionLimit,
-          size_limit_bytes: deps.sizeLimitBytes,
-          state: 'active',
-          password_epoch: generation,
-          size_bytes: null,
-          size_measured_at: null,
-          created_at: sql<Date>`now()`,
-          deleted_at: null,
-        }).where('container_owner_databases.deleted_at', 'is not', null))
-        .execute();
-      let row = await load(clerkUserId);
-      if (row.state === 'fenced') throw new ContainerOwnerDatabaseError('fenced');
-      if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
-      await provision(row, signal);
-      row = await settleProvisioned(row, signal);
-      if (row.password_epoch > generation) throw new ContainerOwnerDatabaseError('stale_generation');
-      if (row.password_epoch < generation) {
-        await rotate(clerkUserId, generation, signal);
-        row = await load(clerkUserId);
-      }
-      return credentials(row);
+      return serialized(clerkUserId, signal, () => ensureLocked(clerkUserId, generation, signal));
     },
 
-    rotate,
-
-    async fence(clerkUserId: string, signal: AbortSignal): Promise<void> {
-      const row = await load(clerkUserId);
-      await db.executor.updateTable('container_owner_databases').set({ state: 'fenced' })
-        .where('clerk_user_id', '=', clerkUserId).where('state', 'in', ['active', 'fenced']).execute();
-      await admin.query(`ALTER ROLE ${quoteIdentifier(row.role_name, 'mxr_')} NOLOGIN`, [], signal);
-      await terminateSessions(row.role_name, signal);
+    rotate(clerkUserId: string, generation: number, signal: AbortSignal) {
+      return serialized(clerkUserId, signal, () => rotate(clerkUserId, generation, signal));
     },
 
-    async unfence(clerkUserId: string, signal: AbortSignal): Promise<void> {
-      const row = await load(clerkUserId);
-      const updated = await db.executor.updateTable('container_owner_databases').set({ state: 'active' })
-        .where('clerk_user_id', '=', clerkUserId).where('state', 'in', ['active', 'fenced'])
-        .returning('state').executeTakeFirst();
-      if (!updated) throw new ContainerOwnerDatabaseError('deleting');
-      await admin.query(`ALTER ROLE ${quoteIdentifier(row.role_name, 'mxr_')} LOGIN`, [], signal);
+    fence(clerkUserId: string, signal: AbortSignal): Promise<void> {
+      return serialized(clerkUserId, signal, () => fence(clerkUserId, signal));
     },
+
+    unfence(clerkUserId: string, signal: AbortSignal): Promise<void> {
+      return serialized(clerkUserId, signal, () => unfence(clerkUserId, signal));
+    },
+
+
 
     async measureSize(clerkUserId: string, signal: AbortSignal): Promise<{ sizeBytes: number; overLimit: boolean }> {
       const row = await load(clerkUserId);
@@ -304,31 +350,35 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
      * delayed removal never marks a record that replaced them.
      */
     async remove(clerkUserId: string, signal: AbortSignal): Promise<void> {
-      const row = await db.executor.selectFrom('container_owner_databases').selectAll()
-        .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
-      if (!row || row.deleted_at) return;
-      const marked = await db.executor.updateTable('container_owner_databases').set({ state: 'deleting' })
-        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
-        .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
-        .returning('clerk_user_id').executeTakeFirst();
-      if (!marked) return;
-      const roleSql = quoteIdentifier(row.role_name, 'mxr_');
-      const dbSql = quoteIdentifier(row.database_name, 'mxo_');
-      const roleExists = await exists('pg_roles', row.role_name, signal);
-      if (roleExists) await admin.query(`ALTER ROLE ${roleSql} NOLOGIN`, [], signal);
-      if (roleExists && await exists('pg_database', row.database_name, signal)) {
-        await admin.query(`REVOKE CONNECT ON DATABASE ${dbSql} FROM ${roleSql}`, [], signal);
-      }
-      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1 OR datname = $2',
-        [row.role_name, row.database_name], signal);
-      await admin.query(`DROP DATABASE IF EXISTS ${dbSql} WITH (FORCE)`, [], signal);
-      await admin.query(`DROP ROLE IF EXISTS ${roleSql}`, [], signal);
-      await db.executor.updateTable('container_owner_databases').set({ deleted_at: sql<Date>`now()` })
-        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
-        .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
-        .execute();
+      return serialized(clerkUserId, signal, () => removeLocked(clerkUserId, signal));
     },
   };
+
+  async function removeLocked(clerkUserId: string, signal: AbortSignal): Promise<void> {
+    const row = await db.executor.selectFrom('container_owner_databases').selectAll()
+      .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
+    if (!row || row.deleted_at) return;
+    const marked = await db.executor.updateTable('container_owner_databases').set({ state: 'deleting' })
+      .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
+      .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
+      .returning('clerk_user_id').executeTakeFirst();
+    if (!marked) return;
+    const roleSql = quoteIdentifier(row.role_name, 'mxr_');
+    const dbSql = quoteIdentifier(row.database_name, 'mxo_');
+    const roleExists = await exists('pg_roles', row.role_name, signal);
+    if (roleExists) await admin.query(`ALTER ROLE ${roleSql} NOLOGIN`, [], signal);
+    if (roleExists && await exists('pg_database', row.database_name, signal)) {
+      await admin.query(`REVOKE CONNECT ON DATABASE ${dbSql} FROM ${roleSql}`, [], signal);
+    }
+    await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1 OR datname = $2',
+      [row.role_name, row.database_name], signal);
+    await admin.query(`DROP DATABASE IF EXISTS ${dbSql} WITH (FORCE)`, [], signal);
+    await admin.query(`DROP ROLE IF EXISTS ${roleSql}`, [], signal);
+    await db.executor.updateTable('container_owner_databases').set({ deleted_at: sql<Date>`now()` })
+      .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
+      .where('database_name', '=', row.database_name).where('role_name', '=', row.role_name)
+      .execute();
+  }
 }
 
 export type ContainerOwnerDatabases = ReturnType<typeof createContainerOwnerDatabases>;
