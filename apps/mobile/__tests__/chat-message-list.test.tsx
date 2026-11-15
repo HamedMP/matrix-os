@@ -297,6 +297,10 @@ describe("MessageList", () => {
 
       const row = screen.getByTestId("reply-actions");
       expect(flat(row)).toMatchObject({ flexDirection: "row", alignItems: "center" });
+      // Each button fills a whole fingertip's square of its own, with no overlap.
+      for (const name of ["Copy reply", "Share reply"]) {
+        expect(flat(within(row).getByRole("button", { name }))).toMatchObject({ width: 44, height: 44 });
+      }
       const time = within(row).getByText(/04/);
       expect(flat(time)).toMatchObject({ fontSize: 13, color: "#8A8686" });
     });

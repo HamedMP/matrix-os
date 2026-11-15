@@ -21,9 +21,7 @@ function formatReplyTime(createdAt: number): string {
   return Number.isFinite(createdAt) ? replyTime.format(createdAt) : "";
 }
 
-const BUTTON_SIZE = 32;
-// A button drawn smaller than a fingertip still answers a press on its whole 44pt square.
-const REACH = (size.tapTarget - BUTTON_SIZE) / 2;
+const ICON_SIZE = 18;
 
 /**
  * The row under a finished reply: Copy, Share and when it was written, as
@@ -65,11 +63,10 @@ function ReplyAction({ icon, label, onPress }: { icon: IconData; label: string; 
     <PressableScale
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={REACH}
       onPress={onPress}
       style={styles.button}
     >
-      <Icon icon={icon} size={18} color={theme.v2.colors.textSubtle} />
+      <Icon icon={icon} size={ICON_SIZE} color={theme.v2.colors.textSubtle} />
     </PressableScale>
   );
 }
@@ -78,15 +75,15 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.v2.space[2],
-    // The buttons' own room around their icons lines the first icon up with
-    // the reply's text and keeps the row close under what comes before it.
-    marginStart: -theme.v2.space[6],
-    marginTop: -theme.v2.space[6],
+    // Each button is a whole fingertip's square around a small icon. Pulled
+    // out by that room, the first icon lines up with the reply's text and the
+    // row sits as close under what comes before it as a 32pt button would.
+    marginStart: -theme.v2.space[12],
+    marginVertical: -theme.v2.space[12],
   },
   button: {
-    width: BUTTON_SIZE,
-    height: BUTTON_SIZE,
+    width: size.tapTarget,
+    height: size.tapTarget,
     borderRadius: theme.v2.radius.control,
     alignItems: "center",
     justifyContent: "center",

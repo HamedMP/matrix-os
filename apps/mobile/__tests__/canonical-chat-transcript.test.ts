@@ -299,6 +299,30 @@ describe("where a reply ends", () => {
     expect(byId.msg_q!.endsTurn).toBeUndefined();
   });
 
+  it("marks only the latest attempt of a turn, so a retried turn ends once", () => {
+    const run = (id: string, attempt: number, status: string) => ({
+      id, chatId: "chat_1", turnId: "cturn_1", attempt, status,
+      createdAt: at, updatedAt: at, startedAt: at, completedAt: at,
+    });
+    const detail = (retryStatus: string) => ({
+      record: { chat: { id: "chat_1" } },
+      turns: [],
+      runs: [run("run_failed", 1, "failed"), run("run_retry", 2, retryStatus)],
+      activities: [],
+      messages: [
+        userMessage("msg_q", 1, "Build it"),
+        assistantMessage("msg_partial", 2, "Starting on the app.", "run_failed"),
+        assistantMessage("msg_retry", 3, "Done. It has a daily checklist.", "run_retry"),
+      ],
+    } as unknown as CanonicalChatDetailResponse);
+
+    for (const status of ["running", "completed"]) {
+      const byId = Object.fromEntries(buildTranscript(detail(status)).map((message) => [message.id, message]));
+      expect(byId.msg_partial!.endsTurn).toBeUndefined();
+      expect(byId.msg_retry).toMatchObject({ endsTurn: true });
+    }
+  });
+
   it("treats a reply that belongs to no run as a turn of its own", () => {
     const [reply] = buildTranscript(chatWith([assistantMessage("msg_alone", 1, "Hello")]));
     expect(reply).toMatchObject({ id: "msg_alone", endsTurn: true });

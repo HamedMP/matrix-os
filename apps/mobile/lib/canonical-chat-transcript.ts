@@ -182,6 +182,17 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     if (message.seq > current) lastAssistantSeqByRun.set(message.runId, message.seq);
   }
 
+  // A retried turn has a run per attempt. Only the latest attempt's reply
+  // ends the turn, so an earlier, failed attempt does not keep its own actions.
+  const latestRunByTurn = new Map<string, CanonicalChatRun>();
+  for (const run of detail.runs) {
+    const latest = latestRunByTurn.get(run.turnId);
+    if (!latest || run.attempt > latest.attempt) latestRunByTurn.set(run.turnId, run);
+  }
+  const isLatestAttempt = (run: CanonicalChatRun | undefined) => (
+    !run || latestRunByTurn.get(run.turnId)?.id === run.id
+  );
+
   const transcript = ordered.map((message): TranscriptMessage => {
     const scheduledMessage = nativeScheduledMessage(message, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
     const run = message.runId ? runsById.get(message.runId) : undefined;
@@ -198,7 +209,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
       isRunning: run ? !TERMINAL_RUN_STATUSES.has(run.status) : false,
-      ...(message.role === "assistant" && (!message.runId || isRunsLastAssistantMessage)
+      ...(message.role === "assistant" && (!message.runId || (isRunsLastAssistantMessage && isLatestAttempt(run)))
         ? { endsTurn: true as const }
         : {}),
       createdAt: Date.parse(message.createdAt),
