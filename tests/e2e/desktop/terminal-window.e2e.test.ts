@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { closeElectronApp } from "./fixtures/close-electron";
+import { LOCAL_TERMINAL_VERSION } from "../../../desktop/src/shared/local-terminals";
 
 const root = resolve(import.meta.dirname, "../../..");
 const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
@@ -22,10 +23,10 @@ const output = process.env.MATRIX_TERMINAL_WINDOW_EVIDENCE_DIR ?? join(tmpdir(),
 // Local terminals need the pinned herdr-core binary. CI provides it and sets
 // MATRIX_DESKTOP_HC_REQUIRED=1; elsewhere the local tests run when it is installed.
 const hcPath = [process.env.MATRIX_DESKTOP_HC_PATH, join(homedir(), ".local/bin/hc")].find((candidate) => {
-  try { return !!candidate && execFileSync(candidate, ["--version"], { encoding: "utf8", timeout: 3_000 }).trim().endsWith("0.1.19"); }
+  try { return !!candidate && execFileSync(candidate, ["--version"], { encoding: "utf8", timeout: 3_000 }).trim().endsWith(LOCAL_TERMINAL_VERSION); }
   catch { return false; }
 });
-if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !hcPath) throw new Error("herdr-core 0.1.19 is required for this lane");
+if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !hcPath) throw new Error(`herdr-core ${LOCAL_TERMINAL_VERSION} is required for this lane`);
 const localIt = hcPath ? it : it.skip;
 
 suite("Electron Desktop Terminal window", () => {

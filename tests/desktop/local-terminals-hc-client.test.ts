@@ -1,3 +1,4 @@
+import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 import { EventEmitter } from "node:events";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,20 +26,20 @@ describe("herdr-core client", () => {
 
   async function connected() {
     const core = fakeCore();
-    const connection = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" });
+    const connection = await connectHc({ open: () => core.socket, expectedVersion: LOCAL_TERMINAL_VERSION });
     return { core, connection };
   }
 
   it("handshakes in framed mode and reports the core version", async () => {
     const { core, connection } = await connected();
     expect(JSON.parse(core.sent.plain[0]!)).toMatchObject({ method: "hello", params: { framed: true } });
-    expect(connection.version).toBe("0.1.19");
+    expect(connection.version).toBe(LOCAL_TERMINAL_VERSION);
   });
 
   it("refuses a core of another version or generation without sending any other call", async () => {
     for (const options of [{ version: "0.1.20" }, { generation: 2 }]) {
       const core = fakeCore(options);
-      await expect(connectHc({ open: () => core.socket, expectedVersion: "0.1.19" })).rejects.toBeInstanceOf(HcVersionMismatchError);
+      await expect(connectHc({ open: () => core.socket, expectedVersion: LOCAL_TERMINAL_VERSION })).rejects.toBeInstanceOf(HcVersionMismatchError);
       expect(core.sent.calls).toEqual([]);
       expect(core.socket.destroyed).toBe(true);
     }
@@ -47,7 +48,7 @@ describe("herdr-core client", () => {
   it("times out a silent core during the handshake", async () => {
     const socket = new EventEmitter() as never as { write(): void; destroy(): void; on: EventEmitter["on"] };
     socket.write = () => undefined; socket.destroy = () => undefined;
-    const attempt = connectHc({ open: () => socket as never, expectedVersion: "0.1.19", timeoutMs: 1_000 });
+    const attempt = connectHc({ open: () => socket as never, expectedVersion: LOCAL_TERMINAL_VERSION, timeoutMs: 1_000 });
     const failure = expect(attempt).rejects.toThrow("did not answer");
     await vi.advanceTimersByTimeAsync(1_000);
     await failure;
@@ -149,7 +150,7 @@ describe("herdr-core client", () => {
   it("tells an unreadable handshake apart from a core of another version", async () => {
     for (const hello of [{ error: { code: -32601, message: "no" } }, { result: { version: 7 } }]) {
       const core = fakeCore({ hello });
-      const failure = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" }).catch((error: unknown) => error);
+      const failure = await connectHc({ open: () => core.socket, expectedVersion: LOCAL_TERMINAL_VERSION }).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(HcProtocolError);
       expect(failure).not.toBeInstanceOf(HcVersionMismatchError);
     }
