@@ -40,6 +40,7 @@ const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+
 const MembersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MEMBERSHIP_PAGE_LIMIT).default(50),
   cursor: CollaborationOrganizationMembersCursorSchema.optional(),
+  include: z.literal("imageUrl").optional(),
 }).strict();
 const AccessResolveSchema = z.object({
   protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),
@@ -143,6 +144,7 @@ export function createPlatformOrganizationRoutes(options: {
             displayName: member.displayName ?? profile?.displayName ?? member.actorId,
             ...(member.email ? { emailAddress: member.email }
               : profile?.emailAddress ? { emailAddress: profile.emailAddress } : {}),
+            ...(query.data.include === "imageUrl" && member.imageUrl ? { imageUrl: member.imageUrl } : {}),
             role: managementRole(member.role),
             joinedAt: member.sourceUpdatedAt.toISOString(),
           };

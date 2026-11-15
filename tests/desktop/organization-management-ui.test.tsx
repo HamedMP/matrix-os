@@ -264,8 +264,8 @@ describe("OrganizationSectionView", () => {
   it("wires the selected organization to the member and invitation reads", async () => {
     apiState.get.mockImplementation(async (path: string) => {
       if (path === "/api/organizations") return { complete: true, organizations: [northwind] };
-      if (path === "/api/organizations/org_northwind/members") return { members: [members[0]], nextCursor: "next-page" };
-      if (path === "/api/organizations/org_northwind/members?cursor=next-page") return { members: [members[1]] };
+      if (path === "/api/organizations/org_northwind/members?limit=100") return { members: [members[0]], nextCursor: "next-page" };
+      if (path === "/api/organizations/org_northwind/members?limit=100&cursor=next-page") return { members: [members[1]] };
       if (path === "/api/organizations/org_northwind/invitations") return { invitations };
       throw new Error(`Unexpected path: ${path}`);
     });
@@ -273,8 +273,8 @@ describe("OrganizationSectionView", () => {
     render(<OrganizationSection />);
 
     expect(await screen.findByText(/Nima Boscarino/)).toBeTruthy();
-    expect(apiState.get).toHaveBeenCalledWith("/api/organizations/org_northwind/members");
-    expect(apiState.get).toHaveBeenCalledWith("/api/organizations/org_northwind/members?cursor=next-page");
+    expect(apiState.get).toHaveBeenCalledWith("/api/organizations/org_northwind/members?limit=100");
+    expect(apiState.get).toHaveBeenCalledWith("/api/organizations/org_northwind/members?limit=100&cursor=next-page");
     expect(apiState.get).toHaveBeenCalledWith("/api/organizations/org_northwind/invitations");
     expect(apiState.release).toHaveBeenCalledTimes(2);
   });
@@ -282,7 +282,7 @@ describe("OrganizationSectionView", () => {
   it("wires rename and member removal to the organization mutation API", async () => {
     apiState.get.mockImplementation(async (path: string) => {
       if (path === "/api/organizations") return { complete: true, organizations: [northwind] };
-      if (path === "/api/organizations/org_northwind/members") return { members };
+      if (path === "/api/organizations/org_northwind/members?limit=100") return { members };
       if (path === "/api/organizations/org_northwind/invitations") return { invitations: [] };
       throw new Error(`Unexpected path: ${path}`);
     });

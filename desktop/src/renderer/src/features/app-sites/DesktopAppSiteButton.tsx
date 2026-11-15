@@ -6,7 +6,25 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import { DesktopAppOrgSharingSection } from "./DesktopAppOrgSharingSection";
+import type { ApiClient } from "../../lib/api";
+import type { SiteClient } from "../../../../../../shell/src/lib/site-client";
+import {
+  DesktopAppOrgSharingDetails,
+  DesktopAppOrgSharingSummary,
+  useDesktopAppOrgSharing,
+} from "./DesktopAppOrgSharingSection";
+
+type SharePanelProps = { appSlug: string; client: SiteClient; ownerIdentity: string; onClose: () => void };
+
+/** Owns the sharing controller for the popover's lifetime, across the overview and details views. */
+function DesktopAppOrgSharePanel({ api, buildEpoch, ...panel }: SharePanelProps & { api: ApiClient; buildEpoch: number }) {
+  const controller = useDesktopAppOrgSharing({ appId: panel.appSlug, api, buildEpoch });
+  return <AppSiteSharePanel {...panel} organizationSharing={{
+    summary: <DesktopAppOrgSharingSummary controller={controller} />,
+    title: "Organization sharing",
+    content: <DesktopAppOrgSharingDetails controller={controller} />,
+  }} />;
+}
 
 export function DesktopAppSiteButton({
   appSlug,
@@ -48,17 +66,24 @@ export function DesktopAppSiteButton({
       open={open}
       zIndex={DESKTOP_Z_INDEX.popover}
     >
-      {open && client ? (
+      {open && client && collaborationApi ? (
+        <DesktopAppOrgSharePanel
+          key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
+          appSlug={appSlug}
+          client={client}
+          ownerIdentity={email ?? userId ?? "local-user"}
+          onClose={() => setOpen(false)}
+          api={collaborationApi}
+          buildEpoch={buildEpoch}
+        />
+      ) : open && client ? (
+        // Without a runtime collaboration API, invite and publication remain available on their own.
         <AppSiteSharePanel
           key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
           appSlug={appSlug}
           client={client}
           ownerIdentity={email ?? userId ?? "local-user"}
           onClose={() => setOpen(false)}
-          organizationSharing={collaborationApi ? <DesktopAppOrgSharingSection
-            key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
-            appId={appSlug} api={collaborationApi} buildEpoch={buildEpoch}
-          /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

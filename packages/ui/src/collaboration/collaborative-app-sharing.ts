@@ -3,6 +3,11 @@ export { SharedAppBadge } from "./SharedAppBadge.js";
 export { SharedAppDirectoryNotice } from "./SharedAppDirectoryNotice.js";
 export { useSharedAppDirectory, sharedAppDisplayName } from "./useSharedAppDirectory.js";
 export { useCollaborativeAppSharing } from "./useCollaborativeAppSharing.js";
+export {
+  collaborativeAppShareOrganizationId,
+  deriveCollaborativeAppShareStatus,
+  type CollaborativeAppShareStatus,
+} from "./app-share-status.js";
 export { SharedAppViewer } from "./SharedAppViewer.js";
 export { CollaborativeAppShareButton } from "./CollaborativeAppShareButton.js";
 export { CollaborativeAppShareDialog } from "./CollaborativeAppShareDialog.js";

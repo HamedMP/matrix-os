@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useMemo, useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
@@ -29,6 +29,12 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => undefined),
 }));
+
+/** Organization sharing is one compact row in the Publish app popover; its controls open in place. */
+async function openOrganizationSharing() {
+  fireEvent.click(await screen.findByRole("button", { name: /^Share(d)? with/ }));
+  await screen.findByRole("heading", { name: "Organization sharing" });
+}
 
 function EmbedHostWithChrome(props: React.ComponentProps<typeof EmbedHost>) {
   const [chrome, setChrome] = useState<SurfaceChromeSpec | null>(null);
@@ -134,13 +140,14 @@ describe("EmbedHost", () => {
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
     const dialog = await screen.findByRole("dialog", { name: "Share app" });
     expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
-    expect(screen.getByRole("region", { name: "Share with your org" })).toBeTruthy();
+    await openOrganizationSharing();
+    const region = screen.getByRole("region", { name: "Share with your org" });
     expect(screen.getByText(/including guests/)).toBeTruthy();
     expect(screen.getByText(/stay on your Matrix/)).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Check collaboration" }));
     fireEvent.click(await screen.findByRole("button", { name: "Share with your org" }));
     await waitFor(() => expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ organizationId: "org_matrix" })));
-    expect(screen.getByText(/^Shared with/)).toBeTruthy();
+    expect(within(region).getByText(/^Shared with/)).toBeTruthy();
     expect(publishing.client.getConfig).not.toHaveBeenCalled();
     expect(publishing.client.deploy).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
@@ -151,8 +158,10 @@ describe("EmbedHost", () => {
     useConnection.setState({ organizationStatus: "none", api: { forRuntime: () => ({ get: vi.fn(), post: vi.fn() }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     render(<EmbedHostWithChrome kind="app" slug="notes" active />);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await openOrganizationSharing();
     expect(await screen.findByText(/Select an organization/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Share with your org" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check collaboration" })).toBeNull();
   });
 
   it("shows blocked readiness and a safe request error without enabling sharing", async () => {
@@ -174,6 +183,7 @@ describe("EmbedHost", () => {
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     render(<EmbedHostWithChrome kind="app" slug="notes" active />);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await openOrganizationSharing();
     expect(await screen.findByText("Declare collaborative capability.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Check collaboration" }));
@@ -210,6 +220,7 @@ describe("EmbedHost", () => {
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     render(<EmbedHostWithChrome kind="app" slug="notes" active />);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await openOrganizationSharing();
     expect(await screen.findByText("App sharing is unavailable. Try again.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Check collaboration" }));
@@ -237,6 +248,7 @@ describe("EmbedHost", () => {
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     render(<EmbedHostWithChrome kind="app" slug="notes" active />);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await openOrganizationSharing();
     expect(await screen.findByText("Review the provider policy.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(true);
   });

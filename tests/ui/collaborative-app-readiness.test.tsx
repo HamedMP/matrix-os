@@ -186,6 +186,92 @@ describe("collaborative app owner readiness", () => {
     await waitFor(() => expect(view.result.current.state).toBe("blocked"));
   });
 
+  it("re-reads the share with readiness when the build changes, so a needed recheck is not hidden", async () => {
+    let share: unknown = activeShare;
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : share),
+      post: vi.fn(),
+    };
+    const view = renderHook(({ buildEpoch }) => useCollaborativeAppSharing({
+      appId: "team-tracker", api, buildEpoch, manageShare: true,
+    }), { initialProps: { buildEpoch: 0 } });
+    await waitFor(() => expect(view.result.current.share?.state).toBe("active"));
+    const shareReads = () => api.get.mock.calls.filter(([path]) => path.endsWith("/share")).length;
+    expect(shareReads()).toBe(1);
+
+    share = { ...activeShare, state: "needs_recheck" };
+    view.rerender({ buildEpoch: 1 });
+
+    await waitFor(() => expect(view.result.current.share?.state).toBe("needs_recheck"));
+    expect(shareReads()).toBe(2);
+    expect(view.result.current.shareKnown).toBe(true);
+  });
+
+  it.each([
+    ["stop", { ...activeShare, state: "stopped" as const, shareRevision: "2" }],
+    ["create", { ...activeShare, shareRevision: "2" }],
+  ] as const)("keeps a %s confirmed during a rebuild, then re-reads the share", async (action, written) => {
+    let share: unknown = action === "stop" ? activeShare : null;
+    let finishWrite!: (value: unknown) => void;
+    const pendingWrite = () => new Promise((resolve) => { finishWrite = resolve; });
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : share),
+      post: vi.fn(async (path: string) => path.endsWith("/preflight")
+        ? { eligible: true, catalogId: build.catalogId, resourceRevision: "7", readinessId: ready.readinessId,
+          buildId: build.buildId, confirmationToken: "token-".padEnd(32, "x") }
+        : pendingWrite()),
+      delete: vi.fn(pendingWrite),
+    };
+    const view = renderHook(({ buildEpoch }) => useCollaborativeAppSharing({
+      appId: "team-tracker", api, buildEpoch, manageShare: true,
+    }), { initialProps: { buildEpoch: 0 } });
+    await waitFor(() => expect(view.result.current.shareKnown && view.result.current.canShare).toBe(true));
+    const shareReads = () => api.get.mock.calls.filter(([path]) => path.endsWith("/share")).length;
+
+    let result!: Promise<unknown>;
+    act(() => {
+      result = action === "stop"
+        ? view.result.current.stopShare()
+        : view.result.current.createShare({ organizationId: "org_matrix_team" });
+    });
+    await waitFor(() => expect(action === "stop" ? api.delete : api.post).toHaveBeenCalledTimes(action === "stop" ? 1 : 2));
+    view.rerender({ buildEpoch: 1 });
+    await waitFor(() => expect(api.get.mock.calls.filter(([path]) => path.endsWith("/readiness")).length).toBe(2));
+    expect(shareReads()).toBe(1);
+
+    share = { ...written, state: "needs_recheck" };
+    await act(async () => { finishWrite(written); await result; });
+
+    await expect(result).resolves.toEqual(written);
+    await waitFor(() => expect(shareReads()).toBe(2));
+    await waitFor(() => expect(view.result.current.share?.state).toBe("needs_recheck"));
+    expect(view.result.current.actionState).toBe("idle");
+  });
+
+  it("keeps the safe error of a stop that fails during a rebuild", async () => {
+    let failStop!: (error: Error) => void;
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : activeShare),
+      post: vi.fn(),
+      delete: vi.fn(() => new Promise((_, reject) => { failStop = reject; })),
+    };
+    const view = renderHook(({ buildEpoch }) => useCollaborativeAppSharing({
+      appId: "team-tracker", api, buildEpoch, manageShare: true,
+    }), { initialProps: { buildEpoch: 0 } });
+    await waitFor(() => expect(view.result.current.share?.state).toBe("active"));
+    let result!: Promise<unknown>;
+    act(() => { result = view.result.current.stopShare(); });
+    await waitFor(() => expect(api.delete).toHaveBeenCalledTimes(1));
+    view.rerender({ buildEpoch: 1 });
+
+    await act(async () => { failStop(new Error("private stop failure")); await result; });
+
+    await expect(result).resolves.toBeNull();
+    await waitFor(() => expect(view.result.current.actionState).toBe("failed"));
+    expect(view.result.current.actionMessage).toBe("Sharing could not be stopped. Refresh and try again.");
+    expect(api.get.mock.calls.filter(([path]) => path.endsWith("/share")).length).toBe(2);
+  });
+
   it("uses only bounded safe copy when the response or transport is invalid", async () => {
     const api = {
       get: vi.fn(async () => { throw new Error("postgres password=private"); }),

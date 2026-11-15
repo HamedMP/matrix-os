@@ -70,6 +70,12 @@ export function useCollaborativeAppSharing(input: {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const requestGeneration = useRef(0);
   const shareGeneration = useRef(0);
+  // A share write in flight, and whether a rebuild asked for a share read while it ran.
+  const pendingWrite = useRef<number | null>(null);
+  const rereadAfterWrite = useRef(false);
+  // Advances when the app or share management changes, so a settled write never reads for a previous app.
+  const shareScope = useRef(0);
+  const handledBuildEpoch = useRef<number | null>(null);
   const appId = AppIdSchema.safeParse(input.appId);
   const path = appId.success
     ? `/api/collaboration/apps/${encodeURIComponent(appId.data)}/readiness`
@@ -177,8 +183,26 @@ export function useCollaborativeAppSharing(input: {
 
   useEffect(() => {
     if (input.manageShare) void refreshShare();
-    return () => { shareGeneration.current += 1; };
+    return () => { shareGeneration.current += 1; shareScope.current += 1; };
   }, [input.manageShare, refreshShare]);
+
+  // A rebuild can move an active share to needs_recheck, so the share is re-read with readiness.
+  // A write in flight keeps its confirmed result; the read follows once it is confirmed. A failed
+  // write keeps its safe error: a failed create has no share to move, and a failed stop re-reads itself.
+  useEffect(() => {
+    const previous = handledBuildEpoch.current;
+    handledBuildEpoch.current = buildEpoch;
+    if (previous === null || previous === buildEpoch || !input.manageShare) return;
+    if (pendingWrite.current !== null) rereadAfterWrite.current = true;
+    else void refreshShare();
+  }, [buildEpoch, input.manageShare, refreshShare]);
+
+  const settleWrite = useCallback((generation: number, scope: number, confirmed: boolean) => {
+    if (pendingWrite.current === generation) pendingWrite.current = null;
+    if (!rereadAfterWrite.current || pendingWrite.current !== null) return;
+    rereadAfterWrite.current = false;
+    if (confirmed && shareScope.current === scope) void refreshShare();
+  }, [refreshShare]);
 
   const recheck = useCallback(async (rawInput: {
     organizationId: string;
@@ -220,6 +244,9 @@ export function useCollaborativeAppSharing(input: {
     clientRequestId?: string;
   }): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
+    const scope = shareScope.current;
+    let confirmed = false;
+    pendingWrite.current = generation;
     setActionState("sharing");
     setActionMessage(null);
     try {
@@ -245,6 +272,7 @@ export function useCollaborativeAppSharing(input: {
       setShare(next);
       setShareKnown(true);
       setActionState("idle");
+      confirmed = true;
       return next;
     } catch (error: unknown) {
       console.warn("[collaborative-app-share] create failed", error instanceof Error ? error.name : "UnknownError");
@@ -253,11 +281,16 @@ export function useCollaborativeAppSharing(input: {
         setActionMessage(SAFE_SHARE_UNAVAILABLE);
       }
       return null;
+    } finally {
+      settleWrite(generation, scope, confirmed);
     }
-  }, [currentReadiness, input.api, path]);
+  }, [currentReadiness, input.api, path, settleWrite]);
 
   const stopShare = useCallback(async (clientRequestId?: string): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
+    const scope = shareScope.current;
+    let confirmed = false;
+    pendingWrite.current = generation;
     setActionState("stopping");
     setActionMessage(null);
     try {
@@ -274,6 +307,7 @@ export function useCollaborativeAppSharing(input: {
       setShare(next);
       setShareKnown(true);
       setActionState("idle");
+      confirmed = true;
       return next;
     } catch (error: unknown) {
       console.warn("[collaborative-app-share] stop failed", error instanceof Error ? error.name : "UnknownError");
@@ -283,8 +317,10 @@ export function useCollaborativeAppSharing(input: {
       setActionState("failed");
       setActionMessage("Sharing could not be stopped. Refresh and try again.");
       return null;
+    } finally {
+      settleWrite(generation, scope, confirmed);
     }
-  }, [input.api, path, refreshShare, share]);
+  }, [input.api, path, refreshShare, settleWrite, share]);
 
   return {
     readiness: currentReadiness,

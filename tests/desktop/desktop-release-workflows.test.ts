@@ -579,7 +579,8 @@ describe("Matrix OS Canary release pipeline", () => {
     for (const path of imported) {
       const covered = (workflow.on.push.paths as string[]).some((pattern) => {
         const prefix = pattern.replace(/\*\*$/, "").replace(/\*$/, "");
-        return pattern.endsWith("*") ? path.startsWith(prefix) : path === pattern;
+        // A directory import (e.g. a Tailwind @source) is covered by its own `dir/**` pattern.
+        return pattern.endsWith("*") ? `${path}/`.startsWith(prefix) : path === pattern;
       });
       expect(covered, `${path} is built into the desktop app`).toBe(true);
     }
