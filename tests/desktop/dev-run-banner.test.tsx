@@ -49,3 +49,13 @@ it("keeps Windows banner text clear of the native caption buttons on the right",
   render(<StatusBanner platform="MacIntel">label</StatusBanner>);
   expect(screen.getByRole("status").className).not.toContain(WINDOWS_CAPTION_INSET_CLASS);
 });
+
+it("pins banner text to the right edge so it never crowds the macOS window buttons", () => {
+  for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
+    render(<StatusBanner platform={platform}>label</StatusBanner>);
+    const banner = screen.getByRole("status");
+    expect(banner.className).toContain("text-right");
+    expect(banner.className).toContain("truncate");
+    cleanup();
+  }
+});
