@@ -80,7 +80,13 @@ export function createBillingStatusHandler(options: {
         override: parseBillingOverrideRecord(state.override),
         now: currentTime,
       });
-      const access = getRuntimeAccessDecision(entitlement, currentTime);
+      const machine = await getActiveUserMachineByClerkId(
+        options.db,
+        clerkUserId,
+        runtimeSlot,
+      );
+      // A free entitlement allows only a container runtime, so the decision names the selected runtime's substrate.
+      const access = getRuntimeAccessDecision(entitlement, currentTime, machine?.substrate);
       const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
         && runtimeSlot === 'primary';
       const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
@@ -115,11 +121,6 @@ export function createBillingStatusHandler(options: {
           currentTime,
         )
         : null;
-      const machine = await getActiveUserMachineByClerkId(
-        options.db,
-        clerkUserId,
-        runtimeSlot,
-      );
       const placement = options.resolveRuntimePlacement(machine?.location);
       const response = MatrixBillingStatusSchema.safeParse({
         entitlement: entitlement
