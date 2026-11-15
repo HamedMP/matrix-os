@@ -1,6 +1,6 @@
 # 2693: Share popover redesign
 
-Status: implementation (phases 1–2 of 4)
+Status: implementation (phases 1–3 of 4)
 Design: https://claude.ai/artifact/ER7AzhxZ6n46gVazELsZ3B (Prototype, SharePopover component, per-state artboards)
 Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (unmerged stack #3233–#3340)
 Linear: blocked. The Linear connector was unreachable from the implementing session; a requester-assigned ENG ticket must be linked before any PR opens.
@@ -73,6 +73,14 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 - Shared: "{Org} link · Opens it in the Matrix app" + Copy (phase 2 copies `/shared/app/<scopeId>?…` on the current origin; phase 4 swaps in the hand-off page), "Stop sharing with {Org}" (`DELETE …/share` with share/binding revisions).
 - The previous Electron "Share with your org" section is removed; Web keeps the existing in-app readiness bar in `AppViewer` (it also refreshes the owner participant context) until a follow-up routes that refresh through the popover.
 
+## Launcher (phase 3)
+
+- Web Launchpad / legacy grid (MissionControl) and Electron AppLauncher share `packages/ui/src/share/launcher-filter.tsx`.
+- Shared badge (top-right) = sharing org's initial on a stable org colour (`organizationColor`), `aria-label`/tooltip "{App} — shared from {Org}"; generic people icon when the org is unknown. Org names come from current memberships (`/api/organizations`).
+- Blue dot before the name until first opened. Seen list: `~/system/share/seen-shared-apps.json` `{ version: 1, seen: scopeId[≤500] }` (owner file, follows the member across devices, oldest dropped first). The first read after the directory loads baselines existing shared apps as seen, so rollout does not mark everything new. Writes are best-effort and never block opening the app.
+- Filter chips under search: All apps · Mine (apps the owner built) · one chip per org with ≥1 shared app (avatar + count); `aria-pressed`; hint line per filter ("Apps you made.", "{n} apps shared in {Org}."). A chip that disappears falls back to All apps.
+- Org-shared apps still appear as soon as the 2689 directory lists them (existing discovery + refresh signal).
+
 ## Failure modes
 
 - **Load failure:** an alert with Try again.
@@ -84,7 +92,7 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 
 1. Popover, Private (one-time links real, email stubbed), Public, mode-switch confirm, and slug availability. **Done.**
 2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share. **Done.**
-3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips.
+3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips. **Done.**
 4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`).
 
 ## Acceptance (phase 1)

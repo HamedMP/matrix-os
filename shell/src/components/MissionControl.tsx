@@ -15,6 +15,7 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
 import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import { openSharedLauncherApp, useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
+import { useLauncherShareContext } from "@/hooks/useLauncherShareContext";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import {
   XIcon,
@@ -59,6 +60,7 @@ export function MissionControl({
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
   const shared = useSharedLauncherApps(open);
+  const shareContext = useLauncherShareContext(shared, open);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
@@ -117,7 +119,7 @@ export function MissionControl({
     : [CREATE_APP, ...allApps];
   const openLauncherApp = (name: string, path: string) => {
     const sharedApp = shared.apps.find((app) => app.path === path);
-    if (sharedApp && openSharedLauncherApp(sharedApp)) return;
+    if (sharedApp && openSharedLauncherApp(sharedApp)) { shareContext.markOpened(sharedApp); return; }
     if (path === CREATE_APP.path) onCreateApp();
     else onOpenApp(name, path);
   };
@@ -127,7 +129,8 @@ export function MissionControl({
   // renderers; pinning and ordering belong to Settings, not the OS launcher.
   if (nativePresentation || themeStyle === "macos-glass") {
     return (
-      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} sharedDirectory={shared} />
+      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} sharedDirectory={shared}
+        organizations={shareContext.organizations} isNewShared={shareContext.isNewShared} />
     );
   }
 
@@ -207,6 +210,7 @@ export function MissionControl({
           onAddToDesktop={onAddToDesktop}
           visible={visible}
           closingRef={closingRef}
+          shareContext={shareContext}
         />
       </div>
     </div>
@@ -233,6 +237,7 @@ function LauncherGrid({
   onAddToDesktop,
   visible,
   closingRef,
+  shareContext,
 }: {
   apps: AppEntry[];
   openWindows: Set<string>;
@@ -246,6 +251,7 @@ function LauncherGrid({
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
   visible: boolean;
   closingRef: React.RefObject<boolean>;
+  shareContext: Pick<ReturnType<typeof useLauncherShareContext>, "organizationFor" | "isNewShared">;
 }) {
   const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps);
   const [placementError, setPlacementError] = useState<string | null>(null);
@@ -295,6 +301,8 @@ function LauncherGrid({
         <AppTile
           name={app.name}
           shared={!!app.sharedAppTarget}
+          sharedOrganization={shareContext.organizationFor(app)}
+          isNew={!!app.sharedAppTarget && shareContext.isNewShared(app.sharedAppTarget.scopeId)}
           createApp={app.path === CREATE_APP.path}
           onAddToDesktop={!app.sharedAppTarget && !isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
             ? () => void addToDesktop(app)

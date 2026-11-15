@@ -48,6 +48,7 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     if (!record || handledCompletion.current === record.requestId) return;
     if (record.state === "failed") {
       handledCompletion.current = record.requestId;
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- the skill reported failure through the external handoff record.
       setRequired(true); setNotice(NOT_READY_AFTER_CHAT);
       return;
     }

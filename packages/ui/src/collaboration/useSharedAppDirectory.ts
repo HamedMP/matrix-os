@@ -90,6 +90,8 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
   }, [api, identity, enabled]);
   const current = enabled && state?.api === api && state.identity === identity ? state : null;
   return { items: current?.items ?? EMPTY, unavailable: current?.unavailable ?? false,
+    /** True once discovery for this account has completed successfully at least once. */
+    loaded: current !== null && !current.loading && !current.unavailable,
     loading: current?.loading ?? false, hasMore: !!current?.nextCursor, hasEarlier: current?.hasEarlier ?? false,
     retry: () => setAttempt((value) => value + 1),
     restart: () => { setPageRequest(null); setRefresh((value) => value + 1); },

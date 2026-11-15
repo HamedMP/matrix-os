@@ -60,7 +60,7 @@ describe("AppLauncher", () => {
   it.each(["loading", "offline"])("opens shared apps while the installed catalog is %s", async (status) => {
     clearDesktopApps();
     useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member",
-      api: { get: vi.fn(() => status === "loading" ? new Promise(() => undefined) : Promise.reject(new Error("offline"))) } as never });
+      api: { forRuntime() { return this; }, get: vi.fn(() => status === "loading" ? new Promise(() => undefined) : Promise.reject(new Error("offline"))) } as never });
     const target = { scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
       organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
       catalogId: "30000000-0000-4000-8000-000000000001", readinessId: "40000000-0000-4000-8000-000000000001",
@@ -99,6 +99,7 @@ describe("AppLauncher", () => {
       platformHost: "https://platform.test",
       runtimeSlot: "primary",
       api: {
+        forRuntime() { return this; },
         get: vi.fn().mockResolvedValue({
           apps: [
             { slug: "notes", name: 42 },
@@ -307,7 +308,7 @@ describe("AppLauncher", () => {
   it("does not show a no-match state before the app catalog loads", () => {
     clearDesktopApps();
     useConnection.setState({
-      api: { get: vi.fn(() => new Promise(() => undefined)) } as never,
+      api: { forRuntime() { return this; }, get: vi.fn(() => new Promise(() => undefined)) } as never,
     });
 
     render(<AppLauncher />);

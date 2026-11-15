@@ -87,8 +87,9 @@ function collaborativeStep(step: string): "none" | "required" | "running" {
 
 /** A live share or running handoff pins the org; otherwise the owner's pick, then the active org. */
 function selectOrganization(organizations: ShareOrganization[], preferences: Array<string | null | undefined>): ShareOrganization {
+  const byId = new Map(organizations.map((item) => [item.organizationId, item]));
   for (const id of preferences) {
-    const match = id ? organizations.find((item) => item.organizationId === id) : undefined;
+    const match = id ? byId.get(id) : undefined;
     if (match) return match;
   }
   return organizations[0]!;
