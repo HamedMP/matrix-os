@@ -159,6 +159,32 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
   });
 
+  // Fault detected (review of #3297): one failed first capture switched the whole
+  // request to the frozen snapshot, so the wait timed out after capture recovered.
+  it("keeps reading live after a failed first capture", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["boot"]],
+      captures: [
+        null as never,
+        { viewport: ["boot"], scrollback: [] },
+        { viewport: ["boot", "ready on :3000"], scrollback: [] },
+      ],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
+  });
+
+  // Fault detected: a runtime that cannot capture at all (older than the gateway) made
+  // every output wait time out instead of using the snapshot.
+  it("uses the snapshot when the runtime never captures", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["boot"], ["boot"], ["boot"], ["boot"], ["boot"], ["boot", "ready"]],
+      captures: [null as never],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 10_000 })).resolves.toEqual({ reason: "output" });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });
