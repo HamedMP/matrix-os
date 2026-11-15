@@ -513,7 +513,7 @@ Provisional per-owner defaults, configuration-driven, so limit tests can be writ
 | Idle before stop | 10 min |
 | Maximum session | 4 h |
 | Compute per month | 80 billed hours (UTC month, idle tail included); at the cap, no wakes until the 1st except 2 export-only wakes of 15 min; running sessions stop through the normal flush (tasks T057a to T057g) |
-| Home size | 2 GiB |
+| Home size | 2 GiB; bytes held for a signed upload URL stay counted until it expires (about 16 min), even after a delete or smaller overwrite |
 | Home files | 50,000 |
 | Database size and connections | 500 MB, 5 connections; size is held by a platform sweep that moves table ownership to a holder role and leaves the owner read, delete, and truncate only, because the owner role owns its tables and can switch off its own read-only setting (T055a) |
 

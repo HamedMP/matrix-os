@@ -132,7 +132,21 @@ The password itself is not stored; it is derived or held in the provider secret 
 | --- | --- | --- |
 | `clerk_user_id` | text, primary key | |
 | `object_bytes` | bigint, not null | Maintained by the object broker in the same statement that authorizes a write |
+| `object_count` | integer, not null | Files counted against the 50,000 limit |
 | `updated_at` | timestamptz, not null | |
+
+## `runtime_storage_objects` (new)
+
+Per-key ledger, so overwrites and deletes adjust usage exactly. Primary key
+`(clerk_user_id, object_key)`; cascades from `runtime_storage_usage`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `bytes` | bigint, not null | Bytes held for the key |
+| `counts_as_file` | boolean, not null | |
+| `reservation_id` | uuid, not null | |
+| `pending_until` | timestamptz, null | An authorized write the broker has not seen land, so an abandoned upload can be reconciled |
+| `signed_until` | timestamptz, null | When the last signed upload URL for the key expires (about 16 min). While it is outstanding, a delete or smaller overwrite keeps the largest signed size held; the quota frees only after expiry |
 
 ## `runtime_migrations` (new)
 
