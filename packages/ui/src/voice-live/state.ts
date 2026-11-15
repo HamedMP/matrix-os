@@ -72,7 +72,11 @@ export function reduceVoiceLive(state: VoiceLiveState, event: VoiceLiveEvent): V
     case "session.ended":
       return { ...state, status: "ended", endReason: event.reason };
     case "socket.closed":
-      return { ...state, status: "ended", endReason: state.endReason ?? "socket_closed" };
+      // Closing before session.ready means the computer refused the call
+      // (older Gateway without voice, or the route is down), not a hang-up.
+      return state.status === "connecting"
+        ? { ...state, status: "error", errorCode: "voice_unavailable" }
+        : { ...state, status: "ended", endReason: state.endReason ?? "socket_closed" };
     case "error":
       return { ...state, status: "error", errorCode: event.code };
     default:

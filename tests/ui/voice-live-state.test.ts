@@ -37,6 +37,13 @@ describe("voice live state", () => {
     expect(voiceLiveErrorMessage("postgres: relation chats does not exist")).toBe("Voice stopped unexpectedly. Try again.");
   });
 
+  it("treats a socket that closes before the call starts as voice being unavailable, not a finished call", () => {
+    const refused = reduceVoiceLive(initialVoiceLiveState, { type: "socket.closed" });
+    expect(refused).toMatchObject({ status: "error", errorCode: "voice_unavailable" });
+    expect(voiceLiveErrorMessage("voice_unavailable")).toMatch(/not set up on this computer/i);
+    expect(reduceVoiceLive(ready, { type: "socket.closed" })).toMatchObject({ status: "ended", endReason: "socket_closed" });
+  });
+
   it("ignores frames it does not understand", () => {
     expect(parseVoiceLiveFrame("{bad")).toBeNull();
     expect(parseVoiceLiveFrame(JSON.stringify({ type: "unknown.frame" }))).toBeNull();
