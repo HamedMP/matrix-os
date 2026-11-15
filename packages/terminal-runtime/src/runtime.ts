@@ -24,6 +24,11 @@ import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
+  screenCaptureFromDumps,
+  TerminalScreenCaptureRequestSchema,
+  type TerminalScreenCapture,
+} from "./screen-capture.js";
+import {
   TerminalWorkspaceStore,
   type TerminalRuntimeTabState,
   type TerminalRuntimeWorkspaceState,
@@ -33,6 +38,8 @@ export interface ZellijRuntimeAdapter {
   findTabByInternalNameReadOnly?(sessionName: string, internalName: string,
     expected?: { tabId: number | null; paneId: string | null }): Promise<{ tabId: number; paneId: string } | undefined>;
   getCommandState?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandState>;
+  /** Plain text of a pane's viewport, or its whole scrollback when `full`. */
+  dumpPaneText?(sessionName: string, paneId: string, full: boolean): Promise<string>;
   getCommandResult?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
@@ -322,6 +329,29 @@ export class TerminalRuntime {
 
   listWorkspaces(): Promise<TerminalWorkspace[]> {
     return this.store.listWorkspaces();
+  }
+
+  /**
+   * A tab's screen read from zellij now. Zellij only reports screen updates for
+   * panes some client renders, so the cached snapshot of a background tab can be
+   * stale; readers use this and fall back to the snapshot when it returns null.
+   * Read-only, so it does not join the workspace mutation queue.
+   */
+  async captureScreen(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null> {
+    const request = TerminalScreenCaptureRequestSchema.parse(input);
+    const dump = this.zellij.dumpPaneText?.bind(this.zellij);
+    if (!dump) return null;
+    const workspace = await this.store.getRuntimeWorkspace(request.workspaceId);
+    const tab = workspace?.tabs[request.tabId];
+    if (!workspace || !tab?.zellijPaneId || (tab.status !== "running" && tab.status !== "idle")) return null;
+    try {
+      const viewport = await dump(workspace.zellijSessionName, tab.zellijPaneId, false);
+      const full = request.lines > 0 ? await dump(workspace.zellijSessionName, tab.zellijPaneId, true) : undefined;
+      return screenCaptureFromDumps(viewport, full, request.lines);
+    } catch (error) {
+      console.warn("[terminal-runtime] screen capture unavailable", error instanceof Error ? error.name : "unknown_error");
+      return null;
+    }
   }
 
   async getCommandState(refInput: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState> {

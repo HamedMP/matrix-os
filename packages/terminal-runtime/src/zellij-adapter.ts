@@ -238,12 +238,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
 
     for (const input of missing) {
       const cwd = resolvedCwds.get(input.internalName)!;
+      const viewers = await this.clientPanes(sessionName, binaryPath, operationDeadline);
       const output = await this.run([
         "--session", sessionName, "action", "new-tab",
         "--name", input.internalName,
         "--cwd", cwd,
         ...(input.command ? ["--", ...input.command] : []),
       ], binaryPath, remainingCommandTimeout(operationDeadline));
+      await this.returnMovedViewer(sessionName, viewers, binaryPath, operationDeadline);
       const outputTabId = output.trim();
       const tabId = /^\d+$/.test(outputTabId)
         ? z.coerce.number().int().min(0).parse(outputTabId)
@@ -486,6 +488,46 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     };
   }
 
+  /** The pane each attached client shows, from `list-clients`; empty when unknown. */
+  private async clientPanes(sessionName: string, binaryPath: string, operationDeadline?: number): Promise<Map<string, string>> {
+    const panes = new Map<string, string>();
+    try {
+      const output = await this.run(
+        ["--session", sessionName, "action", "list-clients"], binaryPath, remainingCommandTimeout(operationDeadline),
+      );
+      for (const line of output.split("\n")) {
+        const match = /^\s*(\d+)\s+(terminal_\d+)\b/.exec(line);
+        if (match) panes.set(match[1]!, match[2]!);
+      }
+    } catch (error) {
+      console.warn("[terminal-runtime] client list unavailable", error instanceof Error ? error.name : "unknown_error");
+    }
+    return panes;
+  }
+
+  /**
+   * Zellij focuses a new tab for the active client, even with independent focus, so a
+   * tab created in the background would move a person's view to it. Focus actions
+   * apply to that same active client, so focusing the pane it showed returns it.
+   * Best effort: tab creation never fails over a viewer that could not be returned.
+   */
+  private async returnMovedViewer(
+    sessionName: string, before: Map<string, string>, binaryPath: string, operationDeadline?: number,
+  ): Promise<void> {
+    if (before.size === 0) return;
+    const after = await this.clientPanes(sessionName, binaryPath, operationDeadline);
+    const moved = [...after].find(([client, pane]) => before.has(client) && before.get(client) !== pane);
+    if (!moved) return;
+    try {
+      await this.run(
+        ["--session", sessionName, "action", "focus-pane-id", before.get(moved[0])!],
+        binaryPath, remainingCommandTimeout(operationDeadline),
+      );
+    } catch (error) {
+      console.warn("[terminal-runtime] could not return a moved viewer", error instanceof Error ? error.name : "unknown_error");
+    }
+  }
+
   private async waitForAnyClient(sessionName: string, binaryPath: string): Promise<void> {
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const output = await this.run(["--session", sessionName, "action", "list-clients"], binaryPath);
@@ -505,6 +547,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         error instanceof Error ? error.name : "unknown_error",
       );
     }
+  }
+
+  async dumpPaneText(sessionNameInput: string, paneIdInput: string, full: boolean): Promise<string> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const paneId = z.string().regex(PANE_ID).parse(paneIdInput);
+    return this.run(
+      ["--session", sessionName, "action", "dump-screen", "--pane-id", paneId, ...(full ? ["--full"] : [])],
+      binaryPath,
+      TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+    );
   }
 
   async writeToPane(sessionNameInput: string, paneIdInput: string, data: Uint8Array): Promise<void> {

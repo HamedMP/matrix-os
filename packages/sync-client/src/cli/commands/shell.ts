@@ -107,7 +107,12 @@ export async function resolveWorkspace(client: ShellClient, requestedProject: un
 
 export function resolveTab(workspace: WorkspaceRecord, value: unknown): TabRecord {
   if (typeof value !== "string" || !value) throw codedError("--tab is required");
-  const matches = workspace.tabs.filter((tab) => tab.id === value || tab.name === value);
+  const byId = workspace.tabs.find((tab) => tab.id === value);
+  if (byId) return byId;
+  const named = workspace.tabs.filter((tab) => tab.name === value);
+  // A finished tab keeps its name; a live tab of the same name is the one meant.
+  const live = named.filter((tab) => tab.status !== "exited" && tab.status !== "failed");
+  const matches = live.length > 0 ? live : named;
   if (matches.length !== 1) throw codedError(matches.length > 1 ? "Tab name is ambiguous; use its tab id" : "Tab not found");
   return matches[0]!;
 }

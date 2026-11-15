@@ -18,6 +18,7 @@ function tab(overrides: Record<string, unknown> = {}) {
 function harness(options: {
   tab?: Record<string, unknown>;
   snapshot?: unknown;
+  capture?: unknown;
   status?: "idle" | "working" | "done" | "blocked" | "error";
 } = {}) {
   let now = 1_000_000;
@@ -29,6 +30,7 @@ function harness(options: {
       tabs: [tab(options.tab)],
     }]),
     getSnapshot: vi.fn(async () => options.snapshot),
+    ...("capture" in options ? { captureScreen: vi.fn(async () => options.capture) } : {}),
     writeInput: vi.fn(async (_ref: unknown, data: string, expectedIncarnation?: string) => {
       writes.push({ data, ...(expectedIncarnation ? { expectedIncarnation } : {}) });
     }),
@@ -87,6 +89,29 @@ describe("terminal agent verbs: read", () => {
       updatedAt: "2026-11-11T10:05:00.000Z",
     });
     await expect(verbs.read(ref, { lines: 0 })).resolves.toMatchObject({ history: "", lines: 0 });
+  });
+
+  // Fault detected: zellij stops updating the cached snapshot of a tab nobody is viewing,
+  // so reading a background helper returned output from before its latest command.
+  it("reads the live screen when the runtime can capture it, not the cached snapshot", async () => {
+    const { verbs, runtime } = harness({
+      snapshot,
+      capture: { viewport: ["$ echo fresh", "fresh", "$ "], scrollback: ["older 1", "older 2"] },
+    });
+    await expect(verbs.read(ref, { lines: 1 })).resolves.toEqual({
+      screen: "$ echo fresh\nfresh\n$ ",
+      history: "older 2",
+      lines: 1,
+    });
+    expect(runtime.captureScreen).toHaveBeenCalledWith(ref, 1);
+    expect(runtime.getSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the snapshot when the runtime cannot capture the screen", async () => {
+    const { verbs } = harness({ snapshot, capture: null });
+    await expect(verbs.read(ref, { lines: 2 })).resolves.toMatchObject({
+      screen: "$ bun test\n4 passed\n$ ", history: "line 2\nline 3", lines: 2,
+    });
   });
 
   it("marks the read incomplete instead of inventing a screen when no snapshot exists", async () => {
@@ -197,6 +222,18 @@ describe("terminal agent verbs: keys and interrupt", () => {
     const plain = harness();
     await expect(plain.verbs.interrupt(ref)).resolves.toMatchObject({ pressed: "ctrl+c" });
     expect(plain.writes[0]?.data).toBe("\x03");
+  });
+
+  // Fault detected: after an agent exited its tab kept the last status it reported, so
+  // interrupting a program started later in that shell pressed Esc and stopped nothing.
+  it("presses Ctrl+C when the tab's last status says no agent turn is running", async () => {
+    for (const status of ["idle", "done", "error"] as const) {
+      const { verbs, writes } = harness({ status });
+      await expect(verbs.interrupt(ref)).resolves.toMatchObject({ pressed: "ctrl+c" });
+      expect(writes[0]?.data).toBe("\x03");
+    }
+    const blocked = harness({ status: "blocked" });
+    await expect(blocked.verbs.interrupt(ref)).resolves.toMatchObject({ pressed: "esc" });
   });
 
   // Fault detected: the caller cannot tell whether the stop key worked without another request.

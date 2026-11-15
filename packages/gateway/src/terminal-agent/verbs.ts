@@ -40,7 +40,34 @@ export class TerminalAgentVerbError extends Error {
 export interface TerminalAgentVerbRuntime {
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   getSnapshot(ref: TerminalRef): Promise<unknown>;
+  /** The screen read from zellij now; null or absent when only the snapshot is available. */
+  captureScreen?(ref: TerminalRef, lines: number): Promise<unknown>;
   writeInput(ref: TerminalRef, data: string, expectedIncarnation?: string): Promise<void>;
+}
+
+const ScreenCaptureTextSchema = z.object({
+  viewport: z.array(z.string().max(16_384)).max(500),
+  scrollback: z.array(z.string().max(16_384)).max(TERMINAL_READ_LINES_MAX),
+});
+
+/**
+ * A tab's live screen, or undefined to fall back to the cached snapshot. Zellij only
+ * reports screen updates for panes a client renders, so a background tab's snapshot
+ * can be minutes old; a runtime older than the capture operation rejects the call.
+ */
+export async function captureTerminalScreen(
+  runtime: Pick<TerminalAgentVerbRuntime, "captureScreen">,
+  ref: TerminalRef,
+  lines: number,
+): Promise<{ viewport: string[]; scrollback: string[] } | undefined> {
+  if (!runtime.captureScreen) return undefined;
+  try {
+    const parsed = ScreenCaptureTextSchema.safeParse(await runtime.captureScreen(ref, lines));
+    return parsed.success ? parsed.data : undefined;
+  } catch (error: unknown) {
+    console.warn("[gateway] terminal screen capture failed", error instanceof Error ? error.name : "unknown_error");
+    return undefined;
+  }
 }
 
 const SnapshotTextSchema = z.object({
@@ -157,6 +184,15 @@ export function createTerminalAgentVerbs(options: {
     async read(ref, input) {
       const lines = z.number().int().min(0).max(TERMINAL_READ_LINES_MAX).parse(input.lines);
       await requireTab(ref);
+      const live = await captureTerminalScreen(options.runtime, ref, lines);
+      if (live) {
+        const history = lines === 0 ? [] : live.scrollback.slice(-lines);
+        return {
+          screen: live.viewport.map(visibleTerminalText).join("\n"),
+          history: history.map(visibleTerminalText).join("\n"),
+          lines: history.length,
+        };
+      }
       const parsed = SnapshotTextSchema.safeParse(await options.runtime.getSnapshot(ref));
       if (!parsed.success
         || parsed.data.terminalRef.workspaceId !== ref.workspaceId
@@ -209,7 +245,10 @@ export function createTerminalAgentVerbs(options: {
     async interrupt(ref, input = {}) {
       const tab = await requireLiveTab(ref);
       const before = await options.agentStatus?.(ref, tab);
-      const pressed = before !== undefined ? "esc" : "ctrl+c";
+      // Esc stops an agent's turn; only a turn in progress has one to stop. A tab keeps
+      // the last status its agent reported after that agent exits, so idle, done and
+      // error mean a program started later in the shell, which needs Ctrl+C.
+      const pressed = before === "working" || before === "blocked" ? "esc" : "ctrl+c";
       await write(ref, tab, pressed === "esc" ? "\x1b" : "\x03");
       // Look, never escalate: one key is pressed whatever happens next.
       const start = now();

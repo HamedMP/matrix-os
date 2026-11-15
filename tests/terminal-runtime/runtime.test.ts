@@ -50,6 +50,15 @@ class FakeZellij implements ZellijRuntimeAdapter {
   exitDuringNextAttachmentOpen?: { exitCode: number | null };
   nextTabCreated?: () => void;
   private nextTabId = 1;
+  readonly screenDumps = new Map<string, { viewport: string; full: string }>();
+  readonly dumpCalls: Array<{ paneId: string; full: boolean }> = [];
+
+  async dumpPaneText(_sessionName: string, paneId: string, full: boolean): Promise<string> {
+    this.dumpCalls.push({ paneId, full });
+    const dump = this.screenDumps.get(paneId);
+    if (!dump) throw new Error("missing pane");
+    return full ? dump.full : dump.viewport;
+  }
 
   async ensureSession(sessionName: string): Promise<void> {
     if (!this.sessions.has(sessionName)) this.sessions.set(sessionName, new Map());
@@ -263,6 +272,47 @@ describe("project-scoped terminal runtime", () => {
 
     expect(tab.accessScope).toBe("chat");
     expect((await runtime.listWorkspaces())[0]?.tabs[0]?.accessScope).toBe("chat");
+    await runtime.shutdown();
+  });
+
+  // Fault detected: zellij only reports screen updates for panes a client renders, so the
+  // cached snapshot of a background tab freezes and `read` returns minutes-old output.
+  it("captures a tab's screen on demand from zellij, not from the cached snapshot", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "background", cwd: "projects/matrix-os" });
+    const paneId = (await new TerminalWorkspaceStore({ homePath }).getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    zellij.screenDumps.set(paneId!, {
+      viewport: "$ echo fresh\nfresh\n$ \n",
+      full: "old 1\nold 2\n$ echo fresh\nfresh\n$ \n",
+    });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+
+    await expect(runtime.captureScreen({ ...ref, lines: 1 }))
+      .resolves.toEqual({ viewport: ["$ echo fresh", "fresh", "$ "], scrollback: ["old 2"] });
+    await expect(runtime.captureScreen({ ...ref, lines: 0 }))
+      .resolves.toEqual({ viewport: ["$ echo fresh", "fresh", "$ "], scrollback: [] });
+    // History costs a second, full dump only when it was asked for.
+    expect(zellij.dumpCalls).toEqual([
+      { paneId, full: false }, { paneId, full: true }, { paneId, full: false },
+    ]);
+    await runtime.shutdown();
+  });
+
+  it("captures nothing for an unknown tab or when zellij cannot dump the pane", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "gone", cwd: "projects/matrix-os" });
+
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: `tt_${"f".repeat(32)}`, lines: 5 })).resolves.toBeNull();
+    // No dump registered for the pane: the adapter fails, the caller falls back.
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: tab.id, lines: 5 })).resolves.toBeNull();
     await runtime.shutdown();
   });
 
