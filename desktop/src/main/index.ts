@@ -20,6 +20,8 @@ import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
+import { createGitReader, resolveDesktopDevRunSummary } from "./dev-run-label";
+import { desktopDevRunTitle, parseDesktopDevRunLabel } from "../shared/dev-run-label";
 import { createCredentialStore } from "./auth/credential-store";
 import {
   installGatewayCors,
@@ -112,6 +114,8 @@ import {
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
+// Unpacked dev runs only: names this build in the window title and a banner.
+const devRunLabel = parseDesktopDevRunLabel(process.env.MATRIX_DESKTOP_DEV_LABEL, app.isPackaged);
 
 const channelIdentity = resolveDesktopChannelIdentity(bundledDesktopChannel());
 configureDesktopIdentity(app, {
@@ -227,6 +231,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     ...windowChromeOptions(process.platform),
     backgroundColor: "#0e0e13",
     show: false,
+    ...(devRunLabel ? { title: desktopDevRunTitle(devRunLabel) } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -238,6 +243,10 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
+  if (devRunLabel) {
+    // The renderer's <title> would otherwise replace the dev label.
+    win.on("page-title-updated", (event) => { event.preventDefault(); win.setTitle(desktopDevRunTitle(devRunLabel)); });
+  }
   bindPreviewStartupAcknowledgement(win.webContents);
 
   // window.open / target=_blank from the renderer goes to the system browser only.
@@ -331,6 +340,10 @@ if (!gotLock) {
       const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
       const runtimeSelectionOrigin = previewContext?.apiOrigin ?? process.env.MATRIX_API_ORIGIN
         ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
+      const devRunSummary = devRunLabel ? resolveDesktopDevRunSummary({ label: devRunLabel, platformOrigin: platformHost,
+        apiOrigin: runtimeSelectionOrigin, readGit: createGitReader(app.getAppPath()) }).catch((error: unknown) => {
+        logMainError("dev run label unavailable", error); return null;
+      }) : null;
 
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
@@ -743,6 +756,7 @@ if (!gotLock) {
         },
         getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
           sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
+        getDevRunSummary: () => devRunSummary ?? Promise.resolve(null),
         getAppVersion: () => app.getVersion(),
         desktopChannel: channelIdentity.channel,
         buildSource: readDesktopBuildSource(),

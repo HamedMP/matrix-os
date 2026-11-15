@@ -745,3 +745,11 @@ fast-ci system.
 For two test-owned computers and matching isolated Electron apps from an unmerged
 PR, see [Collaboration preview pairs](collaboration-preview-pairs.md). Requires
 reviewed protected setup; ordinary Private Previews keep their existing flow.
+
+## Labeling side-by-side Electron Desktop dev runs
+
+Set `MATRIX_DESKTOP_DEV_LABEL` on an unpacked dev run to name it in the window title (`Matrix OS — <label>`) and a top banner with branch, short SHA, and platform origin. Packaged builds ignore it; unset means no banner. Combine with `OPERATOR_USER_DATA_DIR` when runs must not share a profile:
+
+`MATRIX_DESKTOP_DEV_LABEL="PR #3314" OPERATOR_GATEWAY_URL=https://pr-3314-preview.matrix-os.com MATRIX_API_ORIGIN=https://pr-3314-preview.matrix-os.com bun run dev:desktop`
+
+In unpacked dev the macOS menu-bar and Dock name come from Electron.app's `Info.plist`; the app is not renamed because `app.setName` would move `userData`.

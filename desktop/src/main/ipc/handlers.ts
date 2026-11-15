@@ -44,6 +44,7 @@ export interface HandlerContext {
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
   getPreviewContext?: () => InvokeResponse<"app:get-preview">;
+  getDevRunSummary?: () => Promise<InvokeResponse<"app:get-dev-run">>;
   getAppVersion: () => string;
   /** Build channel; only stable builds raise advisory release-alignment notices. */
   desktopChannel?: DesktopReleaseChannel;
@@ -247,6 +248,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
   handle("app:get-preview", () => ctx.getPreviewContext?.() ?? null);
+  handle("app:get-dev-run", async () => (await ctx.getDevRunSummary?.()) ?? null);
   handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource, channel: ctx.desktopChannel ?? "stable" }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
