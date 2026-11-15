@@ -26,12 +26,15 @@ function dumpRows(stdout: string): string[] {
 
 /**
  * The screen of a pane from a viewport dump and, when history was asked for, a
- * full dump taken right after it. History is the full dump minus the viewport rows.
+ * full dump taken right after it. A full dump is history followed by exactly the
+ * viewport rows, so with history both parts come from the full dump and the
+ * viewport dump only gives the row count; output printed between the two dumps
+ * then cannot repeat or drop rows.
  */
 export function screenCaptureFromDumps(viewportDump: string, fullDump: string | undefined, lines: number): TerminalScreenCapture {
   const viewport = dumpRows(viewportDump).slice(-VIEWPORT_ROWS_MAX);
   if (fullDump === undefined || lines === 0) return { viewport, scrollback: [] };
   const full = dumpRows(fullDump);
-  const history = full.slice(0, Math.max(0, full.length - viewport.length));
-  return { viewport, scrollback: history.slice(-lines) };
+  const split = Math.max(0, full.length - viewport.length);
+  return { viewport: full.slice(split), scrollback: full.slice(0, split).slice(-lines) };
 }

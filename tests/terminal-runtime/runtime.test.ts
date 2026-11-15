@@ -302,6 +302,24 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  // Fault detected: output printed between the viewport and history dumps showed a row twice
+  // and dropped the newest row, because screen and history came from different moments.
+  it("takes the screen and its history from the same moment when output arrives between dumps", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "busy", cwd: "projects/matrix-os" });
+    const paneId = (await new TerminalWorkspaceStore({ homePath }).getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    // The program prints "c" after the viewport dump, scrolling "a" into history.
+    zellij.screenDumps.set(paneId!, { viewport: "a\nb\n", full: "h0\na\nb\nc\n" });
+
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: tab.id, lines: 10 }))
+      .resolves.toEqual({ viewport: ["b", "c"], scrollback: ["h0", "a"] });
+    await runtime.shutdown();
+  });
+
   it("captures nothing for an unknown tab or when zellij cannot dump the pane", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
