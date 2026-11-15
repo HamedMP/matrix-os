@@ -13,10 +13,12 @@ export interface ReplyActionsProps {
   createdAt: number;
 }
 
-/** "3:04 PM", or "15:04", as the phone's own clock writes times. Empty for a time that cannot be read. */
-export function formatReplyTime(createdAt: number): string {
-  if (!Number.isFinite(createdAt)) return "";
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(createdAt);
+// "3:04 PM", or "15:04", as the phone's own clock writes times.
+const replyTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** Empty for a time that cannot be read. */
+function formatReplyTime(createdAt: number): string {
+  return Number.isFinite(createdAt) ? replyTime.format(createdAt) : "";
 }
 
 const BUTTON_SIZE = 32;
