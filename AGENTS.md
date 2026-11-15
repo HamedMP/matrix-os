@@ -120,7 +120,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 | `fetch()` has `signal: AbortSignal.timeout(ms)` | §2 (`packages/`, `shell/` `.ts`) |
 | No sync file I/O in request handlers | §5 |
 | Request-principal helpers, not `getUserIdFromContext` | §8 |
-| PR ≤ 50 files and ≤ 3000 additions (lockfile excluded) | §9 `pr-size` (CI `--pr`; default local run) |
+| PR ≤ 50 files and ≤ 3000 additions (lockfile excluded) | §9 `pr-size` (CI `PR Size` job on every PR, docs-only included; default local run) |
 | Do not grow source files past 2000 lines | §9 `large-file` fails; 1000-2000 lines and test suites warn |
 | `bodyLimit`, Map/Set caps, path validation | warnings only: reviewer judgment |
 
