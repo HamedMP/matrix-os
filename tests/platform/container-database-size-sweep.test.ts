@@ -68,6 +68,32 @@ describe('owner database size sweep', () => {
     expect(inDatabase.flat().some((statement) => statement.startsWith('REASSIGN OWNED BY "mxh_'))).toBe(true);
   });
 
+  it('gives every blocked owner a compaction turn, not only the twenty blocked longest', async () => {
+    const base = Date.parse('2026-11-01T00:00:00.000Z');
+    for (let index = 0; index < 25; index += 1) {
+      const suffix = String.fromCharCode(97 + Math.floor(index / 26)) + 'abcdefghijklmnopqrstuvwxy'[index]!;
+      await db.executor.insertInto('container_owner_databases').values({
+        clerk_user_id: `user_turn_${index}`, database_name: `mxo_${suffix.repeat(13)}`, role_name: `mxr_${suffix.repeat(13)}`,
+        size_limit_bytes: 1000, state: 'active', password_epoch: 1,
+        writes_blocked_at: new Date(base + index * 60_000).toISOString(),
+      }).execute();
+    }
+    const offered: string[][] = [];
+    const sweeper = createOwnerDatabaseSizeSweeper({
+      db, batchSize: 1,
+      ownerDatabases: { enforceSizeLimit: async () => ({ sizeBytes: 2000, overLimit: true, writesBlocked: true }) },
+      // Every candidate stays over its limit, so nobody's block ever lifts.
+      compactor: { async compactFirst(owners) { offered.push([...owners]); return null; } },
+    });
+    try {
+      for (let run = 0; run < 3; run += 1) await sweeper.sweepOnce();
+    } finally {
+      await sweeper.shutdown();
+    }
+    expect(offered[0]).toHaveLength(20);
+    expect(new Set(offered.flat())).toContain('user_turn_24');
+  });
+
   it('alerts operators once per crossing of 1.5x the limit while blocked, without owner data, and re-arms below it', async () => {
     const alerts: unknown[] = [];
     const service = createContainerOwnerDatabases({

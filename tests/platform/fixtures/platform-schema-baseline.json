@@ -348,6 +348,7 @@
     {"table_name":"container_owner_databases","column_name":"writes_blocked_at","data_type":"timestamp with time zone","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"container_owner_databases","column_name":"block_disabled","data_type":"jsonb","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"container_owner_databases","column_name":"size_alerted_at","data_type":"timestamp with time zone","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
+    {"table_name":"container_owner_databases","column_name":"compaction_offered_at","data_type":"timestamp with time zone","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"containers","column_name":"handle","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"containers","column_name":"clerk_user_id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"containers","column_name":"container_id","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},

@@ -28,4 +28,6 @@ export async function migrateContainerOwnerDatabases(db: PlatformMigrationExecut
   await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS block_disabled JSONB`.execute(db);
   // Set once a blocked database passes 1.5x its limit and the operator alert fired.
   await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS size_alerted_at TIMESTAMPTZ`.execute(db);
+  // When the size sweep last offered this blocked owner for compaction, so every blocked owner gets a turn.
+  await sql`ALTER TABLE container_owner_databases ADD COLUMN IF NOT EXISTS compaction_offered_at TIMESTAMPTZ`.execute(db);
 }

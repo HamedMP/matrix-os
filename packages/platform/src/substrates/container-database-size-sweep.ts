@@ -60,19 +60,33 @@ export function createOwnerDatabaseSizeSweeper(deps: OwnerDatabaseSizeSweeperDep
     return enforced;
   }
 
+  /** Owners the compactor had its turn with go to the back, so later blocked owners reach the window. */
+  async function markOffered(owners: readonly string[]): Promise<void> {
+    if (owners.length === 0) return;
+    await deps.db.executor.updateTable('container_owner_databases').set({ compaction_offered_at: sql<Date>`now()` })
+      .where('clerk_user_id', 'in', [...owners]).execute();
+  }
+
   async function compactOne(): Promise<number> {
     if (!deps.compactor) return 0;
     const blocked = await deps.db.executor.selectFrom('container_owner_databases').select('clerk_user_id')
       .where('state', '=', 'active').where('deleted_at', 'is', null).where('writes_blocked_at', 'is not', null)
-      .orderBy('writes_blocked_at').limit(COMPACTION_CANDIDATES).execute();
+      .orderBy(sql`compaction_offered_at ASC NULLS FIRST`).orderBy('writes_blocked_at')
+      .limit(COMPACTION_CANDIDATES).execute();
     if (blocked.length === 0) return 0;
+    const owners = blocked.map((row) => row.clerk_user_id);
     try {
-      const result = await deps.compactor.compactFirst(blocked.map((row) => row.clerk_user_id),
+      const result = await deps.compactor.compactFirst(owners,
         AbortSignal.any([stopping.signal, AbortSignal.timeout(COMPACTION_BUDGET_MS)]));
+      // The compactor works on at most one owner and passes over the ones before it.
+      await markOffered(result ? owners.slice(0, owners.indexOf(result.owner) + 1) : owners);
       return result?.outcome === 'compacted' ? 1 : 0;
     } catch (error: unknown) {
       logError('[container-owner-db] compaction failed', {
         cause: error instanceof ContainerOwnerDatabaseError ? error.code : error instanceof Error ? error.name : 'unknown',
+      });
+      await markOffered(owners).catch((markError: unknown) => {
+        logError('[container-owner-db] compaction turn record failed', { cause: markError instanceof Error ? markError.name : 'unknown' });
       });
       return 0;
     }

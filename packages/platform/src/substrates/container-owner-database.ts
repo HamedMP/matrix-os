@@ -36,6 +36,8 @@ export interface ContainerOwnerDatabasesTable {
   block_disabled: ColumnType<unknown, string | null | undefined, string | null>;
   /** Set when a blocked database passed the alert threshold; cleared once it falls back below it. */
   size_alerted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** When the size sweep last offered this blocked owner for compaction. */
+  compaction_offered_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
