@@ -82,9 +82,9 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
       const wanted = () => attempt.current === mine;
       void sharing.createShare({ organizationId: pending.organizationId }, { shouldContinue: wanted }).then(async (created) => {
         creating.current = false;
+        // A cancelled attempt returns null: createShare stops before the share
+        // request, or revokes the share it just created when cancel raced it.
         if (!created) { if (wanted()) setPending(null); return; }
-        // Cancel raced a successful share: undo it rather than leave access on.
-        if (!wanted()) { await sharing.stopShare(); return; }
         setPending(null);
         setRequired(false); setNotice(null);
         if (pending.reason === "completion") {
