@@ -11,11 +11,13 @@ function harness(script: {
   statuses?: Status[];
   tabStates?: Array<{ status: string; exitCode?: number }>;
   screens?: string[][];
+  captures?: Array<{ viewport: string[]; scrollback: string[] }>;
   accessScope?: string;
 }) {
   let now = 0;
   let step = 0;
   const at = <T>(list: T[] | undefined, fallback: T) => list?.[Math.min(step, (list?.length ?? 1) - 1)] ?? fallback;
+  const captureLines: number[] = [];
   const waiter = createTerminalWaiter({
     runtime: {
       listWorkspaces: async () => [{
@@ -31,6 +33,9 @@ function harness(script: {
       getSnapshot: async () => ({
         terminalRef: ref, viewport: at(script.screens, [""]), scrollback: [], updatedAt: "2026-11-11T10:00:00.000Z",
       }),
+      ...(script.captures ? {
+        captureScreen: async (_ref: unknown, lines: number) => { captureLines.push(lines); return at(script.captures, undefined); },
+      } : {}),
     },
     status: {
       list: async () => new Map(),
@@ -43,7 +48,7 @@ function harness(script: {
     sleep: async (ms) => { now += ms; step += 1; },
     pollMs: 500,
   });
-  return { waiter, elapsed: () => now };
+  return { waiter, elapsed: () => now, captureLines };
 }
 
 // Fault detected: an agent sleeps and polls a helper, or returns before the helper finished.
@@ -87,6 +92,23 @@ describe("terminal wait", () => {
   it("matches output as the terminal shows it, ignoring colour codes", async () => {
     const { waiter } = harness({ statuses: ["idle"], screens: [["boot"], ["boot", "\x1b[32mready\x1b[0m on :3000"]] });
     await expect(waiter.wait(ref, { output: "ready on :3000", timeoutMs: 2_000 })).resolves.toEqual({ reason: "output" });
+  });
+
+  // Fault detected: zellij stops updating the snapshot of a tab nobody views, so a wait
+  // for a background helper's output timed out although the text was on its screen.
+  it("matches output on the live screen when the snapshot is frozen", async () => {
+    const { waiter, captureLines } = harness({
+      statuses: ["idle"],
+      screens: [["boot"]],
+      captures: [
+        { viewport: ["boot"], scrollback: [] },
+        { viewport: ["boot"], scrollback: [] },
+        { viewport: ["boot", "ready on :3000"], scrollback: [] },
+      ],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
+    // A bounded window of history, never the whole scrollback on every poll.
+    expect(new Set(captureLines)).toEqual(new Set([2_000]));
   });
 
   it("times out as a check-in, not a failure", async () => {

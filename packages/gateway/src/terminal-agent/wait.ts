@@ -4,13 +4,16 @@ import { z } from "zod/v4";
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
 import { visibleTerminalText } from "./screen-text.js";
-import { TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbRuntime } from "./verbs.js";
+import { captureTerminalScreen, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbRuntime } from "./verbs.js";
 
 /** One HTTP wait stays below common proxy idle limits; callers wait again after a check-in. */
 export const TERMINAL_WAIT_MAX_MS = 90_000;
 export const TERMINAL_WAIT_DEFAULT_MS = 60_000;
 export const TERMINAL_WAIT_OUTPUT_MAX_CHARS = 256;
 const DEFAULT_POLL_MS = 500;
+// History each output poll reads. Output that scrolls further than this between two
+// polls (500 ms) is not counted; the full scrollback on every poll would cost more.
+const WAIT_OUTPUT_HISTORY_LINES = 2_000;
 const MAX_WAITERS = 256;
 const MAX_WAITERS_PER_TAB = 16;
 
@@ -48,7 +51,7 @@ function countOccurrences(haystack: string, needle: string): number {
  * never reported a status counts as working until it exits.
  */
 export function createTerminalWaiter(options: {
-  runtime: Pick<TerminalAgentVerbRuntime, "listWorkspaces" | "getSnapshot">;
+  runtime: Pick<TerminalAgentVerbRuntime, "listWorkspaces" | "getSnapshot" | "captureScreen">;
   status: TerminalAgentStatusSource;
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -75,6 +78,9 @@ export function createTerminalWaiter(options: {
   }
 
   async function screenText(ref: TerminalRef): Promise<string> {
+    // The live screen first: a background tab's snapshot can stop updating.
+    const live = await captureTerminalScreen(options.runtime, ref, WAIT_OUTPUT_HISTORY_LINES);
+    if (live) return [...live.scrollback, ...live.viewport].map(visibleTerminalText).join("\n");
     const snapshot = z.object({
       viewport: z.array(z.string()).max(200),
       scrollback: z.array(z.string()).max(100_000),
