@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
+import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { toBillingEntitlementRow } from '../database/billing-records.js';
 import { insertUserMachine } from '../database/user-machines.js';
 import type { PlatformDB } from '../db.js';
@@ -38,7 +38,7 @@ export type FreeProvisionOutcome =
 export interface FreeRuntimeProvisionerDeps {
   db: PlatformDB;
   config: FreeTierConfig;
-  ownerDatabases: Pick<ContainerOwnerDatabases, 'ensure'>;
+  ownerDatabases: Pick<ContainerOwnerDatabases, 'ensure' | 'remove'>;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   newMachineId?: () => string;
@@ -140,6 +140,12 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
     const machine = await findContainerRuntime(db, clerkUserId);
     try {
       await deps.ownerDatabases.ensure(clerkUserId, machine?.generation ?? 1, AbortSignal.timeout(OWNER_DATABASE_TIMEOUT_MS));
+      // The database is created after the deletion lock is released. If deletion was accepted
+      // meanwhile, its runtime cleanup may already have run, so this signup removes what it created.
+      if (!(await getAccountDeletionAdmission(db, clerkUserId, deps.env)).newWorkAllowed) {
+        await deps.ownerDatabases.remove(clerkUserId, AbortSignal.timeout(OWNER_DATABASE_TIMEOUT_MS));
+        return { kind: 'deletion_pending' };
+      }
       return outcome;
     } catch (error: unknown) {
       logError('[free-tier] owner database setup failed', {
@@ -173,7 +179,7 @@ export type FreeRuntimeProvisioner = ReturnType<typeof createFreeRuntimeProvisio
 export function createFreeTierRuntime(input: {
   db: PlatformDB;
   config: FreeTierConfig | undefined;
-  ownerDatabases: Pick<ContainerOwnerDatabases, 'ensure'> | undefined;
+  ownerDatabases: Pick<ContainerOwnerDatabases, 'ensure' | 'remove'> | undefined;
   log?: (message: string) => void;
 }): { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner } | undefined {
   if (!input.config) return undefined;

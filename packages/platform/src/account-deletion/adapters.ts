@@ -335,7 +335,11 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if (!options.objectStore) throw new Error('Storage cleanup configuration unavailable');
       await eraseOwnerStorage(options.objectStore, context.clerkUserId, options.r2PrefixRoot);
     },
-    async data(context) { await eraseOwnerPlatformData(db, context.clerkUserId, options.ownerHash); },
+    async data(context) {
+      // A signup racing deletion can recreate the owner database after runtime cleanup; drop it again first.
+      await removeContainerOwnerDatabase(context.clerkUserId);
+      await eraseOwnerPlatformData(db, context.clerkUserId, options.ownerHash);
+    },
     async clerk(context) {
       await assertClerkOwnershipSafe(context.clerkUserId,true);
       await clerk(`/users/${encodeURIComponent(context.clerkUserId)}`, 'DELETE', true);

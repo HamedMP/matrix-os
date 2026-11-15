@@ -412,6 +412,20 @@ describe('free container owner cleanup', () => {
     } finally { await db.destroy(); }
   });
 
+  it('removes an owner database that signup recreated after runtime cleanup, then erases the account data', async () => {
+    const db = await fixture();
+    try {
+      await freeOwner(db, false);
+      const remove = vi.fn(async () => {
+        await db.executor.updateTable('container_owner_databases').set({ state: 'deleting', deleted_at: '2026-10-03' })
+          .where('clerk_user_id', '=', 'user_owner').execute();
+      });
+      await createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', containerOwnerDatabases: { remove } }).data(ctx);
+      expect(remove).toHaveBeenCalledWith('user_owner', expect.any(AbortSignal));
+      expect(await db.executor.selectFrom('container_owner_databases').select('clerk_user_id').execute()).toEqual([]);
+    } finally { await db.destroy(); }
+  });
+
   it('erases the owner database record and the invite once the database is gone', async () => {
     const db = await fixture();
     try {

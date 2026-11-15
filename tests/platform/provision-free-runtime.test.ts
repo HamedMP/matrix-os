@@ -18,6 +18,7 @@ import {
 } from '../../packages/platform/src/free-tier/provision-free-runtime.js';
 import { createContainerOwnerDatabases, type OwnerClusterAdmin } from '../../packages/platform/src/substrates/container-owner-database.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { hashAccountDeletionOwner } from '../../packages/platform/src/account-deletion/repository.js';
 import { createScopedPlatformDbs, freeTierPostgresUrl, type ScopedPlatformDbs } from './free-tier-postgres-helper.js';
 
 const OWNER = 'user_freeowner';
@@ -215,6 +216,29 @@ describe('POST /api/auth/provision-runtime for the free plan', () => {
     const retried = await request(routes, FREE);
     expect(retried.status).toBe(202);
     expect(await containerRows(db, OWNER)).toHaveLength(1);
+  });
+
+  it('removes the owner database it created when account deletion began during signup', async () => {
+    const env = { ACCOUNT_DELETION_SECRET: 'd'.repeat(40) };
+    const owners = ownerDatabasesFor(db);
+    const remove = vi.spyOn(owners, 'remove');
+    const ensure = owners.ensure.bind(owners);
+    // Deletion is accepted (and its runtime cleanup runs) while signup creates the database.
+    vi.spyOn(owners, 'ensure').mockImplementation(async (...args) => {
+      await db.executor.insertInto('account_deletion_jobs').values({
+        owner_hash: hashAccountDeletionOwner(OWNER, env.ACCOUNT_DELETION_SECRET), status: 'processing',
+        due_at: NOW.toISOString(), next_attempt_at: NOW.toISOString(), created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+      } as never).execute();
+      return ensure(...args);
+    });
+    const provisioner = createFreeRuntimeProvisioner({
+      db, config: { maxRuntimes: 10, inviteRequired: false }, ownerDatabases: owners, env, now: () => NOW,
+    });
+    expect(await provisioner.provision({ clerkUserId: OWNER, handle: 'freeowner' })).toEqual({ kind: 'deletion_pending' });
+    expect(remove).toHaveBeenCalledWith(OWNER, expect.any(AbortSignal));
+    const live = await db.executor.selectFrom('container_owner_databases').select('clerk_user_id')
+      .where('deleted_at', 'is', null).execute();
+    expect(live).toEqual([]);
   });
 
   it('rejects free requests that select a region, machine, tools, or another slot', async () => {
