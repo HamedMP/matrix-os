@@ -71,4 +71,3 @@ export function savedCollaborationRoute(
     ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id }
     : NO_ACTIVE_PROVIDER_ROUTE;
 }
-
