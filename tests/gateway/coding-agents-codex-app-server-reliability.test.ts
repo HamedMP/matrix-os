@@ -268,13 +268,41 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("does not count empty transport output as execution progress", async () => {
+  it("keeps a command writing to a file alive beyond the output inactivity limit", async () => {
+    const runtime = await startFakeRuntime("file_output", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  const { open } = await import('node:fs/promises');",
+      "  const { spawn } = await import('node:child_process');",
+      "  const log = await open('ci-watch.log', 'w');",
+      "  const watcher = spawn(process.execPath, ['-e', \"setInterval(() => process.stdout.write('CI pending'), 20)\"], { stdio: ['ignore', log.fd, log.fd] });",
+      "  await log.close();",
+      "  process.once('exit', () => watcher.kill());",
+      "  process.once('SIGTERM', () => process.exit(0));",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'watcher', type: 'commandExecution', command: 'ci-watch > ci-watch.log 2>&1' } } }));",
+      "  setTimeout(async () => {",
+      "    watcher.kill();",
+      "    await new Promise(resolve => watcher.once('close', resolve));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: { id: 'watcher', type: 'commandExecution', status: 'completed' } } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "  }, 400);",
+      "} else if (message.method === 'turn/interrupt') console.log(JSON.stringify({ id: message.id, result: {} }));",
+    ], { stubControlServer: true, env: { MATRIX_CODEX_NO_PROGRESS_MS: "100", MATRIX_CODEX_TOOL_DEADLINE_MS: "100", MATRIX_CODEX_COMMAND_DEADLINE_MS: "2000" } });
+    try {
+      await waitForTranscript(runtime.eventPath, /"type":"turn\.(completed|failed)"/);
+      expect(await readFile(join(runtime.homePath, "ci-watch.log"), "utf8")).toContain("CI pending");
+      expect((await replayTranscriptResult(runtime.eventPath)).outcomes).toEqual(["completed"]);
+    } finally { await cleanup(runtime); }
+  });
+
+  it("does not count empty connector output as execution progress", async () => {
     const runtime = await startFakeRuntime("empty_output", [
       initialize, startThread,
       "else if (message.method === 'turn/start') {",
       "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
-      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'command', type: 'commandExecution' } } }));",
-      "  setInterval(() => console.log(JSON.stringify({ method: 'item/commandExecution/outputDelta', params: { turnId: 'native-turn', itemId: 'command', delta: '' } })), 20);",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'connector', type: 'dynamicToolCall' } } }));",
+      "  setInterval(() => console.log(JSON.stringify({ method: 'item/dynamicToolCall/outputDelta', params: { turnId: 'native-turn', itemId: 'connector', delta: '' } })), 20);",
       "} else if (message.method === 'turn/interrupt') console.log(JSON.stringify({ id: message.id, result: {} }));",
     ], { stubControlServer: true, env: { MATRIX_CODEX_NO_PROGRESS_MS: "100" } });
     try {
