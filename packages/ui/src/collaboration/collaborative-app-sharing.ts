@@ -1,7 +1,7 @@
 export { ReadinessSummary } from "./ReadinessSummary.js";
 export { SharedAppBadge } from "./SharedAppBadge.js";
 export { SharedAppDirectoryNotice } from "./SharedAppDirectoryNotice.js";
-export { useSharedAppDirectory, sharedAppDisplayName } from "./useSharedAppDirectory.js";
+export { useSharedAppDirectory, sharedAppDisplayName, sharedAppPresentation } from "./useSharedAppDirectory.js";
 export { useCollaborativeAppSharing } from "./useCollaborativeAppSharing.js";
 export { SharedAppViewer } from "./SharedAppViewer.js";
 export { CollaborativeAppShareButton } from "./CollaborativeAppShareButton.js";
