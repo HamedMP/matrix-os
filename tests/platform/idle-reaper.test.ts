@@ -145,6 +145,23 @@ describe('container idle stop', () => {
       expect(tracker.lastObserved('a')).not.toBeNull();
     });
 
+    it('persists activity on its own interval, so a serving replica without sweeps still records it', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const { activity } = setup();
+        activity.startPeriodicFlush(30_000);
+        expect(vi.getTimerCount()).toBe(1);
+        advance(5 * MINUTE);
+        activity.observe('ctr-1');
+        vi.advanceTimersByTime(30_000);
+        await vi.waitFor(async () => expect((await row()).lastActivityAt).toBe(new Date(T0.getTime() + 5 * MINUTE).toISOString()));
+        activity.stopPeriodicFlush();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('drops observations older than its TTL', () => {
       const tracker = createActivityTracker({ db, now: () => new Date(clock), ttlMs: MINUTE, logError: () => undefined });
       tracker.observe('a');
@@ -305,6 +322,26 @@ describe('container idle stop', () => {
     await reaper.drain();
     expect(runtime.calls).toEqual(['quiesce', 'resume']);
     expect((await row()).status).toBe('running');
+  });
+
+  it('recovers a stop whose worker disappeared once the stop budget has passed', async () => {
+    const provider = fakeProvider();
+    const { reaper, runtime } = setup({ provider });
+    // Another instance began the stop and crashed: the row stays quiescing with nobody driving it.
+    await db.executor.updateTable('user_machines').set({ status: 'quiescing', status_changed_at: T0, last_activity_at: T0 })
+      .where('machine_id', '=', 'ctr-1').execute();
+    advance(10 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect((await row()).status).toBe('quiescing');
+    expect(provider.suspend).not.toHaveBeenCalled();
+
+    advance(13 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect(provider.suspend).toHaveBeenCalledWith('mvm-1', expect.any(AbortSignal));
+    expect(runtime.calls).toEqual([]);
+    expect(await row()).toMatchObject({ status: 'needs_recovery', failureCode: 'quiesce_timeout', substrateRef: 'mvm-1', generation: 3 });
   });
 
   it('runs one stop when two platform instances sweep the same runtime', async () => {

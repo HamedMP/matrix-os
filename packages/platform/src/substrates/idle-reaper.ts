@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
-import type { ContainerLifecycleService } from './container-lifecycle-service.js';
+import { CONTAINER_QUIESCE_TIMEOUT_MS, type ContainerLifecycleService } from './container-lifecycle-service.js';
 import type { ContainerRuntimeClient, RuntimeTarget } from './container-runtime-client.js';
 
 /**
@@ -74,8 +74,16 @@ export interface ActivityTracker {
   lastObserved(machineId: string): Date | null;
   /** Writes pending observations in one statement; never moves a recorded time backwards. */
   flush(): Promise<void>;
+  /**
+   * Flushes on its own timer. Every replica that proxies owner traffic runs
+   * this, since only background-worker replicas run the idle sweep.
+   */
+  startPeriodicFlush(intervalMs?: number): void;
+  stopPeriodicFlush(): void;
   readonly size: number;
 }
+
+export const ACTIVITY_FLUSH_INTERVAL_MS = 30_000;
 
 export function createActivityTracker(deps: {
   db: PlatformDB;
@@ -90,6 +98,7 @@ export function createActivityTracker(deps: {
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   /** Pending observations keyed by machine; Map order is recency order. */
   const pending = new Map<string, Date>();
+  let flushTimer: ReturnType<typeof setInterval> | null = null;
 
   function evictExpired(at: number): void {
     for (const [machineId, seen] of pending) {
@@ -134,6 +143,15 @@ export function createActivityTracker(deps: {
       for (const [machineId, seen] of batch) {
         if (pending.get(machineId) === seen) pending.delete(machineId);
       }
+    },
+    startPeriodicFlush(intervalMs = ACTIVITY_FLUSH_INTERVAL_MS) {
+      if (flushTimer) return;
+      flushTimer = setInterval(() => { void this.flush(); }, intervalMs);
+      flushTimer.unref?.();
+    },
+    stopPeriodicFlush() {
+      if (flushTimer) clearInterval(flushTimer);
+      flushTimer = null;
     },
     get size() {
       return pending.size;
@@ -235,6 +253,33 @@ export function createIdleReaper(deps: IdleReaperDeps) {
     }] : []);
   }
 
+  /**
+   * Stops left quiescing past the whole stop budget: the instance driving
+   * them is gone. Their unit is suspended and the row moves to recovery, so
+   * compute stops and the next owner request recovers the home.
+   */
+  async function recoverAbandonedStops(limit: number): Promise<void> {
+    const abandonedBefore = new Date(now().getTime() - CONTAINER_QUIESCE_TIMEOUT_MS);
+    const rows = await db.executor.selectFrom('user_machines')
+      .select(['machine_id', 'generation'])
+      .where('substrate', '=', 'container')
+      .where('deleted_at', 'is', null)
+      .where('status', '=', 'quiescing')
+      .where('status_changed_at', '<=', abandonedBefore)
+      .orderBy('status_changed_at', 'asc')
+      .limit(limit)
+      .execute();
+    for (const row of rows) {
+      if (stops.has(row.machine_id) || shutdownController.signal.aborted) continue;
+      try {
+        await lifecycle.recoverAfterFailedStop(row.machine_id, row.generation, 'quiesce_timeout', shutdownController.signal);
+      } catch (error: unknown) {
+        if (shutdownController.signal.aborted) return;
+        logError('[idle-reaper] abandoned stop recovery failed', { cause: error instanceof Error ? error.name : 'unknown' });
+      }
+    }
+  }
+
   /** Owner traffic after the quiesce began, from this instance or another one's persisted record. */
   async function ownerReturned(machineId: string, since: Date): Promise<boolean> {
     const local = activity.lastObserved(machineId);
@@ -330,6 +375,7 @@ export function createIdleReaper(deps: IdleReaperDeps) {
 
   async function runSweep(): Promise<void> {
     await activity.flush();
+    await recoverAbandonedStops(config.maxCandidatesPerSweep);
     const room = config.maxConcurrentStops - stops.size;
     if (room <= 0 || shutdownController.signal.aborted) return;
     for (const candidate of await candidates(Math.min(room, config.maxCandidatesPerSweep))) {

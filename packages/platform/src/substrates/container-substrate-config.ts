@@ -115,6 +115,8 @@ export interface ConfiguredContainerSubstrate {
   platformSecret: string;
   lifecycle: ContainerLifecycleService;
   ownerDatabases: ContainerOwnerDatabases;
+  /** Persists owner activity this replica observes; call on every replica that serves owner traffic. */
+  startServing(): void;
   /** Starts the idle and orphan sweeps; call once the platform database is ready. */
   startBackgroundWork(): void;
   shutdown(): Promise<void>;
@@ -199,11 +201,15 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     platformSecret: config.platform.secret,
     lifecycle,
     ownerDatabases,
+    startServing() {
+      activity.startPeriodicFlush();
+    },
     startBackgroundWork() {
       reaper.start();
       reconciler.start();
     },
     async shutdown() {
+      activity.stopPeriodicFlush();
       await reconciler.shutdown();
       await reaper.shutdown();
       await lifecycle.shutdown();

@@ -146,6 +146,19 @@ describe('container substrate registration', () => {
     }
   });
 
+  it('flushes owner activity on every replica, including one that runs no background sweeps', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
+      configured.startServing();
+      expect(vi.getTimerCount()).toBe(1);
+      await configured.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not build a client when settings are incomplete', () => {
     const createClient = vi.fn(() => ({ send: vi.fn(), destroy: vi.fn() }));
     expect(createConfiguredContainerSubstrate({ db, env: { ...ENV, MATRIX_CONTAINER_REGION: 'nowhere' }, log, createClient })).toBeNull();
