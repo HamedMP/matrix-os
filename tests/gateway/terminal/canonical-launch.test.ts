@@ -35,6 +35,9 @@ it("call-before-join is denied without registration; source identity comes only 
   expect(f.register).toHaveBeenCalledOnce();
   const producer = f.register.mock.calls[0]![0] as import("../../../packages/gateway/src/bots/routine-action-source-registry.js").RoutineSourceProducer;
   expect(producer.source).toMatchObject({ ownerId: principal.userId, computerId: "computer-current", harness: "claude", identity: { kind: "terminal_launch", sessionId: `${f.workspace.id}:${tab.id}`, incarnationId: tab.incarnation } });
+  expect(producer.readPolicy()).toMatchObject({
+    live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full",
+  });
   expect(producer.publish).toBeUndefined();
 });
 it("failed canonical creation closes proof but retains native I/O recovery and does not invent source", async () => {

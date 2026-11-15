@@ -127,7 +127,9 @@ export function createCanonicalTerminalLaunch(options: {
       if (canonical.id !== ref.tabId || canonical.workspaceId !== workspaceId || canonical.incarnation !== admittedIncarnation
         || canonical.nativeHost?.path !== result.reference.path || canonical.nativeHost.generation !== expectedHost.generation
         || !privateCurrent() || !await retained!.verifyCurrent() || !await currentRecord()) { await close(); return canonical; }
-      const policy: RoutineSourcePolicy = prepared?.policy ?? { live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "terminal-native-exact-v1" };
+      // Full Access is assigned only after the retained host and private owner record agree.
+      const policy: RoutineSourcePolicy = prepared?.policy ?? { live: true, scope: "personal", interactionMode: "default",
+        permissionMode: "full_access", originCeiling: "full", revision: "terminal-native-full-v1" };
       source = createTerminalRoutineSource({ ...options.routines!, computerId: options.computerId, homePath: options.homePath,
         admission: { principal, harness: input.managedLaunch.harness, sessionId: key, incarnationId: canonical.incarnation!, launchId: randomUUID(),
           generation: createHash("sha256").update(retained!.heldGeneration).digest("hex"), supervisor: retained!.identity.supervisor, host: retained!.identity.host, root: retained!.identity.root, policy },

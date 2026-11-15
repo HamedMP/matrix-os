@@ -30,5 +30,5 @@ export async function launchPreparedWorkspaceTerminal(options: {
   const launch = TerminalHostLaunchSchema.safeParse(options.launch);
   if (!launch.success) return undefined;
   return launchTerminal({ principal, workspaceId: options.workspaceId, name: request.agent, cwd: options.cwd, harness: request.agent, launch: launch.data,
-    policy: { live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "workspace-terminal-native-exact-v1" } });
+    policy: { live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full", revision: "workspace-terminal-native-full-v1" } });
 }

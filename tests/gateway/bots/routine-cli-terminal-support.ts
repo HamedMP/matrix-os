@@ -12,13 +12,12 @@ import { expect, vi } from "vitest";
 import { TerminalRuntime } from "../../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../../packages/terminal-runtime/src/workspace-store.js";
 import { createCanonicalTerminalLaunch } from "../../../packages/gateway/src/terminal/canonical-launch.js";
+import { launchPreparedWorkspaceTerminal } from "../../../packages/gateway/src/terminal/workspace-launch.js";
 import type { RetainedTerminalStartup, TerminalSourcePort } from "../../../packages/gateway/src/terminal/retained-binding.js";
 import { createTerminalWorkspaceRoutes } from "../../../packages/gateway/src/shell/workspace-routes.js";
 import { createRoutineCliRuntime } from "../../../packages/gateway/src/bots/routine-cli-runtime.js";
 import { createBotRoutineExecution } from "../../../packages/gateway/src/bots/routine-execution.js";
 import { createRoutineCliExecutionRoutes } from "../../../packages/gateway/src/bots/routine-cli-routes.js";
-import { createRoutineActionVerificationRoutes } from "../../../packages/platform/src/routine-action-routes.js";
-import { authenticatedApprovalProxyProof } from "../../../packages/platform/src/canonical-owner-approval-proxy.js";
 import { buildPlatformVerificationToken } from "../../../packages/platform/src/platform-token.js";
 import { authMiddleware } from "../../../packages/gateway/src/auth.js";
 import { proposalFixture } from "./routine-cli-proposal-support.js";
@@ -28,7 +27,7 @@ import type { TerminalHarness } from "../../../packages/gateway/src/terminal/nat
 
 /** Named manager/pane/process identity and background snapshot fixtures only.
  * Actual canonical Terminal store/route/join/source/controller/fixed published CLI,
- * private IPC/source-only Hono/owner PG/target task and human approval are real. */
+ * private IPC/source-only Hono/owner PG/target task and schedule approval are real. */
 export async function terminalFixture() {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL required");
@@ -37,10 +36,15 @@ export async function terminalFixture() {
   const f = await proposalFixture(data.db, vi.fn, { actualSourceOnly: true, adapters: [], catalog: { revision: "fixture", drivers: [], instances: [] } });
   f.state.clock = new Date().toISOString();
   const secret = "fixture-terminal-platform", handle = "computer-one", machineId = "machine_current";
-  const machine = { machineId, handle, runtimeSlot: "primary", clerkUserId: scope.ownerId, provisioningClass: "customer" as const };
-  const platform = createRoutineActionVerificationRoutes({ platformSecret: secret, lookup: { resolveMachine: async () => ({ ...machine, status: "running" }) } });
+  let platformCalls = 0;
   const actualFetch = globalThis.fetch;
-  vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit) => String(url).startsWith("https://platform.example.test") ? platform.request(new Request(url, init)) : actualFetch(url, init));
+  vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).startsWith("https://platform.example.test")) {
+      platformCalls++;
+      throw new Error("Verified Terminal routine operations must not request Platform owner proof");
+    }
+    return actualFetch(url, init);
+  });
   const routines = createRoutineCliRuntime({ db: data.db, computerId: scope.computerId, configuredOwnerIds: [scope.ownerId], agents: f.agents, repository: f.chats,
     transact: f.transact, approvals: f.approvals, control: createBotRoutineExecution({ db: data.db, transact: f.transact, approvals: f.approvals, available: () => true }), registry: f.registry,
     platform: { platformUrl: "https://platform.example.test", handle, machineId, runtimeSlot: "primary", token: buildPlatformVerificationToken(handle, secret) } });
@@ -69,19 +73,8 @@ export async function terminalFixture() {
       binPath: resolve("packages/sync-client/bin/matrix.mjs"), endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute` },
     readProcess: async pid => { const found = [supervisor, hostIdentity, root, ...(writerLive ? [writer] : [])].find(p => p.pid === pid); if (!found) throw new Error("Named process absent"); return found; } });
   const route = createTerminalWorkspaceRoutes({ runtime: terminal, homePath: f.home, managedLaunch: coordinator, terminalOwnerIds: [scope.ownerId], getPrincipal: () => f.principal });
-  async function approve() {
-    await expect.poll(() => routines.list(f.principal).find(a => a.status === "pending"), { timeout: 5000 }).toBeDefined();
-    const view = routines.list(f.principal).find(a => a.status === "pending")!;
-    const path = `/api/routine-cli/actions/${view.challengeId}/decision`, body = { actionDigest: view.actionDigest, decision: "approve" as const, clientRequestId: crypto.randomUUID() };
-    const sessionExpiresAt = Math.floor(Date.now() / 1000) + 300;
-    const proof = await authenticatedApprovalProxyProof({ request: new Request(`https://app.example.test${path}`, { method: "POST", body: JSON.stringify(body) }), method: "POST", path,
-      handle, machine, platformSecret: secret, identity: { userId: scope.ownerId, handle, runtimeSlot: "primary", source: "auth", sessionProvenance: "clerk-browser",
-        sessionExpiresAt, verifiedHumanBrowserExpiresAt: sessionExpiresAt } });
-    expect(proof).toEqual(expect.any(String));
-    await routines.submit(f.principal, view.challengeId, body, proof as string);
-  }
-  return { data, f, routines, terminal, store, coordinator, writer, startup, approve,
-    httpCalls: () => httpCalls, port: () => port!, endWriter: () => { writerLive = false; }, endRoot: () => rootSignal.abort(), changeManager: () => { managerCurrent = false; }, observeManager: () => startup.verifyCurrent(), loseProof: () => { current = false; },
+  return { data, f, routines, terminal, store, coordinator, writer, startup,
+    httpCalls: () => httpCalls, platformCalls: () => platformCalls, port: () => port!, endWriter: () => { writerLive = false; }, endRoot: () => rootSignal.abort(), changeManager: () => { managerCurrent = false; }, observeManager: () => startup.verifyCurrent(), loseProof: () => { current = false; },
     async shareTab(tab: TerminalTab, retireRoutineSource = true) {
       const repository = new CollaborationRepository(ownerDb);
       const terminalId = `${tab.workspaceId}:${tab.id}`;
@@ -96,6 +89,12 @@ export async function terminalFixture() {
     async launch(harness: TerminalHarness = "claude") {
       const response = await route.request(`/workspaces/${workspace.id}/tabs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: harness, cwd: "", managedLaunch: { harness } }) });
       expect(response.status).toBe(201); return (await response.json()).tab;
+    },
+    async launchPrepared() {
+      const tab = await launchPreparedWorkspaceTerminal({ request: { kind: "agent", agent: "pi", ownerId: scope.ownerId, sandboxMode: "workspace_write" },
+        principal: f.principal, workspaceId: workspace.id, cwd: "", launchTerminal: coordinator.launchPrepared,
+        launch: { command: "/fixed/pi", args: [], cwd: f.home, env: { HOME: f.home, PATH: "/bin" }, inheritEnv: false } });
+      expect(tab).toBeDefined(); return tab!;
     },
     async close() { await coordinator.close(); await terminal.shutdown(); await f.canonical.close(); await routines.close(); if ("closeAllConnections" in server) server.closeAllConnections(); await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); await f.close(); await rm(home, { recursive: true, force: true }); await data.destroy(); vi.unstubAllGlobals(); },
   };
