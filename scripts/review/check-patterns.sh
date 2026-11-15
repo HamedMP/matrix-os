@@ -13,6 +13,10 @@
 #   ./scripts/review/check-patterns.sh              # scan all packages
 #   ./scripts/review/check-patterns.sh --diff main   # scan only files changed vs main
 #   ./scripts/review/check-patterns.sh --strict       # treat warnings as errors
+#
+# Section 9 runs scripts/review/check-added-patterns.mjs, which applies
+# repo-wide rules to added lines only: against --diff <base>...HEAD, or with
+# no --diff against merge-base(origin/main) plus uncommitted and untracked work.
 
 set -euo pipefail
 
@@ -25,6 +29,7 @@ RESET='\033[0m'
 SCAN_PATHS="packages shell"
 DIFF_BASE=""
 STRICT=false
+NO_RG_FILES=false
 VIOLATIONS=0
 WARNINGS=0
 
@@ -53,12 +58,12 @@ if [[ -n "$DIFF_BASE" ]]; then
     exit 2
   fi
   FILES=$(git diff --name-only --diff-filter=ACMR "$DIFF_BASE"...HEAD -- $SCAN_PATHS | grep -E '\.(ts|tsx)$' || true)
-  if [[ -z "$FILES" ]]; then
-    echo "No TypeScript files changed vs $DIFF_BASE."
-    exit 0
-  fi
   FILE_ARGS="$FILES"
   SCAN_MODE="changed files vs $DIFF_BASE"
+  if [[ -z "$FILES" ]]; then
+    NO_RG_FILES=true
+    SCAN_MODE="added lines vs $DIFF_BASE (no TypeScript files changed under $SCAN_PATHS)"
+  fi
 else
   FILE_ARGS=""
   SCAN_MODE="all files in: $SCAN_PATHS"
@@ -82,6 +87,9 @@ warning() {
 rg_scan() {
   local pattern="$1"
   shift
+  if $NO_RG_FILES; then
+    return
+  fi
   if [[ -n "$FILE_ARGS" ]]; then
     local filtered_files
     filtered_files=$(echo "$FILE_ARGS" | grep -Ev '(\.test\.ts|\.spec\.ts)$|/node_modules/|/dist/' || true)
@@ -233,6 +241,29 @@ fi
 if [[ -n "$MATCHES" ]]; then
   violation "Legacy getUserIdFromContext() used outside auth compatibility wrapper; use request-principal helpers"
   printf '%s\n' "$MATCHES" | head -20 || true
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# PASS 3: Repo-wide rules on added lines (scripts/review/check-added-patterns.mjs)
+# ═══════════════════════════════════════════════════════════════
+
+header "9. Added lines — repo-wide rules (swallowed errors)"
+
+ADDED_ARGS=()
+if [[ -n "$DIFF_BASE" ]]; then
+  ADDED_ARGS+=(--base "$DIFF_BASE")
+fi
+ADDED_STATUS=0
+ADDED_OUTPUT=$(node "$(dirname "${BASH_SOURCE[0]}")/check-added-patterns.mjs" ${ADDED_ARGS[@]+"${ADDED_ARGS[@]}"}) || ADDED_STATUS=$?
+if [[ $ADDED_STATUS -gt 1 ]]; then
+  echo "Error: added-line checks failed to run (exit $ADDED_STATUS)" >&2
+  exit 2
+fi
+printf '%s\n' "$ADDED_OUTPUT" | grep -v '^added-line summary:' || true
+ADDED_SUMMARY=$(printf '%s\n' "$ADDED_OUTPUT" | sed -n 's/^added-line summary: \([0-9]*\) violation(s), \([0-9]*\) warning(s)$/\1 \2/p')
+if [[ -n "$ADDED_SUMMARY" ]]; then
+  VIOLATIONS=$((VIOLATIONS + ${ADDED_SUMMARY% *}))
+  WARNINGS=$((WARNINGS + ${ADDED_SUMMARY#* }))
 fi
 
 # ═══════════════════════════════════════════════════════════════

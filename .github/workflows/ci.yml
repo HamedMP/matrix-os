@@ -250,6 +250,12 @@ jobs:
           fi
           rg --version
 
+      # scripts/review/check-added-patterns.mjs is dependency-free; it needs Node only.
+      - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
+        with:
+          node-version: 24
+
       - name: Run CLAUDE.md pattern scanner on changed files
         if: needs.changes.outputs.should_run == 'true'
         env:
