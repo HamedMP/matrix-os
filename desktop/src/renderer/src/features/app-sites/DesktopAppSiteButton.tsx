@@ -68,7 +68,7 @@ export function DesktopAppSiteButton({
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          submissions={client && share.site?.status === "published" && share.site.config.forms.length > 0
+          submissions={client && share.site
             ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
         />
       ) : null}
