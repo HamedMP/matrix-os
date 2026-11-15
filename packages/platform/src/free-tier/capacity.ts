@@ -29,10 +29,18 @@ export async function lockCapacity(executor: Executor, ceiling: CapacityCeiling)
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${LOCK_KEYS[ceiling]}, 0))`.execute(executor);
 }
 
-export async function countRunningContainers(executor: Executor): Promise<number> {
+/**
+ * Runtimes holding compute, plus failed stops whose unit was never confirmed
+ * suspended: that unit may still run, until its lifetime ends it.
+ */
+export async function countRunningContainers(executor: Executor, at: Date = new Date()): Promise<number> {
   const row = await executor.selectFrom('user_machines').select(sql<number>`count(*)::int`.as('n'))
     .where('substrate', '=', 'container').where('deleted_at', 'is', null)
-    .where('status', 'in', [...COMPUTE_HOLDING_STATUSES]).executeTakeFirstOrThrow();
+    .where(eb => eb.or([
+      eb('status', 'in', [...COMPUTE_HOLDING_STATUSES]),
+      eb.and([eb('status', '=', 'needs_recovery'), eb('compute_unconfirmed_until', '>', at)]),
+    ]))
+    .executeTakeFirstOrThrow();
   return Number(row.n);
 }
 

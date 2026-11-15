@@ -30,6 +30,9 @@ export async function migrateContainerLimits(db: PlatformMigrationExecutor): Pro
       PRIMARY KEY (clerk_user_id, object_key)
     )
   `.execute(db);
+  // A stop that could not confirm its unit suspended leaves compute that may still run; it counts
+  // against the running ceiling until the provider's unit lifetime has certainly ended it.
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS compute_unconfirmed_until TIMESTAMPTZ`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_runtime_storage_objects_pending
     ON runtime_storage_objects (clerk_user_id, pending_until)

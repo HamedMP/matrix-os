@@ -112,6 +112,8 @@ export interface UserMachinesTable {
   status_changed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   last_flush_digest: Generated<string | null>;
   last_flushed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** A stop could not confirm the unit suspended; it may hold compute until at most this time. */
+  compute_unconfirmed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {

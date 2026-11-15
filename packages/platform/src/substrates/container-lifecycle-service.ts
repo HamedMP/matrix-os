@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { sql, type Updateable } from 'kysely';
 import type { PlatformDB, UserMachinesTable } from '../db.js';
-import { ContainerProviderError, type ContainerProvider, type ContainerUnit } from './container-provider.js';
+import {
+  CONTAINER_UNIT_MAX_LIFETIME_SECONDS, ContainerProviderError, type ContainerProvider, type ContainerUnit,
+} from './container-provider.js';
 import type { EnsureRunningResult } from './types.js';
 import { countRunningContainers, lockCapacity } from '../free-tier/capacity.js';
 
@@ -301,12 +303,15 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
 
   /** The running ceiling is counted and the claim made under one capacity lock, so concurrent starts cannot pass it. */
   async function claimStart(machineId: string, from: ContainerStatus, generation: number): Promise<boolean | 'busy'> {
-    const set = { status: 'starting', started_at: now(), failure_code: null, failure_at: null, status_changed_at: now() };
+    const set = {
+      status: 'starting', started_at: now(), failure_code: null, failure_at: null, status_changed_at: now(),
+      compute_unconfirmed_until: null,
+    };
     if (deps.maxRunning === undefined) return transition(machineId, [from], generation, set);
     const maxRunning = deps.maxRunning;
     return db.transaction(async (trx): Promise<boolean | 'busy'> => {
       await lockCapacity(trx.executor, 'running_runtimes');
-      if (await countRunningContainers(trx.executor) >= maxRunning) return 'busy';
+      if (await countRunningContainers(trx.executor, now()) >= maxRunning) return 'busy';
       const updated = await trx.executor.updateTable('user_machines').set(set)
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .where('status', '=', from).where('generation', '=', generation)
@@ -333,8 +338,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       case 'quiescing': {
         const since = row.status_changed_at?.getTime() ?? 0;
         if (now().getTime() - since <= CONTAINER_QUIESCE_TIMEOUT_MS) return { state: 'starting' };
+        // Nothing suspended the unit, so it may still hold compute.
         await transition(machineId, ['quiescing'], row.generation, {
           status: 'needs_recovery', failure_code: 'quiesce_timeout', failure_at: now().toISOString(),
+          compute_unconfirmed_until: unconfirmedUntil(row),
         });
         return { state: 'failed', code: 'needs_recovery' };
       }
@@ -401,6 +408,16 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return transition(machineId, ['quiescing'], generation, { status: 'running' });
   }
 
+  /**
+   * A failed stop whose unit was never confirmed suspended may still hold
+   * compute, at most until the provider's lifetime ends a unit started then.
+   */
+  function unconfirmedUntil(row: MachineRow): Date | null {
+    if (!row.substrate_ref) return null;
+    const startedAt = row.started_at?.getTime() ?? now().getTime();
+    return new Date(startedAt + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000);
+  }
+
   async function suspendUnit(unitId: string, signal: AbortSignal): Promise<boolean> {
     try {
       await provider.suspend(unitId, AbortSignal.any([signal, callSignal()]));
@@ -420,6 +437,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (!await suspendUnit(row.substrate_ref, signal)) {
       await transition(machineId, ['quiescing'], generation, {
         status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
+        compute_unconfirmed_until: unconfirmedUntil(row),
       });
       return 'needs_recovery';
     }
@@ -438,9 +456,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   ): Promise<boolean> {
     const row = await load(machineId);
     if (!row || row.generation !== generation || row.status !== 'quiescing') return false;
-    if (row.substrate_ref) await suspendUnit(row.substrate_ref, signal);
+    const suspended = row.substrate_ref ? await suspendUnit(row.substrate_ref, signal) : true;
     return transition(machineId, ['quiescing'], generation, {
       status: 'needs_recovery', failure_code: code, failure_at: now().toISOString(),
+      compute_unconfirmed_until: suspended ? null : unconfirmedUntil(row),
     });
   }
 
@@ -474,6 +493,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       .set({
         substrate_ref: null,
         private_address: null,
+        compute_unconfirmed_until: null,
         status: sql<string>`CASE WHEN status IN ('running', 'starting', 'quiescing') THEN 'stopped' ELSE status END`,
         status_changed_at: now(),
       })

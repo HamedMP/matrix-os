@@ -64,6 +64,44 @@ describe('running container ceiling', () => {
     expect(await service.ensureStarted(running)).toEqual({ state: 'running' });
   });
 
+  it('keeps counting a runtime whose stop could not confirm its unit suspended, until that unit must have ended', async () => {
+    const failing = await addContainer(db, 1, 'running');
+    await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', started_at: NOW, status_changed_at: NOW })
+      .where('machine_id', '=', failing).execute();
+    let clock = NOW;
+    const service = createContainerLifecycleService({
+      db, buildBootPayload: async () => '{}', now: () => clock, maxRunning: 1, logError: () => undefined,
+      provider: {
+        ...idleProvider(), run: async () => { throw new Error('unused'); }, suspend: async () => { throw new Error('provider down'); },
+      },
+    });
+    expect(await service.stop(failing, 1, AbortSignal.timeout(5_000))).toBe('needs_recovery');
+    const stopped = await addContainer(db, 2, 'stopped');
+    const whileUncertain = await service.ensureStarted(stopped);
+    await service.drain();
+    expect(whileUncertain).toEqual({ state: 'busy' });
+
+    clock = new Date(NOW.getTime() + 8 * 3_600_000 + 1);
+    const afterLifetime = await service.ensureStarted(stopped);
+    await service.drain();
+    expect(afterLifetime).toEqual({ state: 'starting' });
+  });
+
+  it('frees the slot of a failed stop whose unit was confirmed suspended', async () => {
+    const recovered = await addContainer(db, 1, 'quiescing');
+    await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', started_at: NOW, status_changed_at: NOW })
+      .where('machine_id', '=', recovered).execute();
+    const service = createContainerLifecycleService({
+      db, buildBootPayload: async () => '{}', now: () => NOW, maxRunning: 1, logError: () => undefined,
+      provider: { ...idleProvider(), run: async () => { throw new Error('unused'); }, suspend: async () => undefined },
+    });
+    expect(await service.recoverAfterFailedStop(recovered, 1, 'flush_failed', AbortSignal.timeout(5_000))).toBe(true);
+    expect(await statusOf(db, recovered)).toBe('needs_recovery');
+    const started = await service.ensureStarted(await addContainer(db, 2, 'stopped'));
+    await service.drain();
+    expect(started).toEqual({ state: 'starting' });
+  });
+
   it('does not count runtimes on a VPS or ones without compute', async () => {
     await insertUserMachine(db, {
       machineId: 'vps-cap', clerkUserId: 'user_capvps', handle: 'capvps', status: 'running',
