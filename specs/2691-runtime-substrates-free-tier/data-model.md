@@ -31,12 +31,50 @@ provisioning -> stopped -> starting -> running -> quiescing -> stopped
                               |            |           |
                               v            v           v
                          failed_start   needs_recovery (flush failed)
-running/stopped -> migrating -> (row becomes substrate 'vps') 
+running/stopped -> migrating -> vps runtime (row identity open: D10, below)
 ```
 
 Every transition is a compare-and-set on `(machine_id, status, generation)`.
 `running` plus `activation_state = 'authorized'` is what the funded-AI authorization
 already requires, so no funding code branches on substrate.
+
+### Upgrade and the machine row (open, D10)
+
+Not decided, and no code decides it yet (Stack E, T061 to T068, is unbuilt). The
+constraints any answer must meet, as the code stands:
+
+- A free runtime is one row with `runtime_slot = 'primary'`, `substrate = 'container'`,
+  and `provisioning_class = 'free'`.
+- Among non-deleted rows, `(clerk_user_id, runtime_slot)` and `(handle, runtime_slot)`
+  are unique, and an owner has at most one container row.
+- `substrate = 'container'` requires `provisioning_class = 'free'`, so a row cannot be a
+  container with a customer class, or the reverse, at any committed point.
+- The customer provisioning path (`findExistingProvisioningMachine` in
+  `packages/platform/src/customer-vps-support.ts`, used by
+  `customer-vps-provision.ts`) finds the owner's active row for the requested slot and,
+  unless it has failed, answers with that row. Called unchanged for the `primary` slot, it
+  returns the container row and provisions nothing.
+- Owner objects sit under `matrixos-sync/{ownerId}` for the `primary` slot, keyed by owner
+  and slot, not machine id, so the object layout does not move under either option.
+- Funded-AI rows are keyed by machine id.
+
+Options, for the owner to decide:
+
+1. **Reuse the source row.** The VPS is provisioned into the container's row while it is
+   `migrating`, and the switch changes `substrate`, `provisioning_class`, and status in
+   one statement. Funded-AI rows need no re-pointing and `target_machine_id` is not
+   needed. Needs a provisioning entry that accepts a `migrating` container row, and VPS
+   columns written on a row that is still routed as a container until the switch.
+   Rollback clears the VPS columns and returns the row to `stopped`.
+2. **Stage a separate target row.** The target must sit outside the two slot indexes
+   until the switch (for example a staging slot or a status the partial indexes
+   exclude), and routing must ignore it. The switch soft-deletes the source and moves the
+   target into `primary` in one transaction, re-pointing funded-AI rows as described
+   below. Rollback deletes the target row; the source is never changed before the
+   switch.
+
+Either way, the source must stay routable and writable until verification passes
+(User Story 5, scenario 2).
 
 ## `billing_entitlements` (changed)
 
@@ -85,7 +123,7 @@ The password itself is not stored; it is derived or held in the provider secret 
 | `migration_id` | text, primary key | |
 | `clerk_user_id` | text, not null | One active migration per owner (partial unique index) |
 | `source_machine_id` | text, not null, references `user_machines` | |
-| `target_machine_id` | text, null | Set at provisioning |
+| `target_machine_id` | text, null | Set at provisioning if D10 chooses a separate target row; unused if the source row is reused |
 | `state` | text, not null | `requested`, `quiescing`, `final_sync`, `provisioning`, `restoring`, `verifying`, `completed`, `abandoned` |
 | `inventory` | jsonb, null | Row counts, file manifest digest, app list, balances |
 | `idempotency_key` | text, not null, unique | Stripe event id or client key |
@@ -95,7 +133,7 @@ The password itself is not stored; it is derived or held in the provider secret 
 ## Funded-AI tables (unchanged schema)
 
 A container runtime gets rows in `ai_funded_runtime_policies` and
-`ai_funded_runtime_balances` keyed by its machine id. On upgrade, balance rows are
+`ai_funded_runtime_balances` keyed by its machine id. On upgrade (if D10 chooses a separate target row), balance rows are
 re-pointed to the target machine id in the same transaction that completes the
 migration, under the per-owner funding advisory lock.
 
