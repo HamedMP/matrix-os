@@ -81,7 +81,7 @@ controller is activated through its protected ref **without merging the PR**.
 during normal Source deployments and refuses ambiguous Source lookup failures.
 Nine focused checks and Greptile 5/5 are recorded. It remains unmerged and
 undeployed, so an active test still needs the reviewed temporary Source
-deployment hold and verified restoration described in the private runbook.
+deployment hold and verified restoration described in the [operator runbook](../../scripts/preview-pair/ops/README.md).
 
 | Run | Result |
 | --- | --- |
@@ -129,10 +129,12 @@ Member fixtures, regardless of which maintainer requests the pair.
 - Source's short-lived read credential retains its original expiry; verify
   validity before starting another window.
 
-The private runbook contains exact resource names, references, expiry, live
-revision receipts, operator helper guards and restoration commands. Do not
-publish it or the private receipts/captures in this repository. Do not treat
-old bootstrap scripts or historic activation receipts as current state.
+The [operator tools and runbook](../../scripts/preview-pair/ops/README.md) are
+in this PR. Copy them outside Git and recover the existing allowlisted Cloud
+metadata using `export-operator-state.py`; no files from the previous operator
+are required. Credentials stay in the existing secret stores. Keep generated
+configuration, receipts and captures private. Do not treat old bootstrap
+scripts or historic activation receipts as current state.
 
 ## Next execution
 
@@ -148,7 +150,7 @@ old bootstrap scripts or historic activation receipts as current state.
    manifests, candidate code and workflow inputs.
 3. Recheck Source image/configuration, credential expiry, exact controller
    policies and candidate head. Start a coordinated bounded window using the
-   private runbook; never silently extend an old window or overwrite another
+   [operator runbook](../../scripts/preview-pair/ops/README.md); never silently extend an old window or overwrite another
    operator's changes.
 4. Enable maintenance first. Verify normal setup with admission false and the
    corrected pin, then enable admission after queue/hold checks.
