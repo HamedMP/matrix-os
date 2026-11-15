@@ -218,7 +218,10 @@ export function useCollaborativeAppSharing(input: {
   const createShare = useCallback(async (rawInput: {
     organizationId: string;
     clientRequestId?: string;
-  }): Promise<CollaborativeAppShare | null> => {
+  }, options: {
+    /** Re-checked after preflight; returning false stops before the share mutation. */
+    shouldContinue?: () => boolean;
+  } = {}): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
     setActionState("sharing");
     setActionMessage(null);
@@ -232,6 +235,10 @@ export function useCollaborativeAppSharing(input: {
         expectedBuildId: currentReadiness.build.buildId,
       }));
       if (!preflight.eligible) throw new Error(`SharePreflight:${preflight.reason}`);
+      if (options.shouldContinue && !options.shouldContinue()) {
+        if (shareGeneration.current === generation) setActionState("idle");
+        return null;
+      }
       const next = preflight.existingShare ?? CollaborativeAppShareSchema.parse(await input.api.post(sharePath, {
         organizationId: parsed.organizationId,
         clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),

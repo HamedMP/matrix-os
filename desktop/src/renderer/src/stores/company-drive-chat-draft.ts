@@ -7,7 +7,10 @@ type Request = {
     identity: string;
     tabId: string;
     createdAt: number;
-    reference: CanonicalChatResourceReference;
+    /** A Company Drive resource, or none for a text-only draft (Share → Start in Chats). */
+    reference: CanonicalChatResourceReference | null;
+    /** Composer text prefilled for the owner to send. */
+    text: string;
 };
 export function desktopDriveDraftIdentity(state: Pick<ReturnType<typeof useConnection.getState>, "userId" | "platformHost" | "runtimeSlot" | "authGeneration">): string {
     return JSON.stringify([state.userId, state.platformHost, state.runtimeSlot, state.authGeneration]);
@@ -27,7 +30,20 @@ export function openDesktopCompanyDriveChat(reference: CanonicalChatResourceRefe
     if (parsed.kind !== "organization_drive")
         return;
     const tabId = useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
-    useDesktopCompanyDriveChatDraft.setState({ request: { id: crypto.randomUUID(), identity, tabId, createdAt: Date.now(), reference: parsed } });
+    useDesktopCompanyDriveChatDraft.setState({ request: { id: crypto.randomUUID(), identity, tabId, createdAt: Date.now(), reference: parsed, text: "" } });
+}
+/**
+ * Opens the visible Chat surface on a new draft with `text` in its composer
+ * (bounded; the owner sends it). Used by the Share popover's collaborative
+ * handoff; returns false when no runtime identity is signed in.
+ */
+export function openDesktopTextChatDraft(text: string): boolean {
+    const connection = useConnection.getState();
+    if (!connection.userId || text.length === 0 || text.length > 4000)
+        return false;
+    const tabId = useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
+    useDesktopCompanyDriveChatDraft.setState({ request: { id: crypto.randomUUID(), identity: desktopDriveDraftIdentity(connection), tabId, createdAt: Date.now(), reference: null, text } });
+    return true;
 }
 export function applicableDesktopCompanyDriveDraft(request: Request, identity: string, tabId: string | undefined, now = Date.now()): boolean {
     const tabs = useTabs.getState(), tab = tabs.tabs.find(item => item.id === tabId);

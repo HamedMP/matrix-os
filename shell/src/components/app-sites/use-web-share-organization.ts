@@ -25,12 +25,14 @@ export function useWebShareOrganization(appSlug: string, appName: string) {
     collaborationApi: shellApi,
     fileApi: shellApi,
     openChat,
+    // Same path as Create app: a new chat with the prompt in the composer,
+    // sent by the owner with their normal provider and model choices.
     startChat: async (prompt) => {
       if (!chat) return false;
       openChat();
       await chat.newChat();
-      const sent = await chat.submitMessage(prompt);
-      return sent !== false;
+      chat.requestComposerDraft(prompt, { merge: true });
+      return true;
     },
     orgLink: (share) => typeof window === "undefined" ? null
       : new URL(sharedAppDeepLink({ scopeId: share.scopeId, buildId: share.build.buildId, shareRevision: share.shareRevision }), window.location.origin).toString(),

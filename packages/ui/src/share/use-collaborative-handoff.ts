@@ -11,10 +11,13 @@ export interface HandoffFileApi {
 }
 
 export const HANDOFF_POLL_MS = 5_000;
-/** Stop watching after 30 minutes; the owner can reopen Share to resume. */
-export const HANDOFF_MAX_POLLS = 360;
+/** After 30 minutes of fast polling, keep watching once a minute while the app window is open. */
+export const HANDOFF_FAST_POLLS = 360;
+export const HANDOFF_SLOW_POLL_MS = 60_000;
 
 const blobPath = (appSlug: string) => `/api/files/blob?path=${encodeURIComponent(collaborativeHandoffPath(appSlug))}`;
+// The record is replaced on every transition; the blob route refuses overwrites without force.
+const blobWritePath = (appSlug: string) => `${blobPath(appSlug)}&force=true`;
 
 function isNotFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -63,7 +66,8 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     const poll = async () => {
-      if (cancelled || ++polls > HANDOFF_MAX_POLLS) return;
+      if (cancelled) return;
+      polls += 1;
       try {
         const next = await read(controller.signal);
         if (cancelled) return;
@@ -73,7 +77,7 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
         if (cancelled) return;
         console.warn("[share] handoff poll failed", error instanceof Error ? error.name : "UnknownError");
       }
-      timer = setTimeout(() => { void poll(); }, HANDOFF_POLL_MS);
+      timer = setTimeout(() => { void poll(); }, polls < HANDOFF_FAST_POLLS ? HANDOFF_POLL_MS : HANDOFF_SLOW_POLL_MS);
     };
     timer = setTimeout(() => { void poll(); }, HANDOFF_POLL_MS);
     return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); };
@@ -83,7 +87,7 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
     if (!api) return null;
     generation.current += 1;
     try {
-      await api.put(blobPath(appSlug), next);
+      await api.put(blobWritePath(appSlug), next);
       setRecord(next); setWriteFailed(false);
       return next;
     } catch (error: unknown) {
