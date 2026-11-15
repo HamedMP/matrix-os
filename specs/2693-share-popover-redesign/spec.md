@@ -1,6 +1,6 @@
 # 2693: Share popover redesign
 
-Status: implementation (phases 1–3 of 4)
+Status: implementation (phases 1–4 complete; pending review and live evidence)
 Design: https://claude.ai/artifact/ER7AzhxZ6n46gVazELsZ3B (Prototype, SharePopover component, per-state artboards)
 Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (unmerged stack #3233–#3340)
 Linear: blocked. The Linear connector was unreachable from the implementing session; a requester-assigned ENG ticket must be linked before any PR opens.
@@ -81,6 +81,14 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 - Filter chips under search: All apps · Mine (apps the owner built) · one chip per org with ≥1 shared app (avatar + count); `aria-pressed`; hint line per filter ("Apps you made.", "{n} apps shared in {Org}."). A chip that disappears falls back to All apps.
 - Org-shared apps still appear as soon as the 2689 directory lists them (existing discovery + refresh signal).
 
+## Org link → desktop app (phase 4)
+
+- Copied org link: `https://<app host>/open/shared-app/<scopeId>?expectedBuildId&expectedShareRevision&app&org` (`sharedAppOpenPath`, `packages/contracts/src/shared-app-link.ts`). `app`/`org` are sanitized display hints for the page only.
+- Hand-off page (public route, no data): immediately tries `matrixos://shared-app/<scopeId>?…` once, then shows **Open in Matrix**, "Download Matrix" (`NEXT_PUBLIC_MATRIX_DESKTOP_DOWNLOAD_URL`, default `https://matrix-os.com`) and "Only {Org} members can open this app."
+- Electron main parses the link strictly (`parseSharedAppDesktopUrl`: exact host, UUID scope, only the two expectation params, no hash/credentials) and sends `deeplink:shared-app`; a link that arrives before the renderer listens (cold start) is held once and pulled with `deeplink:take-shared-app` (main window only).
+- The renderer opens the app only when the member's shared-app directory lists that scope; otherwise "This app isn’t shared with you…". Non-members never gain access via the link; the platform re-checks membership on launch.
+- Deploy note: the hand-off page is served before any customer VPS for signed-out browsers, so it needs the platform/app-shell deployment, not only a host bundle.
+
 ## Failure modes
 
 - **Load failure:** an alert with Try again.
@@ -93,7 +101,7 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 1. Popover, Private (one-time links real, email stubbed), Public, mode-switch confirm, and slug availability. **Done.**
 2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share. **Done.**
 3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips. **Done.**
-4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`).
+4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`). **Done.**
 
 ## Acceptance (phase 1)
 

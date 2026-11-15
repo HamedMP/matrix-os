@@ -91,6 +91,7 @@ import { installBrowserProductSessionCookie } from "./embeds/browser-product-ses
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
 import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
+import { createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -180,9 +181,26 @@ function focusMainWindow(): void {
   win.focus();
 }
 
+// Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
+const sharedAppDeepLinks = createSharedAppDeepLinks({
+  schemes: channelIdentity.deepLinkSchemes,
+  deliver: (link) => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || win.webContents.isLoading()) return false;
+    sendEvent("deeplink:shared-app", link);
+    return true;
+  },
+});
+{
+  // Windows/Linux cold start passes the link in argv; the renderer takes it once it listens.
+  const coldStartLink = process.argv.find(isMatrixOsDeepLink);
+  if (coldStartLink) sharedAppDeepLinks.handle(coldStartLink);
+}
+
 function handleDeepLink(url: string): void {
   if (!isMatrixOsDeepLink(url)) return;
   focusMainWindow();
+  sharedAppDeepLinks.handle(url);
 }
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
@@ -671,6 +689,10 @@ if (!gotLock) {
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
+      });
+      registerSharedAppDeepLinkIpc(ipcMain, {
+        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
+        take: () => sharedAppDeepLinks.take(),
       });
       registerIpcHandlers(ipcMain, {
         authorizeSender,

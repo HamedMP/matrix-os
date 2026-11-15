@@ -37,7 +37,8 @@ export interface ShareOrganizationHost {
   /** Opens Matrix Chats on a NEW chat and sends `prompt` as its first message. */
   startChat: (prompt: string) => Promise<boolean>;
   openChat: () => void;
-  orgLink: (share: CollaborativeAppShare) => string | null;
+  /** Absolute org link for Copy; `hints` are display-only names for the hand-off page. */
+  orgLink: (share: CollaborativeAppShare, hints: { app: string; org: string }) => string | null;
 }
 
 /**
@@ -75,9 +76,18 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
       organizationName: selected.name,
       collaborativeStep: collaborativeStep(flow.step),
       content: <OrganizationTab organizations={organizations} selectedId={selected.organizationId} onSelect={setChosenId}
-        flow={flow} orgLink={sharing.share && flow.shared ? host.orgLink(sharing.share) : null} onOpenChat={host.openChat} busy={busy} />,
+        flow={flow} orgLink={sharing.share && flow.shared ? safeOrgLink(host, sharing.share, selected.name) : null} onOpenChat={host.openChat} busy={busy} />,
     },
   };
+}
+
+function safeOrgLink(host: ShareOrganizationHost, share: CollaborativeAppShare, organizationName: string): string | null {
+  try {
+    return host.orgLink(share, { app: host.appName, org: organizationName });
+  } catch (error: unknown) {
+    console.warn("[share] org link unavailable", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
 }
 
 function collaborativeStep(step: string): "none" | "required" | "running" {

@@ -10,6 +10,7 @@ import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
+import { SHARED_APP_DEEP_LINK_EVENTS, SHARED_APP_DEEP_LINK_INVOKE } from "./shared-app-deep-link-ipc";
 import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
 import {
   AppGenerateEventSchema,
@@ -160,6 +161,7 @@ const BoundedJsonValue = z.unknown().refine(
 
 export const INVOKE_CHANNELS = {
   ...TERMINAL_WINDOW_INVOKE,
+  ...SHARED_APP_DEEP_LINK_INVOKE,
   ...LOCAL_TERMINAL_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
@@ -536,6 +538,7 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
+  ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,

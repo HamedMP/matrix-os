@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useShareOrganization } from "@matrix-os/ui/share";
 import { shellApi } from "../../api/http";
 import { useCollaborationOrganization } from "../../lib/collaboration-organization-state";
-import { sharedAppDeepLink } from "../../lib/shared-app-target";
+import { sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
 import { useChatContext } from "../../stores/chat-context";
 import { useWindowManager } from "../../hooks/useWindowManager";
 import { useShellOrganizationsFor } from "../organization/useShellOrganizations";
@@ -32,7 +32,8 @@ export function useWebShareOrganization(appSlug: string, appName: string) {
       const sent = await chat.submitMessage(prompt);
       return sent !== false;
     },
-    orgLink: (share) => typeof window === "undefined" ? null
-      : new URL(sharedAppDeepLink({ scopeId: share.scopeId, buildId: share.build.buildId, shareRevision: share.shareRevision }), window.location.origin).toString(),
+    // Web hand-off page that opens the desktop app on /shared/app/<scopeId> (phase 4).
+    orgLink: (share, hints) => typeof window === "undefined" ? null
+      : new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedBuildId: share.build.buildId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), window.location.origin).toString(),
   });
 }

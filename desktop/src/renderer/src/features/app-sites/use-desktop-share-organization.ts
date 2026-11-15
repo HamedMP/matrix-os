@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
 import { useShareOrganization } from "@matrix-os/ui/share";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
@@ -30,11 +31,10 @@ export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch 
       chat.newChat();
       return useHermesChat.getState().send(prompt);
     },
-    orgLink: (share) => {
+    orgLink: (share, hints) => {
       const origin = import.meta.env.VITE_CHAT_SHARE_ORIGIN || platformHost;
       if (!origin) return null;
-      const query = new URLSearchParams({ expectedBuildId: share.build.buildId, expectedShareRevision: share.shareRevision });
-      return new URL(`/shared/app/${encodeURIComponent(share.scopeId)}?${query}`, origin).toString();
+      return new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedBuildId: share.build.buildId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), origin).toString();
     },
   });
 }

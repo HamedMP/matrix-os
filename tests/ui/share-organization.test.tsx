@@ -78,7 +78,7 @@ function Host({ organizations, api, fileApi, startChat = vi.fn(async () => true)
   const organization = useShareOrganization({
     appSlug: "sales-crm", appName: "Sales CRM", organizations, preferredOrganizationId: ORG,
     collaborationApi: api, fileApi, startChat, openChat: vi.fn(),
-    orgLink: (value) => `https://app.matrix-os.com/shared/app/${value.scopeId}`,
+    orgLink: (value, hints) => `https://app.matrix-os.com/open/shared-app/${value.scopeId}?app=${hints.app}`,
   });
   return <>
     <span data-testid="trigger"><ShareTriggerLabel pageMode={controller.pageMode} orgShared={organization.shared} /></span>
