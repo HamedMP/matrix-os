@@ -18,7 +18,13 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 /** Returns the sanitized label, or null when unset, blank, or running from a packaged build. */
 export function parseDesktopDevRunLabel(raw: string | undefined, isPackaged: boolean): string | null {
   if (isPackaged || typeof raw !== "string") return null;
-  const label = Array.from(raw.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim()).slice(0, DEV_RUN_LABEL_MAX).join("").trim();
+  // Truncate by whole code points but bound UTF-16 length, matching DesktopDevRunSummarySchema.label.
+  let label = "";
+  for (const char of raw.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim()) {
+    if (label.length + char.length > DEV_RUN_LABEL_MAX) break;
+    label += char;
+  }
+  label = label.trim();
   return label.length > 0 ? label : null;
 }
 

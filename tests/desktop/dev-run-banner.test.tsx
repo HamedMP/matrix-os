@@ -3,6 +3,7 @@ import React from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { DevRunBanner } from "@desktop/renderer/src/features/preview/DevRunBanner";
+import { MAC_TRAFFIC_LIGHT_INSET_PX, StatusBanner } from "@desktop/renderer/src/features/preview/StatusBanner";
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@desktop/renderer/src/lib/operator", () => ({ invoke: mocks.invoke }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -27,4 +28,14 @@ it("omits git details that could not be read", async () => {
   mocks.invoke.mockResolvedValue({ label: "local", sha: null, branch: null, platformOrigin: null, apiOrigin: null });
   render(<DevRunBanner />);
   expect((await screen.findByRole("status")).textContent).toBe("Dev build · local");
+});
+
+it("starts banner text after the macOS window buttons and keeps the strip draggable", () => {
+  render(<StatusBanner platform="MacIntel">label</StatusBanner>);
+  const banner = screen.getByRole("status");
+  expect(banner.style.paddingLeft).toBe(`${MAC_TRAFFIC_LIGHT_INSET_PX}px`);
+  expect(banner.className).toContain("titlebar-drag");
+  cleanup();
+  render(<StatusBanner platform="Win32">label</StatusBanner>);
+  expect(screen.getByRole("status").style.paddingLeft).toBe("");
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { desktopDevRunTitle, parseDesktopDevRunLabel } from "@desktop/shared/dev-run-label";
+import { DesktopDevRunSummarySchema, desktopDevRunTitle, parseDesktopDevRunLabel } from "@desktop/shared/dev-run-label";
 import { resolveDesktopDevRunSummary } from "@desktop/main/dev-run-label";
 
 describe("MATRIX_DESKTOP_DEV_LABEL parsing", () => {
@@ -14,6 +14,12 @@ describe("MATRIX_DESKTOP_DEV_LABEL parsing", () => {
     expect(parseDesktopDevRunLabel("  PR #3314 · Core\u0007 MCP\napprovals\u001b[31m ", false)).toBe("PR #3314 · Core MCP approvals [31m");
     expect(parseDesktopDevRunLabel("x".repeat(200), false)).toHaveLength(80);
   });
+  it("keeps emoji labels within the summary schema so the banner still renders", () => {
+    const label = parseDesktopDevRunLabel(`${"a".repeat(79)}😀😀`, false);
+    expect(label).toBe("a".repeat(79));
+    expect(DesktopDevRunSummarySchema.safeParse({ label, sha: null, branch: null, platformOrigin: null, apiOrigin: null }).success).toBe(true);
+  });
+
   it("titles the window with the label", () => {
     expect(desktopDevRunTitle("PR #3314")).toBe("Matrix OS — PR #3314");
   });

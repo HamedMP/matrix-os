@@ -750,6 +750,6 @@ reviewed protected setup; ordinary Private Previews keep their existing flow.
 
 Set `MATRIX_DESKTOP_DEV_LABEL` on an unpacked dev run to name it in the window title (`Matrix OS — <label>`) and a top banner with branch, short SHA, and platform origin. Packaged builds ignore it; unset means no banner. Combine with `OPERATOR_USER_DATA_DIR` when runs must not share a profile:
 
-`MATRIX_DESKTOP_DEV_LABEL="PR #3314" OPERATOR_GATEWAY_URL=https://pr-3314-preview.matrix-os.com MATRIX_API_ORIGIN=https://pr-3314-preview.matrix-os.com bun run dev:desktop`
+`MATRIX_DESKTOP_DEV_LABEL="PR #<N>" OPERATOR_GATEWAY_URL=<platform-preview-origin> MATRIX_API_ORIGIN=<platform-preview-origin> bun run dev:desktop`, where `<platform-preview-origin>` is the platform preview revision URL for that PR.
 
 In unpacked dev the macOS menu-bar and Dock name come from Electron.app's `Info.plist`; the app is not renamed because `app.setName` would move `userData`.

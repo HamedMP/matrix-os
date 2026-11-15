@@ -1,8 +1,8 @@
-function currentPlatform(): string {
+export function currentPlatform(): string {
   return typeof navigator === "undefined" ? "" : navigator.platform;
 }
 
-function isMacPlatform(platform: string): boolean {
+export function isMacPlatform(platform: string): boolean {
   return /^(Mac|iPhone|iPad|iPod)/i.test(platform);
 }
 
