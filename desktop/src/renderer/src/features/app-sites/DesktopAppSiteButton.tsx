@@ -8,7 +8,7 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import { DesktopAppOrgSharingSection } from "./DesktopAppOrgSharingSection";
+import { useDesktopShareOrganization } from "./use-desktop-share-organization";
 
 // TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
 const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(import.meta.env.VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
@@ -41,6 +41,7 @@ export function DesktopAppSiteButton({
     [api, runtimeSlot, authGeneration]);
   const name = appDisplayName(appSlug, appName);
   const share = useShareController({ appSlug, appName: name, client, emailInvites });
+  const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch });
   return (
     <AppSiteSharePopover
       onOpenChange={(next) => { if (next) share.refresh(); setOpen(next); }}
@@ -51,7 +52,7 @@ export function DesktopAppSiteButton({
           disabled={!client}
           style={{ height: 28, padding: "0 10px", gap: 6, fontSize: 12, background: "var(--bg-app)", color: "var(--text-primary)", border: "1px solid var(--border-default)", boxShadow: "var(--shadow-1)" }}
         >
-          <ShareTriggerLabel pageMode={share.pageMode} orgShared={false} />
+          <ShareTriggerLabel pageMode={share.pageMode} orgShared={organization.shared} />
         </Button>
       )}
       open={open}
@@ -66,17 +67,9 @@ export function DesktopAppSiteButton({
           client={client}
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
+          organization={organization.slot}
           submissions={client && share.site
             ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
-          // Interim: PR 2 replaces this with the shared Organization tab.
-          organization={collaborationApi ? {
-            shared: false,
-            organizationName: "your organization",
-            content: <DesktopAppOrgSharingSection
-              key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
-              appId={appSlug} api={collaborationApi} buildEpoch={buildEpoch}
-            />,
-          } : null}
         />
       ) : null}
     </AppSiteSharePopover>

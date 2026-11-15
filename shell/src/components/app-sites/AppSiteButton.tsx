@@ -7,6 +7,7 @@ import { AppSiteSharePopover } from "./AppSiteSharePopover";
 import { useAppSiteOwnerIdentity } from "./AppSiteOwnerIdentity";
 import { webSiteClient } from "./web-site-client";
 import { appDisplayName, ownerInitial } from "./share-identity";
+import { useWebShareOrganization } from "./use-web-share-organization";
 import { SiteSubmissionsSection } from "./SiteSubmissionsSection";
 
 // TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
@@ -27,6 +28,7 @@ export function AppSiteButton({
   const ownerIdentity = useAppSiteOwnerIdentity();
   const name = appDisplayName(appSlug, appName);
   const share = useShareController({ appSlug, appName: name, client: webSiteClient, emailInvites });
+  const organization = useWebShareOrganization(appSlug, name);
   const [resolvedPortalContainer, setResolvedPortalContainer] = useState<HTMLElement | null>(portalContainer ?? null);
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -48,7 +50,7 @@ export function AppSiteButton({
           variant="outline"
           className="h-7 gap-1.5 border-border bg-background px-2.5 text-xs text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
         >
-          <ShareTriggerLabel pageMode={share.pageMode} orgShared={false} />
+          <ShareTriggerLabel pageMode={share.pageMode} orgShared={organization.shared} />
         </Button>
       )}
     >
@@ -61,6 +63,7 @@ export function AppSiteButton({
           client={webSiteClient}
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
+          organization={organization.slot}
           submissions={share.site
             ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
         />
