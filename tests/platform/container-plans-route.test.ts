@@ -189,7 +189,7 @@ describe('the plans screen data for a free container owner', () => {
     await destroyTestPlatformDb(db);
   });
 
-  it('reports no paid access, so the shell shows the plans, and lets checkout start', async () => {
+  it('reports the free plan with runtime access, so the shell shows the plans from ?plans=1, and lets checkout start', async () => {
     const now = new Date('2026-11-14T00:00:00.000Z');
     await insertUserMachine(db, {
       machineId: 'ctr-1', clerkUserId: OWNER, handle: 'plansowner', status: 'stopped', imageVersion: null,
@@ -213,7 +213,11 @@ describe('the plans screen data for a free container owner', () => {
 
     const status = await app.request('/billing/status?runtimeSlot=primary');
     expect(status.status).toBe(200);
-    expect(await status.json()).toMatchObject({ access: { runtimeProxyAllowed: false } });
+    // The owner may use their container; the shell tells the free plan apart by the entitlement.
+    expect(await status.json()).toMatchObject({
+      access: { runtimeProxyAllowed: true, reason: 'active' },
+      entitlement: { planSlug: 'matrix_free' },
+    });
 
     const checkout = await app.request('/billing/checkout', {
       method: 'POST', headers: { 'content-type': 'application/json' },
