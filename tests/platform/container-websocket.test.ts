@@ -211,6 +211,16 @@ describe('container WebSocket upgrades through the platform', () => {
     expect(statusLine(socket)).toBe('HTTP/1.1 502 Bad Gateway');
     expect(socket.writes.join('')).not.toContain('aaaa');
   });
+
+  it('answers 502 for an oversized handshake whose last chunk carries the header terminator', async () => {
+    await makeRunning();
+    const socket = await upgrade(listen(), { authorization: `Bearer ${await token()}` });
+    await vi.waitFor(() => expect(tls.upstreams.at(-1)?.writes.length).toBeGreaterThan(0));
+    const oversized = `HTTP/1.1 101 Switching Protocols\r\nX-Pad: ${'a'.repeat(20_000)}\r\n\r\n`;
+    tls.upstreams.at(-1)!.emit('data', Buffer.from(oversized, 'latin1'));
+    expect(statusLine(socket)).toBe('HTTP/1.1 502 Bad Gateway');
+    expect(socket.writes.join('')).not.toContain('aaaa');
+  });
 });
 
 describe('container WebSocket handshake deadline', () => {

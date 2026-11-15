@@ -182,15 +182,15 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
     const onData = (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       const end = buffered.indexOf('\r\n\r\n');
-      if (end < 0) {
-        if (buffered.length > MAX_HANDSHAKE_BYTES) {
-          settled = true;
-          clearTimeout(deadline);
-          upstream.destroy();
-          relay.refuse(502);
-        }
+      // The header is bounded whether or not this chunk also carries its terminator.
+      if (end < 0 ? buffered.length > MAX_HANDSHAKE_BYTES : end > MAX_HANDSHAKE_BYTES) {
+        settled = true;
+        clearTimeout(deadline);
+        upstream.destroy();
+        relay.refuse(502);
         return;
       }
+      if (end < 0) return;
       upstream.off('data', onData);
       settled = true;
       clearTimeout(deadline);
