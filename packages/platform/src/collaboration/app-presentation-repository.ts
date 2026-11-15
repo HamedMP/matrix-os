@@ -6,6 +6,7 @@ import type {
 import type { CollaborationPlatformDatabase } from "./database.js";
 
 const MAX_LISTED_SCOPES = 100;
+const EXPIRED_WINDOW_SWEEP_LIMIT = 100;
 
 export interface CollaborativeAppPresentationOwner {
   scopeId: string;
@@ -104,6 +105,36 @@ export class CollaborativeAppPresentationRepository {
   async readArtworkBytes(scopeId: string, sha256: string): Promise<Uint8Array | null> {
     const row = await this.currentArtwork(scopeId, sha256).select("presentation.artwork_bytes").executeTakeFirst();
     return row?.artwork_bytes ? new Uint8Array(row.artwork_bytes) : null;
+  }
+
+  /**
+   * Atomically reserves `bytes` of one member's fleet-wide artwork budget for the current fixed
+   * window; every worker shares the same row, so the bound does not multiply per worker. Expired
+   * windows are swept in bounded batches as new reads are recorded.
+   */
+  async reserveArtworkReadBytes(input: { actorId: string; bytes: number; limit: number; windowMs: number; now: number }): Promise<boolean> {
+    if (input.bytes <= 0 || input.bytes > input.limit) return false;
+    const windowStart = new Date(Math.floor(input.now / input.windowMs) * input.windowMs);
+    return this.db.transaction().execute(async (trx) => {
+      const reserved = await trx.insertInto("collaboration_app_artwork_reads")
+        .values({ actor_id: input.actorId, window_start: windowStart.toISOString(), bytes: input.bytes })
+        .onConflict((conflict) => conflict.columns(["actor_id", "window_start"])
+          .doUpdateSet({ bytes: sql<number>`collaboration_app_artwork_reads.bytes + excluded.bytes` })
+          .where(sql<boolean>`collaboration_app_artwork_reads.bytes + excluded.bytes <= ${input.limit}`))
+        .returning("bytes")
+        .executeTakeFirst();
+      if (!reserved) return false;
+      await trx.deleteFrom("collaboration_app_artwork_reads")
+        .where("actor_id", "=", input.actorId)
+        .where("window_start", "<", windowStart.toISOString())
+        .execute();
+      await sql`DELETE FROM collaboration_app_artwork_reads
+        WHERE (actor_id, window_start) IN (
+          SELECT actor_id, window_start FROM collaboration_app_artwork_reads
+          WHERE window_start < ${windowStart.toISOString()} LIMIT ${EXPIRED_WINDOW_SWEEP_LIMIT}
+        )`.execute(trx);
+      return true;
+    });
   }
 
   private currentArtwork(scopeId: string, sha256: string) {

@@ -114,6 +114,27 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     expect((await upload(bytes)).status).toBe(204);
   }
 
+  /** One platform worker: its own routes and in-memory state over the shared database. */
+  function createWorker(workerRepository = new PlatformCollaborationRepository(fixture.collaborationDb.withPlugin(blobReads), { now: () => now }), launchSessions?: CollaborativeAppLaunchSessions) {
+    const worker = new Hono();
+    worker.route("/", createPlatformCollaborationRoutes({
+      repository: workerRepository,
+      ...(launchSessions ? { launchSessions } : {}),
+      resolveActor: async (context) => context.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async ({ runtimeId, bearerToken }) => bearerToken === runtimeToken && runtimeId === "runtime_owner"
+        ? { runtimeId, ownerId: platformCollaborationActors.owner }
+        : bearerToken === runtimeToken && runtimeId === "runtime_other"
+          ? { runtimeId, ownerId: "user_platform_other_owner" }
+          : null,
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId === platformCollaborationActors.owner ? "Owner" : "Member" }),
+      resolveInvitationIdentifier: async () => null,
+      listOrganizationIds: async () => [organizationId],
+      isCurrentOrganizationMember: async ({ actorId, organizationId: requested }) => currentMemberships.has(`${actorId}:${requested}`),
+      now: () => new Date(clock),
+    }));
+    return worker;
+  }
+
   beforeEach(async () => {
     metadataRevision = 0;
     fixture = await createPlatformCollaborationTestDatabase();
@@ -127,22 +148,7 @@ describe("shared app presentation: owner publication to recipient launcher", () 
       now: () => now.getTime(),
       startTimer: false,
     });
-    routes = new Hono();
-    routes.route("/", createPlatformCollaborationRoutes({
-      repository,
-      launchSessions: sessions,
-      resolveActor: async (context) => context.req.header("x-test-actor") ?? null,
-      authenticateRuntime: async ({ runtimeId, bearerToken }) => bearerToken === runtimeToken && runtimeId === "runtime_owner"
-        ? { runtimeId, ownerId: platformCollaborationActors.owner }
-        : bearerToken === runtimeToken && runtimeId === "runtime_other"
-          ? { runtimeId, ownerId: "user_platform_other_owner" }
-          : null,
-      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId === platformCollaborationActors.owner ? "Owner" : "Member" }),
-      resolveInvitationIdentifier: async () => null,
-      listOrganizationIds: async () => [organizationId],
-      isCurrentOrganizationMember: async ({ actorId, organizationId: requested }) => currentMemberships.has(`${actorId}:${requested}`),
-      now: () => new Date(clock),
-    }));
+    routes = createWorker(repository, sessions);
     currentMemberships.add(`${member}:${organizationId}`);
     await applyApp();
   });
@@ -393,5 +399,47 @@ describe("shared app presentation: owner publication to recipient launcher", () 
     expect((await routes.request(iconUrl, { headers: { "x-test-actor": member, "if-none-match": `"${sha256(icon)}"` } })).status).toBe(304);
     clock += 61_000;
     expect((await routes.request(iconUrl, { headers: { "x-test-actor": member } })).status).toBe(200);
+  });
+
+  it("bounds one member's artwork bytes across every platform worker, not per worker", async () => {
+    const icon = png(17, 4 * 1024 * 1024);
+    await publishArtwork(icon);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    const workers = [routes, createWorker(), createWorker()];
+    let served = 0;
+    let refused = 0;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const response = await workers[attempt % workers.length]!.request(iconUrl, { headers: { "x-test-actor": member } });
+      if (response.status === 200) served += (await response.arrayBuffer()).byteLength;
+      else if (response.status === 429) refused += 1;
+    }
+    expect(served).toBeLessThanOrEqual(64 * 1024 * 1024);
+    expect(refused).toBeGreaterThan(0);
+    // Another member keeps their own budget.
+    currentMemberships.add(`user_platform_guest:${organizationId}`);
+    expect((await workers[1]!.request(iconUrl, { headers: { "x-test-actor": "user_platform_guest" } })).status).toBe(200);
+  });
+
+  it("coalesces concurrent cold reads of one artwork into a single database read", async () => {
+    const icon = png(18, 512 * 1024);
+    await publishArtwork(icon);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    blobReads.bytes = 0;
+    const worker = createWorker();
+    const responses = await Promise.all(Array.from({ length: 8 }, () => worker.request(iconUrl, { headers: { "x-test-actor": member } })));
+    for (const response of responses) expect(new Uint8Array(await response.arrayBuffer())).toEqual(icon);
+    expect(blobReads.bytes).toBe(icon.byteLength);
+  });
+
+  it("removes expired fleet budget windows as it records new reads", async () => {
+    const icon = png(19, 64 * 1024);
+    await publishArtwork(icon);
+    const iconUrl = (await listAs(member)).items[0]!.presentation!.iconUrl!;
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member } })).status).toBe(200);
+    clock += 10 * 60_000;
+    expect((await routes.request(iconUrl, { headers: { "x-test-actor": member } })).status).toBe(200);
+    const windows = await fixture.collaborationDb.selectFrom("collaboration_app_artwork_reads").selectAll().execute();
+    expect(windows).toHaveLength(1);
+    expect(new Date(windows[0]!.window_start).getTime()).toBe(Math.floor(clock / 60_000) * 60_000);
   });
 });

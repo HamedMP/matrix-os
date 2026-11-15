@@ -18,10 +18,14 @@ import type {
 } from "./app-presentation-repository.js";
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-/** Full artwork downloads one member may receive per minute; revalidations (304) are free. */
+/**
+ * Full artwork bytes one member may receive per fixed one-minute window across the whole fleet
+ * (the budget lives in Postgres, shared by every worker); revalidations (304) are free.
+ */
 export const ARTWORK_READ_BYTES_PER_MINUTE = 64 * 1024 * 1024;
 const ARTWORK_READ_WINDOW_MS = 60_000;
-const ARTWORK_BUDGET_MAX_ACTORS = 10_000;
+/** Concurrent cold reads of one digest share a single database read; distinct reads are capped. */
+const ARTWORK_MAX_INFLIGHT_READS = 64;
 /** Digest-keyed bytes are immutable, so a bounded cache spares repeated database blob reads. */
 const ARTWORK_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const ARTWORK_CACHE_MAX_ENTRIES = 256;
@@ -58,8 +62,25 @@ export function registerSharedAppPresentationRoutes(app: Hono, options: {
   now?: () => number;
 }): void {
   const now = options.now ?? (() => Date.now());
-  const readBudget = new ArtworkByteBudget(now);
   const cache = new ArtworkBytesCache();
+  const inflight = new Map<string, Promise<Uint8Array | null>>();
+
+  /** Cache, then one shared in-flight read per digest; null when the stored bytes are gone. */
+  function loadArtworkBytes(scopeId: string, sha256: string, byteLength: number): Promise<Uint8Array | null> {
+    const key = `${scopeId}:${sha256}`;
+    const cached = cache.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = inflight.get(key);
+    if (pending) return pending;
+    if (inflight.size >= ARTWORK_MAX_INFLIGHT_READS) return Promise.reject(new ArtworkReadsSaturatedError());
+    const read = options.presentations.readArtworkBytes(scopeId, sha256).then((stored) => {
+      if (!stored || stored.byteLength !== byteLength) return null;
+      cache.set(key, stored);
+      return stored;
+    }).finally(() => inflight.delete(key));
+    inflight.set(key, read);
+    return read;
+  }
   app.put(
     "/internal/collaboration/shared-apps/:scopeId/presentation",
     bodyLimit({ maxSize: COLLABORATION_HTTP_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) }),
@@ -133,15 +154,12 @@ export function registerSharedAppPresentationRoutes(app: Hono, options: {
         c.header("ETag", etag);
         return c.body(null, 304);
       }
-      if (!readBudget.reserve(actorId, artwork.byteLength)) return safeJson(c, "Too many collaboration requests", 429);
-      const key = `${scopeId.data}:${sha256.data}`;
-      let bytes = cache.get(key);
-      if (!bytes) {
-        const stored = await options.presentations.readArtworkBytes(scopeId.data, sha256.data);
-        if (!stored || stored.byteLength !== artwork.byteLength) return safeJson(c, "Collaboration resource not found", 404);
-        cache.set(key, stored);
-        bytes = stored;
-      }
+      const reserved = await options.presentations.reserveArtworkReadBytes({
+        actorId, bytes: artwork.byteLength, limit: ARTWORK_READ_BYTES_PER_MINUTE, windowMs: ARTWORK_READ_WINDOW_MS, now: now(),
+      });
+      if (!reserved) return safeJson(c, "Too many collaboration requests", 429);
+      const bytes = await loadArtworkBytes(scopeId.data, sha256.data, artwork.byteLength);
+      if (!bytes) return safeJson(c, "Collaboration resource not found", 404);
       for (const [name, value] of Object.entries(ARTWORK_HEADERS)) c.header(name, value);
       c.header("ETag", etag);
       c.header("Content-Type", artwork.contentType);
@@ -154,29 +172,10 @@ export function registerSharedAppPresentationRoutes(app: Hono, options: {
   });
 }
 
-/** Per-member sliding-window budget of artwork bytes served, capped in actors tracked. */
-class ArtworkByteBudget {
-  private readonly reads = new Map<string, Array<{ at: number; bytes: number }>>();
-
-  constructor(private readonly now: () => number) {}
-
-  reserve(actorId: string, bytes: number): boolean {
-    const at = this.now();
-    const cutoff = at - ARTWORK_READ_WINDOW_MS;
-    for (const [actor, entries] of this.reads) {
-      const live = entries.filter((entry) => entry.at > cutoff);
-      if (live.length === 0) this.reads.delete(actor);
-      else if (live.length !== entries.length) this.reads.set(actor, live);
-    }
-    const entries = this.reads.get(actorId) ?? [];
-    const used = entries.reduce((total, entry) => total + entry.bytes, 0);
-    if (used + bytes > ARTWORK_READ_BYTES_PER_MINUTE) return false;
-    if (!this.reads.has(actorId) && this.reads.size >= ARTWORK_BUDGET_MAX_ACTORS) {
-      this.reads.delete(this.reads.keys().next().value!);
-    }
-    this.reads.delete(actorId);
-    this.reads.set(actorId, [...entries, { at, bytes }]);
-    return true;
+class ArtworkReadsSaturatedError extends Error {
+  constructor() {
+    super("Too many concurrent artwork reads");
+    this.name = "ArtworkReadsSaturatedError";
   }
 }
 

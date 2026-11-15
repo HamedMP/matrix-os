@@ -118,8 +118,16 @@ export interface CollaborationAppPresentationsTable {
   updated_at: Timestamp;
 }
 
+/** Fleet-wide artwork bytes served per member per fixed one-minute window. */
+export interface CollaborationAppArtworkReadsTable {
+  actor_id: string;
+  window_start: Timestamp;
+  bytes: ColumnType<string | number, number, number>;
+}
+
 export interface CollaborationPlatformDatabase {
   collaboration_app_presentations: CollaborationAppPresentationsTable;
+  collaboration_app_artwork_reads: CollaborationAppArtworkReadsTable;
   collaboration_app_launches: {
     launch_id: string; client_request_id: string; actor_id: string; scope_id: string;
     identity: CollaborativeAppLaunchIdentity; created_at: Timestamp; expires_at: Timestamp;
@@ -310,6 +318,17 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
       CHECK (artwork_bytes IS NULL OR octet_length(artwork_bytes) = artwork_byte_length)
     )
   `.execute(trx);
+  // Shared by every platform worker so one member's artwork budget cannot multiply per worker.
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_app_artwork_reads (
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      window_start TIMESTAMPTZ NOT NULL,
+      bytes BIGINT NOT NULL CHECK (bytes > 0),
+      PRIMARY KEY (actor_id, window_start)
+    )
+  `.execute(trx);
+  await sql`CREATE INDEX IF NOT EXISTS idx_collaboration_app_artwork_reads_window
+    ON collaboration_app_artwork_reads(window_start)`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_cutover_dispositions (
       scope_id UUID PRIMARY KEY,
