@@ -5,6 +5,8 @@
  */
 
 export interface ApprovalDetailField {
+  /** The input's own name, unique within one request. */
+  key: string;
   label: string;
   value: string;
   /** Drawn in the code font: commands, paths, addresses, patterns. */
@@ -39,10 +41,10 @@ function fieldFor(key: string, value: unknown): ApprovalDetailField | null {
   if (value === null || value === undefined || value === "") return null;
   const named = NAMED[key];
   const label = named?.label ?? labelFromKey(key);
-  if (typeof value === "string") return { label, value, code: named?.code ?? true };
-  if (typeof value === "boolean") return { label, value: value ? "Yes" : "No", code: false };
-  if (typeof value === "number") return { label, value: String(value), code: false };
-  return { label, value: JSON.stringify(value, null, 2), code: true };
+  if (typeof value === "string") return { key, label, value, code: named?.code ?? true };
+  if (typeof value === "boolean") return { key, label, value: value ? "Yes" : "No", code: false };
+  if (typeof value === "number") return { key, label, value: String(value), code: false };
+  return { key, label, value: JSON.stringify(value, null, 2), code: true };
 }
 
 /**

@@ -33,20 +33,26 @@ export interface SupervisedToolApprovalCardProps {
  * `SupervisedToolApprovalCard`: what Matrix wants to do, why nothing happens
  * yet, the details on request, and Allow once or Not now.
  */
-export function SupervisedToolApprovalCard({
+export function SupervisedToolApprovalCard({ approval, testID, ...answer }: SupervisedToolApprovalCardProps) {
+  if (approval.kind === "waiting" || approval.kind === "expired") {
+    return <OpenApproval approval={approval} testID={testID} {...answer} />;
+  }
+  return <SettledApproval testID={testID} allowed={approval.kind === "allowed"} line={approval.line} />;
+}
+
+type OpenRequest = Extract<SupervisedToolApproval, { kind: "waiting" | "expired" }>;
+
+function OpenApproval({
   approval,
   sending = null,
   submitted = false,
   error,
   onDecision,
   testID,
-}: SupervisedToolApprovalCardProps) {
+}: Omit<SupervisedToolApprovalCardProps, "approval"> & { approval: OpenRequest }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  if (approval.kind === "allowed" || approval.kind === "declined" || approval.kind === "cancelled") {
-    return <SettledApproval testID={testID} allowed={approval.kind === "allowed"} line={approval.line} />;
-  }
-  const waiting = approval.kind === "waiting";
-  const details = waiting ? approval.details : undefined;
+  const waiting = approval.kind === "waiting" ? approval : null;
+  const details = waiting?.details;
   return (
     <View testID={testID} style={[styles.card, !waiting && styles.cardEnded]}>
       <View style={styles.header}>
@@ -54,16 +60,7 @@ export function SupervisedToolApprovalCard({
           {waiting ? <StatusDot tone="waiting" /> : null}
           <Text style={styles.labelText}>{waiting ? "Needs your approval" : "Request expired"}</Text>
         </View>
-        {details ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: detailsOpen }}
-            hitSlop={12}
-            onPress={() => setDetailsOpen((open) => !open)}
-          >
-            <Text style={styles.toggleText}>{detailsOpen ? "Hide details" : "See details"}</Text>
-          </Pressable>
-        ) : null}
+        {details ? <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} /> : null}
       </View>
       <ApprovalTitle title={approval.title} />
       <View style={styles.body}>
@@ -71,37 +68,49 @@ export function SupervisedToolApprovalCard({
         {detailsOpen && details ? <ApprovalDetails details={details} /> : null}
       </View>
       {waiting ? (
-        submitted ? <Text style={styles.note}>{SUBMITTED_NOTE}</Text> : (
-          approval.allowOnce || approval.decline ? (
-            <View style={styles.actions}>
-              {approval.allowOnce ? (
-                <View style={styles.action}>
-                  <Button
-                    fullWidth
-                    label="Allow once"
-                    loading={sending === "approve"}
-                    disabled={!onDecision || (sending !== null && sending !== "approve")}
-                    onPress={() => onDecision?.("approve")}
-                  />
-                </View>
-              ) : null}
-              {approval.decline ? (
-                <View style={styles.action}>
-                  <Button
-                    fullWidth
-                    variant="outline"
-                    label="Not now"
-                    loading={sending === "decline"}
-                    disabled={!onDecision || (sending !== null && sending !== "decline")}
-                    onPress={() => onDecision?.("decline")}
-                  />
-                </View>
-              ) : null}
-            </View>
-          ) : null
-        )
+        <ApprovalActions request={waiting} submitted={submitted} sending={sending} onDecision={onDecision} />
       ) : null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
+/** Press once to open the details, again to close them. */
+function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} hitSlop={12} onPress={onToggle}>
+      <Text style={styles.toggleText}>{open ? "Hide details" : "See details"}</Text>
+    </Pressable>
+  );
+}
+
+/** Desktop's two answers, side by side; the one being sent shows a spinner. */
+function ApprovalActions({ request, submitted, sending, onDecision }: {
+  request: Extract<SupervisedToolApproval, { kind: "waiting" }>;
+  submitted: boolean;
+  sending: CanonicalChatApprovalDecision | null;
+  onDecision?: (decision: CanonicalChatApprovalDecision) => void;
+}) {
+  if (submitted) return <Text style={styles.note}>{SUBMITTED_NOTE}</Text>;
+  const choices = [
+    ...(request.allowOnce ? [{ decision: "approve" as const, label: "Allow once", variant: "filled" as const }] : []),
+    ...(request.decline ? [{ decision: "decline" as const, label: "Not now", variant: "outline" as const }] : []),
+  ];
+  if (choices.length === 0) return null;
+  return (
+    <View style={styles.actions}>
+      {choices.map((choice) => (
+        <View key={choice.decision} style={styles.action}>
+          <Button
+            fullWidth
+            variant={choice.variant}
+            label={choice.label}
+            loading={sending === choice.decision}
+            disabled={!onDecision || (sending !== null && sending !== choice.decision)}
+            onPress={() => onDecision?.(choice.decision)}
+          />
+        </View>
+      ))}
     </View>
   );
 }
@@ -125,8 +134,8 @@ function ApprovalDetails({ details }: { details: string }) {
   if (!fields) return <Text selectable style={[styles.detailValue, styles.code]}>{details}</Text>;
   return (
     <View style={styles.details}>
-      {fields.map((field, index) => (
-        <View key={`${index}:${field.label}`} style={styles.field}>
+      {fields.map((field) => (
+        <View key={field.key} style={styles.field}>
           <Text style={styles.detailLabel}>{field.label}</Text>
           <Text selectable style={[styles.detailValue, field.code && styles.code]}>{field.value}</Text>
         </View>
