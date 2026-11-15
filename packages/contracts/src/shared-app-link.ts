@@ -27,6 +27,12 @@ export const SharedAppLinkSchema = z.strictObject({
 export type SharedAppLink = z.infer<typeof SharedAppLinkSchema>;
 
 /** Normalizes a display name into a valid hint, or `undefined` when nothing usable remains. */
+/** True for exactly `/open/shared-app/<scopeId>`: the public, data-free hand-off page. */
+export function isSharedAppOpenPath(pathname: string): boolean {
+  if (!pathname.startsWith(SHARED_APP_OPEN_PATH_PREFIX)) return false;
+  return CollaborationIdSchema.safeParse(pathname.slice(SHARED_APP_OPEN_PATH_PREFIX.length)).success;
+}
+
 export function sharedAppDisplayHint(value: string): string | undefined {
   const cleaned = value.replace(/[<>\u0000-\u001f]/g, "").trim().slice(0, 80).trim();
   return cleaned ? cleaned : undefined;

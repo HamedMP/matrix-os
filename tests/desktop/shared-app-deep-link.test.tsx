@@ -2,7 +2,7 @@
 import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseSharedAppDesktopUrl, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
+import { isSharedAppOpenPath, parseSharedAppDesktopUrl, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "../../desktop/src/main/shared-app-deep-link";
 
 // Outcome: a copied org link opens the shared app in the Matrix desktop app.
@@ -42,6 +42,13 @@ describe("org link contract", () => {
     "matrixos://shared-app/%",
   ])("rejects %s", (value) => {
     expect(parseSharedAppDesktopUrl(value, SCHEMES)).toBeNull();
+  });
+
+  it("recognizes only the exact public hand-off path", () => {
+    expect(isSharedAppOpenPath(`/open/shared-app/${SCOPE}`)).toBe(true);
+    expect(isSharedAppOpenPath(`/open/shared-app/${SCOPE}/extra`)).toBe(false);
+    expect(isSharedAppOpenPath("/open/shared-app/not-a-scope")).toBe(false);
+    expect(isSharedAppOpenPath(`/shared/app/${SCOPE}`)).toBe(false);
   });
 
   it("sanitizes display hints so they can never break the link", () => {
