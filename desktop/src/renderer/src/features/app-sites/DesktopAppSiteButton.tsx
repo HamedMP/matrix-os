@@ -66,7 +66,7 @@ export function DesktopAppSiteButton({
           client={client}
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
-          submissions={client && share.site?.status === "published" && share.site.config.forms.length > 0
+          submissions={client && share.site
             ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
           // Interim: PR 2 replaces this with the shared Organization tab.
           organization={collaborationApi ? {

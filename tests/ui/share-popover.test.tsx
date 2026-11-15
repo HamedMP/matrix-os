@@ -336,6 +336,28 @@ describe("review fixes: owner controls and stale state", () => {
     expect(api.unpublish).not.toHaveBeenCalled();
   });
 
+  it("keeps a running action alive when the popover reopens mid-publish", async () => {
+    let finish!: (site: SiteRecord) => void;
+    const deploy = vi.fn((_app: string, _metadata: unknown, _signal: AbortSignal) => new Promise<SiteRecord>((resolve) => { finish = resolve; }));
+    const get = vi.fn(async () => ({ ...base, slug: "sales-crm" }));
+    const api = client({ get, deploy });
+    function RefreshingHost() {
+      const share = useShareController({ appSlug: "sales-crm", appName: "Sales CRM", client: api, emailInvites: null });
+      return <>
+        <button type="button" onClick={share.refresh}>Reopen</button>
+        <SharePanel share={share} appSlug="sales-crm" appName="Sales CRM" client={api} ownerInitial="N" onClose={vi.fn()} organization={null} />
+      </>;
+    }
+    render(<RefreshingHost />);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Publish latest version" }));
+    await waitFor(() => expect(deploy).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    finish({ ...base, slug: "sales-crm", revision: 4 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Publish latest version" })).toHaveProperty("disabled", false));
+    expect(deploy.mock.calls[0]![2].aborted).toBe(false);
+  });
+
   it("re-reads the publication after a revision conflict", async () => {
     const get = vi.fn(async () => ({ ...base, accessMode: "private_link" as const }));
     const api = client({ get, createAccessLink: vi.fn().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 })) });
