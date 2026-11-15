@@ -92,6 +92,18 @@ describe("new shared apps", () => {
     await waitFor(() => expect(stored).toEqual({ version: 1, seen: ["scope-a", "scope-b"] }));
   });
 
+  it("keeps an app opened while the saved list loads marked as seen", async () => {
+    // Fault: markSeen dropped opens before the read settled, so the app regained its new dot.
+    let finish!: (value: unknown) => void;
+    const api = { get: vi.fn(() => new Promise((resolve) => { finish = resolve; })), put: vi.fn(async () => ({ ok: true })) };
+    const { result } = renderHook(() => useSeenSharedApps({ api, scopeIds: ["scope-a", "scope-b"], ready: true }));
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    act(() => result.current.markSeen("scope-b"));
+    await act(async () => finish({ version: 1, seen: ["scope-a"] }));
+    expect(result.current.isNew("scope-b")).toBe(false);
+    expect(api.put).toHaveBeenLastCalledWith(expect.stringContaining("force=true"), { version: 1, seen: ["scope-a", "scope-b"] });
+  });
+
   it("reads the saved list and never throws when saving fails", async () => {
     const api = { get: vi.fn(async () => ({ version: 1, seen: ["scope-a"] })), put: vi.fn(() => { throw new Error("offline"); }) };
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

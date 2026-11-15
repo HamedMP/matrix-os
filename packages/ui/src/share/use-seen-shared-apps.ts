@@ -43,11 +43,21 @@ export function addSeen(seen: readonly string[], scopeId: string): string[] {
 export function useSeenSharedApps({ api, scopeIds, ready }: { api: HandoffFileApi | null; scopeIds: readonly string[]; ready: boolean }) {
   const [seen, setSeen] = useState<string[] | null>(null);
   const loading = useRef(false);
+  /** Apps opened before the saved list loaded; merged in (and saved) once it settles. */
+  const openedWhileLoading = useRef<string[]>([]);
   // A stable key: callers may pass a fresh array each render.
   const idsKey = scopeIds.join("|");
   useEffect(() => {
     if (!api || !ready || seen !== null || loading.current) return;
     const ids = idsKey ? idsKey.split("|") : [];
+    // Settles the loaded list, folding in apps opened meanwhile; saves when that changed it.
+    const settle = (base: string[], alreadySaving: boolean) => {
+      const opened = openedWhileLoading.current;
+      openedWhileLoading.current = [];
+      const next = opened.reduce(addSeen, base);
+      setSeen(next);
+      if (alreadySaving || opened.some((id) => !base.includes(id))) save(api, next);
+    };
     // One bounded read (the api applies its own timeout). A re-run discards the
     // older result and starts again, so the state can never stay unloaded.
     loading.current = true;
@@ -56,17 +66,15 @@ export function useSeenSharedApps({ api, scopeIds, ready }: { api: HandoffFileAp
       try {
         const parsed = SeenSchema.safeParse(await api.get(blobPath));
         if (!current) return;
-        setSeen(parsed.success ? parsed.data.seen : ids);
+        settle(parsed.success ? parsed.data.seen : ids, false);
       } catch (error: unknown) {
         if (!current) return;
         if (!notFound(error)) {
           console.warn("[launcher] seen shared apps unavailable", error instanceof Error ? error.name : "UnknownError");
-          setSeen(ids);
+          settle(ids, false);
           return;
         }
-        const baseline = ids.slice(-SEEN_SHARED_APPS_MAX);
-        setSeen(baseline);
-        save(api, baseline);
+        settle(ids.slice(-SEEN_SHARED_APPS_MAX), true);
       } finally { if (current) loading.current = false; }
     })();
     return () => { current = false; loading.current = false; };
@@ -74,7 +82,12 @@ export function useSeenSharedApps({ api, scopeIds, ready }: { api: HandoffFileAp
   return {
     isNew: (scopeId: string) => seen !== null && !seen.includes(scopeId),
     markSeen(scopeId: string) {
-      if (!api || seen === null || seen.includes(scopeId)) return;
+      if (!api) return;
+      if (seen === null) {
+        openedWhileLoading.current = addSeen(openedWhileLoading.current, scopeId);
+        return;
+      }
+      if (seen.includes(scopeId)) return;
       const next = addSeen(seen, scopeId);
       setSeen(next);
       save(api, next);

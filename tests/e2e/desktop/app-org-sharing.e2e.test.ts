@@ -85,7 +85,7 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     const dialog = page.getByRole("dialog", { name: "Share app" });
     await dialog.waitFor();
     await dialog.getByRole("tab", { name: /Organization/ }).click();
-    await dialog.getByText("Matrix Team").waitFor();
+    await dialog.getByText("Matrix Team", { exact: true }).waitFor();
     expect(await page.getByRole("button", { name: "Share", exact: true }).count()).toBe(1);
     // Readiness is rechecked on Share; a ready result shares at once.
     await dialog.getByRole("button", { name: "Share with Matrix Team" }).click();
