@@ -20,6 +20,7 @@ async function harness(options: {
   statusAfterStart?: Status[];
   template?: string;
   admitWorkspace?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+  onSleep?: () => void;
 } = {}) {
   const home = await mkdtemp(join(tmpdir(), "matrix-terminal-agents-"));
   roots.push(home);
@@ -93,7 +94,7 @@ async function harness(options: {
     templates: createTerminalTemplates({ homePath: home }),
     ...(options.admitWorkspace ? { admitWorkspace: options.admitWorkspace } : {}),
     now: () => now,
-    sleep: async (ms) => { now += ms; },
+    sleep: async (ms) => { now += ms; options.onSleep?.(); },
   });
   return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, panes, advance: (ms: number) => { now += ms; }, time: () => now };
 }
@@ -169,6 +170,19 @@ describe("terminal agents: labels, reports and children", () => {
     await expect(createTerminalAgentsWithResolver(h, async () => child.ref).reportToParent({ caller: childPane, text: "2 bugs; see /tmp/f.md" }))
       .resolves.toEqual({ sent: true, parent: { workspaceId, tabId: parentId } });
     expect(h.sends.at(-1)).toEqual({ tabId: parentId, text: `<matrix from="${child.ref.tabId} review">2 bugs; see /tmp/f.md</matrix>` });
+  });
+
+  // Fault detected (review of #3298): a helper blocked when the wait began, went back to
+  // work and blocked again, but the wait compared with its first state and timed out.
+  it("reports a child that blocks again after working during the wait", async () => {
+    const script: Array<"working" | "blocked"> = ["working", "blocked"];
+    let childId = "";
+    const h = await harness({ onSleep: () => { const next = script.shift(); if (next) h.statuses.set(childId, next); } });
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent: { workspaceId, tabId: parentId } });
+    childId = child.ref.tabId;
+    h.statuses.set(childId, "blocked");
+    await expect(h.agents.waitChildren({ workspaceId, tabId: parentId }, { mode: "any", timeoutMs: 10_000 }))
+      .resolves.toMatchObject({ reason: "changed", child: child.ref, status: "blocked" });
   });
 
   it("waits for any child's news and for all children to stop", async () => {

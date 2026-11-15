@@ -97,6 +97,15 @@ describe("matrix shell orchestration", () => {
     expect(calls[0]?.body).toEqual({ name: "tests", cwd: "", argv: ["bun", "test"], noParent: true });
   });
 
+  // Fault detected (review of #3298): `run -- /tmp/build.sh` without --name used the
+  // path as the tab name, which the gateway rejects, so the run failed.
+  it("names a command run without --name after the program, not its path", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const calls = gateway(() => json({ tab: { id: TAB_ID } }, 201));
+    await runCommand(shellCommand, { rawArgs: ["run", "--dev", "--token", "tok", "--no-parent", "--", "/tmp/build.sh", "--fast"] });
+    expect(calls[0]?.body).toEqual({ name: "build.sh", cwd: "", argv: ["/tmp/build.sh", "--fast"], noParent: true });
+  });
+
   it("says plainly when the first task was not sent", async () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));

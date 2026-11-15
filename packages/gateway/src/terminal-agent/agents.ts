@@ -238,12 +238,15 @@ export function createTerminalAgents(options: {
       ? remembered.facts
       : await snapshot();
     if (initial.size === 0) return { reason: "none" };
+    // Each child's latest observed state: a helper that went back to work and blocked
+    // again is news, though its status matches the one the wait started with.
+    const seen = new Map(initial);
     const timedOut = (): TerminalChildrenWaitResult => {
       // Keep the starting states server-side, under a short cursor, so a check-in's
       // request stays small however many children there are.
       const cursor = input.cursor && remembered ? input.cursor : `wc_${randomBytes(16).toString("hex")}`;
       childWaitBaselines.delete(cursor);
-      childWaitBaselines.set(cursor, { parentKey, facts: initial, expiresAt: now() + CHILD_WAIT_BASELINE_TTL_MS });
+      childWaitBaselines.set(cursor, { parentKey, facts: seen, expiresAt: now() + CHILD_WAIT_BASELINE_TTL_MS });
       for (const [key, entry] of childWaitBaselines) {
         if (childWaitBaselines.size <= MAX_CHILD_WAIT_BASELINES && entry.expiresAt > now()) break;
         childWaitBaselines.delete(key);
@@ -258,7 +261,7 @@ export function createTerminalAgents(options: {
         const working = [...current.values()].some((child) => child.live && (child.status === undefined || child.status === "working"));
         if (!working) return { reason: "idle" };
       } else {
-        for (const [key, before] of initial) {
+        for (const [key, before] of seen) {
           const child = current.get(key);
           // A child whose record is gone was removed: that is its exit.
           if (!child) return { reason: "changed", child: before.ref, exited: true };
@@ -267,6 +270,8 @@ export function createTerminalAgents(options: {
           if (child.status !== before.status && child.status !== "working") {
             return { reason: "changed", child: child.ref, ...(child.status ? { status: child.status } : {}) };
           }
+          // Only a move to working is left: remember it, so a later block is news.
+          if (child.status !== before.status) seen.set(key, child);
         }
       }
       if (now() >= deadline) return timedOut();

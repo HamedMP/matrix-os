@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { defineCommand } from "citty";
 import { formatCliSuccess } from "../output.js";
 import { resolveTerminalAgentCliConnection } from "../local-terminal-connection.js";
@@ -106,7 +107,8 @@ export const shellRunCommand = command(
     const task = template ? words.slice(1).join(" ") : undefined;
     const result = await agents.run({
       ...(project ? { projectId: project.id } : {}),
-      name: typeof args.name === "string" && args.name ? args.name : template?.name ?? words[0]!.slice(0, 64),
+      // A command's default name is its program, never its path: names reject paths.
+      name: typeof args.name === "string" && args.name ? args.name : template?.name ?? (basename(words[0]!) || "run").slice(0, 64),
       // As `matrix shell new`: a project's terminals start in its folder unless --cwd says otherwise.
       cwd: typeof args.cwd === "string" ? args.cwd : project ? `projects/${project.label}` : "",
       ...(template ? { template: template.name } : { argv: words }),
