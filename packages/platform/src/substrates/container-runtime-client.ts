@@ -60,6 +60,34 @@ export interface ContainerRuntimeClientDeps {
 
 type Reply = { status: number; body: unknown } | null;
 
+/** Reads at most `maxBytes`, cancelling the stream as soon as the body passes it; null when it does. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string | null> {
+  const declared = response.headers.get('content-length');
+  if (declared !== null && Number(declared) > maxBytes) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 export function createContainerRuntimeClient(deps: ContainerRuntimeClientDeps): ContainerRuntimeClient {
   const doFetch = deps.fetch ?? fetch;
   const now = deps.now ?? (() => new Date());
@@ -97,8 +125,8 @@ export function createContainerRuntimeClient(deps: ContainerRuntimeClientDeps): 
       const response = await doFetch(`https://${target.endpointHost}/internal/runtime/${route}`, {
         method: 'POST', headers, body: '{}', redirect: 'error', signal: bounded,
       });
-      const text = await response.text();
-      if (text.length > MAX_RESPONSE_BYTES) {
+      const text = await readBoundedText(response, MAX_RESPONSE_BYTES);
+      if (text === null) {
         logError('[container-runtime] response too large', { route, status: response.status });
         return null;
       }

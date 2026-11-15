@@ -62,6 +62,22 @@ describe('container runtime client', () => {
       .toEqual({ ok: false, error: 'unavailable' });
   });
 
+  it('stops reading an oversized reply at the limit and cancels the rest of the stream', async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024).fill(0x61));
+      },
+      cancel() { cancelled = true; },
+    });
+    const { runtime } = client(() => new Response(endless, { status: 200 }));
+    expect(await runtime.quiesce(TARGET, AbortSignal.timeout(5_000))).toEqual({ ok: false, error: 'unavailable' });
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(8);
+  });
+
   it('accepts a flush only when the home and manifest are durable', async () => {
     const parts = { home: 'persisted', ownerDatabase: 'persisted', kernelDatabase: 'local_only' };
     expect(await client(() => json(200, { manifestDigest: DIGEST, parts })).runtime.flush(TARGET, AbortSignal.timeout(5_000)))
