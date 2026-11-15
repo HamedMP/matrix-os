@@ -58,7 +58,8 @@ interface MachineRow {
   failure_at: string | null;
 }
 
-export type RegisterOutcome = 'ok' | 'stale_generation' | 'not_starting';
+/** `unit_pending`: the gateway answered before its unit was recorded; the runtime retries shortly. */
+export type RegisterOutcome = 'ok' | 'stale_generation' | 'not_starting' | 'unit_pending';
 export type StopOutcome = 'stopped' | 'stale_generation' | 'not_running' | 'needs_recovery';
 export type DestroyOutcome = 'destroyed' | 'stale_generation';
 
@@ -87,6 +88,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   const maxLaunches = deps.maxConcurrentLaunches ?? DEFAULT_MAX_CONCURRENT_LAUNCHES;
   const launches = new Set<Promise<void>>();
+  /** Launch slots held by starts whose claim is still in flight, so a burst cannot overshoot the cap. */
+  let claiming = 0;
   const shutdownController = new AbortController();
 
   function callSignal(): AbortSignal {
@@ -237,20 +240,40 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       default:
         return { state: 'failed', code: 'needs_recovery' };
     }
-    if (launches.size >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
-    const claimed = await transition(machineId, ['stopped', 'failed_start'], row.generation, {
-      status: 'starting', started_at: now(), failure_code: null, failure_at: null,
-    });
-    if (claimed) track(launch({ ...row, status: 'starting' }));
+    if (launches.size + claiming >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
+    claiming += 1;
+    try {
+      const claimed = await transition(machineId, ['stopped', 'failed_start'], row.generation, {
+        status: 'starting', started_at: now(), failure_code: null, failure_at: null,
+      });
+      if (claimed) track(launch({ ...row, status: 'starting' }));
+    } finally {
+      claiming -= 1;
+    }
     return { state: 'starting' };
   }
 
+  /**
+   * A runtime is running only once its unit is recorded: registration that
+   * beats `launch` saving the unit asks the runtime to retry, so the save
+   * still finds the row starting and never fences the new unit.
+   */
   async function markRegistered(machineId: string, generation: number): Promise<RegisterOutcome> {
-    const ok = await transition(machineId, ['starting'], generation, { status: 'running', last_activity_at: now() });
+    const ok = await db.executor.updateTable('user_machines')
+      .set({ status: 'running', last_activity_at: now() })
+      .where('machine_id', '=', machineId)
+      .where('substrate', '=', 'container')
+      .where('deleted_at', 'is', null)
+      .where('status', '=', 'starting')
+      .where('generation', '=', generation)
+      .where('substrate_ref', 'is not', null)
+      .returning('machine_id')
+      .executeTakeFirst();
     if (ok) return 'ok';
     const row = await load(machineId);
     if (!row || row.generation !== generation) return 'stale_generation';
-    return row.status === 'running' ? 'ok' : 'not_starting';
+    if (row.status === 'running') return 'ok';
+    return row.status === 'starting' && row.substrate_ref === null ? 'unit_pending' : 'not_starting';
   }
 
   async function stop(machineId: string, generation: number, signal: AbortSignal): Promise<StopOutcome> {

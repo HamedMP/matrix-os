@@ -154,6 +154,27 @@ describe('container lifecycle service', () => {
     expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'running' });
   });
 
+  it('asks a runtime that registers before its unit is recorded to retry, and keeps the unit', async () => {
+    let s!: ReturnType<typeof service>;
+    const outcomes: string[] = [];
+    const provider = fakeProvider({
+      run: vi.fn(async () => {
+        // The new gateway is fast: it registers before `run` has returned to the platform.
+        outcomes.push(await s.markRegistered('ctr-1', 2));
+        return unit();
+      }),
+    });
+    s = service(provider);
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+
+    expect(outcomes).toEqual(['unit_pending']);
+    expect(provider.terminate).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({ status: 'starting', generation: 2, substrateRef: 'mvm-new' });
+    expect(await s.markRegistered('ctr-1', 2)).toBe('ok');
+    expect(await row()).toMatchObject({ status: 'running', substrateRef: 'mvm-new', privateAddress: ENDPOINT });
+  });
+
   it('terminates a new unit whose generation was fenced while it was being created', async () => {
     const provider = fakeProvider({
       run: vi.fn(async () => {
@@ -263,6 +284,29 @@ describe('container lifecycle service', () => {
     expect((await getUserMachine(db, 'ctr-2'))?.status).toBe('stopped');
     release();
     await s.drain();
+  });
+
+  it('holds the launch cap for a burst of starts that all pass the check before any claim lands', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const provider = fakeProvider({ run: vi.fn(async () => { await gate; return unit(); }) });
+    const s = createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, maxConcurrentLaunches: 2,
+      buildBootPayload: async () => '{}',
+    });
+    const ids = ['ctr-2', 'ctr-3', 'ctr-4', 'ctr-5'];
+    for (const [i, machineId] of ids.entries()) {
+      await insertUserMachine(db, {
+        machineId, clerkUserId: `user_burst_${i}`, handle: `burst${i}`, status: 'stopped',
+        provisionedAt: '2026-11-01T00:00:00.000Z', substrate: 'container',
+      });
+    }
+    const results = await Promise.all(['ctr-1', ...ids].map(id => s.ensureStarted(id)));
+    release();
+    await s.drain();
+    expect(results.filter(r => r.state === 'starting')).toHaveLength(2);
+    expect(results.filter(r => r.state === 'busy')).toHaveLength(3);
+    expect(provider.run).toHaveBeenCalledTimes(2);
   });
 
   it('aborts in-flight provider calls on shutdown', async () => {
