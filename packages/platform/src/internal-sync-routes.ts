@@ -403,10 +403,11 @@ export function createInternalSyncRoutes(opts: {
     key: string,
     bytes: number,
     pendingMs: number | null,
+    signed = false,
   ): Promise<StorageQuotaDecision | null> {
     if (!c.get("internalSyncMetered")) return null;
     const scope = c.get("internalSyncScope");
-    return quota.authorize(scope.ownerId, { key, bytes, countsAsFile: countsAsFile(key, scope), pendingMs });
+    return quota.authorize(scope.ownerId, { key, bytes, countsAsFile: countsAsFile(key, scope), pendingMs, signed });
   }
 
   function refusal(c: { json: (body: unknown, status?: number) => Response }, decision: StorageQuotaDecision): Response | null {
@@ -416,7 +417,11 @@ export function createInternalSyncRoutes(opts: {
       : c.json({ error: "File limit reached", code: "file_limit_reached" }, 507);
   }
 
-  /** Multipart sizes are known only once the object exists; one that does not fit is removed unless it replaced a counted key. */
+  /**
+   * Multipart sizes are known only once the object exists, so completion has
+   * already replaced the key. One that does not fit is removed and the key
+   * released, whatever it held before: that earlier object is gone either way.
+   */
   async function meterCompleted(
     c: QuotaContext & { json: (body: unknown, status?: number) => Response },
     key: string,
@@ -428,7 +433,8 @@ export function createInternalSyncRoutes(opts: {
     }
     const decision = await meter(c, key, head.contentLength, null);
     if (!decision || decision.ok) return null;
-    if (!decision.priorExisted) await opts.r2.deleteObject(key);
+    await opts.r2.deleteObject(key);
+    await quota.release(c.get("internalSyncScope").ownerId, key);
     return refusal(c, decision);
   }
 
@@ -454,7 +460,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    const decision = await meter(c, parsed.key, parsed.size, presignPendingMs(parsed.expiresIn));
+    const decision = await meter(c, parsed.key, parsed.size, presignPendingMs(parsed.expiresIn), true);
     const refused = decision && refusal(c, decision);
     if (refused) return refused;
     const url = await opts.r2.getPresignedPutUrl(
@@ -512,7 +518,7 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Forbidden key" }, 403);
     }
     const key = systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key);
-    const decision = await meter(c, key, parsed.data.size, presignPendingMs(SYSTEM_STORAGE_PRESIGN_TTL_SECONDS));
+    const decision = await meter(c, key, parsed.data.size, presignPendingMs(SYSTEM_STORAGE_PRESIGN_TTL_SECONDS), true);
     const refused = decision && refusal(c, decision);
     if (refused) return refused;
     const url = await opts.r2.getPresignedPutUrl(key, parsed.data.size, SYSTEM_STORAGE_PRESIGN_TTL_SECONDS);

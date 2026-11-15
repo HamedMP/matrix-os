@@ -5,7 +5,8 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
  * Spec 2691 US4: per-owner object-store usage for container runtimes. The
  * usage row is the lock and the counter; the per-key ledger lets overwrites
  * and deletes adjust it exactly. `pending_until` marks an authorized write the
- * broker has not seen land, so an abandoned upload can be reconciled.
+ * broker has not seen land, so an abandoned upload can be reconciled;
+ * `signed_until` is when the last signed upload URL for the key expires.
  */
 export async function migrateContainerLimits(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
@@ -24,6 +25,7 @@ export async function migrateContainerLimits(db: PlatformMigrationExecutor): Pro
       counts_as_file BOOLEAN NOT NULL,
       reservation_id UUID NOT NULL,
       pending_until TIMESTAMPTZ,
+      signed_until TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (clerk_user_id, object_key)
     )

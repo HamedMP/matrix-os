@@ -720,6 +720,7 @@
     {"table_name":"runtime_storage_objects","column_name":"counts_as_file","data_type":"boolean","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"runtime_storage_objects","column_name":"reservation_id","data_type":"uuid","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"runtime_storage_objects","column_name":"pending_until","data_type":"timestamp with time zone","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
+    {"table_name":"runtime_storage_objects","column_name":"signed_until","data_type":"timestamp with time zone","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"runtime_storage_objects","column_name":"updated_at","data_type":"timestamp with time zone","is_nullable":"NO","column_default":"now()","character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"runtime_storage_usage","column_name":"clerk_user_id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"runtime_storage_usage","column_name":"object_bytes","data_type":"bigint","is_nullable":"NO","column_default":"0","character_maximum_length":null,"numeric_precision":64,"numeric_scale":0},

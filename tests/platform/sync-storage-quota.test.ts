@@ -123,10 +123,15 @@ describe('sync broker storage quota for container runtimes', () => {
     expect((await presignPut(target, free, key, 700)).status).toBe(200);
     expect((await presignPut(target, free, key, 900)).status).toBe(200);
     expect((await presignPut(target, free, key, 300)).status).toBe(200);
-    expect(await usage()).toEqual({ object_bytes: 300, object_count: 0 });
+    // All three URLs can still write the key, so it holds the largest until they expire.
+    expect(await usage()).toEqual({ object_bytes: 900, object_count: 0 });
+    r2.sizes.set(key, 300);
+    clock += 17 * 60_000;
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 700)).status).toBe(200);
+    expect(await usage()).toEqual({ object_bytes: 1000, object_count: 0 });
   });
 
-  it('keeps read and delete working at the limit, and a delete frees the space', async () => {
+  it('keeps read and delete working at the limit, and a delete frees the space once its signed URL expires', async () => {
     const target = app();
     const key = `${FREE_PREFIX}/objects/sha256/${hex(3)}`;
     expect((await presignPut(target, free, key, 1000)).status).toBe(200);
@@ -135,8 +140,58 @@ describe('sync broker storage quota for container runtimes', () => {
     expect(read.status).toBe(200);
     const removed = await target.request(`/sync/quotafree/object?key=${encodeURIComponent(key)}`, { method: 'DELETE', headers: free });
     expect(removed.status).toBe(200);
-    expect(await usage()).toEqual({ object_bytes: 0, object_count: 0 });
+    // The signed URL could still recreate the key, so its hold stays until the URL expires.
+    expect(await usage()).toEqual({ object_bytes: 1000, object_count: 1 });
+    clock += 17 * 60_000;
     expect((await presignPut(target, free, `${FREE_PREFIX}/objects/sha256/${hex(4)}`, 1000)).status).toBe(200);
+    expect(await usage()).toEqual({ object_bytes: 1000, object_count: 1 });
+  });
+
+  it('frees a deleted key at once when no signed upload for it is outstanding', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const put = await target.request(`/sync/quotafree/object?key=${encodeURIComponent(key)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(400),
+    });
+    expect(put.status).toBe(200);
+    await target.request(`/sync/quotafree/object?key=${encodeURIComponent(key)}`, { method: 'DELETE', headers: free });
+    expect(await usage()).toEqual({ object_bytes: 0, object_count: 0 });
+  });
+
+  it('keeps the larger signed hold when the same key is overwritten small before that URL expires', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    expect((await presignPut(target, free, key, 800)).status).toBe(200);
+    const small = await target.request(`/sync/quotafree/object?key=${encodeURIComponent(key)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(100),
+    });
+    expect(small.status).toBe(200);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+    // The older signed URL is used last and the larger object lands.
+    r2.sizes.set(key, 800);
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 300)).status).toBe(507);
+    clock += 17 * 60_000;
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 300)).status).toBe(507);
+    expect(await db.executor.selectFrom('runtime_storage_objects').select(['bytes', 'pending_until'])
+      .where('object_key', '=', key).executeTakeFirstOrThrow()).toEqual({ bytes: 800, pending_until: null });
+  });
+
+  it('removes an oversized multipart overwrite of a counted key and stops counting it', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/objects/sha256/${hex(10)}`;
+    const put = await target.request(`/sync/quotafree/object?key=${encodeURIComponent(key)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(100),
+    });
+    expect(put.status).toBe(200);
+    r2.completeMultipartUpload.mockImplementation(async (k: string) => { r2.sizes.set(k, 5000); return { etag: 'mp' }; });
+    const refused = await target.request('/sync/quotafree/multipart/complete', {
+      method: 'POST', headers: free,
+      body: JSON.stringify({ key, uploadId: 'upload-1', parts: [{ partNumber: 1, etag: 'p1' }] }),
+    });
+    expect(refused.status).toBe(507);
+    expect(r2.deleteObject).toHaveBeenCalledWith(key);
+    expect(r2.sizes.has(key)).toBe(false);
+    expect(await usage()).toEqual({ object_bytes: 0, object_count: 0 });
   });
 
   it('enforces the file-count limit on file blobs while manifests still fit', async () => {

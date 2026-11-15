@@ -12,6 +12,12 @@ import type { PlatformDB } from '../db.js';
  * body still streaming) stays pending until it is confirmed or, after it
  * expires, reconciled against the store: present objects keep their real
  * size, absent ones release their bytes.
+ *
+ * A signed upload URL can write its key until it expires, whatever the
+ * broker does to the key meanwhile. So while one is outstanding
+ * (`signed_until`), the key keeps at least the bytes it was signed for: a
+ * smaller overwrite does not shrink the hold, a delete does not drop it, and
+ * the key is reconciled against the store once the last URL expires.
  */
 
 export interface RuntimeStorageUsageTable {
@@ -28,6 +34,8 @@ export interface RuntimeStorageObjectsTable {
   counts_as_file: boolean;
   reservation_id: string;
   pending_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  /** When the last signed upload URL issued for this key expires. */
+  signed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
@@ -51,6 +59,8 @@ export interface StorageWrite {
   countsAsFile: boolean;
   /** How long the write may take to land; null when it already has. */
   pendingMs: number | null;
+  /** The write goes through a signed URL the broker cannot revoke, valid for `pendingMs`. */
+  signed?: boolean;
 }
 
 export interface StorageQuotaDeps {
@@ -100,18 +110,27 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
 
   async function tryAuthorize(ownerId: string, write: StorageWrite): Promise<StorageQuotaDecision> {
     const reservationId = randomUUID();
-    const pendingUntil = write.pendingMs === null ? null : new Date(now().getTime() + write.pendingMs).toISOString();
+    const at = now();
+    const pendingUntil = write.pendingMs === null ? null : new Date(at.getTime() + write.pendingMs).toISOString();
+    const signedUntil = write.signed && pendingUntil !== null ? pendingUntil : null;
     return db.transaction(async (trx): Promise<StorageQuotaDecision> => {
       const usage = await lockUsage(trx.executor, ownerId);
       const authorized = await sql<{ prior_existed: boolean }>`
         WITH prior AS (
-          SELECT bytes, counts_as_file FROM runtime_storage_objects
+          SELECT bytes, counts_as_file,
+            CASE WHEN signed_until > ${at.toISOString()}::timestamptz THEN signed_until END AS outstanding_until
+          FROM runtime_storage_objects
           WHERE clerk_user_id = ${ownerId} AND object_key = ${write.key}
+        ), held AS (
+          SELECT GREATEST(${write.bytes}::bigint,
+              COALESCE((SELECT bytes FROM prior WHERE outstanding_until IS NOT NULL), 0)) AS bytes,
+            (SELECT outstanding_until FROM prior) AS outstanding_until
         ), delta AS (
-          SELECT ${write.bytes}::bigint - COALESCE((SELECT bytes FROM prior), 0) AS bytes,
+          SELECT h.bytes - COALESCE((SELECT bytes FROM prior), 0) AS bytes,
             (CASE WHEN ${write.countsAsFile}::boolean THEN 1 ELSE 0 END)
               - COALESCE((SELECT CASE WHEN counts_as_file THEN 1 ELSE 0 END FROM prior), 0) AS files,
             EXISTS (SELECT 1 FROM prior) AS prior_existed
+          FROM held h
         ), counted AS (
           UPDATE runtime_storage_usage u
           SET object_bytes = u.object_bytes + d.bytes, object_count = u.object_count + d.files, updated_at = now()
@@ -122,13 +141,15 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
           RETURNING d.prior_existed
         ), recorded AS (
           INSERT INTO runtime_storage_objects
-            (clerk_user_id, object_key, bytes, counts_as_file, reservation_id, pending_until, updated_at)
-          SELECT ${ownerId}, ${write.key}, ${write.bytes}, ${write.countsAsFile}, ${reservationId}::uuid,
-            ${pendingUntil}::timestamptz, now()
-          FROM counted
+            (clerk_user_id, object_key, bytes, counts_as_file, reservation_id, pending_until, signed_until, updated_at)
+          SELECT ${ownerId}, ${write.key}, h.bytes, ${write.countsAsFile}, ${reservationId}::uuid,
+            GREATEST(${pendingUntil}::timestamptz, h.outstanding_until),
+            GREATEST(${signedUntil}::timestamptz, h.outstanding_until), now()
+          FROM counted, held h
           ON CONFLICT (clerk_user_id, object_key) DO UPDATE SET
             bytes = EXCLUDED.bytes, counts_as_file = EXCLUDED.counts_as_file,
-            reservation_id = EXCLUDED.reservation_id, pending_until = EXCLUDED.pending_until, updated_at = now()
+            reservation_id = EXCLUDED.reservation_id, pending_until = EXCLUDED.pending_until,
+            signed_until = EXCLUDED.signed_until, updated_at = now()
           RETURNING 1
         )
         SELECT prior_existed FROM counted
@@ -155,7 +176,8 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
         await trx.executor.deleteFrom('runtime_storage_objects')
           .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
       } else {
-        await trx.executor.updateTable('runtime_storage_objects').set({ bytes: landed, pending_until: null, updated_at: now() })
+        await trx.executor.updateTable('runtime_storage_objects')
+          .set({ bytes: landed, pending_until: null, signed_until: null, updated_at: now() })
           .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
       }
       await trx.executor.updateTable('runtime_storage_usage').set({
@@ -200,17 +222,35 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
       return tryAuthorize(ownerId, write);
     },
 
-    /** Marks a pending write as landed. A newer authorization of the same key keeps its own state. */
+    /**
+     * Marks a pending write as landed. A newer authorization of the same key
+     * keeps its own state, and an outstanding signed URL keeps the key pending.
+     */
     async confirm(ownerId: string, key: string, reservationId: string): Promise<void> {
-      await db.executor.updateTable('runtime_storage_objects').set({ pending_until: null, updated_at: now() })
+      const at = now().toISOString();
+      await db.executor.updateTable('runtime_storage_objects')
+        .set({
+          pending_until: sql<Date | null>`CASE WHEN signed_until > ${at}::timestamptz THEN signed_until END`,
+          updated_at: now(),
+        })
         .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
         .where('reservation_id', '=', reservationId).execute();
     },
 
-    /** Releases a deleted key. Deleting is never refused. */
+    /**
+     * Releases a deleted key. Deleting is never refused. A key with an
+     * outstanding signed URL keeps its hold until that URL expires and is then
+     * reconciled, since the URL can still recreate it.
+     */
     async release(ownerId: string, key: string): Promise<void> {
       await db.transaction(async (trx) => {
         await lockUsage(trx.executor, ownerId);
+        const held = await trx.executor.updateTable('runtime_storage_objects')
+          .set({ pending_until: sql<Date>`signed_until`, updated_at: now() })
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
+          .where('signed_until', '>', now())
+          .returning('object_key').executeTakeFirst();
+        if (held) return;
         await sql`
           WITH gone AS (
             DELETE FROM runtime_storage_objects WHERE clerk_user_id = ${ownerId} AND object_key = ${key}
