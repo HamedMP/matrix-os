@@ -334,6 +334,36 @@ function checkPrSize(stats, report) {
   );
 }
 
+export const FILE_LIMITS = { split: 2000, plan: 1000 };
+const GENERATED_PATH = /(?:^|\/)(?:fixtures|generated|__generated__)\//;
+
+function checkLargeFiles(stats, today, report) {
+  for (const { path, added, deleted } of stats) {
+    if (added <= deleted || !SOURCE_FILE.test(path) || SKIPPED_PATH.test(path) || GENERATED_PATH.test(path)) continue;
+    const text = readText(path);
+    if (text === null) continue;
+    const lines = lineCount(text);
+    if (lines <= FILE_LIMITS.plan) continue;
+    const growth = `${path} has ${lines} lines and this change grows it by ${added - deleted}`;
+    if (lines <= FILE_LIMITS.split) {
+      report.warning(
+        "large-file",
+        `${growth}. Put an extraction plan or follow-up issue in the PR body (docs/dev/large-file-refactoring.md).`,
+      );
+      continue;
+    }
+    const marker = text.split("\n").findIndex((line) => EXCEPTION.exec(line)?.[1] === "large-file");
+    const exception = marker === -1 ? null : exceptionFor(text.split("\n"), marker + 1, "large-file", today);
+    if (exception?.valid) continue;
+    report.violation(
+      "large-file",
+      `${growth}${exception ? ` (${exception.why})` : ""}. Files over ${FILE_LIMITS.split} lines are split before ` +
+        "adding behavior: move the new code, or an existing route group or helper family, into a focused module " +
+        "first (docs/dev/large-file-refactoring.md).",
+    );
+  }
+}
+
 export function run({ base = null, prSize = false, today = new Date().toISOString().slice(0, 10) } = {}) {
   const findings = { violations: [], warnings: [], notices: [] };
   const report = {
@@ -347,7 +377,9 @@ export function run({ base = null, prSize = false, today = new Date().toISOStrin
     return findings;
   }
   checkSwallowedErrors(addedLines(range), today, report);
-  if (prSize) checkPrSize(changedFileStats(range), report);
+  const stats = changedFileStats(range);
+  checkLargeFiles(stats, today, report);
+  if (prSize) checkPrSize(stats, report);
   return findings;
 }
 

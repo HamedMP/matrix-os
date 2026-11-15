@@ -251,7 +251,7 @@ fi
 # PASS 3: Repo-wide rules on added lines (scripts/review/check-added-patterns.mjs)
 # ═══════════════════════════════════════════════════════════════
 
-header "9. Added lines — repo-wide rules (swallowed errors, PR size)"
+header "9. Added lines — repo-wide rules (swallowed errors, large files, PR size)"
 
 ADDED_ARGS=()
 if [[ -n "$DIFF_BASE" ]]; then

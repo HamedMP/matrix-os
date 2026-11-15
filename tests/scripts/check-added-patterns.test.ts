@@ -124,7 +124,7 @@ describe("added-line swallowed-error rule", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Added lines — repo-wide rules");
+    expect(result.stdout).toContain("9. Added lines — repo-wide rules");
     expect(result.stdout).not.toContain("[swallowed-error]");
   });
 
@@ -231,5 +231,57 @@ describe("PR size rule", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("this change touches 51 files");
+  });
+});
+
+function source(lines: number, header = "") {
+  return header + Array.from({ length: lines }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+}
+
+describe("large-file rule", () => {
+  it("rejects growing a file past 2000 lines like server.ts in #3275 and #3278", () => {
+    const result = scanChange(
+      { "packages/gateway/src/server.ts": source(2031) },
+      { "packages/gateway/src/server.ts": source(2037) },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "VIOLATION [large-file] packages/gateway/src/server.ts has 2037 lines and this change grows it by 6",
+    );
+    expect(result.stdout).toContain("into a focused module");
+  });
+
+  it("warns, without failing, when a 1000-2000 line file grows like thread-store.ts in #3100", () => {
+    const result = scanChange(
+      { "packages/gateway/src/coding-agents/thread-store.ts": source(1900) },
+      { "packages/gateway/src/coding-agents/thread-store.ts": source(1904) },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WARNING [large-file] packages/gateway/src/coding-agents/thread-store.ts has 1904 lines");
+    expect(result.stdout).toContain("extraction plan");
+  });
+
+  it("accepts edits that shrink or keep the size of an oversized file", () => {
+    const shrink = scanChange({ "tests/platform/proxy-routing.test.ts": source(3000) }, {
+      "tests/platform/proxy-routing.test.ts": source(2990),
+    });
+
+    expect(shrink.status).toBe(0);
+    expect(shrink.stdout).not.toContain("[large-file]");
+  });
+
+  it("ignores generated fixtures and honors a dated file-level exception", () => {
+    const fixture = scanChange({}, { "tests/platform/fixtures/schema.ts": source(2500) });
+    const header =
+      "// pattern-allow large-file: generated route table, split tracked in ENG-1 (expires 2999-01-01, approved-by hamedmp)\n";
+    const excepted = scanChange({ "packages/platform/src/routes.ts": source(2100, header) }, {
+      "packages/platform/src/routes.ts": source(2110, header),
+    });
+
+    expect(fixture.stdout).not.toContain("[large-file]");
+    expect(excepted.status).toBe(0);
+    expect(excepted.stdout).not.toContain("[large-file]");
   });
 });
