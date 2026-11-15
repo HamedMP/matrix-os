@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserSurface, createBrowserSetupTransport, createHostedBrowserSetupTransport, createHostedBrowserSession, createHostedBrowserVisibility, type BrowserSurfaceKind } from '../../../../../packages/ui/src/browser/index';
+import { BrowserSurface, createBrowserSetupTransport, createHostedBrowserSetupTransport, createHostedBrowserSession, createHostedBrowserVisibility, type BrowserChromeHost, type BrowserSurfaceKind } from '../../../../../packages/ui/src/browser/index';
+import { parseBrowserChromeAction } from '../../../../../packages/contracts/src/browser-chrome';
 import './style.css';
 import { BrowserLabFailure, reportBrowserFailure } from '../../safe-errors.mjs';
 
@@ -15,7 +16,17 @@ type NativeBrowserBridge = {
   browserSetup?: boolean;
   gatewayFetch?: (url: string, init: RequestInit, timeout: number) => Promise<unknown>;
   openApp?: (name: string, path: string) => void;
+  browserChrome?: { publish(model: unknown): void; onAction(handler: (action: string) => void): () => void };
 };
+// Electron Desktop draws the toolbar in its window title bar; validate actions on arrival too.
+function nativeChromeHost(bridge: NativeBrowserBridge | undefined): BrowserChromeHost | undefined {
+  const chrome = bridge?.browserChrome;
+  if (!chrome) return undefined;
+  return {
+    publish: (model) => chrome.publish(model),
+    onAction: (handler) => chrome.onAction((raw) => { const action = parseBrowserChromeAction(raw); if (action) handler(action); }),
+  };
+}
 function browserBridge(): NativeBrowserBridge | undefined {
   return (window as Window & { MatrixOS?: NativeBrowserBridge }).MatrixOS;
 }
@@ -50,8 +61,9 @@ function HostedBrowser({ surface }: { surface: BrowserSurfaceKind }) {
     return createHostedBrowserSetupTransport(bridge);
   });
   const bridge = browserBridge();
+  const [chromeHost] = useState(() => nativeChromeHost(browserBridge()));
   return <div className="matrix-browser-native-host"><BrowserSurface gatewayUrl={`${location.origin}${vmPrefix}`} surface={surface}
-    active={active} ensureSession={ensureSession} setup={setup}
+    active={active} ensureSession={ensureSession} setup={setup} chromeHost={chromeHost}
     onOpenCloudDesktop={bridge?.openApp ? () => bridge.openApp?.('Cloud desktop', 'matrix-app:matrix-cloud-desktop') : undefined}
     onOpenBrowser={bridge?.openApp ? () => bridge.openApp?.('Browser', 'matrix-app:matrix-browser') : undefined}/></div>;
 }

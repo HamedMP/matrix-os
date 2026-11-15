@@ -75,6 +75,7 @@ import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
+import { BROWSER_CHROME_PUBLISH_CHANNEL } from "../shared/browser-chrome";
 import {
   fitWindowBoundsToWorkArea,
   type FittedWindowBounds,
@@ -512,6 +513,7 @@ if (!gotLock) {
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+        emitBrowserChrome: (embedId, model) => sendEvent("embed:browser-chrome", { embedId, model }),
         appBridge: nativeAppBridge,
         appPreloadPath: join(__dirname, "../preload/index.cjs"),
         browserLabViewerAuth: {
@@ -525,6 +527,8 @@ if (!gotLock) {
           installBrowserSessionCookie: (headers, origin, isCurrent) => installBrowserProductSessionCookie(headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
         })("matrix-browser", { url: "/api/apps/browser-lab/session", init: { method: "POST", body: "{}" } }, "browser-lab"),
       });
+      // Browser embeds publish title bar chrome; main validates sender and model.
+      ipcMain.on(BROWSER_CHROME_PUBLISH_CHANNEL, (event, model: unknown) => embeds.publishBrowserChrome(event.sender.id, model));
       const updater = createUpdater({
         onAvailable: (version) => {
           console.info(`[updates] downloading Matrix OS ${version}`);

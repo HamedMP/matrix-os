@@ -59,6 +59,8 @@ import {
   RequestIdSchema,
   UserInputAnswerRequestSchema,
   boundedListSchema,
+  BROWSER_CHROME_ACTIONS,
+  BrowserChromeModelSchema,
 } from "@matrix-os/contracts";
 import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project-workspace";
 import {
@@ -442,6 +444,10 @@ export const INVOKE_CHANNELS = {
       .strict(),
     response: Ok,
   },
+  "embed:browser-chrome-action": {
+    request: z.strictObject({ embedId: z.string().min(1).max(64), action: z.enum(BROWSER_CHROME_ACTIONS) }),
+    response: Ok,
+  },
   "embed:set-scale": {
     request: z.strictObject({ embedId: z.string().min(1).max(64), factor: ZoomFactorSchema }),
     response: Ok,
@@ -554,6 +560,10 @@ export const EVENT_CHANNELS = {
     })
     .strict(),
   "runtime:changed": z.object({ slot: z.string().min(1).max(64) }).strict(),
+  "embed:browser-chrome": z.strictObject({
+    embedId: z.string().min(1).max(64),
+    model: BrowserChromeModelSchema.nullable(),
+  }),
   "embed:state": z
     .object({
       embedId: z.string().min(1).max(64),

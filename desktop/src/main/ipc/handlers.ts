@@ -409,6 +409,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:set-bounds", ({ embedId, bounds }, event) => ({
     ok: ctx.embeds.setBounds(embedId, toWebContentsViewBounds(bounds, event)),
   }));
+  handle("embed:browser-chrome-action", ({ embedId, action }) => ({
+    ok: ctx.embeds.dispatchBrowserChromeAction(embedId, action),
+  }));
   handle("embed:set-scale", ({ embedId, factor }) => ({
     ok: ctx.embeds.setScale(embedId, factor),
   }));

@@ -7,6 +7,7 @@ import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { EmbedBrowserTitleBarControls, useEmbedBrowserChrome } from "./embed-browser-chrome";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
@@ -61,10 +62,14 @@ export default function EmbedHost({
   const lastRefreshRequestRef = useRef(refreshRequest);
   useLayoutEffect(() => { activeRef.current = active; }, [active]);
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
+  const [openedEmbedId, setOpenedEmbedId] = useState<string | null>(null);
+  const browserChrome = useEmbedBrowserChrome(Boolean(product), openedEmbedId);
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
-  const publishingChrome = useMemo(() => slug && visible && !product ? ({
+  const publishingChrome = useMemo(() => product ? (visible && openedEmbedId && browserChrome ? {
+    rightActions: <EmbedBrowserTitleBarControls embedId={openedEmbedId} model={browserChrome} />,
+  } : null) : slug && visible ? ({
     rightActions: (
       <DesktopAppSiteButton
         key={`${runtimeSlot}:${authGeneration}:${slug}`}
@@ -73,7 +78,7 @@ export default function EmbedHost({
         buildEpoch={openedEmbedRevision}
       />
     ),
-  }) : null, [authGeneration, openedEmbedRevision, portalContainer, product, runtimeSlot, slug, visible]);
+  }) : null, [authGeneration, browserChrome, openedEmbedId, openedEmbedRevision, portalContainer, product, runtimeSlot, slug, visible]);
 
   useLayoutEffect(() => {
     if (!surfaceChromeHost) return;
@@ -133,6 +138,7 @@ export default function EmbedHost({
           return;
         }
         embedIdRef.current = embedId;
+        setOpenedEmbedId(embedId);
         setOpenedEmbedRevision((revision) => revision + 1);
         setState(pendingStates.get(embedId) ?? initialState);
         pendingStates.delete(embedId);
@@ -158,6 +164,7 @@ export default function EmbedHost({
       offState?.();
       const id = embedIdRef.current;
       embedIdRef.current = null;
+      setOpenedEmbedId(null);
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

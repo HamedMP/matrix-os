@@ -1,3 +1,4 @@
+import type { BROWSER_CONTROL_LABELS } from "@matrix-os/contracts";
 import type { BrowserAutomationAction, BrowserStatus, BrowserSurfaceState } from "./types.js";
 
 export function browserHumanInputAllowed(status: BrowserStatus | null): boolean {
@@ -15,8 +16,8 @@ export function browserAutomationActionAllowed(status: BrowserStatus | null, act
   return ["paused", "human"].includes(automation.phase);
 }
 
-export function browserControlLabel(state: BrowserSurfaceState): string {
-  if (state.automationAction) return { pause: "Pausing agent…", takeover: "Taking over…", resume: "Resuming agent…", stop: "Stopping agent…" }[state.automationAction];
+export function browserControlLabel(state: BrowserSurfaceState): (typeof BROWSER_CONTROL_LABELS)[number] {
+  if (state.automationAction) return ({ pause: "Pausing agent…", takeover: "Taking over…", resume: "Resuming agent…", stop: "Stopping agent…" } as const)[state.automationAction];
   const phase = state.status?.automation?.phase;
   if (phase === "agent") return "Agent is working";
   if (phase === "pausing") return "Pausing agent…";

@@ -1,4 +1,4 @@
-import type { SharedBrowserControl, SharedBrowserState } from "@matrix-os/contracts";
+import type { BrowserChromeAction, BrowserChromeModel, SharedBrowserControl, SharedBrowserState } from "@matrix-os/contracts";
 
 export type BrowserSurfaceKind = "browser" | "desktop";
 export type BrowserControlAction = "restore-chrome" | "show-desktop" | "open-files" | "open-terminal";
@@ -24,6 +24,13 @@ export interface BrowserSurfaceProps {
   ensureSession(signal: AbortSignal, options?: BrowserSessionOptions): Promise<void>;
   onOpenCloudDesktop?: () => void;
   onOpenBrowser?: () => void;
+  /** When present, status and actions render in the host window's title bar instead of an inline toolbar. */
+  chromeHost?: BrowserChromeHost;
+}
+export interface BrowserChromeHost {
+  /** `null` clears the title bar when the surface unmounts. */
+  publish(model: BrowserChromeModel | null): void;
+  onAction(handler: (action: BrowserChromeAction) => void): () => void;
 }
 export type BrowserConnection = "connecting" | "connected" | "disconnected" | "unavailable" | "inactive";
 export interface BrowserSurfaceState {
