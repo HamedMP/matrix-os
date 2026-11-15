@@ -300,3 +300,50 @@ describe("Public tab", () => {
     expect(screen.getByRole("button", { name: /Publish to web/ })).toHaveProperty("disabled", true);
   });
 });
+
+describe("review fixes: owner controls and stale state", () => {
+  it("publishes the latest app version and saves details on a live site without unpublishing", async () => {
+    const api = client({ get: vi.fn(async () => ({ ...base, slug: "sales-crm" })) });
+    renderPanel(api);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Publish latest version" }));
+    await waitFor(() => expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "public", slug: "sales-crm", baseRevision: 3 }), expect.any(AbortSignal)));
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Track deals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save details" }));
+    await waitFor(() => expect(api.update).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "public", description: "Track deals" }), expect.any(AbortSignal)));
+    expect(api.unpublish).not.toHaveBeenCalled();
+  });
+
+  it("stops private sharing for a one-time-link site", async () => {
+    const api = client({ get: vi.fn(async () => ({ ...base, accessMode: "private_link" as const })) });
+    renderPanel(api);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing privately" }));
+    await waitFor(() => expect(api.unpublish).toHaveBeenCalledWith("sales-crm", 3, expect.any(AbortSignal)));
+  });
+
+  it("blocks every access change while the publication is unknown", async () => {
+    const api = client({ get: vi.fn(async () => { throw Object.assign(new Error("down"), { status: 503 }); }) });
+    renderPanel(api, { emailInvites: createInMemoryEmailInvitations() });
+    await screen.findByRole("button", { name: "Try again" });
+    expect(screen.getByLabelText("Email address")).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: /One-time links/ }));
+    expect(screen.getByRole("button", { name: "New one-time link" })).toHaveProperty("disabled", true);
+    selectTab(/Public/);
+    expect(screen.getByRole("button", { name: /Publish to web/ })).toHaveProperty("disabled", true);
+    expect(api.deploy).not.toHaveBeenCalled();
+    expect(api.unpublish).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the publication after a revision conflict", async () => {
+    const get = vi.fn(async () => ({ ...base, accessMode: "private_link" as const }));
+    const api = client({ get, createAccessLink: vi.fn().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 })) });
+    renderPanel(api);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: /One-time links/ }));
+    fireEvent.click(screen.getByRole("button", { name: "New one-time link" }));
+    expect(await screen.findByText("This changed somewhere else. Refresh and try again.")).toBeTruthy();
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  });
+});
