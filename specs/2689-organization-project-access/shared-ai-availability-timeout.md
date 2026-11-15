@@ -28,6 +28,16 @@ No routes, authorization sources, database writes, locks or schemas change.
 Public behavior remains the existing documented organization-wide project access;
 no public documentation change is required for this performance correction.
 
+## Candidate installation
+
+The protected customer updater cannot order PR-style version strings and
+therefore correctly defers them as possible funded-configuration rollbacks.
+Use the normal host release workflow's numbered version with `channel=none`
+and `deploy_after_publish=false`. Expose the publisher's existing register-only
+mode in dispatch choices; retain the same-SHA CI gate and explicit deployment
+gates. Publish no channel pointer and install only the reviewed owner target.
+Do not weaken the updater's protected configuration or version checks.
+
 ## Acceptance
 
 | Starting state | Action | Completion | Boundary / surface |
