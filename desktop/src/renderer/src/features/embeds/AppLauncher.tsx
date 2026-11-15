@@ -3,7 +3,7 @@ import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppDisplayName } from "
 import { useSharedLauncherApps } from "../collaboration/useSharedLauncherApps";
 import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
 import {
-  LauncherFilterChips, NewAppDot, effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter, sharedTileLabel, useSeenSharedApps,
+  LauncherFilterChips, NewAppDot, useOpenCount, effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter, sharedTileLabel, useSeenSharedApps,
   type LauncherFilter, type ShareOrganization,
 } from "@matrix-os/ui/share";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
@@ -26,6 +26,7 @@ import {
   type OsViewMode,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
+  isOsViewFixedAppPath,
 } from "@matrix-os/contracts";
 type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
@@ -114,7 +115,8 @@ export default function AppLauncher({
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
   const shared = useSharedLauncherApps(launcherActive);
-  const organizationListing = useDesktopOrganizations();
+  // Re-read memberships each time the launcher opens so a newly joined org gets its badge and chip.
+  const organizationListing = useDesktopOrganizations(useOpenCount(launcherActive));
   const organizations = useMemo<ShareOrganization[]>(() => organizationListing.state === "loaded"
     ? organizationListing.organizations.map(({ organizationId, name, memberCount }) => ({ organizationId, name, memberCount }))
     : [], [organizationListing]);
@@ -198,7 +200,10 @@ export default function AppLauncher({
   const allEntries = useMemo<LauncherEntry[]>(() => [...entries, ...shared.items.map((target) => ({
     type: "shared" as const, key: `shared:${target.scopeId}`, name: sharedAppDisplayName(target.appId), target,
   }))], [entries, shared.items]);
-  const filterEntry = (entry: LauncherEntry) => ({ organizationId: entry.type === "shared" ? entry.target.organizationId : null, mine: entry.type === "installed" });
+  const filterEntry = (entry: LauncherEntry) => ({
+    organizationId: entry.type === "shared" ? entry.target.organizationId : null,
+    mine: entry.type === "installed" && !isOsViewFixedAppPath(entry.app.path ?? ""),
+  });
   const chips = launcherFilterChips(allEntries.map(filterEntry), organizations);
   const filter = effectiveLauncherFilter(chosenFilter, chips);
   const organizationFor = (entry: LauncherEntry) => entry.type === "shared" ? organizations.find((item) => item.organizationId === entry.target.organizationId) ?? null : null;
