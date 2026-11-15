@@ -10,13 +10,15 @@ const ROOTS = [
   path.resolve(import.meta.dirname, "../../packages/ui/src"),
 ];
 // The Tailwind theme aliases (--color-success etc.) resolve to the same fills.
-const FILL = String.raw`var\(\s*--(?:color-)?(?:success|warning|danger|info)\s*\)`;
+// A fill is matched whether it ends the var() or starts a fallback chain: var(--danger, var(--x)).
+const FILL = String.raw`var\(\s*--(?:color-)?(?:success|warning|danger|info)\s*[,)]`;
 // A fill named only as the last fallback of another variable is allowed.
 const PRIMARY_FILL = new RegExp(String.raw`(?<!,\s*)${FILL}`);
-const STYLE_COLOR = /(?<![\w-])color\s*:\s*([^,;}]*)/g;
+// The value runs to the first comma (kept, so a fill starting a fallback chain is visible).
+const STYLE_COLOR = /(?<![\w-])color\s*:\s*([^,;}]*,?)/g;
 // A constant (string, ternary or status map, optionally type-annotated) whose value contains a primary fill.
 const FILL_CONSTANT = /(?<![\w$])const\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=([^;]*);/g;
-const TAILWIND_TEXT = new RegExp(String.raw`(?<![\w-])text-\[(?:color:)?${FILL}\]`, "g");
+const TAILWIND_TEXT = new RegExp(String.raw`(?<![\w-])text-\[(?:color:)?${FILL}`, "g");
 
 function collectSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -40,7 +42,7 @@ function findFillTokensUsedAsText(file: string, source: string): string[] {
   }
   for (const match of source.matchAll(STYLE_COLOR)) {
     const value = match[1]!.trim();
-    const reference = /^([A-Za-z_$][\w$]*)(?:\[|$)/.exec(value)?.[1];
+    const reference = /^([A-Za-z_$][\w$]*)(?:\[|\s*,?$)/.exec(value)?.[1];
     if (PRIMARY_FILL.test(value) || (reference && fillConstants.has(reference))) {
       findings.push(`${relative}:${lineOf(source, match.index!)} color: ${value}`);
     }
@@ -69,13 +71,30 @@ describe("status text tokens", () => {
       `  done: "var(--color-success)",`,
       `  error: "var(--color-danger)",`,
       `} as const;`,
-      `<span style={{ borderColor: "var(--border-default)", color: previewColor }} />`,
+      `<span style={{ borderColor: "var(--border-default)", color: previewColor, fontSize: 12 }} />`,
       `<span style={{ color: STATUS_COLOR[terminal.status] }} />`,
       `<i style={{ color: "var(--color-warning)" }} />`,
       `const AVAILABILITY_COLOR: Record<Availability, string> = { available: "var(--color-success)" };`,
       `<em style={{ color: AVAILABILITY_COLOR[computer.availability] }} />`,
     ].join("\n");
     expect(findFillTokensUsedAsText("/sample.tsx", sample)).toHaveLength(4);
+  });
+
+  it("detects fills used first in a fallback chain", () => {
+    const sample = [
+      `.state { color: var(--success, var(--import-accent)); }`,
+      `<Menu.Item style={item.danger ? {color:"var(--danger, var(--destructive))"} : undefined} />`,
+      `<p style={{ color: "var( --color-warning , #e0aa52)" }} />`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.tsx", sample)).toHaveLength(3);
+  });
+
+  it("allows a fallback chain that starts with a text token", () => {
+    const sample = [
+      `.state { color: var(--success-text, var(--success, var(--import-accent))); }`,
+      `<Menu.Item style={{ color: "var(--danger-text, var(--destructive-text, var(--danger)))" }} />`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.tsx", sample)).toEqual([]);
   });
 
   it("allows fill variables that only reach backgrounds, borders and dots", () => {

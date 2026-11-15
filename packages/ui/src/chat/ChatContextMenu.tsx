@@ -15,7 +15,7 @@ function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContext
     <Menu.Portal><Menu.SubContent className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{zIndex,background:"var(--bg-overlay, var(--popover))",color:"var(--text-primary, var(--popover-foreground))",borderColor:"var(--border-default, var(--border))"}}>
       <MenuActions items={item.children} zIndex={zIndex} Menu={Menu} />
     </Menu.SubContent></Menu.Portal>
-  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger, var(--destructive))"} : undefined}>{item.label}</Menu.Item></Fragment>);
+  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger-text, var(--destructive-text, var(--danger, var(--destructive))))"} : undefined}>{item.label}</Menu.Item></Fragment>);
 }
 
 export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange, onContextMenuOpenChange }: {

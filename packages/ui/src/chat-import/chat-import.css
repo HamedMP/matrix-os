@@ -57,7 +57,7 @@
 .matrix-import-row + .matrix-import-row { border-top: 1px solid var(--import-border); }
 .matrix-import-row-head { display: flex; align-items: center; gap: 12px; }
 .matrix-import-file { color: var(--import-muted); align-self: flex-start; margin-top: 5px; }
-.matrix-import-row[data-status="imported"] .matrix-import-file { color: var(--success, var(--import-accent)); }
+.matrix-import-row[data-status="imported"] .matrix-import-file { color: var(--success-text, var(--success, var(--import-accent))); }
 .matrix-import-row-heading { flex: 1; min-width: 0; }
 .matrix-import-title input { width: 100%; min-width: 0; background: transparent; color: inherit; border: 1px solid transparent; padding: 3px 5px; margin-left: -5px; border-radius: 4px; font-size: 14px; font-weight: 500; }
 .matrix-import-title input:hover:enabled { border-color: var(--import-border); }
@@ -65,7 +65,7 @@
 .matrix-import-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--import-muted); font-size: 11px; }
 .matrix-import-meta > span + span { border-left: 1px solid var(--import-border); padding-left: 9px; }
 .matrix-import-state { color: var(--import-muted); font-size: 11px; flex-shrink: 0; }
-.matrix-import-row[data-status="imported"] .matrix-import-state { color: var(--success, var(--import-accent)); }
+.matrix-import-row[data-status="imported"] .matrix-import-state { color: var(--success-text, var(--success, var(--import-accent))); }
 .matrix-import-row[data-status="failed"] .matrix-import-state { color: var(--import-danger); }
 .matrix-import-icon-button { display: grid; place-items: center; padding: 5px; background: transparent; color: var(--import-muted); border: none; border-radius: 5px; }
 .matrix-import-icon-button:hover:enabled { background: var(--import-sunken); }
@@ -81,7 +81,7 @@
 .matrix-import-transfer progress::-webkit-progress-value { background: var(--import-accent); }
 .matrix-import-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--import-muted); }
 .matrix-import-text-button { display: inline-flex; align-items: center; gap: 3px; color: var(--import-accent); background: transparent; border: none; padding: 4px 0; font-size: 12px; }
-.matrix-import-completion { display: flex; align-items: center; gap: 8px; margin-top: 14px !important; color: var(--success, var(--import-accent)); }
+.matrix-import-completion { display: flex; align-items: center; gap: 8px; margin-top: 14px !important; color: var(--success-text, var(--success, var(--import-accent))); }
 .matrix-import-footer { padding-top: 16px; }
 .matrix-import-privacy { display: flex; align-items: flex-start; gap: 9px; color: var(--import-muted); font-size: 11px; }
 .matrix-import-privacy svg { flex-shrink: 0; margin-top: 2px; }
