@@ -27,6 +27,8 @@ const AgentRecordSchema = z.object({
   outliveParent: z.boolean(),
   template: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   firstMessage: FirstMessageSchema.optional(),
+  // The last state noted to the parent, so a restarted gateway does not repeat it.
+  noted: z.enum(["blocked", "error", "exited", "removed"]).optional(),
   createdAt: z.iso.datetime({ offset: true }),
 }).strict();
 export type TerminalAgentRecord = z.infer<typeof AgentRecordSchema>;

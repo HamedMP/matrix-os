@@ -464,9 +464,17 @@ export function createTerminalAgents(options: {
           continue;
         }
         const word = !all.has(key) ? "removed" : childTab ? statuses.get(key)?.status : "exited";
-        const previous = state.get(key);
+        // In-memory state is lost on a gateway restart; the record keeps the last word
+        // noted to the parent, so a delivered note is never typed into it again.
+        const previous = state.get(key) ?? record.noted;
         if (word) state.set(key, word);
         if (!word || word === previous) continue;
+        if (record.noted && word !== "blocked" && word !== "error" && word !== "exited" && word !== "removed") {
+          // A new turn: a later blocked or error is news again.
+          await options.registry.upsert(record.ref, ({ noted: _noted, ...current }) => current).catch((error: unknown) => {
+            console.warn("[gateway] terminal note record failed", error instanceof Error ? error.name : "unknown_error");
+          });
+        }
         // A removed child that already reported its exit needs no second note.
         if (word === "removed" && previous === "exited") continue;
         if (word !== "blocked" && word !== "error" && word !== "exited" && word !== "removed") continue;
@@ -475,7 +483,13 @@ export function createTerminalAgents(options: {
         const text = word === "exited" || word === "removed"
           ? exitCode === undefined ? "exited" : `exited with code ${exitCode}`
           : word === "blocked" ? "is blocked and needs a person; read its screen" : "reported an error; read its screen";
-        if (!await note(record, key, name, text) && word === "removed") pending.add(key);
+        if (await note(record, key, name, text)) {
+          await options.registry.upsert(record.ref, (current) => ({ ...current, noted: word })).catch((error: unknown) => {
+            console.warn("[gateway] terminal note record failed", error instanceof Error ? error.name : "unknown_error");
+          });
+        } else if (word === "removed") {
+          pending.add(key);
+        }
       }
       // List again right before pruning: a tab created during this pass keeps its record,
       // and so does any record younger than the grace period.

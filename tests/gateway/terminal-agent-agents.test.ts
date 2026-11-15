@@ -299,6 +299,23 @@ describe("terminal agents: limits, vanished children and admission", () => {
     ]);
   });
 
+  // Fault detected (pr-3300 preview): supervision remembered sent notes only in memory,
+  // so every gateway restart typed every past helper's "exited" note into its parent again.
+  it("does not repeat an exit note after a gateway restart", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    await h.agents.supervise(new Map());
+    h.tabs.set(child.ref.tabId, { ...h.tabs.get(child.ref.tabId), status: "exited", exitCode: 0 });
+    await h.agents.supervise(new Map());
+    // A restarted gateway starts with empty supervision state.
+    await h.agents.supervise(new Map());
+    await h.agents.supervise(new Map());
+    expect(h.sends.filter((send) => send.tabId === parentId).map((send) => send.text)).toEqual([
+      `<matrix from="${child.ref.tabId} review">exited with code 0</matrix>`,
+    ]);
+  });
+
   it("keeps the record of a tab created during a supervision pass", async () => {
     const h = await harness();
     const parent = { workspaceId, tabId: parentId };
