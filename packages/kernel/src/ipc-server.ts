@@ -1204,6 +1204,7 @@ async function createWebTools(homePath: string | undefined, tool: typeof import(
     brave: webConfig.search.braveApiKey,
     perplexity: webConfig.search.perplexityApiKey,
     grok: webConfig.search.grokApiKey,
+    keenable: webConfig.search.keenableApiKey,
   };
   const searchTool = createWebSearchTool({ cache, apiKeys });
 
@@ -1246,7 +1247,7 @@ async function createWebTools(homePath: string | undefined, tool: typeof import(
       {
         query: z.string().describe("Search query"),
         count: z.number().optional().describe("Number of results (1-10, default: 5)"),
-        provider: z.enum(["brave", "perplexity", "grok"]).optional().describe("Search provider (auto-detected from available API keys)"),
+        provider: z.enum(["brave", "perplexity", "grok", "keenable"]).optional().describe("Search provider (auto-detected from available API keys; keenable also works without a key)"),
         freshness: z.enum(["day", "week", "month", "year"]).optional().describe("How recent results should be"),
       },
       async ({ query, count, provider, freshness }) => {
@@ -1286,7 +1287,7 @@ function resolveEnvVar(value: string | undefined): string | undefined {
 }
 
 interface WebConfig {
-  search: { provider?: string; braveApiKey?: string; perplexityApiKey?: string; grokApiKey?: string };
+  search: { provider?: string; braveApiKey?: string; perplexityApiKey?: string; grokApiKey?: string; keenableApiKey?: string };
   fetch: { maxChars?: number; cacheTtlMinutes?: number; firecrawlApiKey?: string };
 }
 
@@ -1296,6 +1297,7 @@ function loadWebConfig(homePath?: string): WebConfig {
       braveApiKey: process.env.BRAVE_API_KEY,
       perplexityApiKey: process.env.PERPLEXITY_API_KEY,
       grokApiKey: process.env.XAI_API_KEY,
+      keenableApiKey: process.env.KEENABLE_API_KEY,
     },
     fetch: { maxChars: 50_000, cacheTtlMinutes: 15 },
   };
@@ -1315,6 +1317,7 @@ function loadWebConfig(homePath?: string): WebConfig {
         braveApiKey: resolveEnvVar(web.search?.braveApiKey) ?? defaults.search.braveApiKey,
         perplexityApiKey: resolveEnvVar(web.search?.perplexityApiKey) ?? defaults.search.perplexityApiKey,
         grokApiKey: resolveEnvVar(web.search?.grokApiKey) ?? defaults.search.grokApiKey,
+        keenableApiKey: resolveEnvVar(web.search?.keenableApiKey) ?? defaults.search.keenableApiKey,
       },
       fetch: {
         maxChars: web.fetch?.maxChars ?? defaults.fetch.maxChars,

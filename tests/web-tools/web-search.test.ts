@@ -151,6 +151,71 @@ describe("createWebSearchTool", () => {
     });
   });
 
+  describe("Keenable Search", () => {
+    const keenableResponse = {
+      ok: true,
+      json: () => Promise.resolve({
+        results: [
+          { title: "Matrix Protocol", url: "https://matrix.org", snippet: "A decentralized protocol", published_at: "2026-11-13T10:00:00Z" },
+        ],
+      }),
+    };
+
+    it("uses the keyless public endpoint when no key is set", async () => {
+      const fetcher = vi.fn().mockResolvedValue(keenableResponse);
+
+      const tool = createWebSearchTool({ cache, fetcher, apiKeys: {} });
+      const result = await tool.execute({ query: "matrix protocol", provider: "keenable", count: 3 });
+
+      expect(fetcher.mock.calls[0][0]).toBe("https://api.keenable.ai/v1/search/public");
+      const opts = fetcher.mock.calls[0][1] as RequestInit;
+      const headers = opts.headers as Record<string, string>;
+      expect(headers["X-Keenable-Title"]).toBe("Matrix OS");
+      expect(headers["X-API-Key"]).toBeUndefined();
+      expect(JSON.parse(opts.body as string)).toEqual({ query: "matrix protocol", max_results: 3 });
+      expect(result.provider).toBe("keenable");
+      expect(result.results[0]).toEqual({
+        title: "Matrix Protocol",
+        url: "https://matrix.org",
+        snippet: "A decentralized protocol",
+        age: "2026-11-13T10:00:00Z",
+      });
+    });
+
+    it("uses the keyed endpoint with X-API-Key when a key is set", async () => {
+      const fetcher = vi.fn().mockResolvedValue(keenableResponse);
+
+      const tool = createWebSearchTool({ cache, fetcher, apiKeys: { keenable: "keen-key" } });
+      await tool.execute({ query: "test", provider: "keenable" });
+
+      expect(fetcher.mock.calls[0][0]).toBe("https://api.keenable.ai/v1/search");
+      const headers = (fetcher.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+      expect(headers["X-API-Key"]).toBe("keen-key");
+    });
+
+    it("maps freshness to published_after", async () => {
+      vi.setSystemTime(new Date("2026-11-15T12:00:00Z"));
+      const fetcher = vi.fn().mockResolvedValue(keenableResponse);
+
+      const tool = createWebSearchTool({ cache, fetcher, apiKeys: {} });
+      await tool.execute({ query: "news", provider: "keenable", freshness: "week" });
+
+      const body = JSON.parse((fetcher.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.published_after).toBe("2026-11-08");
+    });
+
+    it("is not picked automatically over existing providers", async () => {
+      const fetcher = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ web: { results: [] } }),
+      });
+
+      const tool = createWebSearchTool({ cache, fetcher, apiKeys: { brave: "key", keenable: "keen-key" } });
+      const result = await tool.execute({ query: "test" });
+      expect(result.provider).toBe("brave");
+    });
+  });
+
   describe("Provider auto-detection", () => {
     it("picks brave when available", async () => {
       const fetcher = vi.fn().mockResolvedValue({

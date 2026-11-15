@@ -1,6 +1,6 @@
 import { WebCache } from "./web-cache.js";
 
-export type SearchProvider = "brave" | "perplexity" | "grok";
+export type SearchProvider = "brave" | "perplexity" | "grok" | "keenable";
 
 export interface SearchResult {
   title: string;
@@ -31,6 +31,7 @@ export interface ApiKeys {
   brave?: string;
   perplexity?: string;
   grok?: string;
+  keenable?: string;
 }
 
 export interface WebSearchToolOptions {
@@ -46,9 +47,17 @@ const FRESHNESS_MAP: Record<string, string> = {
   year: "py",
 };
 
-const PROVIDER_PRIORITY: SearchProvider[] = ["brave", "perplexity", "grok"];
+const PROVIDER_PRIORITY: SearchProvider[] = ["brave", "perplexity", "grok", "keenable"];
+
+const FRESHNESS_DAYS: Record<string, number> = {
+  day: 1,
+  week: 7,
+  month: 30,
+  year: 365,
+};
 
 function detectProvider(apiKeys: ApiKeys, requested?: SearchProvider): SearchProvider {
+  if (requested === "keenable") return requested;
   if (requested) {
     const key = apiKeys[requested];
     if (!key) throw new Error(`No API key configured for ${requested}. Set the appropriate environment variable.`);
@@ -57,7 +66,7 @@ function detectProvider(apiKeys: ApiKeys, requested?: SearchProvider): SearchPro
   for (const p of PROVIDER_PRIORITY) {
     if (apiKeys[p]) return p;
   }
-  throw new Error("No search API key configured. Set BRAVE_API_KEY, PERPLEXITY_API_KEY, or XAI_API_KEY.");
+  throw new Error("No search API key configured. Set BRAVE_API_KEY, PERPLEXITY_API_KEY, XAI_API_KEY, or KEENABLE_API_KEY.");
 }
 
 export function createWebSearchTool(opts: WebSearchToolOptions) {
@@ -86,6 +95,9 @@ export function createWebSearchTool(opts: WebSearchToolOptions) {
         break;
       case "grok":
         result = await searchGrok(query, apiKeys.grok!, fetcher);
+        break;
+      case "keenable":
+        result = await searchKeenable(query, count, freshness, apiKeys.keenable, fetcher);
         break;
     }
 
@@ -221,5 +233,54 @@ async function searchGrok(
     provider: "grok",
     results: [],
     answer,
+  };
+}
+
+async function searchKeenable(
+  query: string,
+  count: number,
+  freshness: string | undefined,
+  apiKey: string | undefined,
+  fetcher: FetchLike,
+): Promise<WebSearchResult> {
+  const body: Record<string, unknown> = { query, max_results: count };
+  const days = freshness ? FRESHNESS_DAYS[freshness] : undefined;
+  if (days) {
+    body.published_after = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  }
+
+  const endpoint = apiKey
+    ? "https://api.keenable.ai/v1/search"
+    : "https://api.keenable.ai/v1/search/public";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
+  } else {
+    headers["X-Keenable-Title"] = "Matrix OS";
+  }
+
+  const response = await fetcher(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Keenable API error: ${response.status}`);
+  }
+
+  const data = (await response.json()) as {
+    results?: Array<{ title?: string; url: string; snippet?: string; description?: string; published_at?: string }>;
+  };
+
+  return {
+    query,
+    provider: "keenable",
+    results: (data.results ?? []).map((r) => ({
+      title: r.title ?? r.url,
+      url: r.url,
+      snippet: r.snippet || r.description || "",
+      age: r.published_at,
+    })),
   };
 }
