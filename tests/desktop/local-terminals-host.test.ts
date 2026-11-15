@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
+import { createAttachmentSlots } from "@desktop/main/local-terminals/hc-sessions";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
@@ -290,11 +291,11 @@ describe("local terminal host against a scripted core", () => {
     expect(await host.list()).toHaveLength(51);
   });
 
-  function attaching() {
+  function attaching(overrides: Partial<LocalTerminalHostOptions> = {}) {
     let channel = 10;
     const started = start((core, call) => {
       if (call.method === "terminal.attach") core.reply(call.id, { result: { channel: ++channel } });
-    });
+    }, overrides);
     return { ...started, lastChannel: () => channel };
   }
 
@@ -312,6 +313,17 @@ describe("local terminal host against a scripted core", () => {
     expect(host.acknowledge(attachId, 50)).toBe(true);
     expect(credits()).toEqual([3, 5]);
     expect(host.acknowledge(attachId + 1, 1)).toBe(false);
+  });
+
+  it("draws attachments from a budget shared with the window's other hosts", async () => {
+    const slots = createAttachmentSlots(2);
+    const taken = slots.acquire();
+    const { host } = attaching({ slots });
+    const attachId = await host.attach("t1", { cols: 80, rows: 24 });
+    expect(attachId).not.toBe(taken);
+    await expect(host.attach("t1", { cols: 80, rows: 24 })).rejects.toThrow("too many");
+    host.detach(attachId);
+    expect(slots.acquire()).not.toBeNull();
   });
 
   it("frees every attachment when the window goes away, so a new window can attach again", async () => {

@@ -75,13 +75,39 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   let waitsForRetry = false;
   let blockedUntil = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectedAt = 0;
+  // Ends a stream that is still waiting for its handshake; set only while one is.
+  let abandonPending: (() => void) | null = null;
 
   const shutDown = () => new Error("herdr sessions are shut down");
 
   async function open(): Promise<HcConnection> {
     const socket = await options.open();
     if (disposed) { socket.destroy(); throw shutDown(); }
-    return restrictHcConnection(await connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: CALL_TIMEOUT_MS }), ALLOWED_METHODS);
+    const abandoned = new Promise<never>((_, reject) => {
+      abandonPending = () => { socket.destroy(); reject(shutDown()); };
+    });
+    try {
+      const opened = await Promise.race([
+        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: CALL_TIMEOUT_MS }),
+        abandoned,
+      ]);
+      return restrictHcConnection(opened, ALLOWED_METHODS);
+    } finally {
+      abandonPending = null;
+    }
+  }
+
+  /** A failure: the next dial waits, longer after each failure in a row. */
+  function backOff(): void {
+    failures += 1;
+    const wait = Math.min(BACKOFF_MAX_MS, BACKOFF_START_MS * 2 ** (failures - 1));
+    blockedUntil = now() + wait * (0.5 + random() / 2);
+  }
+
+  /** A connection that held for a while ends the run of failures; a handshake alone does not. */
+  function connectionEnded(): void {
+    if (now() - connectedAt >= BACKOFF_MAX_MS) failures = 0;
   }
 
   function failed(error: unknown): HerdrSessionHostStatus {
@@ -99,6 +125,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       if (sessions.attached() > 0) { touch(); return; }
       const idle = connection;
       connection = null;
+      connectionEnded();
       idle?.close();
     }, idleMs);
     idleTimer.unref?.();
@@ -115,10 +142,14 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
         if (disposed) { opened.close(); throw shutDown(); }
         connection = opened;
         status = "ready";
-        failures = 0;
+        connectedAt = now();
         opened.onDisconnect(() => {
+          // Closed by this host (idle or disposed): not a failure.
           if (connection !== opened) return;
           connection = null;
+          status = "unavailable";
+          connectionEnded();
+          backOff();
           sessions.connectionLost();
         });
         touch();
@@ -127,10 +158,8 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       .catch((error: unknown) => {
         if (disposed) throw error;
         status = failed(error);
-        failures += 1;
         waitsForRetry = WAITS_FOR_RETRY.has(status);
-        const wait = Math.min(BACKOFF_MAX_MS, BACKOFF_START_MS * 2 ** (failures - 1));
-        blockedUntil = now() + wait * (0.5 + random() / 2);
+        backOff();
         // The name only: what a transport or a remote core says stays out of the log.
         console.warn("[herdr-sessions] unavailable:", status, describeError(error).split(":")[0]);
         throw error;
@@ -171,6 +200,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = null;
       sessions.drop();
+      abandonPending?.();
       connection?.close();
       connection = null;
     },

@@ -122,7 +122,8 @@ describe("herdr session host against a scripted core", () => {
   });
 
   it("carries output through the shared flow control and ends attachments when the line drops", async () => {
-    const { host, sink, cores, open } = start(script());
+    let time = 0;
+    const { host, sink, cores, open } = start(script(), { now: () => time, random: () => 1 });
     const attachId = await host.attach("t7", { cols: 80, rows: 24 });
     const core = cores[0]!;
     core.stream(5, HC_FRAME.DATA, Buffer.from("hello"));
@@ -137,8 +138,14 @@ describe("herdr session host against a scripted core", () => {
     core.socket.emit("close");
     expect(sink.closed).toHaveBeenCalledWith(attachId);
     expect(host.input(attachId, "x", false)).toBe(false);
-    // The terminal is still running there: the next use reconnects, and nothing was ended.
+    // A dropped line is a failure like any other: reported, and not redialed on the next poll.
+    expect(host.status()).toBe("unavailable");
+    await expect(host.list()).rejects.toThrow();
+    expect(open).toHaveBeenCalledTimes(1);
+    // The terminal is still running there: after the wait the next use reconnects, and nothing was ended.
+    time += 1_001;
     expect(await host.list()).toEqual([]);
+    expect(host.status()).toBe("ready");
     expect(open).toHaveBeenCalledTimes(2);
     expect(cores.flatMap((each) => each.sent.calls).some((call) => call.method === "terminal.kill")).toBe(false);
   });
@@ -198,6 +205,29 @@ describe("herdr session host against a scripted core", () => {
     expect(host.status()).toBe("ready");
   });
 
+  it("waits longer each time a computer accepts the connection and then drops it", async () => {
+    let time = 0;
+    const { host, cores, open } = start(script(), { now: () => time, random: () => 1 });
+    await host.list();
+    cores[0]!.socket.emit("close");
+    time += 1_001;
+    await host.list();
+    cores[1]!.socket.emit("close");
+    // The second drop in a row doubles the wait: a handshake alone does not reset it.
+    time += 1_001;
+    await expect(host.list()).rejects.toThrow();
+    expect(open).toHaveBeenCalledTimes(2);
+    time += 1_000;
+    await host.list();
+    expect(open).toHaveBeenCalledTimes(3);
+    // A connection that held for a while starts over at the shortest wait.
+    time += 60_000;
+    cores[2]!.socket.emit("close");
+    time += 1_001;
+    await host.list();
+    expect(open).toHaveBeenCalledTimes(4);
+  });
+
   it("closes an idle connection and keeps one that has a terminal open", async () => {
     vi.useFakeTimers();
     const idle = start(script(), { idleMs: 60_000 });
@@ -205,6 +235,8 @@ describe("herdr session host against a scripted core", () => {
     await vi.advanceTimersByTimeAsync(60_001);
     expect(idle.cores[0]!.socket.destroyed).toBe(true);
     expect(idle.sink.closed).not.toHaveBeenCalled();
+    // Closing an idle connection is not a failure: no status change and no wait.
+    expect(idle.host.status()).toBe("ready");
     await idle.host.list();
     expect(idle.open).toHaveBeenCalledTimes(2);
 
@@ -249,6 +281,19 @@ describe("herdr session host against a scripted core", () => {
     release(late.socket);
     await expect(pending).rejects.toThrow();
     expect(late.socket.destroyed).toBe(true);
+  });
+
+  it("destroys a stream still waiting for the handshake when the host is disposed", async () => {
+    const silent = new EventEmitter() as EventEmitter & HcSocket & { destroyed: boolean };
+    silent.destroyed = false;
+    silent.write = () => undefined;
+    silent.destroy = () => { silent.destroyed = true; };
+    const { host } = start(script(), { open: async () => silent });
+    const pending = host.list();
+    await vi.waitFor(() => expect(silent.listenerCount("data")).toBeGreaterThan(0));
+    host.dispose();
+    expect(silent.destroyed).toBe(true);
+    await expect(pending).rejects.toThrow();
   });
 });
 

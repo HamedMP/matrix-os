@@ -8,7 +8,7 @@ import type { LocalTerminalAgent } from "../../shared/local-terminals";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createHcSessions, type HcSessionSink } from "./hc-sessions";
+import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -69,6 +69,8 @@ export interface LocalTerminalHostOptions {
   uid: number;
   startCore(binaryPath: string, env: Record<string, string>, timeoutMs: number): Promise<void>;
   openSocket(path: string): HcSocket;
+  /** Shared with the window's other hosts, so the attachment budget holds across them. */
+  slots?: AttachmentSlots;
   now?: () => number;
 }
 
@@ -163,7 +165,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     return connecting;
   }
 
-  const sessions = createHcSessions({ ensure, now }, sink);
+  const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
 
   /** A real folder under home, resolved through symlinks; anything else is refused. */
   async function folderUnderHome(folder: string): Promise<string> {
