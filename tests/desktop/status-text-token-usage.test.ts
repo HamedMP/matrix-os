@@ -19,6 +19,16 @@ const STYLE_COLOR = /(?<![\w-])color\s*:\s*([^,;}]*,?)/g;
 // A constant (string, ternary or status map, optionally type-annotated) whose value contains a primary fill.
 const FILL_CONSTANT = /(?<![\w$])const\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=([^;]*);/g;
 const TAILWIND_TEXT = new RegExp(String.raw`(?<![\w-])text-\[(?:color:)?${FILL}`, "g");
+// A CSS custom property that resolves to a fill (anywhere in its chain) and names no *-text token.
+const CSS_PROPERTY = /(?<![\w-])(--[\w-]+)\s*:\s*([^;}]+)/g;
+
+function cssFillAliases(source: string): Set<string> {
+  const aliases = new Set<string>();
+  for (const match of source.matchAll(CSS_PROPERTY)) {
+    if (new RegExp(FILL).test(match[2]!) && !/--[\w-]*-text\b/.test(match[2]!)) aliases.add(match[1]!);
+  }
+  return aliases;
+}
 
 function collectSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -33,7 +43,7 @@ function lineOf(source: string, index: number): number {
   return source.slice(0, index).split("\n").length;
 }
 
-function findFillTokensUsedAsText(file: string, source: string): string[] {
+function findFillTokensUsedAsText(file: string, source: string, aliases = cssFillAliases(source)): string[] {
   const findings: string[] = [];
   const relative = path.relative(path.resolve(import.meta.dirname, "../.."), file);
   const fillConstants = new Set<string>();
@@ -43,7 +53,8 @@ function findFillTokensUsedAsText(file: string, source: string): string[] {
   for (const match of source.matchAll(STYLE_COLOR)) {
     const value = match[1]!.trim();
     const reference = /^([A-Za-z_$][\w$]*)(?:\[|\s*,?$)/.exec(value)?.[1];
-    if (PRIMARY_FILL.test(value) || (reference && fillConstants.has(reference))) {
+    const alias = /^["']?var\(\s*(--[\w-]+)\s*[,)]/.exec(value)?.[1];
+    if (PRIMARY_FILL.test(value) || (reference && fillConstants.has(reference)) || (alias && aliases.has(alias))) {
       findings.push(`${relative}:${lineOf(source, match.index!)} color: ${value}`);
     }
   }
@@ -89,6 +100,25 @@ describe("status text tokens", () => {
     expect(findFillTokensUsedAsText("/sample.tsx", sample)).toHaveLength(3);
   });
 
+  it("detects CSS custom properties that alias a fill and reach text", () => {
+    const css = [
+      `.root { --matrix-ap-warning: var(--ap-warning, var(--warning, var(--ember))); }`,
+      `.root { --import-danger: var(--danger, var(--destructive)); }`,
+      `.chip[data-state="not-connected"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }`,
+      `.error { color: var(--import-danger, #c00); }`,
+      `.chip i { background: var(--matrix-ap-warning); }`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.css", css)).toHaveLength(2);
+  });
+
+  it("allows CSS custom properties that alias a text token", () => {
+    const css = [
+      `.root { --matrix-ap-warning-text: var(--ap-warning-text, var(--warning-text, var(--matrix-ap-warning))); }`,
+      `.chip { color: var(--matrix-ap-warning-text); }`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.css", css)).toEqual([]);
+  });
+
   it("allows a fallback chain that starts with a text token", () => {
     const sample = [
       `.state { color: var(--success-text, var(--success, var(--import-accent))); }`,
@@ -118,8 +148,11 @@ describe("status text tokens", () => {
   });
 
   it("keeps Electron Desktop and shared UI status labels on accessible text tokens", () => {
-    const findings = ROOTS.flatMap((root) => collectSources(root))
-      .flatMap((file) => findFillTokensUsedAsText(file, readFileSync(file, "utf8")));
+    const files = ROOTS.flatMap((root) => collectSources(root));
+    // Aliases defined in one stylesheet are used from others and from components.
+    const aliases = new Set(files.filter((file) => file.endsWith(".css"))
+      .flatMap((file) => [...cssFillAliases(readFileSync(file, "utf8"))]));
+    const findings = files.flatMap((file) => findFillTokensUsedAsText(file, readFileSync(file, "utf8"), aliases));
     expect(findings).toEqual([]);
   });
 });
