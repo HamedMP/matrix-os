@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   desktopAppearanceForApp,
@@ -11,6 +11,7 @@ import {
   OS_VIEW_CORE_APP_FIXTURE,
   OS_VIEW_FIXED_APP_NAMES,
 } from "../fixtures/os-view-parity";
+import { useVocalStore } from "@/stores/vocal";
 
 const apps = [
   ...OS_VIEW_CORE_APP_FIXTURE.map((app) => ({
@@ -39,6 +40,17 @@ const windows = [
 ];
 
 describe("WebDesktopSurface", () => {
+  it("starts and ends a live voice call from the launch bar", () => {
+    useVocalStore.setState({ active: false, chatId: undefined });
+    render(<WebDesktopSurface apps={apps} windows={[]} fullscreenWindowId={null} launcherOpen={false}
+      onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+      onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+    const bar = screen.getByRole("navigation", { name: "Running apps" });
+    fireEvent.click(within(bar).getByRole("button", { name: "Talk with Matrix" }));
+    expect(useVocalStore.getState()).toMatchObject({ active: true, chatId: undefined });
+    fireEvent.click(within(bar).getByRole("button", { name: "End voice call" }));
+    expect(useVocalStore.getState().active).toBe(false);
+  });
   it("loads launcher artwork from the explicitly selected computer and runtime", () => {
     const previous = window.location.href;
     window.history.replaceState({}, "", "/vm/pr-2406?runtime=pr-2406");
