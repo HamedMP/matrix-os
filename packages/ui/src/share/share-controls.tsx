@@ -42,7 +42,7 @@ export function ShareTabsList({ className, ...props }: ComponentProps<typeof Tab
   return <TabsPrimitive.List data-slot="tabs-list" className={cn("flex gap-0.5 rounded-[11px] bg-[var(--share-muted)] p-[3px]", className)} {...props} />;
 }
 export function ShareTabsTrigger({ className, ...props }: ComponentProps<typeof TabsPrimitive.Trigger>) {
-  return <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn("flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium text-[var(--share-muted-fg)] data-[state=active]:bg-[var(--share-bg)] data-[state=active]:text-[var(--share-fg)] data-[state=active]:shadow-[0_1px_2px_rgba(24,24,27,0.10),0_0_0_1px_rgba(24,24,27,0.05)]", className)} {...props} />;
+  return <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn("flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium whitespace-nowrap [&_svg]:shrink-0 text-[var(--share-muted-fg)] data-[state=active]:bg-[var(--share-bg)] data-[state=active]:text-[var(--share-fg)] data-[state=active]:shadow-[0_1px_2px_rgba(24,24,27,0.10),0_0_0_1px_rgba(24,24,27,0.05)]", className)} {...props} />;
 }
 export const ShareTabsContent = TabsPrimitive.Content;
 

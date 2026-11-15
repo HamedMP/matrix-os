@@ -124,6 +124,16 @@ describe("Organization tab", () => {
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
   });
 
+  it("pins the org picker as a static summary once shared", async () => {
+    render(<Host organizations={[finna, northwind]} api={collaboration(["ready"])} fileApi={files()} />);
+    await openOrganizationTab();
+    expect(screen.getByRole("combobox", { name: "Share in Finna, change organization" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
+    await screen.findByText("Finna link");
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.getByLabelText("Share in Finna")).toBeTruthy();
+  });
+
   it("asks for the two-step collaborative flow when readiness is blocked and never shares", async () => {
     const api = collaboration(["blocked"]);
     render(<Host organizations={[finna]} api={api} fileApi={files()} />);
