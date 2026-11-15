@@ -9,10 +9,12 @@ const artifacts = Object.freeze({
   arm64: Object.freeze({
     '2.1.280': '92f2b4fd05d0bdcf7b9a0d4e0ecef4a1e4b368b290cd8fd07cff9a50013f45a2',
     '2.1.317': '563a0d60ad0c223d9415768210997acb0f7134ea51dc3c238e88bc2e18ddeefa',
+    '2.1.325': '7b6e484b1989a5a14a4b354709ccc8672518a3ec5b9ccd7981fc6254327fde67',
   }),
   x64: Object.freeze({
     '2.1.280': '1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b',
     '2.1.317': 'eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0',
+    '2.1.325': '0dc4f4a9a165fc60746d7ae8489712e5fc352f1e7ad4eb22e7141bd0812eb0cf',
   }),
 });
 assert.ok(Object.hasOwn(artifacts, process.arch), 'qualified Linux native architecture required');
