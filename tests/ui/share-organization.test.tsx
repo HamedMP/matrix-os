@@ -33,7 +33,7 @@ const share = (state: "active" | "stopped" = "active") => ({
   createdAt: "2026-11-05T10:00:00.000Z", updatedAt: "2026-11-05T10:00:00.000Z",
 });
 
-function collaboration(checkResults: Array<"ready" | "blocked">, options: { initialShare?: unknown; preflightGate?: Promise<void>; shareReadFailures?: number } = {}) {
+function collaboration(checkResults: Array<"ready" | "blocked">, options: { initialShare?: unknown; preflightGate?: Promise<void>; shareGate?: Promise<void>; shareReadFailures?: number } = {}) {
   let current: unknown = null;
   let currentShare: unknown = options.initialShare ?? null;
   let shareReadFailures = options.shareReadFailures ?? 0;
@@ -52,7 +52,7 @@ function collaboration(checkResults: Array<"ready" | "blocked">, options: { init
       if (path.endsWith("/readiness/check")) { checkCount += 1; current = readiness(results.shift() ?? "blocked", String(checkCount + 1)); return current; }
       if (path.endsWith("/share/preflight")) await options.preflightGate;
       if (path.endsWith("/share/preflight")) return { eligible: true, catalogId: build.catalogId, resourceRevision: "0", readinessId: "40000000-0000-4000-8000-000000000001", buildId: build.buildId, confirmationToken: "token_payload.signature_value" };
-      if (path.endsWith("/share")) { currentShare = share(); return currentShare; }
+      if (path.endsWith("/share")) { currentShare = share(); await options.shareGate; return currentShare; }
       throw new Error(`unexpected ${path}`);
     }),
     delete: vi.fn(async () => { currentShare = { ...share("stopped"), updatedAt: new Date().toISOString() }; return currentShare; }),
@@ -241,6 +241,19 @@ describe("Organization tab review fixes", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share/preflight", expect.anything()));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+  });
+
+  it("revokes access when the owner cancels after the share request was sent", async () => {
+    // Fault: undoing the raced share used a stale share snapshot (null), so stopShare threw and access stayed on.
+    let release!: () => void;
+    const api = collaboration(["ready"], { shareGate: new Promise((resolve) => { release = resolve; }) });
+    render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
+    await openOrganizationTab();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything()));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel sharing" }));
+    release();
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.objectContaining({ expectedShareRevision: expect.any(String) })));
+    expect(screen.queryByText("Collaborative and shared")).toBeNull();
   });
 
   it("does not re-share from a completion saved before the owner stopped sharing", async () => {
