@@ -72,6 +72,6 @@ export function approvalDetailFields(details: string): ApprovalDetailField[] | n
  * card can set the command apart. Titles without a subject stay whole.
  */
 export function approvalTitleParts(title: string): { action: string; subject?: string } {
-  const match = /^(.+?) · “(.+)”$/su.exec(title);
+  const match = /^(.+?) · “([\s\S]+)”$/u.exec(title);
   return match ? { action: match[1]!, subject: match[2]! } : { action: title };
 }
