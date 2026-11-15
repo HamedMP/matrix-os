@@ -2,6 +2,7 @@
 // Machines on the left, one attached terminal on the right. Every Matrix
 // computer is reached with its own credential, held by the trusted core.
 import { useEffect, useRef, useState } from "react";
+import { Toaster } from "sonner";
 import { ChevronDown, ChevronRight, Cloud, Laptop, Pencil, Plus, SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
@@ -443,6 +444,10 @@ export default function TerminalWindowApp() {
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
       <LocalTerminalAttention state={view.local.state} activeId={view.localActive} onOpen={view.openLocal} />
+      {/* This window's one toast host, configured like the main window's. */}
+      <Toaster position="bottom-right" toastOptions={{ style: {
+        background: "var(--bg-overlay)", color: "var(--text-primary)", border: "1px solid var(--border-default)",
+      } }} />
       <header className="titlebar-drag flex shrink-0 items-center justify-center border-b text-[12px] font-medium"
         style={{ height: "var(--titlebar-height)", borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
         {windowTitle(view)}
