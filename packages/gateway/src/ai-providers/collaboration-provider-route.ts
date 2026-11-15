@@ -1,6 +1,43 @@
 import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
 import type { CollaborationChatProviderRoute } from "./snapshot-read-options.js";
+import { claudeFallbackCatalog } from "../chat/claude-model-catalog.js";
+
+/** Preserve native picker values verbatim; Claude Code resolves moving aliases. */
+export function withNativeClaudeChatModel(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  chatRoute?: CollaborationChatProviderRoute,
+): AiProviderSnapshotV3 {
+  if (chatRoute?.driverKind !== "claude_code"
+    || canonical.models.some((model) => model.id === chatRoute.modelId)) return canonical;
+  const nativeModel = claudeFallbackCatalog().models.find((model) => model.id === chatRoute.modelId);
+  if (!nativeModel) return canonical;
+  const harnesses = config.harnesses.filter((harness) => harness.enabled && harness.harness === "claude");
+  if (harnesses.length !== 1) return canonical;
+  const harness = harnesses[0]!;
+  const source = canonical.accessSources.find((candidate) => candidate.id === harness.accessSourceId
+    && candidate.vendor === "anthropic" && (candidate.fundingKind === "owner_account"
+      || candidate.fundingKind === "owner_api_key"));
+  const template = canonical.models.find((model) => model.id === harness.route.modelId
+    && model.vendor === "anthropic" && model.eligibleAccessSourceIds.includes(source?.id ?? "")
+    && source?.eligibleModelIds.includes(model.id)
+    && model.status !== "retired" && model.status !== "unavailable");
+  if (!source || !template) return canonical;
+  // This advertises the same documented native choices as the private Chat
+  // picker, not a claim that a subscription entitles a particular model version.
+  // Readiness still gates the exact source and provider execution is authoritative.
+  return {
+    ...canonical,
+    models: [...canonical.models, { ...template, id: nativeModel.id, displayName: nativeModel.displayName,
+      eligibleAccessSourceIds: [source.id], dataPolicies: template.dataPolicies.filter((policy) => policy.accessSourceId === source.id) }],
+    accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id
+      ? { ...candidate, eligibleModelIds: [...candidate.eligibleModelIds, nativeModel.id] } : candidate),
+    instances: canonical.instances.map((instance) => instance.accessSourceId === source.id
+      && (instance.driverId === "claude_code" || instance.driverId === "kernel")
+      ? { ...instance, modelIds: [...instance.modelIds, nativeModel.id] } : instance),
+  };
+}
 
 const NO_ACTIVE_PROVIDER_ROUTE: AiProviderSnapshotV3["active"] = {
   providerInstanceId: null,

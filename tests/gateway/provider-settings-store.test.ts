@@ -23,6 +23,7 @@ import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadataRea
 import type { ClaudeNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/claude-native-account-metadata.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
 import { resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
+import { claudeFallbackCatalog } from "../../packages/gateway/src/chat/claude-model-catalog.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
@@ -389,6 +390,16 @@ describe("ProviderSettingsStore", () => {
         collaborationChatRoute: { driverKind, modelId },
       });
       expect(snapshot.active).toEqual({ providerInstanceId, accessSourceId, modelId });
+      expect(resolveCurrentOwnerRoute(snapshot, NOW.getTime())?.modelId).toBe(modelId);
+    }
+    for (const modelId of ["default", "opus", "sonnet"]) {
+      expect(claudeFallbackCatalog().models.map((model) => model.id)).toContain(modelId);
+      const snapshot = await store.getCanonicalCollaborationSnapshot({
+        collaborationChatRoute: { driverKind: "claude_code", modelId },
+      });
+      expect(snapshot.active).toEqual({
+        providerInstanceId: "kernel_owner", accessSourceId: "owner_anthropic_profile", modelId,
+      });
       expect(resolveCurrentOwnerRoute(snapshot, NOW.getTime())?.modelId).toBe(modelId);
     }
     // A bound Chat must never switch to the other ready agent when its own is off.
