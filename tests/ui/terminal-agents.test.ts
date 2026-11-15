@@ -133,6 +133,49 @@ describe("terminal events client", () => {
     expect(states.length).toBeGreaterThan(0);
   });
 
+  // Fault detected (review of #3299): a socket left open by a network change but no
+  // longer delivering frames kept stale badges and missed new attention alerts.
+  it("reconnects when the server stops answering pings", async () => {
+    const sockets: FakeSocket[] = [];
+    const timers: Array<{ callback: () => void; ms: number }> = [];
+    const repeats: Array<() => void> = [];
+    let now = 0;
+    const client = createTerminalEventsClient({
+      url: () => "wss://example.test/ws/terminal/events",
+      createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      onState: () => undefined,
+      now: () => now,
+      setTimer: (callback, ms) => { timers.push({ callback, ms }); return timers.length; },
+      clearTimer: vi.fn(),
+      setRepeat: (callback) => { repeats.push(callback); return repeats.length; },
+      clearRepeat: vi.fn(),
+    });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    client.start();
+    await flush();
+    sockets[0]!.onopen?.({});
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "snapshot", seq: 1, tabs: [fact(tabA)] }) });
+    // Pongs keep arriving: the socket stays.
+    for (let tick = 0; tick < 4; tick += 1) {
+      now += 20_000;
+      repeats[0]!();
+      sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "pong" }) });
+    }
+    expect(sockets[0]!.closed).toBe(false);
+    // Silence: within a bounded number of ping ticks the client drops and reconnects.
+    for (let tick = 0; tick < 3; tick += 1) { now += 20_000; repeats[0]!(); }
+    expect(sockets[0]!.closed).toBe(true);
+    expect(client.getState().connected).toBe(false);
+    expect(timers.map((timer) => timer.ms)).toEqual([1_000]);
+    timers[0]!.callback();
+    await flush();
+    expect(sockets).toHaveLength(2);
+    // The late close of the abandoned socket changes nothing.
+    sockets[0]!.onclose?.({});
+    expect(timers).toHaveLength(1);
+    client.stop();
+  });
+
   // Fault detected (review of #3299): a socket closed by stop() republishes the old
   // tabs after the store has cleared itself.
   it("ignores close and messages from a socket it stopped", async () => {

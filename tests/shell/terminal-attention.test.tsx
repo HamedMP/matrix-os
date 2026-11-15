@@ -116,7 +116,7 @@ describe("terminal attention notifier", () => {
   // background agent finishing raised nothing.
   it("raises done only for a tab that is not on screen, and clears an alert once it is resolved", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 300, height: 200 } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 } as DOMRect);
     render(<><div data-terminal-session={key} /><TerminalAttentionNotifier /></>);
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("done") }); });
@@ -139,7 +139,20 @@ describe("visible terminal sessions", () => {
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 0, height: 0 } as DOMRect);
     render(<div data-terminal-session={key} />);
     expect([...visibleTerminalSessions()]).toEqual([]);
-    rect.mockReturnValue({ width: 10, height: 10 } as DOMRect);
+    rect.mockReturnValue({ left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 } as DOMRect);
+    expect([...visibleTerminalSessions()]).toEqual([key]);
+  });
+
+  // Fault detected (review of #3299): a Web Canvas pane panned fully off screen still
+  // counted as seen, so its agent finishing raised no toast.
+  it("does not count a pane panned off the visible area", () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const offKey = `${workspaceId}:tt_${"b".repeat(32)}`;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const left = this.dataset.terminalSession === key ? 100 : window.innerWidth + 200;
+      return { left, top: 100, right: left + 400, bottom: 400, width: 400, height: 300 } as DOMRect;
+    });
+    render(<><div data-terminal-session={key} /><div data-terminal-session={offKey} /></>);
     expect([...visibleTerminalSessions()]).toEqual([key]);
   });
 });

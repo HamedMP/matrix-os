@@ -1,6 +1,9 @@
 import { EMPTY_TERMINAL_EVENTS_STATE, reduceTerminalEvents, type TerminalEventsState } from "./events-state.js";
 
 const PING_MS = 20_000;
+// The gateway answers every ping with a pong, so a socket silent this long has
+// stopped delivering (for example after a network change) even if it never closed.
+const STALE_MS = PING_MS * 2.5;
 // The gateway bounds each tab to about 1 KiB, and the runtime to 10 000 live tabs plus
 // 1 024 finished ones, so a snapshot stays below this.
 const MAX_FRAME_CHARS = 16 * 1024 * 1024;
@@ -29,17 +32,20 @@ export function createTerminalEventsClient(options: {
   clearTimer?: (handle: unknown) => void;
   setRepeat?: (callback: () => void, ms: number) => unknown;
   clearRepeat?: (handle: unknown) => void;
+  now?: () => number;
 }) {
   const setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const setRepeat = options.setRepeat ?? ((callback, ms) => setInterval(callback, ms));
   const clearRepeat = options.clearRepeat ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+  const now = options.now ?? (() => Date.now());
   let state = EMPTY_TERMINAL_EVENTS_STATE;
   let socket: TerminalEventsSocket | null = null;
   let ping: unknown = null;
   let retry: unknown = null;
   let backoff = RECONNECT_MIN_MS;
   let stopped = false;
+  let lastFrameAt = 0;
 
   const publish = (next: TerminalEventsState) => {
     if (next === state) return;
@@ -79,9 +85,29 @@ export function createTerminalEventsClient(options: {
       return;
     }
     socket = opened;
+    // Only the current socket of a running client may change state: a socket
+    // closed by stop() or replaced must not restore old tabs.
+    const drop = () => {
+      if (socket !== opened) return;
+      if (ping !== null) clearRepeat(ping);
+      ping = null;
+      socket = null;
+      if (stopped) return;
+      publish({ ...state, connected: false });
+      scheduleReconnect();
+    };
     opened.onopen = () => {
       backoff = RECONNECT_MIN_MS;
+      lastFrameAt = now();
       ping = setRepeat(() => {
+        if (socket !== opened) return;
+        if (now() - lastFrameAt > STALE_MS) {
+          console.warn("[terminal-events] no frames from server, reconnecting");
+          drop();
+          try { opened.close(4000, "heartbeat timeout"); }
+          catch (error: unknown) { console.warn("[terminal-events] close failed", error instanceof Error ? error.name : "unknown_error"); }
+          return;
+        }
         try { opened.send(JSON.stringify({ type: "ping" })); }
         catch (error: unknown) { console.warn("[terminal-events] ping failed", error instanceof Error ? error.name : "unknown_error"); }
       }, PING_MS);
@@ -89,6 +115,7 @@ export function createTerminalEventsClient(options: {
     // react-doctor-disable-next-line react-doctor/postmessage-origin-risk -- a WebSocket from this client's own authenticated URL, not window.postMessage
     opened.onmessage = (event) => {
       if (socket !== opened || stopped) return;
+      lastFrameAt = now();
       if (typeof event.data !== "string" || event.data.length > MAX_FRAME_CHARS) return;
       let frame: unknown;
       try { frame = JSON.parse(event.data); }
@@ -98,17 +125,7 @@ export function createTerminalEventsClient(options: {
       }
       publish(reduceTerminalEvents(state, frame));
     };
-    opened.onclose = () => {
-      // Only the current socket of a running client may change state: a socket
-      // closed by stop() or replaced must not restore old tabs.
-      if (socket !== opened) return;
-      if (ping !== null) clearRepeat(ping);
-      ping = null;
-      socket = null;
-      if (stopped) return;
-      publish({ ...state, connected: false });
-      scheduleReconnect();
-    };
+    opened.onclose = drop;
     opened.onerror = () => {
       console.warn("[terminal-events] socket error");
     };
