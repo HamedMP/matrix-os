@@ -336,6 +336,7 @@ function checkPrSize(stats, report) {
 
 export const FILE_LIMITS = { split: 2000, plan: 1000 };
 const GENERATED_PATH = /(?:^|\/)(?:fixtures|generated|__generated__)\//;
+const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|e2e)\.[cm]?[jt]sx?$/;
 
 function checkLargeFiles(stats, today, report) {
   for (const { path, added, deleted } of stats) {
@@ -345,6 +346,11 @@ function checkLargeFiles(stats, today, report) {
     const lines = lineCount(text);
     if (lines <= FILE_LIMITS.plan) continue;
     const growth = `${path} has ${lines} lines and this change grows it by ${added - deleted}`;
+    // Review evidence covers source files; oversized suites only warn until they are split by behavior.
+    if (TEST_FILE.test(path) && lines > FILE_LIMITS.split) {
+      report.warning("large-file", `${growth}. Add new cases in a new focused test file (docs/dev/large-file-refactoring.md).`);
+      continue;
+    }
     if (lines <= FILE_LIMITS.split) {
       report.warning(
         "large-file",

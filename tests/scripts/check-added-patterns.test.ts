@@ -264,12 +264,22 @@ describe("large-file rule", () => {
   });
 
   it("accepts edits that shrink or keep the size of an oversized file", () => {
-    const shrink = scanChange({ "tests/platform/proxy-routing.test.ts": source(3000) }, {
-      "tests/platform/proxy-routing.test.ts": source(2990),
+    const shrink = scanChange({ "packages/platform/src/golden-snapshot-repository.ts": source(2653) }, {
+      "packages/platform/src/golden-snapshot-repository.ts": source(2640),
     });
 
     expect(shrink.status).toBe(0);
     expect(shrink.stdout).not.toContain("[large-file]");
+  });
+
+  it("only warns when an oversized test suite grows like chat-orchestrator.test.ts in de0cc107f", () => {
+    const result = scanChange({ "tests/gateway/chat-orchestrator.test.ts": source(1994) }, {
+      "tests/gateway/chat-orchestrator.test.ts": source(2038),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WARNING [large-file] tests/gateway/chat-orchestrator.test.ts has 2038 lines");
+    expect(result.stdout).toContain("new focused test file");
   });
 
   it("ignores generated fixtures and honors a dated file-level exception", () => {
