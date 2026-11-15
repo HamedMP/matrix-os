@@ -182,7 +182,9 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     }
     for (const table of ['billing_google_checkout_attribution','billing_google_purchases','billing_customers','billing_subscriptions','billing_entitlements','billing_entitlement_overrides',
       'prebilling_provisioning_intents','billing_checkout_attempts','billing_trial_accounts','onboarding_first_run',
-      'onboarding_journey_events','device_codes','free_tier_invites','container_owner_databases'] as const) {
+      'onboarding_journey_events','device_codes','free_tier_invites','container_owner_databases',
+      // The per-key storage ledger cascades from the usage row.
+      'runtime_storage_usage'] as const) {
       await trx.executor.deleteFrom(table).where('clerk_user_id','=',owner).execute();
     }
     await sql`UPDATE user_machines SET access_clerk_user_ids = array_remove(access_clerk_user_ids, ${owner})

@@ -452,3 +452,23 @@ describe('free container owner cleanup', () => {
     } finally { await db.destroy(); }
   });
 });
+
+describe('container storage ledger cleanup', () => {
+  it('erases the owner storage usage and per-key ledger with the account', async () => {
+    const db = await fixture();
+    try {
+      for (const owner of ['user_owner', 'user_other']) {
+        await db.executor.insertInto('runtime_storage_usage').values({ clerk_user_id: owner, object_bytes: 10, object_count: 1 }).execute();
+        await db.executor.insertInto('runtime_storage_objects').values({
+          clerk_user_id: owner, object_key: `matrixos-sync/${owner}/files/a`, bytes: 10, counts_as_file: true,
+          reservation_id: '11111111-1111-4111-8111-111111111111', pending_until: null,
+        }).execute();
+      }
+      await eraseOwnerPlatformData(db, 'user_owner');
+      expect(await db.executor.selectFrom('runtime_storage_usage').select('clerk_user_id').execute())
+        .toEqual([{ clerk_user_id: 'user_other' }]);
+      expect(await db.executor.selectFrom('runtime_storage_objects').select('clerk_user_id').execute())
+        .toEqual([{ clerk_user_id: 'user_other' }]);
+    } finally { await db.destroy(); }
+  });
+});
