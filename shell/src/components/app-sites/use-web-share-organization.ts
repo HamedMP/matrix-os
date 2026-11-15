@@ -6,11 +6,13 @@ import { useCollaborationOrganization } from "../../lib/collaboration-organizati
 import { sharedAppDeepLink } from "../../lib/shared-app-target";
 import { useChatContext } from "../../stores/chat-context";
 import { useWindowManager } from "../../hooks/useWindowManager";
-import { useShellOrganizations } from "../organization/useShellOrganizations";
+import { useShellOrganizationsFor } from "../organization/useShellOrganizations";
+import { useOwnerCollaborationParticipant } from "../../lib/owner-collaboration-participant";
 
 /** Web Desktop / Web Canvas wiring for the shared Organization tab (spec 2693 phase 2). */
 export function useWebShareOrganization(appSlug: string, appName: string) {
-  const listing = useShellOrganizations();
+  const participant = useOwnerCollaborationParticipant();
+  const listing = useShellOrganizationsFor(participant?.actorId ?? null);
   const active = useCollaborationOrganization();
   const chat = useChatContext();
   const organizations = useMemo(() => listing.state === "loaded"
