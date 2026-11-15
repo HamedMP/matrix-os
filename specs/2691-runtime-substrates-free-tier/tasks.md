@@ -152,11 +152,11 @@ task means implemented on a local branch, not merged.
 
 **Independent test**: quickstart.md section 6.
 
-- [ ] T061 [US5] `runtime_migrations` migration and repository with compare-and-set transitions in `packages/platform/src/migrations-runtime/repository.ts`, with tests in `tests/platform/runtime-migration-repository.test.ts`
+- [ ] T061 [US5] `runtime_migrations` migration and repository with compare-and-set transitions, and the D10 staging mechanism for the target row (a reserved staging slot or a staging status excluded from both slot indexes; data-model.md), with tests on real Postgres that a staged target and the container coexist and the switch never leaves two active `primary` rows, in `packages/platform/src/migrations-runtime/repository.ts`, with tests in `tests/platform/runtime-migration-repository.test.ts`
 - [ ] T062 [US5] `MigrationRunner` state machine, each step idempotent and resumable, in `packages/platform/src/migrations-runtime/runner.ts`, with failure-injection tests per state in `tests/platform/runtime-migration-runner.test.ts`
 - [ ] T063 [US5] Final sync and inventory (row counts, manifest digest, app list, balances) in `packages/platform/src/migrations-runtime/inventory.ts`
-- [ ] T064 [US5] Provision the VPS with restore from the container layout in `packages/platform/src/migrations-runtime/provision-target.ts`. Blocked on D10 (data-model.md, "Upgrade and the machine row"): the existing customer provisioning path, called unchanged, returns the owner's active `primary` row (the container) and provisions nothing, so T064 must either provision into the source row or stage a target the unique indexes allow
-- [ ] T065 [US5] Balance transfer and substrate switch in one transaction under the per-owner funding lock in `packages/platform/src/migrations-runtime/complete.ts`, with tests that no second starter grant occurs in `tests/platform/runtime-migration-complete.test.ts`
+- [ ] T064 [US5] Provision the VPS on a staged target row (D10) with restore from the container layout in `packages/platform/src/migrations-runtime/provision-target.ts`. The customer provisioning path, called unchanged, returns the owner's active `primary` row (the container) and provisions nothing, so T064 calls it with an explicit staged target that stays outside the slot unique indexes, restores from the `primary` sync prefix, and is ignored by routing, journey, sign-in, and fleet jobs until the T065 switch. Tests: a staged target never routes, the container stays writable while it provisions, and abandon deletes only the target
+- [ ] T065 [US5] Balance transfer and the switch to the staged VPS row (container row soft-deleted first, target moved into the active `primary` slot) in one transaction under the per-owner funding lock in `packages/platform/src/migrations-runtime/complete.ts`, with tests that no second starter grant occurs in `tests/platform/runtime-migration-complete.test.ts`
 - [ ] T066 [US5] Start a migration from the verified Stripe webhook in `packages/platform/src/billing/` webhook handler (idempotent on event id, non-2xx on failure), and add `GET` and `POST /api/runtime/upgrade`
 - [ ] T067 [US5] Upgrade progress, failure, and abandon UI in `shell/src/components/BillingGate.tsx` and Settings billing
 - [ ] T068 [US5] Staging lane: three owners, one failed and resumed, one abandoned, in `tests/e2e/container-upgrade.test.ts`
@@ -185,7 +185,7 @@ task means implemented on a local branch, not merged.
 - T010a has no dependency and lands before T046a, because the boot-set restore must not race template setup.
 - T046a needs T047 (snapshot) and T047b (one manifest per flush). T047e needs T046a. T047d and T047c can land in either order after T047b.
 - T041a to T041d before T044. T041 needs T041a and T042.
-- T057a before T057b to T057e; T057g after T057f. T061, T064, and T065 wait on D10.
+- T057a before T057b to T057e; T057g after T057f. T061 picks the D10 staging mechanism before T064 and T065.
 - US1 needs Stack A. US2, US3, and US4 need US1. US5 needs US3 (flush layout). US6 needs US1 on web.
 - Inside Stack A: T011, T012, then T014; T013 in parallel; T015, T016, then T017, T018, T019.
 

@@ -31,50 +31,68 @@ provisioning -> stopped -> starting -> running -> quiescing -> stopped
                               |            |           |
                               v            v           v
                          failed_start   needs_recovery (flush failed)
-running/stopped -> migrating -> vps runtime (row identity open: D10, below)
+running/stopped -> migrating -> (switch to a staged vps row: D10, below)
 ```
 
 Every transition is a compare-and-set on `(machine_id, status, generation)`.
 `running` plus `activation_state = 'authorized'` is what the funded-AI authorization
 already requires, so no funding code branches on substrate.
 
-### Upgrade and the machine row (open, D10)
+### Upgrade and the machine row (D10, decided 2026-11-15)
 
-Not decided, and no code decides it yet (Stack E, T061 to T068, is unbuilt). The
-constraints any answer must meet, as the code stands:
+**Decision**: the VPS is built on its own `user_machines` row, staged beside the
+container row and kept outside the active-row unique indexes until the switch. The
+container stays usable until the target is verified; rollback drops the target. Stack E
+(T061 to T068) is unbuilt, so the mechanism below is a design direction; names marked
+*proposed* do not exist in the code.
+
+**Constraints, as the code stands:**
 
 - A free runtime is one row with `runtime_slot = 'primary'`, `substrate = 'container'`,
   and `provisioning_class = 'free'`.
 - Among non-deleted rows, `(clerk_user_id, runtime_slot)` and `(handle, runtime_slot)`
-  are unique, and an owner has at most one container row.
-- `substrate = 'container'` requires `provisioning_class = 'free'`, so a row cannot be a
-  container with a customer class, or the reverse, at any committed point.
+  are unique (`idx_user_machines_clerk_slot_active`, `idx_user_machines_handle_slot_active`,
+  both `WHERE deleted_at IS NULL`), and an owner has at most one container row.
+- `substrate = 'container'` requires `provisioning_class = 'free'`.
 - The customer provisioning path (`findExistingProvisioningMachine` in
   `packages/platform/src/customer-vps-support.ts`, used by
   `customer-vps-provision.ts`) finds the owner's active row for the requested slot and,
   unless it has failed, answers with that row. Called unchanged for the `primary` slot, it
   returns the container row and provisions nothing.
-- Owner objects sit under `matrixos-sync/{ownerId}` for the `primary` slot, keyed by owner
-  and slot, not machine id, so the object layout does not move under either option.
+- Owner objects sit under `matrixos-sync/{ownerId}` for the `primary` slot
+  (`buildSyncStoragePrefix`), keyed by owner and slot, not machine id. Any other slot maps
+  to a different prefix.
 - Funded-AI rows are keyed by machine id.
 
-Options, for the owner to decide:
+**Staging.** The target row is inserted when the migration reaches `provisioning`, and
+its id is recorded in `runtime_migrations.target_machine_id`. While staged it must not
+collide with the source in either slot index. Two ways to get there, to be chosen in T061:
 
-1. **Reuse the source row.** The VPS is provisioned into the container's row while it is
-   `migrating`, and the switch changes `substrate`, `provisioning_class`, and status in
-   one statement. Funded-AI rows need no re-pointing and `target_machine_id` is not
-   needed. Needs a provisioning entry that accepts a `migrating` container row, and VPS
-   columns written on a row that is still routed as a container until the switch.
-   Rollback clears the VPS columns and returns the row to `stopped`.
-2. **Stage a separate target row.** The target must sit outside the two slot indexes
-   until the switch (for example a staging slot or a status the partial indexes
-   exclude), and routing must ignore it. The switch soft-deletes the source and moves the
-   target into `primary` in one transaction, re-pointing funded-AI rows as described
-   below. Rollback deletes the target row; the source is never changed before the
-   switch.
+- *Proposed*: a staging slot value reserved for upgrades (for example `upgrade`). It
+  needs no index change, and the handle stays the owner's, since the handle index is per
+  slot. The target VPS must still restore from and write to the `primary` prefix, so the
+  staged row's sync scope is pinned to `primary` rather than derived from its slot.
+- *Proposed*: a staging status, with both slot indexes rebuilt to exclude it. The target
+  keeps `primary` and the prefix needs no special case, but the change touches two
+  indexes every paid row depends on.
 
-Either way, the source must stay routable and writable until verification passes
-(User Story 5, scenario 2).
+Either way, the target is provisioned through the customer path with an explicit target
+(so it does not answer with the container row), and it carries `provisioning_class =
+'customer'`, `substrate = 'vps'` from insertion. Session routing, `/vm/<handle>`, journey,
+device sign-in, the reaper, the orphan reconciler, and the paid fleet jobs must ignore a
+staged row; until the switch, the owner resolves only to the container.
+
+**Switch** (one transaction, after verification, under the per-owner funding lock): soft-
+delete the container row (`deleted_at`), take the target out of staging into `primary`
+active state, re-point funded-AI rows to the target machine id, and mark the migration
+`completed`. The soft-delete happens first in the transaction, so the slot indexes see at
+most one active `primary` row at every statement. Compute and the owner database are
+deleted after commit (User Story 5, scenario 3).
+
+**Rollback** (abandon or deadline): delete the staged target row and its VPS through the
+existing deletion path, and return the container to writable. The container row is not
+changed before the switch apart from its `migrating` status, so the source stays
+routable and its data stays in place.
 
 ## `billing_entitlements` (changed)
 
@@ -123,7 +141,7 @@ The password itself is not stored; it is derived or held in the provider secret 
 | `migration_id` | text, primary key | |
 | `clerk_user_id` | text, not null | One active migration per owner (partial unique index) |
 | `source_machine_id` | text, not null, references `user_machines` | |
-| `target_machine_id` | text, null | Set at provisioning if D10 chooses a separate target row; unused if the source row is reused |
+| `target_machine_id` | text, null | The staged VPS row (D10); set when the target is inserted at `provisioning` |
 | `state` | text, not null | `requested`, `quiescing`, `final_sync`, `provisioning`, `restoring`, `verifying`, `completed`, `abandoned` |
 | `inventory` | jsonb, null | Row counts, file manifest digest, app list, balances |
 | `idempotency_key` | text, not null, unique | Stripe event id or client key |
@@ -133,7 +151,7 @@ The password itself is not stored; it is derived or held in the provider secret 
 ## Funded-AI tables (unchanged schema)
 
 A container runtime gets rows in `ai_funded_runtime_policies` and
-`ai_funded_runtime_balances` keyed by its machine id. On upgrade (if D10 chooses a separate target row), balance rows are
+`ai_funded_runtime_balances` keyed by its machine id. On upgrade (D10), balance rows are
 re-pointed to the target machine id in the same transaction that completes the
 migration, under the per-owner funding advisory lock.
 

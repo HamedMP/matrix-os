@@ -474,8 +474,8 @@ as the mirror does today, restored cleanly 0 to 2 times in 30.
 - **Limits.** Every limit is enforced by one atomic statement or a held lock, never by
   read-then-write.
 - **Balance transfer.** Upgrade takes the existing per-owner funding advisory lock,
-  waits for unsettled reservations, then moves balances (if the target is a separate row)
-  and switches substrate in one transaction. Whether the target is a separate row is D10.
+  waits for unsettled reservations, then moves balances to the staged VPS row and
+  switches the owner to it in one transaction (D10).
 - **Migration state.** Transitions are compare-and-set on the migration row; each step
   is idempotent so a crashed runner can be resumed by another.
 
@@ -575,7 +575,7 @@ N/A without architectural rationale and reviewer approval.
 | D7 | Relationship to spec 639 | Agree with ENG-423 owner who lands the capability contract first |
 | D8 | `.git` and project history | Open. `.git` is not mirrored today, and S4 measured 1.4 GB of it for a large home and 65-92 s of boot-time `git init`. Options: pack history into the home (plan T045) and count it against the home size, or keep a size cap on history |
 | D9 | Build store and egress token | Open (S3). Store as a second writable bind under quota or a quota'd cache inside the home excluded from flush; egress through a gateway-forwarded socket (recommended) or a direct platform endpoint. Also open: whether default apps are ever rebuilt in the container |
-| D10 | Upgrade machine row | Open. Reuse the container's `user_machines` row for the VPS, or stage a separate target row outside the `(clerk_user_id, runtime_slot)` and `(handle, runtime_slot)` unique indexes until the switch. The customer provisioning path, unchanged, returns the container row. Constraints and both options: data-model.md, "Upgrade and the machine row". Blocks T061, T064, T065 |
+| D10 | Upgrade machine row | Decided 2026-11-15: the VPS is built on its own staged `user_machines` row, kept outside the `(clerk_user_id, runtime_slot)` and `(handle, runtime_slot)` active-row unique indexes until the switch; the container stays usable until the target is verified; rollback drops the target. Staging mechanism chosen in T061; see data-model.md, "Upgrade and the machine row" |
 
 ## Stakeholder review
 
