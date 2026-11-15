@@ -111,6 +111,22 @@ describe("terminal wait", () => {
     expect(new Set(captureLines)).toEqual(new Set([2_000]));
   });
 
+  // Fault detected (review of #3297): each read holds only the latest history lines, so
+  // when an old match scrolled out before a new one printed, the count never rose above
+  // the starting count and the wait timed out with the text on screen.
+  it("still sees a new match after an old one scrolled out of the read window", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["ready old", "boot"], ["boot", "more"], ["boot", "more", "ready new"]],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
+  });
+
+  it("reports the lowered baseline on a check-in after matches scrolled out", async () => {
+    const { waiter } = harness({ statuses: ["idle"], screens: [["ready old"], ["boot"]] });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 1_000 })).resolves.toEqual({ reason: "timeout", seen: 0 });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });

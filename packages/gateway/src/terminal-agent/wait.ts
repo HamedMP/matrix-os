@@ -93,7 +93,7 @@ export function createTerminalWaiter(options: {
     const deadline = now() + input.timeoutMs;
     // A follow-up request continues the caller's baseline, so text printed between
     // two check-ins still counts as new.
-    const baseline = input.output ? input.seen ?? countOccurrences(await screenText(ref), input.output) : 0;
+    let baseline = input.output ? input.seen ?? countOccurrences(await screenText(ref), input.output) : 0;
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
     for (;;) {
@@ -102,7 +102,13 @@ export function createTerminalWaiter(options: {
       const tab = await findTab(ref);
       if (tab.status === "exited" || tab.status === "failed") return { reason: "exited", exitCode: tab.exitCode ?? null };
       if (input.output) {
-        if (countOccurrences(await screenText(ref), input.output) > baseline) return { reason: "output" };
+        const count = countOccurrences(await screenText(ref), input.output);
+        if (count > baseline) return { reason: "output" };
+        // A read holds only recent history: matches that scrolled out (or a cleared
+        // screen) lower the count, so the baseline drops with it and the next match
+        // still counts. Missed only if an old match leaves and a new one arrives
+        // between two polls 500 ms apart, i.e. thousands of lines in that time.
+        baseline = count;
       } else {
         lastStatus = (await options.status.get(ref))?.status;
         if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
