@@ -138,7 +138,8 @@ export class EmbedService {
           allowPublicNavigation,
           onState,
           ...(kind === "app" && routeSlug === "browser-lab" && viewerAdmission
-            ? { registerViewerTransport: viewerAdmission.register } : {}),
+            ? { registerViewerTransport: viewerAdmission.register,
+                permissionPolicy: viewerAdmission.allowsClipboard } : {}),
           ...(kind === "app" && slug && routeSlug && nativeBrowserProduct(slug, routeSlug)
             ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
                 renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
