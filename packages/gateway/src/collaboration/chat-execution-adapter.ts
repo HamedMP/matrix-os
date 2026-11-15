@@ -319,7 +319,7 @@ export class CollaborationChatExecutionAdapter {
           context.scopeId,
           context.ownerId,
           capability.effectiveSelection ?? null,
-          inheritedProject ? null : boundDriverKind ?? null,
+          boundDriverKind ?? null,
         ) ?? undefined;
       } catch (error: unknown) {
         console.warn("[collaboration] canonical shared Provider authority unavailable",

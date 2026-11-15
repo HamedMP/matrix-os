@@ -26,6 +26,7 @@ import {
   resolveCurrentOwnerRoute,
 } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
+import { sharedNativeSelectionReady } from "../../packages/gateway/src/collaboration/shared-provider-readiness.js";
 import { providerSettingsMutationChangesExecutionAuthority } from "../../packages/gateway/src/ai-providers/provider-settings-mutations.js";
 
 function currentRouteSnapshot(revision = 1) {
@@ -300,6 +301,20 @@ describe("shared AI Provider readiness", () => {
         ...instance,
       }],
     })),
+  });
+
+  it.each([
+    ["claude_code", "claude_code_default", "default"],
+    ["claude_code", "claude_code_default", "opus"],
+    ["claude_code", "claude_code_default", "sonnet"],
+    ["codex", "codex_default", "gpt-5"],
+  ] as const)("validates the saved %s native model %s/%s without Settings model IDs", async (driverKind, instanceId, model) => {
+    const selected = { instanceId, model };
+    const nativeCatalog = catalogWith({ id: instanceId, driverKind }, { id: model });
+    expect(await sharedNativeSelectionReady(nativeCatalog, "user_owner", selected, driverKind)).toBe(true);
+    expect(await sharedNativeSelectionReady(nativeCatalog, "user_owner", { ...selected, model: "removed-native-model" }, driverKind)).toBe(false);
+    expect(await sharedNativeSelectionReady(catalogWith({ id: instanceId, driverKind }, { id: model, availability: "unavailable" }),
+      "user_owner", selected, driverKind)).toBe(false);
   });
 
   it("reports the Matrix-included route ready without probing owner credentials", async () => {
