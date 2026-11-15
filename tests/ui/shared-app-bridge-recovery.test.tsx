@@ -51,7 +51,7 @@ async function setup() {
     addEventListener: (type: string, listener: typeof listeners[number]) => { if (type === "message") listeners.push(listener); else if (type === "pagehide") disposers.push(() => listener({ source: parent, origin: window.location.origin, data: null })); },
     setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window), console,
   }); });
-  return { bridge: child.MatrixOS!.collaboration, transport, direct, view, post, frame };
+  return { bridge: child.MatrixOS!.collaboration, transport, platform, direct, view, post, frame };
 }
 
 it("lets the member retry an unconfirmed create through the real injected bridge with the same operation identity", async () => {
@@ -126,7 +126,7 @@ it("does not turn an empty retry queue into a new mutation", async () => {
   const { bridge, direct } = await setup();
   await act(async () => { await expect(bridge.retryMutation()).rejects.toThrow(); });
   expect(direct.request).not.toHaveBeenCalled();
-  expect(screen.getByText("The app changed")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("keeps an overlay retry failure visible, then permits another recovery attempt", async () => {
@@ -140,4 +140,47 @@ it("keeps an overlay retry failure visible, then permits another recovery attemp
   expect(screen.queryByRole("alert")).toBeNull();
   expect(direct.request).toHaveBeenCalledTimes(3);
   expect(direct.request.mock.calls[2]).toEqual(direct.request.mock.calls[0]);
+});
+
+
+it("lets the app reconcile after the overlay already recovered the original write without a false conflict", async () => {
+  const { bridge, direct } = await setup();
+  direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+  await act(async () => { await expect(bridge.mutate({ action: "insert" }, "0")).rejects.toThrow(); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry" })); });
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await act(async () => { await expect(bridge.retryMutation()).rejects.toThrow(); });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(direct.request).toHaveBeenCalledTimes(2);
+});
+
+it.each(["success", "failure"] as const)("ignores an old retry %s after replacing the target and transport on the same viewer", async (outcome) => {
+  const { bridge, direct, view, transport, platform, post, frame } = await setup();
+  direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+  await act(async () => { await expect(bridge.mutate({ action: "insert" }, "0")).rejects.toThrow(); });
+  let finish!: (value: typeof saved) => void, fail!: (error: unknown) => void;
+  direct.request.mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  const oldRetry = bridge.retryMutation();
+  void oldRetry.catch(() => undefined);
+  await waitFor(() => expect(direct.request).toHaveBeenCalledTimes(2));
+  const nextTarget = { ...target, buildId: "c".repeat(64), shareRevision: "3" };
+  const nextPlatform = { ...platform, post: vi.fn(async () => {
+    const launch = await platform.post();
+    return { ...launch, target: { ...launch.target, buildId: nextTarget.buildId, shareRevision: nextTarget.shareRevision } };
+  }) };
+  const nextDirect = { request: vi.fn(), subscribeEvents: vi.fn(() => () => undefined), close: vi.fn() };
+  const nextTransport = createSharedAppTransport({ target: nextTarget, platform: nextPlatform, direct: nextDirect as never });
+  expect(nextTransport).not.toBe(transport);
+  view.rerender(<SharedAppViewer target={nextTarget} transport={nextTransport} />);
+  await waitFor(() => expect(screen.getByTitle("Tasks shared by Owner")).not.toBe(frame));
+  const replacement = screen.getByTitle("Tasks shared by Owner") as HTMLIFrameElement;
+  const replacementPost = vi.spyOn(replacement.contentWindow!, "postMessage");
+  post.mockClear();
+  expect(screen.getByText("Opening shared app…")).toBeTruthy();
+  await act(async () => { if (outcome === "success") finish(saved); else fail(new CollaborationDirectError("denied")); });
+  expect(post).not.toHaveBeenCalled();
+  expect(replacementPost).not.toHaveBeenCalled();
+  expect(screen.getByText("Opening shared app…")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(nextDirect.request).not.toHaveBeenCalled();
 });

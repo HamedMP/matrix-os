@@ -154,8 +154,12 @@ export function SharedAppViewer({ target, transport }: {
       })
         .catch((error: unknown) => {
           if (!mounted.current || activeDocumentGeneration.current !== generation) return;
-          applyFailure(error);
           const failure = error instanceof SharedAppTransportError ? error : new SharedAppTransportError("unavailable", true);
+          // The overlay may already have confirmed this write. An empty retry queue
+          // is for the app to reconcile, rather than a new conflicting edit.
+          const alreadyRecovered = request.type === "matrix:shared-app:retry"
+            && !pendingMutationRecovery.current && failure.code === "conflict";
+          if (!alreadyRecovered) applyFailure(failure);
           reply(event, request.requestId, { ok: false, code: failure.code, message: failure.message });
         });
     };
