@@ -11,11 +11,39 @@ epoch, compared in constant time. A token from an older epoch is rejected with 4
 
 | Route | Body | Result |
 | --- | --- | --- |
-| `POST /internal/containers/:handle/register` | `{ generation, bundleVersion }` | 200 `{ ok: true }`; sets `running` by compare-and-set from `starting`; idempotent |
+| `POST /internal/containers/:handle/register` | `{ generation, bundleVersion }` | 200 `{ ok: true }`; sets `running` by compare-and-set from `starting`; idempotent. 503 `{ error: "retry" }` with `Retry-After` when the platform is not ready for it yet (see below) |
 | `POST /internal/containers/:handle/lifecycle/activity` | `{ unsettledRuns: number }` | 204; advisory only |
 | `POST /internal/containers/:handle/lifecycle/flushed` | `{ generation, manifestDigest }` | 204; records the last good flush |
 
 Limits: 4 KiB body; per-runtime rate limit.
+
+### Register responses
+
+As built in `packages/platform/src/substrates/container-internal-routes.ts` (branch
+`feat/2691-container-register`):
+
+| Status | Body | Meaning | Runtime does |
+| --- | --- | --- | --- |
+| 200 | `{ ok: true }` | Registered, or already `running` at this generation | Continue |
+| 503 | `{ error: "retry" }`, `Retry-After: 1` | The runtime registered before the platform saved its unit (`starting` with no `substrate_ref` yet). Registering then would fence the new unit | Retry |
+| 503 | `{ error: "retry" }`, `Retry-After: 5` | Registered, but post-registration setup (funded AI) failed; the setup is idempotent | Retry |
+| 503 | `{ error: "unavailable" }` | Platform misconfigured (secret missing) | Retry with backoff; not fenced |
+| 429 | `{ error: "rate_limited" }` | Per-runtime rate limit | Retry after backoff |
+| 400 | `{ error: "invalid_request" }` | Body or JSON invalid | Do not retry; a bug |
+| 401 | `{ error: "unauthorized" }` | Token, handle, machine id, slot, or epoch mismatch | Fenced: stop |
+| 409 | `{ error: "stale_generation" }` | Another generation owns the runtime | Fenced: stop |
+| 409 | `{ error: "not_starting" }` | The row left `starting` (for example `failed_start` after the start deadline) | Stop |
+
+**Client rule.** A 503 `retry` is never a fence: the runtime keeps serving nothing new,
+waits the `Retry-After` seconds, and sends the same body again. Only 401 and 409 mean
+the unit must stop. Retries are bounded by the platform's start deadline
+(`CONTAINER_START_TIMEOUT_MS`, 90 s from the start claim): past it the row is
+`failed_start` and register answers 409 `not_starting`, so the loop ends on its own.
+*Proposed* client-side bounds so a misbehaving platform cannot hold a unit forever:
+honour `Retry-After` up to 30 s (default 1 s when absent or invalid), and give up and
+exit after 120 s from the first register attempt, which the platform then treats as a
+failed start.
+
 
 ## Gateway, called by the platform
 
