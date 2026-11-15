@@ -1,0 +1,34 @@
+name: Preview Pair Source Configuration
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/preview-pair-source-config.yml"
+      - ".github/workflows/platform-cloud-run.yml"
+      - "scripts/ci/platform-preview-pair-env.py"
+      - "tests/platform/test_preview_pair_deployment_config.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/preview-pair-source-config.yml"
+      - ".github/workflows/platform-cloud-run.yml"
+      - "scripts/ci/platform-preview-pair-env.py"
+      - "tests/platform/test_preview_pair_deployment_config.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-pair-source-config-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preserve-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify actual deployment arguments and revision bindings
+        run: python3 tests/platform/test_preview_pair_deployment_config.py

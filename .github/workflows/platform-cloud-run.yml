@@ -186,9 +186,6 @@ jobs:
             exit 1
           fi
 
-      - name: Verify preview-pair deployment preservation
-        run: python3 -m unittest discover -s tests/platform -p test_preview_pair_deployment_config.py
-
       - name: Validate deployment configuration
         run: |
           set -euo pipefail

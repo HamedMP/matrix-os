@@ -25,6 +25,8 @@ configured pair bindings omitted MATRIX_PREVIEW_PAIR_ENABLED. The changed comman
 preserves both flags and both secret references. Boundary tests exercise actual
 revision metadata rendering, the default-serving selector, plaintext refusal,
 unconfigured default-off behavior, delimiter refusal and unknown field refusal.
+A dedicated unprivileged PR/main workflow executes the required checks without
+installing application dependencies or receiving deployment credentials.
 
 No new endpoint, permission grant, data write path or user-facing surface.
 Cloud Run revision creation remains the atomic environment/secret update boundary.
