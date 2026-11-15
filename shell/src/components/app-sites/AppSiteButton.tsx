@@ -64,7 +64,7 @@ export function AppSiteButton({
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          submissions={share.site?.status === "published" && share.site.config.forms.length > 0
+          submissions={share.site
             ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
         />
       ) : null}
