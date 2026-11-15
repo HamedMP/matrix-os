@@ -11,6 +11,7 @@ interface SentMessage {
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
+  selection: { instanceId: string; model: string };
   interactionMode: string;
   permissionMode: string;
   onChatCreated?: (chatId: string) => void;
@@ -161,7 +162,7 @@ describe("useProjectComposer", () => {
     expect(sent(1).turnRequestId).toBe(sent(0).turnRequestId);
   });
 
-  it("retries a failed send in the mode it was first sent in, and sends the next message in a mode chosen meanwhile", () => {
+  it("retries a failed send with the model and mode it was first sent with, and sends the next message with those chosen meanwhile", () => {
     const { result, rerender, initialProps } = renderComposer();
     act(() => result.current.setDraft("Draft the case study"));
     act(() => result.current.send());
@@ -169,13 +170,14 @@ describe("useProjectComposer", () => {
 
     // The server may have the first attempt: a retry under its request ids must be the same request.
     const fullAccess = { interactionMode: "default", permissionMode: "full_access" };
-    rerender({ ...initialProps, turnModes: fullAccess });
+    const other = { instanceId: selection.instanceId, model: "sonnet-5-mini" };
+    rerender({ ...initialProps, selection: other, turnModes: fullAccess });
     act(() => result.current.send());
-    expect(sent(1)).toMatchObject({ turnRequestId: sent(0).turnRequestId, permissionMode: "supervised" });
+    expect(sent(1)).toMatchObject({ turnRequestId: sent(0).turnRequestId, selection, permissionMode: "supervised" });
 
     act(() => result.current.setDraft("Draft the pricing page"));
     act(() => result.current.send());
-    expect(sent(2)).toMatchObject({ permissionMode: "full_access" });
+    expect(sent(2)).toMatchObject({ selection: other, permissionMode: "full_access" });
     expect(sent(2).turnRequestId).not.toBe(sent(0).turnRequestId);
   });
 

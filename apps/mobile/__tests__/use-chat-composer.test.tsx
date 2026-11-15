@@ -269,7 +269,7 @@ describe("chat composer send lifecycle", () => {
   it.each([
     ["sent again with Retry", "retry"],
     ["taken back into the composer and sent unchanged", "edit"],
-  ])("sends a message that was not sent, %s, in the mode it was first sent in, and the next message in a mode chosen meanwhile", async (_case, how) => {
+  ])("sends a message that was not sent, %s, with the model and mode it was first sent with, and the next message with those chosen meanwhile", async (_case, how) => {
     mockAdmitChatTurn.mockRejectedValueOnce(new Error("Turn rejected"));
     const inChat = { activeChatId: "chat_existing", detail: detailFor("chat_existing", []) };
     const composer = renderComposer(inChat);
@@ -277,7 +277,10 @@ describe("chat composer send lifecycle", () => {
     await waitFor(() => expect(composer.result.current.optimisticMessages).toMatchObject([{ failed: true }]));
 
     // The server may have the first attempt: a send under its keys must be the same request.
-    composer.rerender({ ...newChat, ...inChat, turnModes: { interactionMode: "default", permissionMode: "full_access" } });
+    const other = { instanceId: "instance_other", model: "other" } as CanonicalChatModelSelection;
+    composer.rerender({
+      ...newChat, ...inChat, selection: other, turnModes: { interactionMode: "default", permissionMode: "full_access" },
+    });
     mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_existing", "msg_mine"));
     if (how === "retry") {
       act(() => { composer.result.current.retrySend("optimistic-req_2"); });
@@ -286,12 +289,12 @@ describe("chat composer send lifecycle", () => {
       act(() => { composer.result.current.send(); });
     }
     await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(2));
-    expect(mockAdmitChatTurn.mock.calls[1][3]).toMatchObject({ clientRequestId: "req_2", permissionMode: "supervised" });
+    expect(mockAdmitChatTurn.mock.calls[1][3]).toMatchObject({ clientRequestId: "req_2", selection, permissionMode: "supervised" });
     await waitFor(() => expect(composer.result.current.isSending).toBe(false));
 
     sendText(composer, "Tag it");
     await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(3));
-    expect(mockAdmitChatTurn.mock.calls[2][3]).toMatchObject({ permissionMode: "full_access" });
+    expect(mockAdmitChatTurn.mock.calls[2][3]).toMatchObject({ selection: other, permissionMode: "full_access" });
     expect(mockAdmitChatTurn.mock.calls[2][3].clientRequestId).not.toBe("req_2");
   });
 

@@ -25,7 +25,11 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
-  /** The modes it was sent in. A retry under its request ids is the same request, so it goes in them again. */
+  /**
+   * The model and modes it was sent with. The computer may have it already,
+   * and answers a retry under its request ids only as the same request.
+   */
+  selection: CanonicalChatModelSelection;
   turnModes: { interactionMode: string; permissionMode: string };
 }
 
@@ -102,7 +106,7 @@ export function useProjectComposer({
     const attempt = failedSends.current.find((failed) => (
       failed.projectId === projectId && failed.text === text && sameAttachments(failed.attachments, attachments)
     )) ?? {
-      projectId, text, attachments, turnModes,
+      projectId, text, attachments, selection, turnModes,
       chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId(),
     };
 
@@ -111,7 +115,7 @@ export function useProjectComposer({
       baseRevision: 0,
       text,
       attachments,
-      selection,
+      selection: attempt.selection,
       interactionMode: attempt.turnModes.interactionMode,
       permissionMode: attempt.turnModes.permissionMode,
       projectId,
@@ -123,7 +127,7 @@ export function useProjectComposer({
         // newer text and attachments by now. Only what was sent is cleared.
         setDraftValue((current) => (current.trim() === text ? "" : current));
         setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
-        onChatStarted(chatId, selection, attempt.turnModes.permissionMode);
+        onChatStarted(chatId, attempt.selection, attempt.turnModes.permissionMode);
       },
     }, {
       onError: () => {
