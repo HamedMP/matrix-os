@@ -21,6 +21,7 @@ vi.mock("../../desktop/src/renderer/src/stores/connection", () => ({ useConnecti
 vi.mock("../../desktop/src/renderer/src/stores/ui", () => ({ useUi: (select: (state: { acquireRendererOverlay: () => void; releaseRendererOverlay: () => void }) => unknown) => select({ acquireRendererOverlay: fixture.acquire, releaseRendererOverlay: fixture.release }) }));
 beforeEach(() => {
   vi.clearAllMocks();
+  fixture.client.get.mockImplementation(async () => null);
   fixture.connection.api = { forRuntime: () => null }; fixture.connection.runtimeSlot = "primary"; fixture.connection.authGeneration = 0;
   fixture.connection.email = "owner@example.com"; fixture.connection.userId = "user_owner";
 });
@@ -53,6 +54,16 @@ it("keeps Web sharing inside a maximized app window", async () => {
 
 for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", DesktopAppSiteButton]] as const) {
   describe(`${surface} Share trigger`, () => {
+    it("keeps visitor submissions reachable after the app is unpublished", async () => {
+      // Fault: gating submissions on a live site hides saved visitor responses once the owner unpublishes.
+      const siteId = "11111111-1111-4111-8111-111111111111";
+      fixture.client.get.mockResolvedValue({ id: siteId, appSlug: "launch", title: "Launch", description: "", slug: null, url: `https://matrix.page/${siteId}`, revision: 4, status: "unpublished", accessMode: "public", activeVersion: null, versions: [], config: { data: {}, forms: [] } } as never);
+      render(<ContainedTrigger Component={Component} />);
+      fireEvent.click(screen.getByRole("button", { name: "Share" }));
+      fireEvent.mouseDown(await screen.findByRole("tab", { name: /Public/ }), { button: 0 });
+      expect(await screen.findByRole("button", { name: "Visitor submissions" })).toBeTruthy();
+    });
+
     it("stays accessible and toggles closed on the second pointer click, then supports Escape and reopen", async () => {
       render(<ContainedTrigger Component={Component} />);
       const trigger = screen.getByRole("button", { name: "Share" });

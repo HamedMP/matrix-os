@@ -31,5 +31,8 @@ function LoadedSubmissions({ id, appSlug, client }: { id: string; appSlug: strin
     requested.current = true;
     void loadSubmissions();
   }, [ready, loadSubmissions]);
-  return <div className="text-xs"><SiteSubmissions id={id} appSlug={appSlug} client={client} state={state} /></div>;
+  return <div className="flex flex-col gap-2 text-xs">
+    {state.error ? <p role="alert" className="m-0 text-[var(--share-danger-fg)]">{state.error}</p> : null}
+    <SiteSubmissions id={id} appSlug={appSlug} client={client} state={state} />
+  </div>;
 }

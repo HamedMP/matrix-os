@@ -60,10 +60,17 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   const patch = (value: Partial<ShareView>) => setView((current) => ({ ...current, ...value }));
   const pageMode: PageMode = pageModeOf(view.site, view.emailActive);
 
+  // Owner actions get their own lifecycle: a silent re-read must never abort a
+  // running mutation (it would leave `operation` set and the buttons disabled).
+  useEffect(() => {
+    const controller = new AbortController();
+    lifecycle.current = controller; busy.current = false;
+    return () => { controller.abort(); };
+  }, [appSlug, client, emailInvites]);
+
   useEffect(() => {
     if (!client) return;
     const controller = new AbortController();
-    lifecycle.current = controller; busy.current = false;
     const signal = controller.signal;
     let current = true;
     void (async () => {
@@ -212,7 +219,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     emailInvitesAvailable: emailInvites !== null,
     retry: () => { setView(initialView()); setReload((value) => value + 1); },
     /** Silent re-read (e.g. when the popover opens) so mutations use the current revision. */
-    refresh: () => setReload((value) => value + 1),
+    refresh: () => { if (!busy.current) setReload((value) => value + 1); },
     /** Redeploys the app's current files, keeping access mode and details. */
     publishUpdate: () => run("update", async (signal) => {
       const site = view.site;
