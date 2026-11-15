@@ -40,9 +40,20 @@ const MAX_UNSENT_MESSAGES = 8;
 const NEW_CHAT_DRAFT_KEY = chatDraftKey(null);
 const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
+/** The interaction and permission modes a turn is sent in. */
+interface TurnModes {
+  interactionMode: string;
+  permissionMode: string;
+}
+
 interface PendingMessage extends OptimisticUserMessage {
   /** `ComposerState.navigation` when it was sent. */
   navigation: number;
+  /**
+   * The modes it was sent in. The computer may have it already, so sending it
+   * again under the same keys must be the same request, in the same modes.
+   */
+  turnModes: TurnModes;
   /** The project a new chat was to be created in. */
   projectId: string | null;
   /** The idempotency key of the chat a new chat's send creates. */
@@ -59,6 +70,8 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
+  /** The modes it was sent in, which a send under its keys goes in again. */
+  turnModes: TurnModes;
   /** Its text and attachments have not gone back into a composer yet -- see `reconcile`. */
   held: boolean;
 }
@@ -127,7 +140,7 @@ function failedSend(message: PendingMessage, held: boolean): FailedSend {
   return {
     chatId: message.chatId, projectId: message.projectId, text: message.text,
     attachments: message.attachments ?? NO_ATTACHMENTS, chatRequestId: message.chatRequestId,
-    turnRequestId: message.turnRequestId, held,
+    turnRequestId: message.turnRequestId, turnModes: message.turnModes, held,
   };
 }
 
@@ -240,7 +253,7 @@ interface ChatComposerOptions {
   catalog: CanonicalProviderCatalog | null;
   /** A recipe's fixed auto route represents its saved coordinator. */
   recipeAutomatic?: boolean;
-  turnModes: { interactionMode: string; permissionMode: string } | null;
+  turnModes: TurnModes | null;
   /** Only applied when the send creates the chat. */
   projectId: string | null;
   /**
@@ -259,6 +272,11 @@ interface Outgoing {
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
+  /**
+   * The modes of the earlier attempt this send repeats under its keys. A mode
+   * chosen since applies from the next new message.
+   */
+  turnModes?: TurnModes;
 }
 
 /**
@@ -345,6 +363,7 @@ export function useChatComposer({
     // Felt as the message leaves, before anything has been heard back.
     tapHaptic();
     const { text, attachments: sent, chatRequestId, turnRequestId } = outgoing;
+    const modes = outgoing.turnModes ?? turnModes;
     const optimisticId = `optimistic-${turnRequestId}`;
     // The send's callbacks land later, possibly after a switch to another
     // account or computer has replaced this state.
@@ -356,7 +375,7 @@ export function useChatComposer({
       ...current,
       pending: withPending(current.pending, {
         id: optimisticId, chatId: activeChatId, text, attachments: sent, turnRequestId, chatRequestId,
-        projectId: outgoing.projectId, createdAt: Date.now(), navigation,
+        projectId: outgoing.projectId, createdAt: Date.now(), navigation, turnModes: modes,
       }),
       ...(fromComposer ? {
         drafts: writeChatDraft(current.drafts, draftKey, ""),
@@ -371,8 +390,8 @@ export function useChatComposer({
       text,
       attachments: sent,
       selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
+      interactionMode: modes.interactionMode,
+      permissionMode: modes.permissionMode,
       projectId: outgoing.projectId,
       chatRequestId,
       turnRequestId,
@@ -457,6 +476,7 @@ export function useChatComposer({
       projectId,
       chatRequestId: retried?.chatRequestId ?? canonicalChatRequestId(),
       turnRequestId: retried?.turnRequestId ?? canonicalChatRequestId(),
+      turnModes: retried?.turnModes,
     }, true);
   }, [canSend, draft, attachments, activeChatId, projectId, state.failed, dispatch]);
 
@@ -475,6 +495,7 @@ export function useChatComposer({
       projectId: message.projectId,
       chatRequestId: message.chatRequestId,
       turnRequestId: message.turnRequestId,
+      turnModes: message.turnModes,
     }, false);
   }, [state.pending, activeChatId, sendHeldBack, retryErrorIn, dispatch]);
 

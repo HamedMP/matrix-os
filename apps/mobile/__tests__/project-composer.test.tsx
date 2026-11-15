@@ -11,6 +11,8 @@ interface SentMessage {
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
+  interactionMode: string;
+  permissionMode: string;
   onChatCreated?: (chatId: string) => void;
 }
 
@@ -157,6 +159,24 @@ describe("useProjectComposer", () => {
     expect(mockMutate).toHaveBeenCalledTimes(2);
     expect(sent(1).chatRequestId).toBe(sent(0).chatRequestId);
     expect(sent(1).turnRequestId).toBe(sent(0).turnRequestId);
+  });
+
+  it("retries a failed send in the mode it was first sent in, and sends the next message in a mode chosen meanwhile", () => {
+    const { result, rerender, initialProps } = renderComposer();
+    act(() => result.current.setDraft("Draft the case study"));
+    act(() => result.current.send());
+    act(() => callbacks().onError());
+
+    // The server may have the first attempt: a retry under its request ids must be the same request.
+    const fullAccess = { interactionMode: "default", permissionMode: "full_access" };
+    rerender({ ...initialProps, turnModes: fullAccess });
+    act(() => result.current.send());
+    expect(sent(1)).toMatchObject({ turnRequestId: sent(0).turnRequestId, permissionMode: "supervised" });
+
+    act(() => result.current.setDraft("Draft the pricing page"));
+    act(() => result.current.send());
+    expect(sent(2)).toMatchObject({ permissionMode: "full_access" });
+    expect(sent(2).turnRequestId).not.toBe(sent(0).turnRequestId);
   });
 
   it("gives different text its own request ids, and the first text its old ones when it comes back", () => {

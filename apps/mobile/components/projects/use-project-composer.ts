@@ -25,6 +25,8 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
+  /** The modes it was sent in. A retry under its request ids is the same request, so it goes in them again. */
+  turnModes: { interactionMode: string; permissionMode: string };
 }
 
 interface ProjectComposerOptions {
@@ -99,7 +101,10 @@ export function useProjectComposer({
     // would create a second chat and run the prompt again.
     const attempt = failedSends.current.find((failed) => (
       failed.projectId === projectId && failed.text === text && sameAttachments(failed.attachments, attachments)
-    )) ?? { projectId, text, attachments, chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId() };
+    )) ?? {
+      projectId, text, attachments, turnModes,
+      chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId(),
+    };
 
     sendMessage.mutate({
       chatId: null,
@@ -107,8 +112,8 @@ export function useProjectComposer({
       text,
       attachments,
       selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
+      interactionMode: attempt.turnModes.interactionMode,
+      permissionMode: attempt.turnModes.permissionMode,
       projectId,
       chatRequestId: attempt.chatRequestId,
       turnRequestId: attempt.turnRequestId,
@@ -118,7 +123,7 @@ export function useProjectComposer({
         // newer text and attachments by now. Only what was sent is cleared.
         setDraftValue((current) => (current.trim() === text ? "" : current));
         setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
-        onChatStarted(chatId, selection, turnModes.permissionMode);
+        onChatStarted(chatId, selection, attempt.turnModes.permissionMode);
       },
     }, {
       onError: () => {
