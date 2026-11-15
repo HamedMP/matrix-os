@@ -112,6 +112,20 @@ file so the rules have one source of truth.
 
 These patterns were identified as recurring defects across 4+ PRs (~317 unresolved review comments). Violations are the #1 source of bugs. Full analysis: `docs/dev/pr-review-analysis.md`
 
+**Rule → enforcer** (`bun run check:patterns`; CI Pattern Scan runs it on every PR). When a reviewer repeats a rule that nothing enforces, add the enforcer and a row here in the same change.
+
+| Rule | Enforced by `scripts/review/check-patterns.sh` |
+| --- | --- |
+| No bare/empty catch, no unread catch binding | §1 whole files in `packages/`, `shell/` `.ts`; §9 `swallowed-error`, added lines in all JS/TS |
+| `fetch()` has `signal: AbortSignal.timeout(ms)` | §2 (`packages/`, `shell/` `.ts`) |
+| No sync file I/O in request handlers | §5 |
+| Request-principal helpers, not `getUserIdFromContext` | §8 |
+| PR ≤ 50 files and ≤ 3000 additions (lockfile excluded) | §9 `pr-size` (CI `--pr`; default local run) |
+| Do not grow source files past 2000 lines | §9 `large-file` fails; 1000-2000 lines and test suites warn |
+| `bodyLimit`, Map/Set caps, path validation | warnings only: reviewer judgment |
+
+Exceptions go on or above the line (file-level for `large-file`): `// pattern-allow <rule>: <reason> (expires YYYY-MM-DD, approved-by <human>)`. Expired ones fail.
+
 ### Atomicity
 
 - **2+ related DB writes MUST use a transaction**. No exceptions. Like + counter, delete + cascade, insert + update are all multi-step.
