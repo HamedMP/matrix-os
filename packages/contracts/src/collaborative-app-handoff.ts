@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CollaborationOrganizationIdSchema } from "./collaboration-identity.js";
+import { CollaborationOrganizationIdSchema } from "#collaboration-identity";
 
 /**
  * "Make app collaborative" handoff between the Share popover and Matrix Chats
