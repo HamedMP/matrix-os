@@ -61,7 +61,7 @@ describe("Electron Desktop remote terminal attention", () => {
   it("uses the shared copy for errors and finishes, and skips a finish in the viewed tab", async () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     render(<><Toaster /><section data-terminal-session={key} /><RemoteTerminalAttention /></>);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 100, height: 100 } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 } as DOMRect);
     await publish(tabs("working"));
     await publish(tabs("done"));
     expect(screen.queryByTestId("terminal-attention")).toBeNull();
