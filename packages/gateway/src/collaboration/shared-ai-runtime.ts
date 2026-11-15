@@ -77,7 +77,7 @@ import {
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
-import { SHARED_RUN_SELECTION_REQUIREMENTS, resolveSharedProviderReadiness } from "./shared-provider-readiness.js";
+import { SHARED_RUN_SELECTION_REQUIREMENTS, resolveSharedProviderReadiness, sharedNativeSelectionReady } from "./shared-provider-readiness.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 import { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
 import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "../bots/selection.js";
@@ -367,6 +367,9 @@ export async function createSharedAiRuntime(options: {
             driverKind: execution.driverKind,
           });
           const executableSelection = executableChatSelectionForOwnerRoute(ownerDecision);
+          if (ownerDecision.authorityKind === "provider_settings_active" && !await sharedNativeSelectionReady(
+            options.providerCatalog, context.ownerId, execution.selection, execution.driverKind,
+          )) throw new SharedChatRunPreparationError("unavailable");
           if (ownerDecision.authorityKind === "provider_settings_active"
             && (executableSelection.instanceId !== execution.selection.instanceId
               || executableSelection.model !== execution.selection.model

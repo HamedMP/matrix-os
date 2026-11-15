@@ -11,7 +11,7 @@ import { renewProviderSettingsNativeObservation } from "./provider-settings-nati
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
-import { savedCollaborationRoute, withNativeClaudeChatModel } from "./collaboration-provider-route.js";
+import { savedCollaborationRoute } from "./collaboration-provider-route.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -616,10 +616,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         }
       }
       const codexQualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
-      const qualified = withNativeClaudeChatModel(
-        qualifyNativeClaudeCollaborationRoute(codexQualified, config, projected, claudeMetadata),
-        config, options.collaborationChatRoute,
-      );
+      const qualified = qualifyNativeClaudeCollaborationRoute(codexQualified, config, projected, claudeMetadata);
       const accepted = await this.#serialize(async () => {
         options.signal?.throwIfAborted();
         const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);

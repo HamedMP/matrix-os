@@ -134,6 +134,23 @@ function sameOwnerRoute(current: SharedRunOwnerSourceDecision, expected: SharedR
     && current.modelId === expected.modelId;
 }
 
+/** Keep native model IDs verbatim; shared-ai-runtime validates them in the native Chat catalog. */
+export function bindOwnerRouteToChatModel(
+  decision: SharedRunOwnerSourceDecision | null,
+  chatRoute?: CollaborationChatProviderRoute,
+): SharedRunOwnerSourceDecision | null {
+  if (!decision || !chatRoute) return decision;
+  if (DRIVER_BY_HARNESS[decision.harness] !== chatRoute.driverKind) return null;
+  return {
+    ...decision,
+    modelId: chatRoute.modelId,
+    allowedModelIds: [chatRoute.modelId],
+    routeGeneration: createHash("sha256").update(JSON.stringify({
+      sourceRouteGeneration: decision.routeGeneration, nativeModelId: chatRoute.modelId,
+    })).digest("hex"),
+  };
+}
+
 /**
  * Whether the owner's selected source can admit queued work right now:
  * `missing` without a policy for this owner, `paused` while the selected
@@ -291,8 +308,6 @@ export class SharedRunOwnerSource {
       }
     }
     const decision = resolveCurrentOwnerRoute(await this.snapshots.getSnapshotV3(input.ownerId, chatRoute), this.now());
-    if (chatRoute && decision && (DRIVER_BY_HARNESS[decision.harness] !== chatRoute.driverKind
-      || decision.modelId !== chatRoute.modelId)) return null;
-    return decision;
+    return bindOwnerRouteToChatModel(decision, chatRoute);
   }
 }

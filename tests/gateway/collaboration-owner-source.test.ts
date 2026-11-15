@@ -654,6 +654,13 @@ describe("S08 owner-selected AI source", () => {
         });
         expect(await ownerSource.matchesCurrent({ ...input, expected: decision })).toBe(true);
         await fixture.db.updateTable("chats").set({
+          current_selection: JSON.stringify({ instanceId: "claude_code_default", model: "sonnet" }),
+        }).where("id", "=", collaborationIds.chat).execute();
+        const nativeDecision = await ownerSource.prepare(run(collaborationActors.editor));
+        expect(nativeDecision.modelId).toBe("sonnet");
+        expect(nativeDecision.routeGeneration).not.toBe(decision.routeGeneration);
+        expect(await ownerSource.matchesCurrent({ ...input, expected: decision })).toBe(false);
+        await fixture.db.updateTable("chats").set({
           bound_driver_kind: "codex", bound_instance_id: "codex_default",
           current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6" }),
         }).where("id", "=", collaborationIds.chat).execute();
