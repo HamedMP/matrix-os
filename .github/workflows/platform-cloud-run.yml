@@ -1003,9 +1003,12 @@ jobs:
             exit 1
           fi
           service_exists=0
-          if gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" >/dev/null 2>&1; then
+          # Only successful enumeration can confirm absence. API/auth/network
+          # failures must stop here rather than dropping existing Source settings.
+          service_names="$(gcloud run services list \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(metadata.name)')"
+          if grep -Fxq -- "$CLOUD_RUN_SERVICE" <<< "$service_names"; then
             service_exists=1
           fi
 

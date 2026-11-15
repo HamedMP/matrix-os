@@ -42,13 +42,15 @@ class Deployment(unittest.TestCase):
 
     def test_snapshot_uses_default_serving_revision_instead_of_pending_candidate(self):
         workflow=WORKFLOW.read_text()
-        block=workflow.split('          # Preserve only existing Source settings',1)[1].split('          ats_env_bindings=',1)[0]
+        block='service_exists=0'+workflow.split('          service_exists=0',1)[1].split('          ats_env_bindings=',1)[0]
         with tempfile.TemporaryDirectory() as temp:
             fake=Path(temp)/'gcloud'
             fake.write_text("""#!/usr/bin/env python3
 import json,sys
 args=sys.argv[1:]
-if args[:3]==['run','services','describe']:
+if args[:3]==['run','services','list']:
+ print('other-service\\nsource')
+elif args[:3]==['run','services','describe']:
  print(json.dumps({'status':{'traffic':[{'percent':100,'revisionName':'source-active'},{'percent':0,'revisionName':'source-untrusted-pending','tag':'candidate'}]}}))
 elif args[:3]==['run','revisions','describe'] and args[3]=='source-active':
  print(json.dumps({'spec':{'containers':[{'env':[{'name':'MATRIX_PREVIEW_PAIR_ENABLED','value':'true'}]}]}}))
@@ -57,10 +59,36 @@ else: raise SystemExit(7)
             fake.chmod(0o700)
             environment={**os.environ,'PATH':temp+os.pathsep+os.environ['PATH'],'DEPLOY_ENVIRONMENT':'production',
                 'CLOUD_RUN_SERVICE':'source','GCP_PROJECT_ID':'project','GCP_REGION':'region'}
-            command='set -euo pipefail; service_exists=1; # Preserve only existing Source settings'+block+'\n printf "%s" "$preview_pair_env_bindings"'
+            command='set -euo pipefail; '+block+'\n printf "%s" "$preview_pair_env_bindings"'
             result=subprocess.run(['bash','-c',command],cwd=ROOT,env=environment,text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout,'|MATRIX_PREVIEW_PAIR_ENABLED=true')
+
+    def test_service_lookup_error_cannot_fall_through_to_deployment(self):
+        workflow=WORKFLOW.read_text()
+        block='service_exists=0'+workflow.split('          service_exists=0',1)[1].split('          ats_env_bindings=',1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            fake=Path(temp)/'gcloud'
+            fake.write_text('#!/usr/bin/env bash\nexit 1\n')
+            fake.chmod(0o700)
+            environment={**os.environ,'PATH':temp+os.pathsep+os.environ['PATH'],'DEPLOY_ENVIRONMENT':'production',
+                'CLOUD_RUN_SERVICE':'source','GCP_PROJECT_ID':'project','GCP_REGION':'region'}
+            result=subprocess.run(['bash','-c','set -euo pipefail; '+block+'\n echo DEPLOY_WOULD_RUN'],cwd=ROOT,env=environment,text=True,capture_output=True)
+            self.assertNotEqual(result.returncode,0,'A Cloud Run lookup failure must stop before deployment')
+            self.assertNotIn('DEPLOY_WOULD_RUN',result.stdout)
+
+    def test_confirmed_missing_service_can_keep_default_off_bootstrap(self):
+        workflow=WORKFLOW.read_text()
+        block='service_exists=0'+workflow.split('          service_exists=0',1)[1].split('          ats_env_bindings=',1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            fake=Path(temp)/'gcloud'
+            fake.write_text('#!/usr/bin/env bash\nif [ "$1 $2 $3" != "run services list" ]; then exit 7; fi\n')
+            fake.chmod(0o700)
+            environment={**os.environ,'PATH':temp+os.pathsep+os.environ['PATH'],'DEPLOY_ENVIRONMENT':'production',
+                'CLOUD_RUN_SERVICE':'source','GCP_PROJECT_ID':'project','GCP_REGION':'region'}
+            result=subprocess.run(['bash','-c','set -euo pipefail; '+block+'\n printf "%s:%s" "$service_exists" "$preview_pair_env_bindings"'],cwd=ROOT,env=environment,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout,'0:')
 
     def test_preserves_literal_json_and_pinned_references_without_resolving_values(self):
         fixtures='[\n {"id":"fixture-1","ownerActorId":"owner"}\n]'

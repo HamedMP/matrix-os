@@ -14,6 +14,8 @@ the operator/GitHub Secret Manager references into the existing atomic Cloud Run
 deployment. It neither accesses secret values nor accepts candidate build input.
 Unknown pair fields, plaintext credentials, invalid CLI delimiters and ambiguous
 serving traffic fail the deployment instead of silently discarding configuration.
+The initial service lookup must succeed: only successful service enumeration
+without the exact Source name confirms absence. API/auth/network errors stop.
 An unconfigured Source still produces no extra bindings and remains default-off.
 
 The production-role revision already inherits that template and uses update-env.
