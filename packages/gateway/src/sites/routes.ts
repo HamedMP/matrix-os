@@ -5,7 +5,7 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, SiteSlugAvailabilityQuerySchema, type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -120,6 +120,11 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   const parsed=SiteAccessLinksQuerySchema.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);
   try{return c.json(await options.platform!.accessLinks(c.req.param('slug')!,parsed.data));}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+ });
+ app.get(base+'/slug-availability',async c=>{
+  const parsed=SiteSlugAvailabilityQuerySchema.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);
+  try{return c.json(await options.platform!.slugAvailability(c.req.param('slug')!,parsed.data.slug,c.req.raw.signal));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status===400?400:503);throw error;}
  });
  app.post(base+'/access-links',limit,async c=>{
   const parsed=await body(c,SiteAccessLinkCreateRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);

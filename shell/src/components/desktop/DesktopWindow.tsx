@@ -195,7 +195,7 @@ export function DesktopWindow({
         <div className={publishingSlug ? "flex w-[116px] shrink-0 justify-end" : "w-[78px] shrink-0"}>
           {publishingSlug && !isHidden && !isMinimizing ? (
             <div onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-              <AppSiteButton appSlug={publishingSlug} portalContainerRef={windowRef} />
+              <AppSiteButton appSlug={publishingSlug} appName={win.title} portalContainerRef={windowRef} />
             </div>
           ) : null}
         </div>

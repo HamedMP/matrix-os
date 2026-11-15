@@ -31,7 +31,7 @@ export function AppSiteSharePopover({
           collisionBoundary={portalContainer ?? undefined}
           collisionPadding={8}
           style={{
-            width: "min(24rem, var(--radix-popover-content-available-width))",
+            width: "min(22.5rem, var(--radix-popover-content-available-width))",
             maxHeight: "min(34rem, var(--radix-popover-content-available-height))",
             zIndex,
             background: "var(--background, var(--bg-overlay, Canvas))",
@@ -39,7 +39,7 @@ export function AppSiteSharePopover({
             borderColor: "var(--border, var(--border-default, color-mix(in srgb, CanvasText 18%, transparent)))",
             boxShadow: "var(--shadow-3, 0 16px 40px rgb(0 0 0 / 0.2))",
           }}
-          className="overflow-hidden rounded-lg border outline-none"
+          className="overflow-hidden rounded-[14px] border outline-none"
         >
           {children}
         </PopoverPrimitive.Content>

@@ -5,7 +5,8 @@ import {
     SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
     SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
-    type SiteAccessLinkSummary, type SiteRecord,
+    SiteSlugAvailabilityQuerySchema, SiteSlugAvailabilitySchema, classifySiteSlug, siteSlugSuggestionCandidates,
+    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability,
 } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
@@ -412,6 +413,29 @@ export function createSitesService(options: {
         emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_REVOKED,
             { access_mode: 'private_link' }, owner.ownerId);
     }
+    /**
+     * Read-only friendly-path check for the owner's share UI. Aliases are public
+     * routing data (matrix.page/<slug> resolves for anyone), so reporting `taken`
+     * reveals nothing private. The write path still claims aliases atomically.
+     */
+    async function slugAvailability(owner: SiteOwner, input: unknown): Promise<SiteSlugAvailability> {
+        const parsed = SiteSlugAvailabilityQuerySchema.safeParse(input);
+        if (!parsed.success) throw new SiteError('invalid_request');
+        const slug = parsed.data.slug;
+        const local = classifySiteSlug(slug);
+        if (local !== 'valid') return SiteSlugAvailabilitySchema.parse({ status: local, suggestions: [] });
+        await db.ready;
+        const own = await ownership(db, owner).select('id').executeTakeFirst();
+        const candidates = siteSlugSuggestionCandidates(slug, owner.appSlug === slug ? [] : [owner.appSlug]);
+        const claimed = await db.executor.selectFrom('public_site_aliases').select(['slug', 'site_id'])
+            .where('slug', 'in', [slug, ...candidates]).execute();
+        const takenByOthers = new Set(claimed.filter(row => row.site_id !== own?.id).map(row => row.slug));
+        if (!takenByOthers.has(slug)) return SiteSlugAvailabilitySchema.parse({ status: 'available', suggestions: [] });
+        return SiteSlugAvailabilitySchema.parse({
+            status: 'taken',
+            suggestions: candidates.filter(candidate => !takenByOthers.has(candidate)).slice(0, 2),
+        });
+    }
     async function claimAccessLink(reference: string, input: unknown) {
         const parsed = SiteAccessClaimSchema.safeParse(input);
         if (!parsed.success) throw new SiteError('invalid_request');
@@ -442,6 +466,6 @@ export function createSitesService(options: {
         return result;
     }
     return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
-        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink };
+        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability };
 }
 export type SitesService = ReturnType<typeof createSitesService>;
