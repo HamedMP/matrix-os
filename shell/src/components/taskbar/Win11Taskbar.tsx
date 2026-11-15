@@ -21,11 +21,17 @@ import {
   useStartMenuDismiss,
   type TaskbarAppEntry,
 } from "./taskbar-utils";
+import { windowAppEntry } from "@/lib/window-app-entry";
 import { Win11StartMenu } from "./Win11StartMenu";
 import type { WindowsTaskbarProps } from "./WindowsTaskbar";
 
 interface CenterIcon extends TaskbarAppEntry {
   open: boolean;
+}
+
+/** Shared windows are one icon per owner's share; every other window groups under its app path. */
+function centerIconPath(windowRecord: AppWindow): string {
+  return windowRecord.sharedAppTarget ? windowRecord.path : baseWindowPath(windowRecord.path);
 }
 
 /**
@@ -53,7 +59,7 @@ export function Win11Taskbar({
     (best, w) => (!w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best),
     undefined,
   );
-  const focusedBasePath = focusedWindow ? baseWindowPath(focusedWindow.path) : null;
+  const focusedBasePath = focusedWindow ? centerIconPath(focusedWindow) : null;
 
   // Center icons: built-ins stand in for pinned apps; any app with an open
   // window joins the row (deduped by base path), like the real Win11 taskbar.
@@ -70,10 +76,15 @@ export function Win11Taskbar({
     seenPaths.add(base);
     centerIcons.push({ name: app.name, path: app.path, iconUrl: app.iconUrl, open: true });
   }
+  for (const windowRecord of windows) {
+    if (!windowRecord.sharedAppTarget || seenPaths.has(windowRecord.path)) continue;
+    seenPaths.add(windowRecord.path);
+    centerIcons.push({ name: windowRecord.title, path: windowRecord.path, iconUrl: windowAppEntry(windowRecord, apps).iconUrl, open: true });
+  }
 
   const onCenterIconClick = (icon: CenterIcon) => {
     const win = windows
-      .filter((w) => baseWindowPath(w.path) === icon.path)
+      .filter((w) => centerIconPath(w) === icon.path)
       .toSorted((a, b) => b.zIndex - a.zIndex)[0];
     if (!win) {
       onOpenApp(icon.path, icon.name);
