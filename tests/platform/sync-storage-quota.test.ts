@@ -5,7 +5,7 @@ import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/
 import { createInternalSyncRoutes } from '../../packages/platform/src/internal-sync-routes.js';
 import { createStorageQuota, DEFAULT_STORAGE_QUOTA_LIMITS } from '../../packages/platform/src/free-tier/storage-quota.js';
 import { loadContainerStorageLimits } from '../../packages/platform/src/free-tier/config.js';
-import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
+import { buildPlatformSyncVerificationToken, buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createScopedPlatformDbs, freeTierPostgresUrl, type ScopedPlatformDbs } from './free-tier-postgres-helper.js';
 
@@ -93,6 +93,22 @@ describe('sync broker storage quota for container runtimes', () => {
     expect(await refused.json()).toEqual({ error: 'Storage limit reached', code: 'storage_full' });
     expect(r2.getPresignedPutUrl).toHaveBeenCalledTimes(1);
     expect(await usage()).toEqual({ object_bytes: 600, object_count: 1 });
+  });
+
+  it('refuses the handle-only token for a container runtime, so a replaced unit cannot reach storage', async () => {
+    const target = app();
+    const handleOnly = (handle: string) => ({
+      authorization: `Bearer ${buildPlatformVerificationToken(handle, SECRET)}`, 'content-type': 'application/json',
+    });
+    const refused = await target.request('/sync/quotafree/presign/put', {
+      method: 'POST', headers: handleOnly('quotafree'), body: JSON.stringify({ key: `${FREE_PREFIX}/manifest.json`, size: 10 }),
+    });
+    expect(refused.status).toBe(401);
+    expect(r2.getPresignedPutUrl).not.toHaveBeenCalled();
+    const vpsAllowed = await target.request('/sync/quotavps/presign/put', {
+      method: 'POST', headers: handleOnly('quotavps'), body: JSON.stringify({ key: `${VPS_PREFIX}/manifest.json`, size: 10 }),
+    });
+    expect(vpsAllowed.status).toBe(200);
   });
 
   it('leaves VPS owners unmetered', async () => {

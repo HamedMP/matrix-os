@@ -359,6 +359,11 @@ export function createInternalSyncRoutes(opts: {
       if (!owner) {
         return c.json({ error: "Unknown handle" }, 404);
       }
+      // A container holds the handle token for owner proofs, and it survives a
+      // generation change; only the epoch-bound runtime identity reaches its storage.
+      if (owner.metered) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
       scope = { ownerId: owner.userId, runtimeSlot: "primary" };
       metered = owner.metered;
     }
