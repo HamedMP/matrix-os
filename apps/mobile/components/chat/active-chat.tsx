@@ -2,6 +2,7 @@ import {
   canonicalChatExecutionControls,
   MATRIX_BOT_SELECTION,
   type CanonicalChatDetailResponse,
+  type CanonicalChatExecutionControls,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
@@ -10,7 +11,7 @@ import { useAuth } from "@clerk/clerk-expo";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { chosenTurnModes, defaultCatalogSelection } from "@/lib/canonical-chat-selection";
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
@@ -32,6 +33,26 @@ function savedChatExecutionControls(detail: CanonicalChatDetailResponse | null, 
   return canonicalChatExecutionControls({
     chatId: detail.record.chat.id, currentSelection: detail.record.chat.currentSelection, runs: detail.runs,
   });
+}
+
+// A chat with an agent runs in the agent's own modes.
+const AGENT_TURN_MODES = { interactionMode: "default", permissionMode: "default" };
+
+/**
+ * The permission mode asked for the chat on screen: the one chosen for it on
+ * this phone, else the one an open chat last ran with, else, for a new chat,
+ * the one last chosen on this phone. Null when there is none: the engine's
+ * default then applies.
+ */
+function askedPermissionMode(
+  activeChatId: string | null,
+  chosen: string | null | undefined,
+  saved: CanonicalChatExecutionControls | undefined,
+  remembered: RememberedComposerChoice | null,
+): string | null {
+  if (chosen) return chosen;
+  if (activeChatId !== null) return saved?.permissionMode ?? null;
+  return remembered?.permissionMode ?? null;
 }
 
 interface ChatScreenSelectionSources {
@@ -62,7 +83,9 @@ function chatScreenSelection({
 
 function useActiveChatState() {
   const { isSignedIn, userId } = useAuth();
-  const { activeChatId, selectionOverride, setSelectionOverride, selectedProjectId } = useCanonicalChatSession();
+  const {
+    activeChatId, selectionOverride, setSelectionOverride, permissionModeOverride, setPermissionModeOverride, selectedProjectId,
+  } = useCanonicalChatSession();
 
   const {
     detail, computer, refresh, isError: chatReadFailed, reload: reloadChat,
@@ -96,8 +119,13 @@ function useActiveChatState() {
     setSelectionOverride(chosen);
     remember({ selection: chosen });
   }, [setSelectionOverride, remember]);
-  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection,
-    savedChatExecutionControls(detail, activeChatId));
+  const choosePermissionMode = useCallback((mode: string) => {
+    setPermissionModeOverride(mode);
+    remember({ permissionMode: mode });
+  }, [setPermissionModeOverride, remember]);
+  const savedControls = savedChatExecutionControls(detail, activeChatId);
+  const turnModes = directBot ? AGENT_TURN_MODES : chosenTurnModes(catalog, selection, savedControls,
+    askedPermissionMode(activeChatId, permissionModeOverride, savedControls, remembered.choice));
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 
@@ -142,6 +170,10 @@ function useActiveChatState() {
     selection,
     /** Chooses the model of the chat on screen, and remembers it on this phone for the next new chat. */
     chooseSelection,
+    /** The permission mode the next message is sent with, once there is a model to send it to. */
+    permissionMode: turnModes?.permissionMode ?? null,
+    /** Chooses it for the chat on screen, from its next message, and remembers it on this phone for the next new chat. */
+    choosePermissionMode,
     attachmentKinds,
     composer,
   };

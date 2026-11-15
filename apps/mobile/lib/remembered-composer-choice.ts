@@ -7,10 +7,15 @@ import { z } from "zod/v4";
  * What the composer was last set to on this phone, for one account's computer:
  * a new chat starts from it when nothing better is known. Every part is
  * optional and remembered on its own, so a control added beside the model
- * picker (a permission mode, say) adds a field here without touching the rest.
+ * picker adds a field here without touching the rest.
  */
 export interface RememberedComposerChoice {
   selection?: CanonicalChatModelSelection;
+  /**
+   * The permission mode last chosen, such as "full_access". It is kept as
+   * chosen, so it comes back with an engine that runs it after one that did not.
+   */
+  permissionMode?: string;
 }
 
 interface ComposerChoiceStorage {
@@ -27,7 +32,11 @@ const STORAGE_KEY = "matrix_os_composer_choice_v1";
 export const MAX_REMEMBERED_COMPUTERS = 8;
 
 const ScopeSchema = z.string().min(1).max(400);
-const ChoiceSchema = z.object({ selection: CanonicalChatModelSelectionSchema.optional() });
+const ChoiceSchema = z.object({
+  selection: CanonicalChatModelSelectionSchema.optional(),
+  // A mode that cannot be read is dropped on its own, keeping the model saved with it.
+  permissionMode: z.string().min(1).max(80).optional().catch(undefined),
+});
 const EntrySchema = z.object({ scope: ScopeSchema, choice: ChoiceSchema });
 const StoredSchema = z.object({ entries: z.array(z.unknown()).max(MAX_REMEMBERED_COMPUTERS * 4) });
 

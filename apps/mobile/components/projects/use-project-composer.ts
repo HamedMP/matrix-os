@@ -40,8 +40,8 @@ interface ProjectComposerOptions {
   attachmentKinds?: readonly ChatAttachmentKind[];
   /** Holds sends back, as while there is no model to send to yet. */
   disabled?: boolean;
-  /** Called once the new chat's first message is admitted, with the model it was started with. */
-  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection) => void;
+  /** Called once the new chat's first message is admitted, with the model and permission mode it was started with. */
+  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection, permissionMode: string) => void;
 }
 
 /**
@@ -118,7 +118,7 @@ export function useProjectComposer({
         // newer text and attachments by now. Only what was sent is cleared.
         setDraftValue((current) => (current.trim() === text ? "" : current));
         setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
-        onChatStarted(chatId, selection);
+        onChatStarted(chatId, selection, turnModes.permissionMode);
       },
     }, {
       onError: () => {

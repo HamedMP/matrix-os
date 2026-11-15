@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react-native";
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 
@@ -11,7 +12,7 @@ export const OPUS = { instanceId: SONNET.instanceId, model: "anthropic:claude-op
 export function renderPicker(
   catalog: CanonicalProviderCatalog | null,
   selection: CanonicalChatModelSelection | null,
-  props: { catalogLoading?: boolean } = {},
+  props: Partial<Omit<ComponentProps<typeof ModelPicker>, "catalog" | "selection" | "onSelectionChange">> = {},
 ) {
   const change = jest.fn();
   render(<ModelPicker catalog={catalog} selection={selection} onSelectionChange={change} {...props} />);

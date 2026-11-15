@@ -37,13 +37,21 @@ interface CanonicalChatSessionContextValue {
   draftChatRequests: number;
   /**
    * Binds the id of a chat the draft flow just lazily created on first send —
-   * unlike `selectChat`, this does not reset `selectionOverride` (the
-   * selection that was just used to create it stays authoritative).
+   * unlike `selectChat`, this does not reset `selectionOverride` or
+   * `permissionModeOverride` (what was just used to create it stays
+   * authoritative).
    */
   bindDraftChatId: (id: string) => void;
   /** The model/harness the user explicitly picked for the active chat, if any. */
   selectionOverride: CanonicalChatModelSelection | null;
   setSelectionOverride: (selection: CanonicalChatModelSelection) => void;
+  /**
+   * The permission mode the user picked for the active chat, if any. Like
+   * `selectionOverride` it is cleared when another chat is opened or a new one
+   * started, and kept when a draft becomes a chat.
+   */
+  permissionModeOverride: string | null;
+  setPermissionModeOverride: (mode: string) => void;
   /**
    * The Project a draft chat should be created in, if the user picked one.
    * Only meaningful before the chat exists -- an existing chat's project is
@@ -69,6 +77,8 @@ const CanonicalChatSessionContext = createContext<CanonicalChatSessionContextVal
   bindDraftChatId: () => {},
   selectionOverride: null,
   setSelectionOverride: () => {},
+  permissionModeOverride: null,
+  setPermissionModeOverride: () => {},
   selectedProjectId: null,
   setSelectedProjectId: () => {},
   subscribe: () => () => {},
@@ -82,6 +92,7 @@ export function useCanonicalChatSession(): CanonicalChatSessionContextValue {
 export function CanonicalChatSessionProvider({ children }: { children: ReactNode }) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectionOverride, setSelectionOverride] = useState<CanonicalChatModelSelection | null>(null);
+  const [permissionModeOverride, setPermissionModeOverride] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [draftChatRequests, setDraftChatRequests] = useState(0);
   const [streamLive, setStreamLive] = useState(false);
@@ -144,12 +155,14 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const selectChat = useCallback((id: string) => {
     setActiveChatId(id);
     setSelectionOverride(null);
+    setPermissionModeOverride(null);
     setSelectedProjectId(null);
   }, []);
 
   const startDraftChat = useCallback((projectId: string | null = null) => {
     setActiveChatId(null);
     setSelectionOverride(null);
+    setPermissionModeOverride(null);
     setSelectedProjectId(projectId);
     setDraftChatRequests((count) => count + 1);
   }, []);
@@ -173,6 +186,8 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       bindDraftChatId,
       selectionOverride,
       setSelectionOverride,
+      permissionModeOverride,
+      setPermissionModeOverride,
       selectedProjectId,
       setSelectedProjectId,
       subscribe,
@@ -185,6 +200,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       draftChatRequests,
       bindDraftChatId,
       selectionOverride,
+      permissionModeOverride,
       selectedProjectId,
       subscribe,
       streamLive,

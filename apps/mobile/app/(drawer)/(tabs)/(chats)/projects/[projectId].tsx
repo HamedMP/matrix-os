@@ -15,7 +15,7 @@ import { useProjectComposer } from "@/components/projects/use-project-composer";
 import { useProjectList } from "@/components/projects/use-project-list";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { newChatSelection } from "@/components/chat/new-chat-selection";
-import { defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { chosenTurnModes } from "@/lib/canonical-chat-selection";
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useActiveGateway } from "@/lib/queries/use-active-gateway";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
@@ -35,7 +35,7 @@ export default function ProjectRoute() {
   const router = useRouter();
   const goBack = useBackOr("/projects");
   const warmSessionToken = useSessionTokenWarmup();
-  const { selectChat, setSelectionOverride } = useCanonicalChatSession();
+  const { selectChat, setSelectionOverride, setPermissionModeOverride } = useCanonicalChatSession();
   const list = useProjectList();
   const rename = useRenameProject();
   const archive = useArchiveProject();
@@ -49,6 +49,7 @@ export default function ProjectRoute() {
   // The model chosen here belongs to the chat this composer will start, not
   // to whichever chat is open on the chat screen.
   const [chosenModel, setChosenModel] = useState<CanonicalChatModelSelection | null>(null);
+  const [chosenPermissionMode, setChosenPermissionMode] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const project = list.projects.find((candidate) => candidate.id === projectId) ?? leaving;
@@ -81,21 +82,25 @@ export default function ProjectRoute() {
     remembered: remembered.choice?.selection,
   });
   const selection = chosenModel ?? startingSelection;
+  // A new chat starts in the permission mode chosen here, else the one last chosen on this phone.
+  const turnModes = chosenTurnModes(catalog, selection, undefined, chosenPermissionMode ?? remembered.choice?.permissionMode);
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const composer = useProjectComposer({
     projectId: project?.id ?? null,
     selection,
     catalog,
-    turnModes: defaultTurnModes(catalog, selection),
+    turnModes,
     attachmentKinds,
     // There is no model to send to until the provider catalog has loaded.
     disabled: catalogPending || (chosenModel === null && choiceUnknown),
-    onChatStarted: (chatId, startedWith) => {
-      // The send made the new chat the open one. The model it was started
-      // with stays chosen there; the next new chat here starts from the
-      // project's latest chat again.
+    onChatStarted: (chatId, startedWith, startedInMode) => {
+      // The send made the new chat the open one. The model and permission
+      // mode it was started with stay chosen there; the next new chat here
+      // starts from the project's latest chat and this phone's choice again.
       setSelectionOverride(startedWith);
+      setPermissionModeOverride(startedInMode);
       setChosenModel(null);
+      setChosenPermissionMode(null);
       if (navigation.isFocused()) showChat(chatId);
     },
   });
@@ -203,6 +208,11 @@ export default function ProjectRoute() {
               onSelectionChange={(chosen) => {
                 setChosenModel(chosen);
                 remembered.remember({ selection: chosen });
+              }}
+              permissionMode={turnModes?.permissionMode ?? null}
+              onPermissionModeChange={(mode) => {
+                setChosenPermissionMode(mode);
+                remembered.remember({ permissionMode: mode });
               }}
             />
           ),

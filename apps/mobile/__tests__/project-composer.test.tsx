@@ -79,8 +79,8 @@ describe("useProjectComposer", () => {
     expect(sent().turnRequestId).not.toBe(sent().chatRequestId);
   });
 
-  it("keeps the text in the box until the server has the message, then reports the chat and the model it started with", () => {
-    const { result, onChatStarted } = renderComposer();
+  it("keeps the text in the box until the server has the message, then reports the chat and the model and mode it started with", () => {
+    const { result, onChatStarted } = renderComposer({ turnModes: { interactionMode: "default", permissionMode: "full_access" } });
     act(() => result.current.setDraft("Draft the case study"));
     act(() => result.current.send());
 
@@ -89,7 +89,7 @@ describe("useProjectComposer", () => {
 
     act(() => sent().onChatCreated?.("chat_new"));
 
-    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection);
+    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection, "full_access");
     expect(result.current.draft).toBe("");
   });
 
@@ -102,7 +102,7 @@ describe("useProjectComposer", () => {
     act(() => result.current.setDraft("Draft the case study, and a summary"));
     act(() => sent().onChatCreated?.("chat_new"));
 
-    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection);
+    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection, "supervised");
     expect(result.current.draft).toBe("Draft the case study, and a summary");
   });
 

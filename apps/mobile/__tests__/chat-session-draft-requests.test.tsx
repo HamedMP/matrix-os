@@ -65,3 +65,48 @@ describe("draft chat requests", () => {
     expect(screen.getByText("draft:0:none")).toBeTruthy();
   });
 });
+
+/** Shows the permission mode chosen for the chat on screen, and offers each way of changing the chat. */
+function PermissionProbe() {
+  const session = useCanonicalChatSession();
+  const actions = {
+    "choose full access": () => session.setPermissionModeOverride("full_access"),
+    "new chat": () => session.startDraftChat(),
+    "open chat": () => session.selectChat("chat_a"),
+    "bind chat": () => session.bindDraftChatId("chat_b"),
+  };
+  return (
+    <>
+      <Text>{`mode:${session.permissionModeOverride ?? "none"}`}</Text>
+      {Object.entries(actions).map(([label, onPress]) => (
+        <Pressable key={label} accessibilityRole="button" accessibilityLabel={label} onPress={onPress} />
+      ))}
+    </>
+  );
+}
+
+describe("the permission mode chosen for the chat on screen", () => {
+  afterEach(cleanup);
+
+  it("stays with a new chat once its first message makes it a chat", () => {
+    render(<CanonicalChatSessionProvider><PermissionProbe /></CanonicalChatSessionProvider>);
+    expect(screen.getByText("mode:none")).toBeTruthy();
+
+    press("choose full access");
+    press("bind chat");
+
+    expect(screen.getByText("mode:full_access")).toBeTruthy();
+  });
+
+  it.each([
+    ["starting a new chat", "new chat"],
+    ["opening another chat", "open chat"],
+  ])("is cleared by %s, which starts from its own mode", (_case, action) => {
+    render(<CanonicalChatSessionProvider><PermissionProbe /></CanonicalChatSessionProvider>);
+    press("choose full access");
+
+    press(action);
+
+    expect(screen.getByText("mode:none")).toBeTruthy();
+  });
+});

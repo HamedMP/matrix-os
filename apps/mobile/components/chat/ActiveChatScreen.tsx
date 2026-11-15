@@ -38,7 +38,8 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, providerCatalogChecking, selection, chooseSelection, attachmentKinds, composer,
+    catalog, directBot, providerCatalogChecking, selection, chooseSelection, permissionMode, choosePermissionMode,
+    attachmentKinds, composer,
   } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
@@ -155,6 +156,8 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
             catalogLoading={providerCatalogChecking}
             selection={selection}
             onSelectionChange={chooseSelection}
+            permissionMode={permissionMode}
+            onPermissionModeChange={choosePermissionMode}
           />
         ),
       }}
