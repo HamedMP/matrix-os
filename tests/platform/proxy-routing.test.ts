@@ -1189,6 +1189,49 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("pragma")).toBeNull();
   });
 
+  it("serves the org-link hand-off page from the platform shell before computer or billing checks", async () => {
+    // Fault: a signed-in visitor whose computer is booting got the 503 boot page (or billing) instead of the hand-off.
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>hand-off</html>", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+    const path = "/open/shared-app/10000000-0000-4000-8000-000000000001?expectedShareRevision=1&app=Sales";
+
+    const res = await app.request(path, {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session", cookie: "matrix_shell_route=alice-staging" },
+    });
+    const post = await app.request(path, { method: "POST", headers: { host: "app.matrix-os.com" } });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<html>hand-off</html>");
+    expect(verifyToken).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`http://127.0.0.1:3200${path}`);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(post.status).toBe(405);
+  });
+
+  it("returns a bounded no-store 503 when the org-link hand-off shell is unavailable", async () => {
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123" });
+
+    const res = await app.request("/open/shared-app/10000000-0000-4000-8000-000000000001", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(await res.text()).toBe("Matrix OS shell unavailable");
+  });
+
   it("serves namespaced runtime public images from the platform shell", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("platform-runtime-image", {

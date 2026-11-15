@@ -49,6 +49,8 @@ export function isPublicShellPath(pathname: string, search = ""): boolean {
     pathname === "/runtime" ||
     pathname === "/slack/oauth/complete" ||
     pathname === "/onboarding/computer" ||
+    // Org-link hand-off (spec 2693): no data, only a desktop deep link; membership is checked on open.
+    /^\/open\/shared-app\/[0-9a-f-]{36}$/i.test(pathname) ||
     (pathname === "/" && searchParams.get("billing") === "setup") ||
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||

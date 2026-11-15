@@ -75,6 +75,7 @@ export * from "#collaboration";
 export * from "#collaboration-capabilities";
 export * from "#collaborative-app-sharing";
 export * from "#collaborative-app-handoff";
+export * from "#shared-app-link";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";

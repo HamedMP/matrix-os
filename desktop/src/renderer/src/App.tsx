@@ -18,6 +18,7 @@ import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefa
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 import { wireNativeAppOpening } from "./lib/native-app-opening";
+import { SharedAppDeepLinkOpener, wireSharedAppDeepLinks } from "./features/collaboration/shared-app-deep-links";
 
 export default function App() {
   const scope = useConnection((s) => JSON.stringify([s.platformHost, s.handle, s.runtimeSlot, s.authGeneration, s.status === "signed-out"]));
@@ -26,6 +27,7 @@ export default function App() {
   const loadAppearance = useAppearance((s) => s.load);
 
   useEffect(() => wireNativeAppOpening(), []);
+  useEffect(() => wireSharedAppDeepLinks(), []);
   useEffect(() => startDesktopProviderCatalogCoordinator(), []);
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function App() {
           <>
             {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
             <DesktopDefaultOrganization />
+            <SharedAppDeepLinkOpener />
             <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
           </>
         )}

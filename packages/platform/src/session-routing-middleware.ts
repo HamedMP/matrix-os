@@ -1,3 +1,4 @@
+import { isSharedAppOpenPath } from "@matrix-os/contracts";
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
@@ -265,6 +266,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     host: string,
     proxyOpts: {
       assetRequest?: boolean;
+      /** Data-free public page: on upstream failure answer a bounded 503, never an auth page. */
+      publicPage?: boolean;
       preserveUpstreamCacheHeaders?: boolean;
       redirectToBillingOnFailure?: boolean;
       upstreamPath?: string;
@@ -315,6 +318,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         c.header('Retry-After', '5');
         return c.text('Matrix OS shell asset unavailable', 503);
+      }
+      if (proxyOpts.publicPage) {
+        applyNoStoreHeaders(c);
+        c.header('Retry-After', '5');
+        return c.text('Matrix OS shell unavailable', 503);
       }
       if (isSignupBillingHandoff(c.req.url)) {
         const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -442,6 +450,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirectToBillingOnFailure: false,
         upstreamPath,
       });
+    }
+    // Org-link hand-off (spec 2693): a public, data-free page that only offers
+    // to open the desktop app. Serve it from the platform shell before identity,
+    // computer-boot or billing routing so neither can block the hand-off.
+    if (isAppDomain && isSharedAppOpenPath(reqPath)) {
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+        applyNoStoreHeaders(c);
+        c.header('Allow', 'GET, HEAD');
+        return c.text('Method Not Allowed', 405);
+      }
+      return proxyAuthShell(c, host, { publicPage: true, redirectToBillingOnFailure: false });
     }
     if (isAppDomain && isPostHogRelayPath(reqPath)) {
       return proxyPostHogRelay(c, { logRouteError: logRouteError });
