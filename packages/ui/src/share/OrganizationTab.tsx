@@ -70,6 +70,7 @@ function DoneCard({ name, onDismiss }: { name: string; onDismiss: () => void }) 
   </div>;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one view switch over the org-share flow steps (idle, checking, shared, two-step, done); each step's body is already its own component.
 export function OrganizationTab({ organizations, selectedId, onSelect, flow, orgLink, onOpenChat, busy }: {
   organizations: ShareOrganization[];
   selectedId: string;

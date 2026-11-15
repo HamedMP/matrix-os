@@ -606,6 +606,8 @@ describe("native desktop shell", () => {
       get: vi.fn((path: string) => path === "/api/apps"
         ? appsResponse
         : Promise.resolve({ background: { type: "solid", color: "#111111" } })),
+      // The real client binds runtime-scoped calls (the launcher's seen-apps file).
+      forRuntime() { return this; },
     };
     useConnection.setState({
       api: api as never,
@@ -646,6 +648,7 @@ describe("native desktop shell", () => {
         ? Promise.resolve({ apps: [sushi] })
         : Promise.resolve({ background: { type: "solid", color: "#111111" } })),
       patch: vi.fn(async () => ({ ok: true })),
+      forRuntime() { return this; },
     };
     useConnection.setState({
       api: api as never,
