@@ -103,6 +103,28 @@ describe('running container ceiling', () => {
     expect(recovering).toEqual({ state: 'starting' });
   });
 
+  it('keeps counting a resumed unit whose gateway did not reopen', async () => {
+    const stuck = await addContainer(db, 1, 'stopped');
+    await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', private_address: 'mvm-cap-1.lambda-microvm.eu-west-1.on.aws' })
+      .where('machine_id', '=', stuck).execute();
+    const service = createContainerLifecycleService({
+      db, buildBootPayload: async () => '{}', now: () => NOW, maxRunning: 1, logError: () => undefined,
+      reviveInPlace: async () => false,
+      provider: {
+        ...idleProvider(), run: async () => { throw new Error('unused'); }, resume: async () => undefined,
+        describe: async () => ({ unitId: 'mvm-cap-1', state: 'suspended', endpointHost: null, createdAt: NOW,
+          expiresAt: new Date(NOW.getTime() + 6 * 3_600_000) }),
+      },
+    });
+    await service.ensureStarted(stuck);
+    await service.drain();
+    expect(await statusOf(db, stuck)).toBe('needs_recovery');
+    const other = await addContainer(db, 2, 'stopped');
+    const result = await service.ensureStarted(other);
+    await service.drain();
+    expect(result).toEqual({ state: 'busy' });
+  });
+
   it('frees the slot of a failed stop whose unit was confirmed suspended', async () => {
     const recovered = await addContainer(db, 1, 'quiescing');
     await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', started_at: NOW, status_changed_at: NOW })

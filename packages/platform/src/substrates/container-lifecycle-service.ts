@@ -248,6 +248,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
           // The unit is awake but still refuses runs. It may hold unflushed changes, so it is kept for recovery.
           await transition(row.machine_id, ['starting'], generation, {
             status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
+            // Awake and holding compute until the provider ends it.
+            compute_unconfirmed_until: previous.expiresAt ?? unconfirmedUntil(row),
           });
           return;
         }
