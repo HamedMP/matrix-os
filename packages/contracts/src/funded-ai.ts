@@ -200,6 +200,8 @@ export const FundedAiPolicyCheckRequestSchema = z.object({
 export const FundedAiPolicyCheckResponseSchema = z.object({
   contractVersion: z.literal(1),
   authorized: z.literal(true),
+  /** Set for runtimes that pay from a prepaid usage hold (free); absent means postpaid. */
+  customerBilling: z.literal("prepaid").optional(),
   identity: FundedAiIdentitySchema.extend({
     tokenId: TokenIdSchema,
     audience: z.literal(FUNDED_AI_AUDIENCE),

@@ -477,19 +477,23 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("runtime_token_epoch", "=", row.machine_runtime_token_epoch)
         .where("expires_at", ">", checkedAt).executeTakeFirst();
       if (!allocation) throw new AiFundedPolicyError("access_disabled");
-    } else if (row.provisioning_class !== "customer") {
+    } else if (row.provisioning_class !== "customer" && row.provisioning_class !== "free") {
       throw new AiFundedPolicyError("access_disabled");
     }
+    const free = row.provisioning_class === "free";
     if (!row.global_enabled || !row.runtime_enabled
       || row.funding_frozen === true || exactInteger(row.funding_debt_microusd ?? 0) > 0
       || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
       throw new AiFundedPolicyError("access_disabled");
     }
-    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models))
+      .filter((model) => !free || model === FREE_MANAGED_MODEL_ID);
     if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
     return FundedAiPolicyCheckResponseSchema.parse({
       contractVersion: 1,
       authorized: true,
+      // A free runtime is never charged after the fact, so the relay asks it for a prepaid hold.
+      ...(free ? { customerBilling: "prepaid" as const } : {}),
       identity: {
         tokenId: row.token_id,
         ownerId: row.owner_id,

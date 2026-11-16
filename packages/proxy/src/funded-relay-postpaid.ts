@@ -11,6 +11,20 @@ export function postpaidAuthorizationMatches(
     && reservation.reservedMicrousd === 0 && reservation.maxCostMicrousd === input.maxCostMicrousd;
 }
 
+/**
+ * A free runtime's prepaid usage hold: usage billing with no postpaid policy, and a positive hold
+ * no larger than the request's liability ceiling. Settlement debits at most that hold.
+ */
+export function prepaidUsageAuthorizationMatches(
+  reservation: FundedAiAuthorizationResponse["reservation"],
+  input: { requestId: string; modelId: string; maxCostMicrousd: number },
+): boolean {
+  return reservation.requestId === input.requestId && reservation.modelId === input.modelId
+    && reservation.billingMode === "usage" && reservation.billingPolicy === undefined
+    && reservation.reservedMicrousd > 0 && reservation.reservedMicrousd <= input.maxCostMicrousd
+    && reservation.maxCostMicrousd === input.maxCostMicrousd;
+}
+
 /** An exact provider cost is distinct from permission to debit the customer. */
 export function postpaidExactFinalization(
   locator: { reservationId: string; tokenId: string },
