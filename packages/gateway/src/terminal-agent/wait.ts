@@ -41,6 +41,35 @@ export interface TerminalWaiter {
   shutdown(): void;
 }
 
+const GAVE_UP: unique symbol = Symbol("gave_up");
+
+/**
+ * The read's result, or GAVE_UP once `ms` pass or `signal` aborts. A read that loses
+ * keeps running underneath; its late result is dropped and a late failure logged.
+ */
+async function boundedRead<T>(read: () => Promise<T>, ms: number, signal: AbortSignal): Promise<T | typeof GAVE_UP> {
+  const stop = new AbortController();
+  const pending = read();
+  const gaveUp = delay(Math.max(0, ms), undefined, { signal: AbortSignal.any([signal, stop.signal]) }).then(
+    (): typeof GAVE_UP => GAVE_UP,
+    (error: unknown): typeof GAVE_UP => {
+      if (error instanceof Error && error.name === "AbortError") return GAVE_UP;
+      throw error;
+    },
+  );
+  try {
+    const winner = await Promise.race([pending, gaveUp]);
+    if (winner === GAVE_UP) {
+      pending.then(undefined, (error: unknown) => {
+        console.warn("[terminal-wait] read after the wait ended failed", error instanceof Error ? error.name : "unknown_error");
+      });
+    }
+    return winner;
+  } finally {
+    stop.abort();
+  }
+}
+
 function countOccurrences(haystack: string, needle: string): number {
   let count = 0;
   for (let index = haystack.indexOf(needle); index !== -1; index = haystack.indexOf(needle, index + needle.length)) count += 1;
@@ -120,19 +149,30 @@ export function createTerminalWaiter(options: {
     // two check-ins still counts as new. Otherwise a source's first read sets its own.
     const baselines: { live?: number; snapshot?: number } = { live: input.seen, snapshot: input.seen };
     const reportedBaseline = () => (liveSeen ? baselines.live : baselines.snapshot ?? baselines.live);
-    if (input.output && input.seen === undefined) {
-      const read = await readText();
-      if (read) baselines[read.source] = countOccurrences(read.text, input.output);
-    }
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
-    for (;;) {
+    // Each runtime read gives up at the deadline or on cancellation, so a slow capture
+    // (two zellij commands with their own timeouts) never outlasts the wait itself.
+    const ended = (): TerminalWaitResult => {
       if (shutdownController.signal.aborted) return { reason: "shutdown" };
       if (input.signal?.aborted) return { reason: "cancelled" };
-      const tab = await findTab(ref);
+      return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: reportedBaseline() ?? 0 } : {}) };
+    };
+    const withinWait = <T>(read: () => Promise<T>) => boundedRead(read, deadline - now(), signal);
+    if (signal.aborted) return ended();
+    if (input.output && input.seen === undefined) {
+      const read = await withinWait(readText);
+      if (read === GAVE_UP) return ended();
+      if (read) baselines[read.source] = countOccurrences(read.text, input.output);
+    }
+    for (;;) {
+      if (signal.aborted) return ended();
+      const tab = await withinWait(() => findTab(ref));
+      if (tab === GAVE_UP) return ended();
       if (tab.status === "exited" || tab.status === "failed") return { reason: "exited", exitCode: tab.exitCode ?? null };
       if (input.output) {
-        const read = await readText();
+        const read = await withinWait(readText);
+        if (read === GAVE_UP) return ended();
         if (read) {
           const count = countOccurrences(read.text, input.output);
           const baseline = baselines[read.source];
@@ -144,13 +184,13 @@ export function createTerminalWaiter(options: {
           baselines[read.source] = count;
         }
       } else {
-        lastStatus = (await options.status.get(ref))?.status;
+        const status = await withinWait(() => options.status.get(ref));
+        if (status === GAVE_UP) return ended();
+        lastStatus = status?.status;
         if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
       }
       const remaining = deadline - now();
-      if (remaining <= 0) {
-        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: reportedBaseline() ?? 0 } : {}) };
-      }
+      if (remaining <= 0) return ended();
       await sleep(Math.min(pollMs, remaining), signal);
     }
   }

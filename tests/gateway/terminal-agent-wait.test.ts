@@ -213,6 +213,40 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { signal: controller.signal })).resolves.toEqual({ reason: "cancelled" });
   });
 
+  // Fault detected (review of #3297): a slow screen capture held the wait past its
+  // deadline, so a short wait turned into a client request error instead of a check-in.
+  function hangingCaptureWaiter() {
+    return createTerminalWaiter({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+          tabs: [{
+            id: tabId, workspaceId, name: "t", cwd: "", revision: 1, order: 0, accessScope: "owner", status: "running",
+            createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+          }],
+        }] as never,
+        getSnapshot: async () => undefined,
+        captureScreen: () => new Promise(() => undefined),
+      },
+      status: { list: async () => new Map(), get: async () => undefined },
+    });
+  }
+
+  it("returns a timeout check-in on time when a screen capture hangs", async () => {
+    const started = Date.now();
+    await expect(hangingCaptureWaiter().wait(ref, { output: "ready", timeoutMs: 100 }))
+      .resolves.toEqual({ reason: "timeout", seen: 0 });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("stops waiting for a hanging capture when the caller goes away", async () => {
+    const controller = new AbortController();
+    const pending = hangingCaptureWaiter().wait(ref, { output: "ready", timeoutMs: 60_000, signal: controller.signal });
+    setTimeout(() => controller.abort(), 20);
+    await expect(pending).resolves.toEqual({ reason: "cancelled" });
+  });
+
   it("bounds concurrent waiters per tab", async () => {
     const { waiter } = harness({ statuses: ["working"] });
     const pending = Array.from({ length: 16 }, () => waiter.wait(ref, { timeoutMs: 60_000 }));
