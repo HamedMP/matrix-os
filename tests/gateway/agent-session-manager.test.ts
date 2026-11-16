@@ -64,7 +64,7 @@ describe("agent-session-manager", () => {
     });
     const terminalRuntime = { ...baseTerminalRuntime(), ...overrides.terminalRuntime };
     const agentLauncher = {
-      buildLaunch: vi.fn((input: AgentLaunchInput): AgentLaunchSpec => ({
+      buildLaunch: vi.fn((input: AgentLaunchInput): AgentLaunchSpec | Promise<AgentLaunchSpec> => ({
         command: input.agent,
         args: ["--safe-mode", input.prompt ?? ""].filter((arg) => arg.length > 0),
         cwd: input.cwd,
@@ -115,12 +115,23 @@ describe("agent-session-manager", () => {
       if (phase === "ensureWorkspace") expect(terminalRuntime.createTab).not.toHaveBeenCalled();
     } finally { await manager.shutdown(); }
   });
-  it("proves a launch preflight rejection has no child", async () => {
-    const { manager, agentLauncher } = createManager();
-    agentLauncher.buildLaunch.mockImplementationOnce(() => { throw new Error("bad launch"); });
+  it.each(["synchronous", "asynchronous"] as const)("cleans a worktree lease after %s launch preflight rejection", async phase => {
+    const { manager, agentLauncher, terminalRuntime, worktreeManager } = createManager();
+    agentLauncher.buildLaunch.mockImplementationOnce(() => {
+      const error = new Error("Codex provider version is not verified");
+      if (phase === "asynchronous") return Promise.reject(error);
+      throw error;
+    });
     try {
-      const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", sessionId: "sess_preflight" });
+      const result = await manager.startSession({
+        kind: "agent", agent: "codex", ownerId: "user_a", sessionId: "sess_preflight", projectSlug: "repo", worktreeId,
+      });
+      expect(result).toMatchObject({ ok: false, error: { code: "sandbox_unavailable" } });
       expect(isSessionStartClean(result, "user_a", "sess_preflight")).toBe(true);
+      expect(terminalRuntime.ensureWorkspace).not.toHaveBeenCalled();
+      expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+      await expect(worktreeManager.listActiveLeases("repo")).resolves.toEqual({ ok: true, leases: [] });
+      await expect(stat(join(homePath, "system", "sessions", "sess_preflight.json"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally { await manager.shutdown(); }
   });
   it("starts background Chat without touching a full interactive Terminal workspace", async () => {

@@ -387,18 +387,23 @@ describe("agent-launcher", () => {
     }));
   });
 
-  it("uses one configured absolute Codex executable for detection and launch", async () => {
+  it.each([CODEX_VERIFIED_VERSION, "0.169.0"])("uses observed Codex %s for detection and launch", async (version) => {
     const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
     const runCommand = vi.fn(async (command: string, args: string[]) => ({
       stdout: command === codexExecutable && args[0] === "--version"
-        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
-        : "ok\n",
+        ? `codex-cli ${version}\n`
+        : "Logged in using ChatGPT\n",
       stderr: "",
     }));
     const launcher = createAgentLauncher({ runCommand, codexExecutable });
 
-    await launcher.detectAgentCredentials();
-    const launch = launcher.buildLaunch({
+    const detected = await launcher.detectAgentCredentials();
+    expect(detected.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      workspaceCompatibility: "compatible",
+      authState: "ok",
+      credentialMode: "chatgpt",
+    });
+    const launch = await launcher.buildLaunch({
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo",
       prompt: "fix tests",
@@ -411,9 +416,58 @@ describe("agent-launcher", () => {
     expect(launch.command).toBe(process.execPath);
     expect(launch.args.slice(1, 4)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
-      CODEX_VERIFIED_VERSION,
+      version,
       codexExecutable,
     ]);
+  });
+
+  it.each(["0.163.0", "0.170.0", "0.169.0-beta.1"])("rejects changed Codex %s before launch", async (replacementVersion) => {
+    let version = "0.169.0";
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === "codex" && args[0] === "--version"
+        ? `codex-cli ${version}\n`
+        : "Logged in using ChatGPT\n",
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand });
+    await launcher.detectAgentCredentials();
+    version = replacementVersion;
+
+    await expect(async () => launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo",
+      prompt: "fix tests",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+    })).rejects.toThrow("Codex provider version is not verified");
+  });
+
+  it("probes the same isolated profile environment used to launch a native Codex turn", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const ownerHome = "/home/matrix/home";
+    const runCommand = vi.fn(async () => ({ stdout: "codex-cli 0.169.0\n", stderr: "" }));
+    const launcher = createAgentLauncher({ runCommand, codexExecutable, runtimeHome: ownerHome });
+    const launch = await launcher.buildLaunch({
+      agent: "codex",
+      cwd: `${ownerHome}/projects/repo`,
+      prompt: "Inspect the worktree.",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: `${ownerHome}/system/coding-agents/provider-events/sess_bound.jsonl`,
+      nativeCodexSubscription: {
+        codexHome: `${ownerHome}/.codex`,
+        expectedPrincipalFingerprint: "a".repeat(64),
+        expectedConsentRevision: 1,
+        expectedConfigurationFingerprint: "b".repeat(64),
+        expectedHarnessInstanceId: "harness_codex",
+        expectedAccountId: "owner_codex",
+      },
+    });
+
+    expect(launch.inheritEnv).toBe(false);
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith(codexExecutable, ["--version"], {
+      cwd: launch.cwd, timeout: 5_000, env: launch.env, inheritEnv: false,
+    });
+    expect(launch.env.CODEX_HOME).toBe(`${ownerHome}/.codex`);
   });
 
   it("keeps an unverified configured Codex version installed but workspace-incompatible", async () => {
