@@ -394,7 +394,7 @@ function ProjectNavigableFilesPanel({
           </button>
         ) : null}
         {status === "loading" ? <p className="p-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading files…</p> : null}
-        {status === "error" ? <p className="p-3 text-xs" style={{ color: "var(--danger)" }}>Files are unavailable.</p> : null}
+        {status === "error" ? <p className="p-3 text-xs" style={{ color: "var(--danger-text)" }}>Files are unavailable.</p> : null}
         {listing?.entries.items.map((entry) => (
           <button
             key={entry.path}

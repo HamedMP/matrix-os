@@ -187,7 +187,7 @@ export default function DesktopBackgroundMenu({ children }: { children: ReactEle
               ))}
             </div>
           )}
-          {error ? <p role="alert" className="mt-4 text-sm" style={{ color: "var(--danger)" }}>{error}</p> : null}
+          {error ? <p role="alert" className="mt-4 text-sm" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
         </div>
       </Dialog>
     </>
