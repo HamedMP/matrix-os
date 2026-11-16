@@ -150,6 +150,9 @@ function sourcePullRequestPayload() {
 }
 
 describe("GatewayClient", () => {
+  // Each test supplies its HTTP responses; Expo 58 does not install fetch in Jest.
+  beforeEach(() => { global.fetch = jest.fn(); });
+
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
     expect(client.connectionState).toBe("disconnected");

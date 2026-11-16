@@ -27,6 +27,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({ useCanonicalChatSessi
   activeChatId: mockActiveChatId, startDraftChat: jest.fn(), draftChatRequests: 0,
   selectionOverride: null, setSelectionOverride: jest.fn(), selectedProjectId: null,
 }) }));
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({ useCanonicalChatDetail: () => ({
   detail: mockDetail, computer: { handle: "fixture", runtimeSlot: "primary", gatewayPath: "/vm/fixture" },
   refresh: jest.fn(), isError: false, reload: jest.fn(),

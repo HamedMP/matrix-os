@@ -139,7 +139,7 @@ export function createDirectStreams(deps: {
   };
 
   /** Opens one stream: purpose ticket → socket → first-frame possession proof. Reconnects always start over with a new ticket. */
-  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: () => void): StreamHandle => {
+  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: (accessUnavailable?: boolean) => void): StreamHandle => {
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -223,6 +223,13 @@ export function createDirectStreams(deps: {
         };
         next.onerror = () => next.close();
       } catch (error: unknown) {
+        if (closed) return;
+        if (error instanceof CollaborationDirectError
+          && (error.code === "not_found" || error.code === "denied" || error.code === "unauthenticated")) {
+          closed = true;
+          onFailure(true);
+          return;
+        }
         if (error instanceof CollaborationDirectError && error.code === "upgrade_required") {
           closed = true;
           onFailure();
@@ -275,7 +282,11 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { usable = false; };
-    }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); });
+    }, (accessUnavailable) => {
+      if (stopped) return;
+      if (accessUnavailable) { stopped = true; handlers.onUnavailable(); }
+      else handlers.onConnectionChange?.("reconnecting");
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; stream.stop(); } });
   };
 
@@ -338,7 +349,11 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { clearHeartbeat(); };
-    }, () => { if (!stopped) handlers.onDisconnected(); });
+    }, (accessUnavailable) => {
+      if (stopped) return;
+      if (accessUnavailable) { stopped = true; clearHeartbeat(); handlers.onUnavailable(); }
+      else handlers.onDisconnected();
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; clearHeartbeat(); stream.stop(); } });
   };
 

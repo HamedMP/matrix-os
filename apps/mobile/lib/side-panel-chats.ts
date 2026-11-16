@@ -1,11 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
-type Chats = readonly CanonicalChatRecord[];
+import { chatNeedsUser } from "@/lib/chat-status";
 
-/** Whether the chat is waiting on the person: an approval, an answer, or a failed run. */
-export function chatNeedsUser(record: CanonicalChatRecord): boolean {
-  return record.chat.attention !== "none";
-}
+export { chatNeedsUser };
+
+type Chats = readonly CanonicalChatRecord[];
 
 export interface SidePanelChatGroups {
   needsYou: CanonicalChatRecord[];

@@ -110,7 +110,7 @@ switch the app's selected computer, so the main window keeps its current compute
 
 **Acceptance**
 1. Attaching to a tab on computer B while the main window is on computer A leaves the main window's selection, credential and profile unchanged.
-2. Tabs created, renamed, reordered or closed in the new window show in the OS-view Terminal on that computer (Electron, Web Desktop, Web Canvas), and the reverse, after the next list refresh. Neither client keeps a private copy of the tab list.
+2. Tabs created, renamed, reordered or closed in the new window show in the OS-view Terminal on that computer (Electron, Web Desktop, Web Canvas), and the reverse, after the next list refresh. Neither client keeps a private copy of the tab list. On window focus, refresh targets must match the currently committed listings, including when focus arrives before passive effects; the refresh keeps visible tabs on screen and does not query unopened computers.
 3. When two clients attach to the same tab, the existing `lease=exclusive|observe` contract applies. The new window shows writer and observer states. It does not take the lease silently.
 4. When a computer's credential expires or is revoked (401), only that section returns to "reconnect". Other sections stay attached.
 

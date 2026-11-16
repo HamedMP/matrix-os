@@ -3,6 +3,8 @@ import { applyUnifiedTheme, resolveThemeMode, type ThemeMode } from '../design/t
 import { FONT_OPTIONS, MONO_FONT_OPTIONS, isThemeId } from '../design/themes';
 import { DEFAULT_APPEARANCE, normalizeAppearance, type AppearancePreferences } from '@matrix-os/brand/themes/preferences';
 import { invoke, onEvent } from '../lib/operator';
+import { desktopPlatform } from '../lib/desktop-platform';
+import { syncsNativeTitlebarOverlay } from '../lib/titlebar-chrome';
 
 export const MIN_ZOOM = 0.5;
 export const MAX_ZOOM = 2;
@@ -20,10 +22,13 @@ interface AppearanceState extends AppearancePreferences {
   setZoom: (factor: number) => void;
 }
 function apply(value: AppearancePreferences): void {
-  applyUnifiedTheme(value.themeId, value.mode, value.customTheme);
+  const overlay = applyUnifiedTheme(value.themeId, value.mode, value.customTheme);
+  if (syncsNativeTitlebarOverlay(desktopPlatform(), window.location.search)) {
+    void invoke('window:set-titlebar-overlay', overlay).catch(error => console.warn('[appearance] titlebar overlay failed:', error));
+  }
   const root = document.documentElement;
-  root.style.setProperty('--font-ui', FONT_OPTIONS.find(f => f.id === value.fontId)!.family);
-  root.style.setProperty('--font-mono', MONO_FONT_OPTIONS.find(f => f.id === value.monoFontId)!.family);
+  root.style.setProperty('--font-ui', (FONT_OPTIONS.find(f => f.id === value.fontId) ?? FONT_OPTIONS[0]).family);
+  root.style.setProperty('--font-mono', (MONO_FONT_OPTIONS.find(f => f.id === value.monoFontId) ?? MONO_FONT_OPTIONS[0]).family);
 }
 function payload(value: AppearancePreferences, zoom: number) {
   return { theme: value.mode, themeId: value.themeId, fontId: value.fontId, monoFontId: value.monoFontId, customTheme: value.customTheme, zoom };
