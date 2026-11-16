@@ -20,7 +20,8 @@ const FAILURE_COPY = {
   failed: 'Your data could not be exported. Try again.',
 } as const;
 /** The export-only wake answers 503 with Retry-After; the page retries this many times at most. */
-const MAX_EXPORT_RETRIES = 10;
+/** A start may take 90 s (CONTAINER_START_TIMEOUT_MS); the export keeps waiting through it, plus a margin. */
+const EXPORT_RETRY_WINDOW_MS = 90_000 + 30_000;
 const MAX_RETRY_DELAY_SECONDS = 30;
 /** The gateway bounds the export stream at ten minutes; the page waits a little longer, never forever. */
 const EXPORT_TIMEOUT_MS = 11 * 60_000;
@@ -68,10 +69,11 @@ const stamp=()=>new Date().toISOString().replace(/\\.\\d{3}Z$/,'Z').replace(/[-:
 const filename=(value)=>{const match=value?/filename="(matrix-export-\\d{8}T\\d{6}Z\\.tar\\.gz)"/.exec(value):null;return match?match[1]:'matrix-export-'+stamp()+'.tar.gz';};
 const save=(blob,name)=>{const url=URL.createObjectURL(blob);try{const link=document.createElement('a');link.href=url;link.download=name;link.rel='noopener';document.body.append(link);link.click();link.remove();}finally{setTimeout(()=>URL.revokeObjectURL(url),0);}};
 button.addEventListener('click',async()=>{button.disabled=true;status.textContent=PREPARING;
-try{for(let retries=0;;retries++){
+const deadline=Date.now()+${EXPORT_RETRY_WINDOW_MS};
+try{for(;;){
 const response=await fetch(path,{headers:{'X-Matrix-Export':'1',accept:'application/gzip'},credentials:'include',signal:AbortSignal.timeout(${EXPORT_TIMEOUT_MS})});
 const retryAfter=Number(response.headers.get('retry-after'));
-if(response.status===503&&retries<${MAX_EXPORT_RETRIES}&&Number.isFinite(retryAfter)&&retryAfter>0){status.textContent=PREPARING;await wait(Math.min(retryAfter,${MAX_RETRY_DELAY_SECONDS})*1000);continue;}
+if(response.status===503&&Date.now()<deadline&&Number.isFinite(retryAfter)&&retryAfter>0){status.textContent=PREPARING;await wait(Math.min(retryAfter,${MAX_RETRY_DELAY_SECONDS})*1000);continue;}
 if(!response.ok){status.textContent=failure(response.status);return;}
 save(await response.blob(),filename(response.headers.get('content-disposition')));status.textContent='';return;}}
 catch(error){console.warn('Export unavailable',error instanceof Error?error.name:'UnknownError');status.textContent=COPY.failed;}

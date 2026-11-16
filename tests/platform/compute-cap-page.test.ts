@@ -136,6 +136,7 @@ describe('the compute cap page in a browser', () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const delays: number[] = [];
     const downloads: string[] = [];
+    let elapsed = 0;
     const html = renderComputeCapPage({ resetsAt: RESETS_AT, exportPath: '/vm/cappage/api/system/export', nonce: 'n0nce' });
     const dom = new JSDOM(html, {
       url: 'https://app.matrix-os.com/vm/cappage/',
@@ -152,8 +153,11 @@ describe('the compute cap page in a browser', () => {
               blob: async () => new window.Blob([next.body ?? '']),
             };
           },
-          setTimeout: (callback: () => void, ms: number) => { delays.push(ms); queueMicrotask(callback); return 0; },
+          setTimeout: (callback: () => void, ms: number) => { delays.push(ms); elapsed += ms; queueMicrotask(callback); return 0; },
         });
+        // The page's clock moves only with its own waits.
+        const start = Date.parse('2026-11-14T03:00:00.000Z');
+        window.Date.now = () => start + elapsed;
         window.URL.createObjectURL = () => 'blob:https://app.matrix-os.com/export';
         window.URL.revokeObjectURL = () => undefined;
         window.HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement) { downloads.push(this.download); };
@@ -193,11 +197,22 @@ describe('the compute cap page in a browser', () => {
     expect(page.status()).toBe('');
   });
 
-  it('stops after ten retries and shows the unavailable copy', async () => {
+  it('keeps waiting through a slow start that takes most of the 90 second window', async () => {
+    const page = open((call) => call <= 25
+      ? { status: 503, headers: { 'retry-after': '3' } }
+      : { status: 200, headers: { 'content-disposition': 'attachment; filename="matrix-export-20261114T031500Z.tar.gz"' }, body: 'tar' });
+    page.button.click();
+    await page.settle();
+    expect(page.calls).toHaveLength(26);
+    expect(page.downloads).toEqual(['matrix-export-20261114T031500Z.tar.gz']);
+  });
+
+  it('gives up once the start window and its margin have passed, and shows the unavailable copy', async () => {
     const page = open(() => ({ status: 503, headers: { 'retry-after': '3' } }));
     page.button.click();
     await page.settle();
-    expect(page.calls).toHaveLength(11);
+    // 120 s of 3 s waits, then the first answer past the deadline is final.
+    expect(page.calls).toHaveLength(41);
     expect(page.status()).toBe(FAILURE_COPY.unavailable);
     expect(page.downloads).toEqual([]);
   });
