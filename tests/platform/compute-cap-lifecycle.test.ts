@@ -144,9 +144,15 @@ describe('monthly compute metering and cap', () => {
     expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
   });
 
-  it('keeps metering the unit of a start that never registered while its termination is unconfirmed', async () => {
+  it.each([
+    ['fails', () => { throw new Error('provider down'); }],
+    ['is only accepted', () => undefined],
+  ])('keeps metering the unit of a start that never registered while its termination %s', async (_case, terminate) => {
     const provider = fakeProvider();
-    vi.mocked(provider.terminate).mockRejectedValue(new Error('provider down'));
+    // The provider still reports the unit: terminating, or untouched.
+    vi.mocked(provider.describe).mockImplementation(async (unitId) => ({ unitId, state: 'terminating', endpointHost: ENDPOINT,
+      createdAt: T0, expiresAt: new Date(T0.getTime() + 8 * HOUR) }));
+    vi.mocked(provider.terminate).mockImplementation(async () => terminate());
     const lifecycle = service(provider);
     await lifecycle.ensureStarted('ctr-1');
     await lifecycle.drain();
