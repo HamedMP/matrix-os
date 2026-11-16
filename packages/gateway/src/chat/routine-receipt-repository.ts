@@ -21,6 +21,8 @@ const statusText = (status: RoutineChatReceiptPart["status"]) => ({
   unknown: "Scheduled task outcome is unknown. Review its execution history before running it again.",
   missed: "Scheduled task occurrence was missed.", skipped: "Scheduled task occurrence was skipped.",
 })[status];
+/** Preserve the UTF-16 limit without introducing a dangling high surrogate into JSONB. */
+const receiptTextPrefix = (text: string, maximum: number) => text.slice(0, maximum).replace(/[\uD800-\uDBFF]$/u, "");
 /** Appends only from committed canonical rows. No source turn/Run/selection/checkpoint writes. */
 export async function appendRoutineReceiptWithin(executor: Executor, ownerId: string, input: AppendRoutineReceiptInput, appendOutbox: AppendOutbox): Promise<CanonicalChatMessage | null> {
   if (!executor.isTransaction) throw new BotStateError("invalid_input");
@@ -88,7 +90,7 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
     ...(output ? { canonicalRunId: output.run_id, canonicalMessageId: output.id } : {}),
     ...(status === "cancelled" ? { stop: "unconfirmed" } : {}), model: proposal.selection.model });
   const original = output ? redactAssistantParts(output.parts).filter(part => part.type === "text").map(part => part.text).join("\n") : statusText(status);
-  const text = original.slice(0, 24_000).trim();
+  const text = receiptTextPrefix(original, 24_000).trim();
   if (input.kind === "output" && !text) return null;
   const latest = await db.selectFrom("chat_messages").select(eb => eb.fn.max<number>("seq").as("seq")).where("chat_id", "=", input.sourceChatId).executeTakeFirst();
   const message = CanonicalChatMessageSchema.parse({ id: `msg_${randomUUID().replaceAll("-", "")}`, chatId: input.sourceChatId,
@@ -100,7 +102,7 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
     .onConflict(conflict => conflict.columns(["owner_id", "source_chat_id", "routine_id", "fire_id", "attempt", "kind"]).doNothing()).returning("message_id").executeTakeFirst();
   if (!claimed) throw new BotStateError("conflict"); // Roll back message/seq too; never leave an orphan append.
   const revision = Number(sourceChat.revision) + 1;
-  await db.updateTable("chats").set({ revision, message_count: sql<number>`message_count+1`, last_message_preview: text.slice(0,280),
+  await db.updateTable("chats").set({ revision, message_count: sql<number>`message_count+1`, last_message_preview: receiptTextPrefix(text, 280),
     activity_at: input.now, updated_at: input.now }).where("id", "=", input.sourceChatId).execute();
   await appendOutbox(executor, { type: "personal", ownerId }, revision, message);
   return message;

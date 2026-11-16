@@ -214,6 +214,7 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
       if ("preferenceRevision" in target) return target;
     } catch (error: unknown) {
       if (!(error instanceof RoutineCliError) || error.code !== "target_required" && error.code !== "target_unavailable") throw error;
+      console.warn("[routine-cli-targets] Remembered list supplement unavailable", error.code);
     }
   };
   return {
