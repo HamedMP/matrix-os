@@ -2,7 +2,8 @@
 // Added-line pattern checks for scripts/review/check-patterns.sh.
 //
 // The bash scanner checks whole files under packages/ and shell/. These rules
-// apply repo-wide but only to lines a change adds, so existing debt does not
+// apply repo-wide but only to lines a change adds (for swallowed errors, any
+// catch block the change edits), so existing debt does not
 // block unrelated work while new copies of the same mistake fail.
 //
 // Usage:
@@ -18,6 +19,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { findSwallowedErrors } from "./swallowed-errors.mjs";
 
 const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SKIPPED_PATH = /(?:^|\/)(?:node_modules|dist|\.next|vendor|coverage)\/|\.min\.js$|\.d\.ts$/;
@@ -103,7 +105,8 @@ export function unquoteGitPath(raw) {
   return Buffer.from(bytes).toString("utf8");
 }
 
-// Map of path -> Set of 1-based added line numbers.
+// Map of path -> { lines, gaps }: 1-based added line numbers, and for each
+// pure deletion the new-file line it follows (0 for the top of the file).
 export function addedLines(range) {
   const out = new Map();
   const diff = git([
@@ -114,14 +117,15 @@ export function addedLines(range) {
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ ")) {
       current = line === "+++ /dev/null" ? null : unquoteGitPath(line.slice(4)).slice(2);
-      if (current && !out.has(current)) out.set(current, new Set());
+      if (current && !out.has(current)) out.set(current, { lines: new Set(), gaps: new Set() });
       continue;
     }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (hunk && current) {
       const start = Number(hunk[1]);
       const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-      for (let n = start; n < start + count; n += 1) out.get(current).add(n);
+      if (count === 0) out.get(current).gaps.add(start);
+      for (let n = start; n < start + count; n += 1) out.get(current).lines.add(n);
     }
   }
   if (range.includeUntracked) {
@@ -130,190 +134,10 @@ export function addedLines(range) {
       if (text === null) continue;
       const lines = new Set();
       for (let n = 1; n <= lineCount(text); n += 1) lines.add(n);
-      out.set(path, lines);
+      out.set(path, { lines, gaps: new Set() });
     }
   }
   return out;
-}
-
-// Replace comment and string contents with spaces, keeping offsets and
-// newlines, so code-shaped text in prose, prompts, or fixtures is ignored.
-// Single and double quoted strings end at a newline, which bounds the damage
-// from JSX text such as `Don't`.
-// Keywords after which `/` starts a regex literal rather than a division.
-const REGEX_KEYWORDS = new Set([
-  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await",
-]);
-
-function wordBefore(text, index) {
-  let end = index;
-  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
-  let start = end;
-  while (start > 0 && /[\w$]/.test(text[start - 1])) start -= 1;
-  if (start > 0 && text[start - 1] === ".") return ""; // a property such as obj.return
-  return text.slice(start, end);
-}
-
-export function maskSource(text) {
-  const out = text.split("");
-  const blank = (from, to) => {
-    for (let i = from; i < to; i += 1) if (out[i] !== "\n") out[i] = " ";
-  };
-  // Brace depth of each open `${ ... }` template expression, innermost last.
-  const templateDepths = [];
-  const scanTemplate = (from) => {
-    let j = from;
-    while (j < text.length && text[j] !== "`") {
-      if (text[j] === "\\") j += 2;
-      else if (text[j] === "$" && text[j + 1] === "{") {
-        blank(from, j);
-        templateDepths.push(0);
-        return j + 2;
-      } else j += 1;
-    }
-    blank(from, Math.min(j, text.length));
-    return j + 1;
-  };
-  let i = 0;
-  let lastSignificant = "";
-  while (i < text.length) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (templateDepths.length > 0 && (ch === "{" || ch === "}")) {
-      const top = templateDepths.length - 1;
-      if (ch === "{") templateDepths[top] += 1;
-      else if (templateDepths[top] > 0) templateDepths[top] -= 1;
-      else {
-        templateDepths.pop();
-        i = scanTemplate(i + 1);
-        lastSignificant = "`";
-        continue;
-      }
-    }
-    if (ch === "`") {
-      i = scanTemplate(i + 1);
-      lastSignificant = "`";
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      const end = text.indexOf("\n", i);
-      const stop = end === -1 ? text.length : end;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const stop = end === -1 ? text.length : end + 2;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== ch) {
-        if (text[j] === "\\") j += 1;
-        else if (text[j] === "\n") break;
-        j += 1;
-      }
-      blank(i + 1, Math.min(j, text.length));
-      i = j + 1;
-      lastSignificant = ch;
-      continue;
-    }
-    const regexAllowed =
-      lastSignificant === "" ||
-      "(,=:[!&|?{};+-*%<>~^".includes(lastSignificant) ||
-      (/[\w$]/.test(lastSignificant) && REGEX_KEYWORDS.has(wordBefore(text, i)));
-    if (ch === "/" && regexAllowed) {
-      let j = i + 1;
-      let inClass = false;
-      while (j < text.length && text[j] !== "\n" && (inClass || text[j] !== "/")) {
-        if (text[j] === "\\") j += 1;
-        else if (text[j] === "[") inClass = true;
-        else if (text[j] === "]") inClass = false;
-        j += 1;
-      }
-      if (text[j] === "/") {
-        blank(i + 1, j);
-        i = j + 1;
-        lastSignificant = "/";
-        continue;
-      }
-    }
-    if (!/\s/.test(ch)) lastSignificant = ch;
-    i += 1;
-  }
-  return out.join("");
-}
-
-function matchClose(masked, openIndex, open, close) {
-  let depth = 0;
-  for (let i = openIndex; i < masked.length; i += 1) {
-    if (masked[i] === open) depth += 1;
-    else if (masked[i] === close) {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return masked.length;
-}
-
-function lineOf(lineStarts, index) {
-  let lo = 0;
-  let hi = lineStarts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (lineStarts[mid] <= index) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo + 1;
-}
-
-const uses = (body, name) => new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(body);
-
-// Returns { line, kind } for each catch that drops its error.
-export function findSwallowedErrors(text) {
-  const masked = maskSource(text);
-  const lineStarts = [0];
-  for (let i = 0; i < text.length; i += 1) if (text[i] === "\n") lineStarts.push(i + 1);
-  const found = [];
-
-  const clause = /(?<![\w$.]\s*)\bcatch\s*(?:\(([^()]*)\))?\s*\{/g;
-  for (let m = clause.exec(masked); m; m = clause.exec(masked)) {
-    if (/\.\s*$|\?\.\s*$/.test(masked.slice(Math.max(0, m.index - 3), m.index))) continue;
-    const binding = (m[1] ?? "").trim();
-    const line = lineOf(lineStarts, m.index);
-    if (!binding) {
-      found.push({ line, kind: "bare-catch" });
-      continue;
-    }
-    const name = /^([A-Za-z_$][\w$]*)/.exec(binding)?.[1];
-    if (!name) continue; // destructuring binds the parts it needs
-    const open = m.index + m[0].length - 1;
-    const body = masked.slice(open + 1, matchClose(masked, open, "{", "}"));
-    if (!uses(body, name)) found.push({ line, kind: "unused-catch-binding", name });
-  }
-
-  const method = /\.\s*catch\s*\(/g;
-  for (let m = method.exec(masked); m; m = method.exec(masked)) {
-    const callOpen = m.index + m[0].length - 1;
-    const callClose = matchClose(masked, callOpen, "(", ")");
-    const args = masked.slice(callOpen + 1, callClose);
-    const line = lineOf(lineStarts, m.index);
-    const handler =
-      /^\s*(?:async\s*)?\(\s*([A-Za-z_$][\w$]*)?\s*(?::[^)]*)?\)\s*=>\s*/.exec(args) ??
-      /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>\s*/.exec(args) ??
-      /^\s*(?:async\s+)?function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)?\s*(?::[^)]*)?\)\s*/.exec(args);
-    if (!handler) continue; // a named handler such as .catch(logFailure)
-    const name = handler[1];
-    if (!name) {
-      found.push({ line, kind: "empty-catch-handler" });
-      continue;
-    }
-    if (!uses(args.slice(handler[0].length), name)) found.push({ line, kind: "unused-catch-binding", name });
-  }
-  return found;
 }
 
 export function exceptionFor(lines, lineNumber, rule, today) {
@@ -333,14 +157,21 @@ const CATCH_FIX = {
   "unused-catch-binding": "catch binding is never read",
 };
 
+// True when the change adds a line in from..to or deletes one strictly inside it.
+function touches({ lines, gaps }, from, to) {
+  for (let n = from; n <= to; n += 1) if (lines.has(n) || (n < to && gaps.has(n))) return true;
+  return false;
+}
+
 function checkSwallowedErrors(added, readFile, today, report) {
-  for (const [path, lineSet] of added) {
-    if (!SOURCE_FILE.test(path) || SKIPPED_PATH.test(path) || lineSet.size === 0) continue;
+  for (const [path, changes] of added) {
+    if (!SOURCE_FILE.test(path) || SKIPPED_PATH.test(path) || changes.lines.size + changes.gaps.size === 0) continue;
     const text = readFile(path);
     if (text === null) continue;
     const lines = text.split("\n");
     for (const hit of findSwallowedErrors(text)) {
-      if (!lineSet.has(hit.line)) continue;
+      // A body edit can drop the only read of an unchanged catch's error, so check the whole block.
+      if (!touches(changes, hit.line, hit.endLine)) continue;
       // Section 1 of check-patterns.sh reports this exact line (and applies the same exceptions).
       if (BASH_CATCH_SCOPE.test(path) && BASH_CATCH_PATTERN[hit.kind]?.test(lines[hit.line - 1] ?? "")) continue;
       const exception = exceptionFor(lines, hit.line, "swallowed-error", today);

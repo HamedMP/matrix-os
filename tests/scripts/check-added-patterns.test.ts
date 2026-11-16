@@ -170,6 +170,44 @@ describe("added-line swallowed-error rule", () => {
     expect(expired.stdout).toContain("exception expired on 2020-01-01");
   });
 
+  it("rejects an unchanged catch (error) whose edited body stops reading the error", () => {
+    const head = ["export function load() {", "  try {", "    return read();", "  } catch (error) {"];
+    const tail = ["  }", "}", ""];
+    const result = scanChange(
+      { "scripts/load.mjs": [...head, "    console.warn(error);", "    return null;", ...tail].join("\n") },
+      { "scripts/load.mjs": [...head, "    return null;", ...tail].join("\n") },
+    );
+    const unrelated = scanChange(
+      { "scripts/load.mjs": [...head, "    console.warn(error);", "    return null;", ...tail].join("\n") },
+      { "scripts/load.mjs": [...head, "    console.warn(error);", "    return undefined;", ...tail].join("\n") },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("scripts/load.mjs:4: catch binding is never read");
+    expect(unrelated.status).toBe(0);
+  });
+
+  it("does not flag an older catch when a deletion lands outside its block", () => {
+    const legacy = ["const a = 1;", "try {", "  run();", "} catch { /* legacy */ }", "export const b = 2;", ""];
+    const result = scanChange(
+      { "scripts/legacy.mjs": legacy.join("\n") },
+      { "scripts/legacy.mjs": legacy.filter((line) => line !== "const a = 1;" && line !== "  run();").join("\n") },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("[swallowed-error]");
+  });
+
+  it("rejects an unchanged .catch((error) => ...) handler whose edited body stops reading the error", () => {
+    const result = scanChange(
+      { "scripts/job.mjs": "run().catch((error) => {\n  log(error);\n});\n" },
+      { "scripts/job.mjs": "run().catch((error) => {\n  log('failed');\n});\n" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("scripts/job.mjs:1: catch binding is never read");
+  });
+
   it("reads a regex literal after return, so a `}` inside it does not end the catch body", () => {
     const result = scanChange({}, {
       "scripts/regex-return.mjs": [
