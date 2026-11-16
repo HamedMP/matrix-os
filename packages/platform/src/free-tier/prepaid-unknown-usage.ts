@@ -14,6 +14,10 @@ import type { AiFundedUsageReservationsTable, PlatformDB } from '../db.js';
  * released hold still counts at its hold in the free daily ceiling
  * (`readDailyFundedSpend` counts expired holds at their hold), and the month
  * budget is not charged.
+ *
+ * Deliberately unguarded: the operator execution-recovery routes, an attested
+ * support escape hatch that lifts only the owner barrier, never the hold, so the
+ * sweep still releases it.
  */
 
 type Executor = PlatformDB['executor'];
