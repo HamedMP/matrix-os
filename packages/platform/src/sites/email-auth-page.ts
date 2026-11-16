@@ -3,14 +3,14 @@ import { SiteIdSchema } from '@matrix-os/contracts';
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
 import { CLERK_SCRIPT_ORIGIN } from '../auth-pages.js';
 
-export function emailAuthPageContext(siteId: string, publishableKey: string) {
+export function emailAuthPageContext(siteId: string, publishableKey: string, appFrame = false) {
     const id = SiteIdSchema.parse(siteId);
     if (!/^pk_(?:live|test)_[A-Za-z0-9_-]{8,512}$/.test(publishableKey))
         throw new Error('Invalid Clerk publishable key');
     const nonce = randomBytes(18).toString('base64');
     const canonical = `https://matrix.page/${id}`;
     const captchaOrigin = 'https://challenges.cloudflare.com';
-    const csp = `default-src 'none'; script-src 'nonce-${nonce}' ${CLERK_SCRIPT_ORIGIN} ${captchaOrigin}; style-src 'unsafe-inline' ${CLERK_SCRIPT_ORIGIN}; img-src data: ${CLERK_SCRIPT_ORIGIN}; font-src data: ${CLERK_SCRIPT_ORIGIN}; connect-src 'self' ${CLERK_SCRIPT_ORIGIN} ${captchaOrigin}; form-action 'self' ${CLERK_SCRIPT_ORIGIN}; frame-src 'self' ${captchaOrigin}; worker-src 'self' blob:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'`;
+    const csp = `default-src 'none'; script-src 'nonce-${nonce}' ${CLERK_SCRIPT_ORIGIN} ${captchaOrigin}; style-src 'unsafe-inline' ${CLERK_SCRIPT_ORIGIN}; img-src data: ${CLERK_SCRIPT_ORIGIN}; font-src data: ${CLERK_SCRIPT_ORIGIN}; connect-src 'self' ${CLERK_SCRIPT_ORIGIN} ${captchaOrigin}; form-action 'self' ${CLERK_SCRIPT_ORIGIN}; frame-src ${appFrame ? "'self' " : ''}${captchaOrigin}; worker-src 'self' blob:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'`;
     const clerkScript = `<script id="clerk-script" nonce="${nonce}" async crossorigin="anonymous" data-clerk-publishable-key="${publishableKey}" src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>`;
     return { canonical, nonce, csp, clerkScript };
 }
@@ -31,7 +31,7 @@ async function endEmailSession(onRevoked){
 
 /** Add a real sign-out action without giving the app frame access to Clerk. */
 export function siteEmailViewerPage(page: string, siteId: string, publishableKey: string): { html: string; csp: string } {
-    const { canonical, nonce, csp, clerkScript } = emailAuthPageContext(siteId, publishableKey);
+    const { canonical, nonce, csp, clerkScript } = emailAuthPageContext(siteId, publishableKey, true);
     const styles = `<style>body{display:flex;flex-direction:column}iframe{flex:1;min-height:0}.matrix-viewer{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-height:40px;padding:0 12px;font:13px ${desktopFonts.sans};background:${desktopPalette.paper};color:${desktopPalette.forest}}.matrix-viewer button{border:0;background:transparent;color:inherit;font:inherit;text-decoration:underline;cursor:pointer}.matrix-viewer button:disabled{opacity:.5;cursor:wait}.matrix-viewer [role=alert]{color:${desktopPalette.danger}}</style>`;
     const controls = '<header class="matrix-viewer" aria-label="Shared app account"><span role="alert" aria-live="polite"></span><button id="email-sign-out" type="button" disabled>Sign out</button></header>';
     const script = `<script nonce="${nonce}">

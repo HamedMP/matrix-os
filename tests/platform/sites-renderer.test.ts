@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { siteEmailViewerPage } from '../../packages/platform/src/sites/email-auth-page.js';
 import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
@@ -164,4 +165,63 @@ it('opens guide links with no opener and preserves in-page anchors without grant
   expect(APP_CSP).toContain('sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox;');
   expect(APP_CSP).not.toContain('allow-same-origin'); expect(APP_CSP).not.toContain('allow-top-navigation');
  } finally { dom.window.close(); }
+});
+
+
+it('allows the app frame only in the authenticated parent and nonces every trusted script', () => {
+ const gate=siteEmailGate(site.id,'pk_test_existing_matrix_instance');
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ expect(gate.csp).not.toContain("frame-src 'self'");
+ expect(viewer.csp).toContain("frame-src 'self' https://challenges.cloudflare.com");
+ const nonce=viewer.csp.match(/script-src 'nonce-([^']+)'/)?.[1];
+ expect(nonce).toBeTruthy();
+ const dom=new JSDOM(viewer.html);
+ try {
+  const scripts=Array.from(dom.window.document.querySelectorAll('script'));
+  expect(scripts.length).toBeGreaterThan(1);
+  expect(scripts.every(script=>script.nonce===nonce)).toBe(true);
+  expect(dom.window.document.querySelector('iframe')?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+  expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ }finally{dom.window.close()}
+});
+
+it('revokes viewer authority before Clerk sign-out, removes the app frame, and pins the return to this app', async () => {
+ let finishRevocation!:(response:Response)=>void;
+ const revocation=new Promise<Response>(resolve=>{finishRevocation=resolve});
+ const fetch=vi.fn(()=>revocation);
+ const clerk={load:vi.fn(async()=>{}),session:{getToken:vi.fn(async()=> 'signed.clerk.token')},
+  signOut:vi.fn(()=>new Promise<void>(()=>{}))};
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ const dom=new JSDOM(viewer.html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:fetch});
+ }});
+ try{
+  const button=dom.window.document.getElementById('email-sign-out') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(button.disabled).toBe(false));button.click();
+  await vi.waitFor(()=>expect(fetch).toHaveBeenCalledOnce());
+  expect(fetch.mock.calls[0]).toEqual([`${site.url}/access/email/sign-out`,expect.objectContaining({method:'POST',body:'{}',redirect:'error',credentials:'same-origin'})]);
+  expect(clerk.signOut).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('iframe')).not.toBeNull();
+  finishRevocation(new Response('{}',{status:200}));
+  await vi.waitFor(()=>expect(clerk.signOut).toHaveBeenCalledWith({redirectUrl:site.url}));
+  expect(dom.window.document.querySelector('iframe')).toBeNull();
+ }finally{dom.window.close()}
+});
+
+it('keeps Clerk signed in and offers retry when synchronous viewer revocation fails', async () => {
+ const clerk={load:vi.fn(async()=>{}),session:{getToken:vi.fn(async()=> 'signed.clerk.token')},signOut:vi.fn()};
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ const dom=new JSDOM(viewer.html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async()=>new Response('private service error',{status:503}))});
+ }});
+ try{
+  const button=dom.window.document.getElementById('email-sign-out') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(button.disabled).toBe(false));button.click();
+  await vi.waitFor(()=>expect(dom.window.document.querySelector('[role=alert]')?.textContent).toBe('Unable to sign out right now. Try again.'));
+  expect(clerk.signOut).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('iframe')).not.toBeNull();
+  expect(button.disabled).toBe(false);
+ }finally{dom.window.close()}
 });
