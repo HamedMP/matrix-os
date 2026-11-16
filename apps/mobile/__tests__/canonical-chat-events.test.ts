@@ -15,7 +15,7 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 
 const mockFetch = streamingFetch as unknown as jest.Mock;
 const GATEWAY_URL = "https://example.test/vm/alice?runtime=primary";
-const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1";
+const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1";
 const createdAt = "2026-09-06T00:00:00.000Z";
 
 const chat = {
@@ -96,7 +96,12 @@ describe("createCanonicalChatEventSource", () => {
     const { source } = connectedSource();
     await settle();
 
-    expect(mockFetch).toHaveBeenCalledWith(STREAM_URL, expect.objectContaining({
+    const [requestUrl, requestInit] = mockFetch.mock.calls[0]!;
+    const url = new URL(requestUrl);
+    expect(url.searchParams.getAll("routineReceiptVersion")).toEqual(["1"]);
+    url.searchParams.delete("routineReceiptVersion");
+    expect(url.toString()).toBe(STREAM_URL);
+    expect(requestInit).toEqual(expect.objectContaining({
       headers: {
         Accept: "text/event-stream",
         "X-Matrix-Chat-Protocol": "2",

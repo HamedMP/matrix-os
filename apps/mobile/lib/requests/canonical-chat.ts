@@ -1,5 +1,6 @@
 import {
   chatMessageVersionUrl,
+  chatReadStateVersionUrl,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -267,16 +268,18 @@ export function fetchChatDetail(
 ): Promise<CanonicalChatDetailResponse> {
   let url: string;
   try {
-    url = chatMessageVersionUrl(buildGatewayRequestUrl(
+    // Without readStateVersion the gateway leaves the read state out, and the
+    // chat screen could not mark the chat read.
+    url = chatReadStateVersionUrl(chatMessageVersionUrl(buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
       { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
-    ), true);
+    )));
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
   return fetchAuthenticatedJson({
-    url,
+    url: url + "&routineReceiptVersion=1",
     token: clerkToken,
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
