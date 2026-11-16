@@ -271,7 +271,7 @@ export function fetchChatDetail(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
       { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
-    ));
+    ), true);
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
@@ -295,7 +295,7 @@ export async function admitChatTurn(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}/turns`,
       { fundingVersion: "1" },
-    ));
+    ), true);
   } catch {
     throw new Error(CHAT_TURN_ERROR);
   }
