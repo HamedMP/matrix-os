@@ -841,7 +841,7 @@ export const CollaborationDirectoryEventSchema = z.object({
   audience: z.enum(["members", "organization", "current_membership"]).optional(),
   /** Opaque owner-home grant pointer for explicit organization activation; never an authorization claim. */
   organizationGrantId: CollaborationIdSchema.optional(),
-  /** Exact app routing metadata only; owner records and credentials never enter the directory. */
+  /** Exact app routing metadata plus bounded presentation; owner records and credentials never enter the directory. */
   app: z.object({
     appId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
     catalogId: CollaborationIdSchema,
@@ -850,6 +850,13 @@ export const CollaborationDirectoryEventSchema = z.object({
     buildId: z.string().regex(/^[a-f0-9]{64}$/),
     shareRevision: z.number().int().positive(),
     state: z.enum(["active", "needs_recheck", "stopped"]),
+    /** Owner manifest display name, bounded; launchers fall back to the slug when absent. */
+    name: boundedDisplayText(120, 512).optional(),
+    /**
+     * Content address of a raster icon the runtime already uploaded to the platform. The platform
+     * never fetches owner URLs; an unknown hash is dropped and the launcher keeps its letter tile.
+     */
+    iconSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict().optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
