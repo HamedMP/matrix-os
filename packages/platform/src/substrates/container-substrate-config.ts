@@ -159,6 +159,8 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
   const lifecycle = createContainerLifecycleService({
     db: deps.db,
     provider,
+    // A resumed unit gets a whole new session, so it must outlive that session and its stop.
+    minResumeLifetimeMs: config.idle.maxSessionMs + CONTAINER_QUIESCE_TIMEOUT_MS,
     reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);

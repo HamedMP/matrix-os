@@ -132,6 +132,36 @@ describe('container lifecycle service', () => {
     expect(await row()).toMatchObject({ status: 'starting', generation: 2, substrateRef: 'mvm-new' });
   });
 
+  it('replaces a suspended unit whose remaining lifetime cannot hold a full session and its stop', async () => {
+    await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-old' });
+    const sessionAndStop = 4 * 3_600_000 + 22 * 60_000;
+    const lifecycle = (provider: ContainerProvider) => createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, minResumeLifetimeMs: sessionAndStop,
+      buildBootPayload: async () => '{}',
+    });
+    // Seven hours in: one hour left, far less than a session and its stop.
+    clock = new Date(T0.getTime() + 7 * 3_600_000);
+    const short = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: 'suspended' })) });
+    const s = lifecycle(short);
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(short.resume).not.toHaveBeenCalled();
+    expect(short.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('still resumes a suspended unit with room for a full session and its stop', async () => {
+    await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-old' });
+    clock = new Date(T0.getTime() + 3_600_000);
+    const provider = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: 'suspended' })) });
+    const s = createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, minResumeLifetimeMs: 4 * 3_600_000 + 22 * 60_000,
+      buildBootPayload: async () => '{}',
+    });
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(provider.resume).toHaveBeenCalledWith('mvm-old', expect.any(AbortSignal));
+  });
+
   it('treats a unit the provider no longer knows as run fresh, not as a failure', async () => {
     await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-expired' });
     const provider = fakeProvider();

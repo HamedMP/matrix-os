@@ -57,6 +57,12 @@ export interface ContainerLifecycleDeps {
    */
   reviveInPlace?(target: ReviveTarget, signal: AbortSignal): Promise<boolean>;
   now?: () => Date;
+  /**
+   * A suspended unit is resumed only with at least this much provider
+   * lifetime left: a whole session plus its stop. Below it the unit is
+   * replaced, so the provider never ends it before the final flush.
+   */
+  minResumeLifetimeMs?: number;
   maxConcurrentLaunches?: number;
   logError?: (message: string, detail: Record<string, string | number>) => void;
 }
@@ -160,7 +166,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
    */
   function resumable(unit: ContainerUnit | null): boolean {
     if (!unit || unit.state !== 'suspended' || !unit.expiresAt) return false;
-    return unit.expiresAt.getTime() - now().getTime() > UNIT_EXPIRY_MARGIN_MS;
+    return unit.expiresAt.getTime() - now().getTime() > Math.max(UNIT_EXPIRY_MARGIN_MS, deps.minResumeLifetimeMs ?? 0);
   }
 
   async function terminateQuietly(unitId: string, reason: string): Promise<void> {
