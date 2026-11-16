@@ -176,8 +176,16 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       const legacy = await db.executor.selectFrom('containers').select('handle').where('clerk_user_id','=',owner)
         .where('status','not in',['deleted','stopped']).limit(1).execute();
       if (legacy.length) throw new Error('Legacy runtime cleanup required');
-      const machineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
-      if (machineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      const allMachineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
+      if (allMachineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      // A container runtime has no provider server: retiring its record is enough, and the orphan
+      // sweep ends any unit a retired record no longer references. It needs no VPS service.
+      for (const machine of allMachineRows.filter((row) => row.substrate === 'container' && !row.deleted_at)) {
+        const retired = await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: new Date().toISOString() })
+          .where('machine_id', '=', machine.machine_id).where('deleted_at', 'is', null).returning('machine_id').executeTakeFirst();
+        if (!retired) throw new Error('Runtime cleanup pending');
+      }
+      const machineRows = allMachineRows.filter((row) => row.substrate !== 'container');
       // PostgreSQL returns BIGINT columns as strings. Normalize before calling
       // the provider or comparing the same ID from inventory and queued rows.
       const machines = machineRows.map(machine => ({ ...machine,

@@ -401,6 +401,21 @@ describe('free container owner cleanup', () => {
     } finally { await db.destroy(); }
   });
 
+  it('cleans up a free owner on a free-only platform with no VPS service configured', async () => {
+    const db = await fixture();
+    try {
+      await freeOwner(db, false);
+      await db.executor.updateTable('user_machines').set({ status: 'stopped', deleted_at: null })
+        .where('machine_id', '=', 'ctr-owner').execute();
+      const remove = vi.fn(async () => undefined);
+      await createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync',
+        fetch: async () => Response.json({ data: [], total_count: 0 }), containerOwnerDatabases: { remove } }).vps(ctx);
+      expect(remove).toHaveBeenCalledWith('user_owner', expect.any(AbortSignal));
+      expect(await db.executor.selectFrom('user_machines').select(['status', 'deleted_at']).executeTakeFirstOrThrow())
+        .toMatchObject({ status: 'deleted', deleted_at: expect.any(String) });
+    } finally { await db.destroy(); }
+  });
+
   it('fails closed when an owner database exists and cannot be removed', async () => {
     const db = await fixture();
     try {
