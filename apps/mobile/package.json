@@ -66,6 +66,7 @@
     "expo-splash-screen": "~58.0.13",
     "expo-status-bar": "~58.0.4",
     "expo-system-ui": "~58.0.7",
+    "expo-task-manager": "~58.0.14",
     "expo-updates": "~58.0.21",
     "expo-web-browser": "~58.0.7",
     "posthog-react-native": "4.54.4",

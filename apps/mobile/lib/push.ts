@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { CanonicalChatIdSchema, MatrixComputerHandleSchema, ThreadIdSchema } from "@matrix-os/contracts";
 
 import { updatePushRegistration } from "@/lib/requests/settings";
+import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
 
@@ -171,6 +172,7 @@ export async function enablePushNotifications(input: {
   clerkToken: string;
   gatewayUrl: string;
 }): Promise<void> {
+  await ensureNotificationChannels();
   const existing = await Notifications.getPermissionsAsync();
   const permission = existing.granted ? existing : await Notifications.requestPermissionsAsync();
   if (!permission.granted) throw new Error("Push notification permission was not granted.");
@@ -180,15 +182,6 @@ export async function enablePushNotifications(input: {
   const token = (await expoPushToken(
     projectId ? { projectId } : undefined,
   )).data;
-
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "Matrix OS",
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#2B3715",
-    });
-  }
 
   await updatePushRegistration({
     clerkToken: input.clerkToken,
