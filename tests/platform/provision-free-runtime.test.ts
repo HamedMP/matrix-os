@@ -11,6 +11,9 @@ import {
 } from '../../packages/platform/src/db.js';
 import type { FreeTierConfig } from '../../packages/platform/src/free-tier/config.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
+import { getRuntimeAccessDecision, loadStripePriceCatalog } from '../../packages/platform/src/billing.js';
+import { recomputeStripeSummary } from '../../packages/platform/src/billing/stripe-webhook-projection.js';
 import { addFreeTierInvite, getFreeTierInvite } from '../../packages/platform/src/free-tier/invites.js';
 import {
   createFreeRuntimeProvisioner,
@@ -86,6 +89,15 @@ async function containerRows(db: PlatformDB, clerkUserId?: string) {
 }
 
 const FREE = { planSlug: 'matrix_free' };
+const EARLIER = '2026-10-01T00:00:00.000Z';
+const LATER = '2026-12-01T00:00:00.000Z';
+
+function endedPaid() {
+  return {
+    ...buildFreeEntitlement(OWNER, new Date(EARLIER)), source: 'stripe' as const, planSlug: 'matrix_starter' as const,
+    status: 'canceled' as const, stripeSubscriptionId: 'sub_old', allowedServerTypes: ['cpx22'], defaultServerType: 'cpx22',
+  };
+}
 
 function fakeVpsService(provision: CustomerVpsService['provision'] = vi.fn<CustomerVpsService['provision']>()) {
   const partial: Partial<CustomerVpsService> = { provision };
@@ -185,16 +197,150 @@ describe('POST /api/auth/provision-runtime for the free plan', () => {
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
   });
 
-  it('refuses an owner with a paid billing history instead of overwriting it', async () => {
+  it.each([
+    { name: 'active', changes: { status: 'active' as const } },
+    { name: 'trialing', changes: { status: 'trialing' as const } },
+    { name: 'past due', changes: { status: 'past_due' as const } },
+    { name: 'unpaid', changes: { status: 'unpaid' as const } },
+    { name: 'incomplete', changes: { status: 'incomplete' as const } },
+    { name: 'canceled within its grace period', changes: { gracePeriodEndsAt: LATER } },
+    { name: 'canceled before its effective end', changes: { effectiveUntil: LATER } },
+  ])('refuses a paid owner whose entitlement is $name and leaves it untouched', async ({ changes }) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    await upsertBillingEntitlement(db, {
-      ...buildFreeEntitlement(OWNER, NOW), source: 'stripe', planSlug: 'matrix_starter', status: 'canceled',
-      stripeSubscriptionId: 'sub_old', allowedServerTypes: ['cpx22'], defaultServerType: 'cpx22',
-    });
+    await upsertBillingEntitlement(db, { ...endedPaid(), ...changes });
     const response = await request(routesFor(db).routes, FREE);
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: 'free_plan_unavailable' });
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_old' });
+    expect(await containerRows(db, OWNER)).toHaveLength(0);
+    expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
+  });
+
+  it.each([
+    { name: 'canceled', changes: {} },
+    { name: 'ended', changes: { status: 'ended' as const } },
+    { name: 'canceled after its grace period', changes: { gracePeriodEndsAt: EARLIER } },
+    { name: 'canceled past its effective end', changes: { effectiveUntil: EARLIER } },
+  ])('lets a former paid owner whose entitlement is $name take the free plan', async ({ changes }) => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, { ...endedPaid(), ...changes });
+    const response = await request(routesFor(db).routes, FREE);
+    expect(response.status).toBe(202);
+    expect(await containerRows(db, OWNER)).toHaveLength(1);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({
+      source: 'free', planSlug: 'matrix_free', status: 'active', stripeSubscriptionId: null,
+    });
+  });
+
+  it('refuses a former paid owner while another subscription or an override is still live', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await db.executor.insertInto('billing_subscriptions').values({
+      stripe_subscription_id: 'sub_extra', stripe_customer_id: 'cus_1', clerk_user_id: OWNER, runtime_slot: 'extra',
+      plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly', price_unit_amount_minor: null,
+      price_currency: null, price_interval_count: null, price_quantity: null, status: 'past_due', current_period_end: null,
+      grace_period_ends_at: null, trial_started_at: null, trial_ends_at: null, trial_converted_at: null,
+      first_trial_payment_failed_at: null, latest_event_created_at: EARLIER, latest_event_id: 'evt_1',
+      latest_invoice_event_created_at: null, latest_invoice_event_id: null, updated_at: EARLIER,
+    }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(409);
+
+    await db.executor.updateTable('billing_subscriptions').set({ status: 'canceled', grace_period_ends_at: LATER }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(409);
+
+    await db.executor.deleteFrom('billing_subscriptions').execute();
+    await db.executor.insertInto('billing_entitlement_overrides').values({ id: 'override_1', clerk_user_id: OWNER,
+      plan_slug: 'internal', status: 'active', max_runtime_slots: 1, included_runtime_slots: 1, addon_runtime_slots: 0,
+      default_server_type: 'cpx22', allowed_server_types: '["cpx22"]', reason: 'support', created_by: 'operator',
+      expires_at: null, revoked_at: null, created_at: EARLIER }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(409);
+    expect(await containerRows(db, OWNER)).toHaveLength(0);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe' });
+  });
+
+  it('gives a former paid owner runtime access after free signup although their canceled subscription is retained', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await db.executor.insertInto('billing_subscriptions').values({
+      stripe_subscription_id: 'sub_old', stripe_customer_id: 'cus_1', clerk_user_id: OWNER, runtime_slot: 'primary',
+      plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly', price_unit_amount_minor: null,
+      price_currency: null, price_interval_count: null, price_quantity: null, status: 'canceled', current_period_end: null,
+      grace_period_ends_at: null, trial_started_at: null, trial_ends_at: null, trial_converted_at: null,
+      first_trial_payment_failed_at: null, latest_event_created_at: EARLIER, latest_event_id: 'evt_1',
+      latest_invoice_event_created_at: null, latest_invoice_event_id: null, updated_at: EARLIER,
+    }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(202);
+    const entitlement = await resolveEffectiveBillingEntitlementForSlot(db, OWNER, NOW, 'primary',
+      { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' });
+    expect(entitlement).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+    expect(getRuntimeAccessDecision(entitlement, NOW, 'container')).toMatchObject({ runtimeProxyAllowed: true });
+  });
+
+  describe('a Stripe webhook after a former paid owner took the free plan', () => {
+    const LATER_AT = new Date('2026-11-12T10:00:00.000Z');
+    const PRICE_ENV = { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' };
+    async function takeFreeWithRetainedSubscription() {
+      await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+      await upsertBillingEntitlement(db, endedPaid());
+      await db.executor.insertInto('billing_subscriptions').values({
+        stripe_subscription_id: 'sub_old', stripe_customer_id: 'cus_1', clerk_user_id: OWNER, runtime_slot: 'primary',
+        plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly', price_unit_amount_minor: null,
+        price_currency: null, price_interval_count: null, price_quantity: null, status: 'canceled', current_period_end: null,
+        grace_period_ends_at: null, trial_started_at: null, trial_ends_at: null, trial_converted_at: null,
+        first_trial_payment_failed_at: null, latest_event_created_at: EARLIER, latest_event_id: 'evt_1',
+        latest_invoice_event_created_at: null, latest_invoice_event_id: null, updated_at: EARLIER,
+      }).execute();
+      expect((await request(routesFor(db).routes, FREE)).status).toBe(202);
+    }
+    /** The webhook handler's two writes: recompute the owner's Stripe summary, then persist it. */
+    async function acceptWebhook() {
+      const summary = await recomputeStripeSummary(db, OWNER, loadStripePriceCatalog(PRICE_ENV), PRICE_ENV, LATER_AT);
+      if (summary) await upsertBillingEntitlement(db, summary);
+    }
+
+    it('keeps the free entitlement when the update is for the still-canceled subscription', async () => {
+      await takeFreeWithRetainedSubscription();
+      await acceptWebhook();
+      expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+      const entitlement = await resolveEffectiveBillingEntitlementForSlot(db, OWNER, LATER_AT, undefined, PRICE_ENV);
+      expect(getRuntimeAccessDecision(entitlement, LATER_AT, 'container')).toMatchObject({ runtimeProxyAllowed: true });
+    });
+
+    it('lets a live subscription replace the free entitlement', async () => {
+      await takeFreeWithRetainedSubscription();
+      await db.executor.updateTable('billing_subscriptions').set({ status: 'active', latest_event_id: 'evt_2' }).execute();
+      await acceptWebhook();
+      expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', status: 'active', stripeSubscriptionId: 'sub_old' });
+    });
+  });
+
+  it('refuses a former paid owner who still has a live VPS in any slot', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertUserMachine(db, {
+      machineId: 'vps-extra', clerkUserId: OWNER, handle: 'freeowner-extra', runtimeSlot: 'extra', status: 'stopped',
+      imageVersion: 'v1', provisionedAt: NOW.toISOString(), activationState: 'authorized',
+    });
+    const response = await request(routesFor(db).routes, FREE);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'runtime_exists' });
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe' });
+
+    await db.executor.updateTable('user_machines').set({ deleted_at: EARLIER, status: 'deleted' }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(202);
+  });
+
+  it('lets a later Stripe reactivation replace the free entitlement even if its clock reads earlier', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    const reactivation = { ...endedPaid(), status: 'active' as const, effectiveFrom: NOW.toISOString(), updatedAt: NOW.toISOString() };
+    const provisioner = createFreeRuntimeProvisioner({
+      db, config: { maxRuntimes: 10, inviteRequired: true }, ownerDatabases: ownerDatabasesFor(db), env: {},
+      now: () => new Date(NOW.getTime() + 1_000),
+    });
+    expect((await provisioner.provision({ clerkUserId: OWNER, handle: 'freeowner' })).kind).toBe('created');
+    await upsertBillingEntitlement(db, reactivation);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', status: 'active' });
   });
 
   it('keeps the runtime when owner database setup fails and finishes it on retry', async () => {
@@ -328,6 +474,25 @@ describe.skipIf(!freeTierPostgresUrl)('free runtime provisioning races against r
     expect(machineIds.size).toBe(1);
     expect(await containerRows(a, OWNER)).toHaveLength(1);
     expect(await a.executor.selectFrom('container_owner_databases').selectAll().execute()).toHaveLength(1);
+  });
+
+  it('keeps the paid entitlement when a Stripe reactivation races a former paid owner taking the free plan', async () => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    for (let round = 0; round < 5; round += 1) {
+      for (const table of ['user_machines', 'free_tier_invites', 'container_owner_databases', 'billing_entitlements'] as const) {
+        await a.executor.deleteFrom(table).execute();
+      }
+      await addFreeTierInvite(a, { clerkUserId: OWNER, invitedBy: 'ops' });
+      await upsertBillingEntitlement(a, endedPaid());
+      const reactivatedAt = new Date().toISOString();
+      const [response] = await Promise.all([
+        request(routesOn(a, { maxRuntimes: 10, inviteRequired: true }), FREE),
+        upsertBillingEntitlement(b, { ...endedPaid(), status: 'active', effectiveFrom: reactivatedAt, updatedAt: reactivatedAt }),
+      ]);
+      expect([202, 409]).toContain(response.status);
+      expect(await getBillingEntitlement(a, OWNER)).toMatchObject({ source: 'stripe', status: 'active' });
+      expect(await containerRows(a, OWNER)).toHaveLength(response.status === 202 ? 1 : 0);
+    }
   });
 
   it('never exceeds the capacity ceiling when different owners race', async () => {

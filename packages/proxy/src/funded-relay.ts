@@ -1,5 +1,5 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
-import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
+import { postpaidAuthorizationMatches, postpaidExactFinalization, prepaidUsageAuthorizationMatches } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
 import type { FundedPricingReviews } from "./funded-pricing-review.js";
@@ -186,6 +186,13 @@ function controlPlaneError(c: Context, error: unknown): Response {
       // Waiting-state hint for the gateway; correctness never depends on it.
       if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
       return response;
+    }
+    if (error.status === 503 && error.busy) {
+      const { retryAfterSeconds, retryAt } = error.busy;
+      c.header("Retry-After", String(retryAfterSeconds));
+      return c.json({
+        type: "error", error: { type: "api_error", code: "busy", message: "Matrix AI is busy; try again later", retryAt },
+      }, 503);
     }
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -408,6 +415,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (reviews === null) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
 
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
+    const prepaid = checked.customerBilling === "prepaid";
     const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
     if (!runtimeAttempt) {
       return rateLimited(c);
@@ -485,7 +493,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         billingMode: "usage",
-        billingPolicy: "postpaid",
+        // A free runtime pays from a prepaid hold; every other runtime stays on zero-hold postpaid.
+        ...(prepaid ? {} : { billingPolicy: "postpaid" as const }),
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -493,8 +502,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return controlPlaneError(c, error);
     }
     const reservation = authorization.reservation;
+    const expected = { requestId, modelId: model.canonicalModelId, maxCostMicrousd };
     if (!identitiesMatch(checked.identity, authorization.identity)
-      || !postpaidAuthorizationMatches(reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
+      || !(prepaid ? prepaidUsageAuthorizationMatches(reservation, expected) : postpaidAuthorizationMatches(reservation, expected))) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -534,6 +544,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
       if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
+      } else if (prepaid) {
+        // A prepaid hold settles at the exact cost, capped at the hold; it carries no postpaid waiver.
+        settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
         settlementQueue.enqueue(postpaidExactFinalization(finalizationLocator, result, terminalState));
       }

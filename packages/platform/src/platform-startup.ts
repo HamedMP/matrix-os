@@ -397,6 +397,8 @@ async function startPlatformServerWithCleanup(
       ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
       service: speechService })
     : undefined;
+  // Read once at startup: free signup and free funded admission share it.
+  const freeTierConfig = loadConfiguredFreeTier(process.env);
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
   let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
@@ -416,6 +418,8 @@ async function startPlatformServerWithCleanup(
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      freeFunding: freeTierConfig?.dailyFundedSpendMicrousd === undefined
+        ? {} : { dailyFundedSpendMicrousd: freeTierConfig.dailyFundedSpendMicrousd },
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -1138,7 +1142,6 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
-  const freeTierConfig = loadConfiguredFreeTier(appEnv);
   const substrateRegistry = createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []);
   containerSubstrate?.startServing();
   if (backgroundWorkersEnabled) containerSubstrate?.startBackgroundWork();

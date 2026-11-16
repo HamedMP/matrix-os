@@ -22,6 +22,7 @@ import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import { alignCustomerOrdinaryModels } from "./customer-ordinary-model-policy.js";
+import type { FreeFundingConfig } from "./free-tier/funded-policy.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -60,6 +61,7 @@ export interface AiFundedPolicyRepositoryOptions {
   reservationTtlMs?: number;
   inFlightTtlMs?: number;
   reservationIdFactory?: () => string;
+  freeFunding?: FreeFundingConfig;
 }
 
 export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
@@ -368,7 +370,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           || policy.ai_requests_used >= policy.ai_request_limit)) {
         throw new AiFundedPolicyError("access_disabled");
       }
-      if (policy && policy.provisioning_class !== "customer"
+      if (policy && policy.provisioning_class !== "customer" && policy.provisioning_class !== "free"
         && !isBoundedPreviewProvisioningClass(policy.provisioning_class)) {
         throw new AiFundedPolicyError("access_disabled");
       }
@@ -416,6 +418,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     reservationTtlMs,
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
+    freeFunding: options.freeFunding,
   });
   return {
     getGlobalPolicy,

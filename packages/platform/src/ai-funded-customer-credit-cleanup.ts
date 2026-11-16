@@ -6,6 +6,7 @@ import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { FundedReferenceSchema } from "./ai-funded-metering-helpers.js";
 import { IsoTimestampSchema } from "@matrix-os/contracts";
+import { freePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 
 type Executor = PlatformDB["executor"];
 const InputSchema = z.object({ limit: z.number().int().min(1).max(1000) }).strict();
@@ -18,7 +19,8 @@ function expiredCustomerRequests(executor: Executor, checkedAt: string) {
     .where("status", "in", [...ACTIVE]).where("expires_at", "<=", checkedAt)
     .where("customer_charge_release", "is", null).where("charge_waiver", "is", null)
     .where("actual_microusd", "is", null)
-;
+    // A dispatched free prepaid hold is charged by its own sweep, never released here.
+    .where(sql<boolean>`NOT (status = 'in_flight' AND ${freePrepaidHold()})`);
 }
 
 function validateLegacyCandidate(row: Selectable<AiFundedUsageReservationsTable>) {

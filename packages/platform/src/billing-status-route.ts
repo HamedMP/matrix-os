@@ -18,7 +18,7 @@ import {
 import type { StripeBillingClient } from './billing-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { projectCardTrialOffer } from './billing/trial-policy.js';
-import { freeEntitlementForSlot } from './free-tier/free-entitlement.js';
+import { entitlementForSlot } from './free-tier/free-entitlement.js';
 
 const BillingStatusQuerySchema = z.object({
   runtimeSlot: RuntimeSlotSchema.optional(),
@@ -56,7 +56,7 @@ export function createBillingStatusHandler(options: {
         currentTime.toISOString(),
       );
       if (query.data.runtimeSlot) {
-        stripeEntitlement = selectedSubscription
+        stripeEntitlement = entitlementForSlot(stripeEntitlement, runtimeSlot, selectedSubscription
           ? deriveStripeEntitlement({
             clerkUserId: selectedSubscription.clerkUserId,
             stripeCustomerId: selectedSubscription.stripeCustomerId,
@@ -73,7 +73,7 @@ export function createBillingStatusHandler(options: {
             runtimeCatalog: loadRuntimeCatalog(env),
             now: currentTime,
           })
-          : freeEntitlementForSlot(stripeEntitlement, runtimeSlot);
+          : null, currentTime);
       }
       const entitlement = computeEffectiveEntitlement({
         stripeEntitlement,

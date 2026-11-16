@@ -25,6 +25,8 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
+import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, type FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
@@ -107,6 +109,7 @@ export interface AiFundedMeteringRepositoryOptions {
   reservationTtlMs: number;
   inFlightTtlMs: number;
   reservationIdFactory?: () => string;
+  freeFunding?: FreeFundingConfig;
 }
 
 // Monetary and cleanup responsibilities live in focused modules.
@@ -133,8 +136,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);
     await options.db.ready;
-    return options.db.transaction(async (trx) => {
-      // Match admission lock order before machine, balance, and grant row locks.
+    // Admission order: the account-deletion and billing owner locks, then the funded owner lock. A free
+    // runtime's read can grant the monthly allowance, which takes the first two, so it takes them first too.
+    return options.db.transaction(async (outer) => withAccountDeletionOwnerLock(outer, identity.ownerId, async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines").select([
@@ -162,7 +166,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("runtime_token_epoch", "=", machine.runtime_token_epoch)
           .where("expires_at", ">", checkedAt).executeTakeFirst()
         : undefined;
-      if (machine.provisioning_class !== "customer" && !preview) throw new AiFundedPolicyError("access_disabled");
+      // A free runtime reads its funding under the same model and allowance rules its admission uses.
+      const free = machine.provisioning_class === "free";
+      if (machine.provisioning_class !== "customer" && !free && !preview) throw new AiFundedPolicyError("access_disabled");
+      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, grantCreditInTransaction);
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: currentPeriod,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
@@ -179,6 +186,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
+          .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
         : [];
       const funding = {
         ...fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
@@ -216,7 +224,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
         },
       };
-    });
+    }));
   }
 
   async function getCheckoutFundingSummary(
@@ -470,19 +478,23 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("runtime_token_epoch", "=", row.machine_runtime_token_epoch)
         .where("expires_at", ">", checkedAt).executeTakeFirst();
       if (!allocation) throw new AiFundedPolicyError("access_disabled");
-    } else if (row.provisioning_class !== "customer") {
+    } else if (row.provisioning_class !== "customer" && row.provisioning_class !== "free") {
       throw new AiFundedPolicyError("access_disabled");
     }
+    const free = row.provisioning_class === "free";
     if (!row.global_enabled || !row.runtime_enabled
       || row.funding_frozen === true || exactInteger(row.funding_debt_microusd ?? 0) > 0
       || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
       throw new AiFundedPolicyError("access_disabled");
     }
-    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models))
+      .filter((model) => !free || model === FREE_MANAGED_MODEL_ID);
     if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
     return FundedAiPolicyCheckResponseSchema.parse({
       contractVersion: 1,
       authorized: true,
+      // A free runtime is never charged after the fact, so the relay asks it for a prepaid hold.
+      ...(free ? { customerBilling: "prepaid" as const } : {}),
       identity: {
         tokenId: row.token_id,
         ownerId: row.owner_id,
@@ -511,6 +523,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationIdFactory,
     reservationTtlMs: options.reservationTtlMs,
     policyFreshnessMs: options.policyFreshnessMs,
+    freeFunding: options.freeFunding ?? {},
+    grantCreditInTransaction,
   });
 
   async function startReservation(
@@ -687,7 +701,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         else if (reservation.charge_waiver !== null) readUsageWaiverAudit(reservation);
         else {
           if (reservation.status !== "in_flight" || reservation.actual_microusd !== null) throw new AiFundedPolicyError("reservation_closed");
-          await releaseCustomerCharge(trx.executor, reservation, "usage_unknown", checkedAt);
+          // A free prepaid hold stays reserved and blocking; only its sweep releases it.
+          if (!await isFreePrepaidHold(trx.executor, reservation)) {
+            await releaseCustomerCharge(trx.executor, reservation, "usage_unknown", checkedAt);
+          }
         }
         // Commit the customer release while explicitly retaining unknown provider cost.
         // The legacy finalization wire cannot truthfully return an exact amount here.

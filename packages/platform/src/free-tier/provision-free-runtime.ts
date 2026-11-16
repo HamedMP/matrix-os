@@ -1,12 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
-import { toBillingEntitlementRow } from '../database/billing-records.js';
 import { insertUserMachine } from '../database/user-machines.js';
 import type { PlatformDB } from '../db.js';
 import type { ContainerOwnerDatabases } from '../substrates/container-owner-database.js';
 import { lockCapacity } from './capacity.js';
 import type { FreeTierConfig } from './config.js';
 import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
+import {
+  FreeEntitlementReplacementRefused,
+  hasLiveVps,
+  paidRightsEnded,
+  storedEntitlementEnded,
+  writeFreeEntitlement,
+} from './former-paid-owner.js';
 import { countFreeRuntimes, getFreeTierInvite, redeemFreeTierInvite } from './invites.js';
 
 /**
@@ -97,10 +103,17 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (!admission.newWorkAllowed) return { kind: 'deletion_pending' };
       const existing = await findContainerRuntime(trx, clerkUserId);
       if (existing) return { kind: 'existing', runtime: toRecord(existing) };
-      if (await hasOtherRuntimeInSlot(trx, clerkUserId)) return { kind: 'runtime_exists' };
+      if (await hasOtherRuntimeInSlot(trx, clerkUserId) || await hasLiveVps(trx, clerkUserId)) {
+        return { kind: 'runtime_exists' };
+      }
+      const at = now();
+      const atIso = at.toISOString();
       const entitlement = await trx.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
-      if (entitlement && entitlement.source !== 'free') return { kind: 'plan_unavailable' };
+      if (entitlement && entitlement.source !== 'free' && !await storedEntitlementEnded(trx, clerkUserId, atIso)) {
+        return { kind: 'plan_unavailable' };
+      }
+      if (!await paidRightsEnded(trx, clerkUserId, atIso)) return { kind: 'plan_unavailable' };
       if (config.inviteRequired) {
         const invite = await getFreeTierInvite(trx, clerkUserId);
         if (!invite || invite.consumedAt) return { kind: 'waitlisted' };
@@ -111,7 +124,6 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (config.inviteRequired && await redeemFreeTierInvite(trx, clerkUserId) !== 'redeemed') {
         return { kind: 'waitlisted' };
       }
-      const at = now();
       const machineId = newMachineId();
       await insertUserMachine(trx, {
         machineId,
@@ -125,10 +137,7 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
         provisionedAt: at.toISOString(),
         activationState: 'authorized',
       });
-      await trx.executor.insertInto('billing_entitlements')
-        .values(toBillingEntitlementRow(buildFreeEntitlement(clerkUserId, at)))
-        .onConflict((oc) => oc.column('clerk_user_id').doNothing())
-        .execute();
+      await writeFreeEntitlement(trx, buildFreeEntitlement(clerkUserId, at));
       return { kind: 'created', runtime: { machineId, handle, runtimeSlot: FREE_RUNTIME_SLOT, status: 'stopped' } };
     }, deps.env);
   }
@@ -161,6 +170,8 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       try {
         decision = await decide(input.clerkUserId, input.handle);
       } catch (error: unknown) {
+        // The transaction rolled back, so the invite and runtime row are untouched.
+        if (error instanceof FreeEntitlementReplacementRefused) return { kind: 'plan_unavailable' };
         // A concurrent paid or free insert for this owner or handle won the unique index; re-read the winner.
         if (!isUniqueViolation(error)) throw error;
         const existing = await findContainerRuntime(db, input.clerkUserId);

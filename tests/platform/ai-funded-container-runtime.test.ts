@@ -45,11 +45,31 @@ describe('funded AI for a free container runtime', () => {
     expect(await initialize(db)).toBe(true);
     const policy = await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().executeTakeFirstOrThrow();
     expect(policy).toMatchObject({ machine_id: CONTAINER, owner_id: OWNER, runtime_slot: 'primary', enabled: true });
-    expect(JSON.parse(policy.allowed_model_ids)).toEqual([...MANAGED_WORKERS_AI_MODEL_IDS]);
+    expect(JSON.parse(policy.allowed_model_ids)).toEqual(['@cf/zai-org/glm-5.3-flash']);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select(['entry_id', 'amount_microusd']).execute())
       .toEqual([{ entry_id: STARTER_ENTRY, amount_microusd: 5_000_000 }]);
     expect(await db.executor.selectFrom('ai_funded_runtime_balances').select('credit_balance_microusd').executeTakeFirst())
       .toEqual({ credit_balance_microusd: 5_000_000 });
+  });
+
+  it('raises a free runtime budget left at the old $5 default, and leaves a custom budget alone', async () => {
+    await seed(db);
+    await initialize(db);
+    // A runtime registered before the monthly allowance kept the $5 starter budget.
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 5_000_000 })
+      .where('machine_id', '=', CONTAINER).execute();
+    expect(await initialize(db)).toBe(true);
+    const raised = await db.executor.selectFrom('ai_funded_runtime_policies').select(['monthly_budget_microusd', 'revision'])
+      .where('machine_id', '=', CONTAINER).executeTakeFirstOrThrow();
+    expect(Number(raised.monthly_budget_microusd)).toBe(10_000_000);
+    expect(raised.revision).toBe(2);
+
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 20_000_000 })
+      .where('machine_id', '=', CONTAINER).execute();
+    await initialize(db);
+    const custom = await db.executor.selectFrom('ai_funded_runtime_policies').select('monthly_budget_microusd')
+      .where('machine_id', '=', CONTAINER).executeTakeFirstOrThrow();
+    expect(Number(custom.monthly_budget_microusd)).toBe(20_000_000);
   });
 
   it('issues a runtime credential for the free class', async () => {
