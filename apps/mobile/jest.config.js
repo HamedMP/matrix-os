@@ -34,6 +34,7 @@ module.exports = {
     "^\\./pcm\\.js$": "<rootDir>/../../packages/ui/src/speech/pcm.ts",
     "^\\.\\./agents-providers/utils\\.js$": "<rootDir>/../../packages/ui/src/agents-providers/utils.ts",
     "^\\./managed-credit-freshness\\.js$": "<rootDir>/../../packages/ui/src/agents-providers/managed-credit-freshness.ts",
+    "^(\\.{1,2}/.*)\\.js$": "$1",
     "^react$": "<rootDir>/node_modules/react",
     "^@/(.*)$": "<rootDir>/$1",
   },

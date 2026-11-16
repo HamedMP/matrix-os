@@ -8,6 +8,7 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { useUnsentMessageActions } from "./unsent-message-actions";
+import {NativeRoutineReceipt} from "./NativeRoutineReceipt";
 import { UserMessage } from "./UserMessage";
 
 export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
@@ -19,6 +20,10 @@ export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderC
   renderRequest?: (message: TranscriptMessage) => ReactNode;
   /** Draws what belongs under a reply, such as its result cards. */
   renderResults?: (message: TranscriptMessage) => ReactNode;
+  /** Drawn inside the same transcript cell, after the message. */
+  renderAfterMessage?: (message: TranscriptMessage) => ReactNode;
+  /** Drawn before the oldest loaded message in the inverted list. */
+  earlier?: ReactNode;
   /** Drawn after the newest message, such as what an agent is waiting on the person for. */
   footer?: ReactNode;
 }
@@ -31,7 +36,9 @@ export function MessageList({
   chatId,
   renderRequest,
   renderResults,
+  renderAfterMessage,
   renderComputerPhoto,
+  earlier,
   footer,
 }: MessageListProps) {
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
@@ -44,8 +51,9 @@ export function MessageList({
           renderComputerPhoto={renderComputerPhoto}
         />
       )}
+      {renderAfterMessage?.(item)}
     </AnalyticsMask>
-  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
+  ), [chatId, renderRequest, renderResults, renderAfterMessage, renderComputerPhoto]);
 
   return (
     <FlatList
@@ -56,6 +64,7 @@ export function MessageList({
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
       ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : undefined}
+      ListFooterComponent={earlier ? <AnalyticsMask>{earlier}</AnalyticsMask> : undefined}
       // In a chat that exists, a tap on the messages closes the keyboard. One
       // that is still being created shows only what was just sent, and a tap
       // there goes to whatever it lands on.
@@ -73,6 +82,7 @@ function Message({
 }: Pick<MessageListProps, "chatId" | "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
   // A message that was not sent offers what the chat it is shown in can do about it.
   const unsent = useUnsentMessageActions();
+  if(message.routineReceipt)return <NativeRoutineReceipt sourceChatId={chatId ?? undefined} receipt={message.routineReceipt} text={message.text}/>;
   if (message.role === "user" || message.scheduledMessage) {
     const failed = message.delivery === "failed" && unsent !== null;
     return (

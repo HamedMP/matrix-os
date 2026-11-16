@@ -1,3 +1,4 @@
+import {routineReceiptMessage} from "@matrix-os/ui/routine-origin";
 import { canonicalChatToolActivities, canonicalReviewedAgentFailure, canonicalAssistantOutputMessages, type CanonicalToolActivity } from "@matrix-os/contracts";
 import type {RoutineOccurrence} from "@matrix-os/ui/bot-routine-transcript";
 import { nativeScheduledMessage, type ScheduledMessagePresentation } from "@matrix-os/ui/chat-scheduled-message";
@@ -41,6 +42,7 @@ export interface TranscriptMessage {
   /** Read-only durable schedule metadata, bound to this input by its canonical request. */
   scheduled?: RoutineOccurrence;
   scheduleEvent?: boolean;
+  routineReceipt?: import("@matrix-os/contracts").RoutineChatReceiptPart;
   input?: CanonicalChatInputView;
   approval?: CanonicalChatApprovalView;
   /** Set on the line that says how a turn ended when it did not finish. */
@@ -177,6 +179,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   }
 
   const transcript = ordered.map((message): TranscriptMessage => {
+    const receipt = routineReceiptMessage(message, detail.record?.chat.id);
     const scheduledMessage = nativeScheduledMessage(message, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
     const run = message.runId ? runsById.get(message.runId) : undefined;
     const isRunsLastAssistantMessage = message.runId !== undefined
@@ -185,6 +188,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     return {
       id: message.id,
       ...(scheduledMessage ? { scheduledMessage } : {}),
+      ...(receipt ? {routineReceipt:receipt} : {}),
       role: message.role,
       text: messageText(message),
       ...(attachments.length > 0 ? { attachments } : {}),
