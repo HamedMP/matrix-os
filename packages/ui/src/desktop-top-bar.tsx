@@ -2,10 +2,8 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import * as Popover from "@radix-ui/react-popover";
-import { Bell, ChevronDown, CircleCheck, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
+import { ChevronDown, CircleCheck, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
 
 const colors: CSSProperties = {
   color: "var(--text-primary, var(--foreground))",
@@ -66,68 +64,4 @@ export function DesktopViewMenu({ mode, onModeChange, onShowDesktop, selected, t
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
-}
-
-export function DesktopInboxMenu({ children, count = 0, open, onOpenChange }: { children: ReactNode; count?: number; open?: boolean; onOpenChange?: (open: boolean) => void }) {
-  return <Popover.Root open={open} onOpenChange={onOpenChange}><Popover.Trigger asChild><button type="button" aria-label="Inbox" className={actionClass}>
-    <Bell size={14} aria-hidden="true" />{count > 0 ? <span aria-label={`${count} tasks need attention`} className="absolute right-0 top-0 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
-  </button></Popover.Trigger><Popover.Portal><Popover.Content aria-label="Inbox" side="bottom" align="end" sideOffset={6} collisionPadding={8}
-    className="no-drag w-[320px] max-w-[calc(100vw-16px)] rounded-xl border p-3 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
-    <h2 className="mb-2 text-sm font-medium">Inbox</h2>{children}
-  </Popover.Content></Popover.Portal></Popover.Root>;
-}
-
-
-/** Bounded runtime activity shared by Web and Electron; no local notification database. */
-export function DesktopActivityInbox({ scope, load, onOpenTask, overlay }: {
-  scope: string; load(): Promise<unknown>; onOpenTask?: (id: string) => void; overlay?: MenuOverlay;
-}) {
-  // Remount on an owner/computer change so even an already-open popup cannot flash old data.
-  return <ScopedActivityInbox key={scope} load={load} onOpenTask={onOpenTask} overlay={overlay} />;
-}
-
-function ScopedActivityInbox({ load, onOpenTask, overlay }: { load(): Promise<unknown>; onOpenTask?: (id: string) => void; overlay?: MenuOverlay }) {
-  const [open, setOpen] = useState(false);
-  useMenuOverlay(open, overlay);
-  const [retry, setRetry] = useState(0);
-  const [snapshot, setSnapshot] = useState<RuntimeSummary | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  useEffect(() => {
-    let active = true;
-    let inFlight = false;
-    const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const result = RuntimeSummarySchema.parse(await load());
-        if (active) { setSnapshot(result); setStatus("ready"); }
-      } catch (error: unknown) {
-        // Never log raw names/messages or schema issues containing owner data.
-        const category = error instanceof Error
-          ? (["AbortError", "TimeoutError", "ZodError"].includes(error.name) ? error.name : "Error")
-          : "non-error";
-        console.warn("[desktop-inbox] load failed:", category);
-        if (active) { setSnapshot(null); setStatus("error"); }
-      } finally { inFlight = false; }
-    };
-    setStatus("loading");
-    void refresh();
-    const timer = setInterval(() => { if (open) void refresh(); }, 30_000);
-    return () => { active = false; clearInterval(timer); };
-  }, [load, open, retry]);
-  const attention = snapshot?.attentionThreads.items ?? [];
-  const activity = (snapshot?.recentActivity.items ?? []).slice(0, 20);
-  return <DesktopInboxMenu open={open} onOpenChange={setOpen} count={attention.length}>
-    {status === "loading" ? <p role="status" className="text-xs">Loading notifications…</p> : null}
-    {status === "error" ? <><p role="alert" className="text-xs">Notifications are unavailable.</p><button type="button" className={rowClass} aria-label="Retry notifications" onClick={() => setRetry(value => value + 1)}>Retry</button></> : null}
-    {status === "ready" ? <div className="max-h-[min(420px,70vh)] overflow-y-auto">
-      {attention.length === 0 && activity.length === 0 ? <p className="text-xs">No app or task notifications yet.</p> : null}
-      {attention.map(thread => <div key={thread.id} className="border-b py-2" style={{ borderColor: colors.borderColor }}>
-        {onOpenTask ? <button type="button" className={rowClass} onClick={() => { setOpen(false); onOpenTask(thread.id); }}>{thread.title}</button> : <p className="text-sm">{thread.title}</p>}
-        <p className="text-xs opacity-70">{thread.attention === "approval_required" ? "Approval needed" : thread.attention === "input_required" ? "Input needed" : "Task needs attention"}</p>
-      </div>)}
-      {activity.map(event => <div key={event.id} className="py-2"><p className="text-sm">{event.label}</p><time dateTime={event.occurredAt} className="text-xs opacity-70">{new Date(event.occurredAt).toLocaleString()}</time></div>)}
-      {snapshot?.recentActivity.hasMore || snapshot?.attentionThreads.hasMore ? <p className="text-xs opacity-70">Showing recent activity.</p> : null}
-    </div> : null}
-  </DesktopInboxMenu>;
 }

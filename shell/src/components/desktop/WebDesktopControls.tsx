@@ -8,6 +8,8 @@ import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, type MatrixC
 import { DesktopActivityInbox, DesktopTopBarActions } from "@matrix-os/ui";
 import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
+import { openTerminalSession } from "@/lib/terminal-session-open";
+import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
 import { GettingStartedPopover, type GettingStartedDestination } from "../onboarding/GettingStartedPopover";
@@ -30,9 +32,20 @@ async function loadActivity(): Promise<unknown> {
 export function WebDesktopControls({ onOpenSettings, onOpenCommandPalette, onOpenSupport, onOpenFirstWork }: WebDesktopControlsProps) {
   const gateway = getGatewayUrl();
   return <DesktopTopBarActions onSearch={onOpenCommandPalette} onSupport={onOpenSupport}
-    inbox={<DesktopActivityInbox scope={gateway} load={loadActivity} />}
+    inbox={<WebAgentInbox gateway={gateway} />}
     setup={<GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork} />}
     computer={<WebComputerMenu gateway={gateway} />} account={<UserButton variant="menubar" onOpenSettings={onOpenSettings} />} />;
+}
+
+/**
+ * Web Desktop has no coding-agent chat surface, so rows open their exact
+ * terminal tab in the durable Terminal window (canonical `__terminal__` path).
+ */
+function WebAgentInbox({ gateway }: { gateway: string }) {
+  const terminalTabs = useTerminalAgentEvents((state) => state.tabs);
+  const retain = useTerminalAgentEvents((state) => state.retain);
+  useEffect(() => retain(), [retain]);
+  return <DesktopActivityInbox scope={gateway} load={loadActivity} terminalTabs={terminalTabs} onOpenTerminal={openTerminalSession} />;
 }
 
 const ComputerContextSchema = z.object({ runtime: z.object({ runtimeSlot: MatrixComputerRuntimeSlotSchema }).passthrough() }).passthrough();

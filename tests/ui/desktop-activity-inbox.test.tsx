@@ -1,14 +1,33 @@
 // @vitest-environment jsdom
 import React from "react";
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesktopActivityInbox } from "../../packages/ui/src/desktop-top-bar";
-const summary = (label = "Notes app build completed") => ({
+import { DesktopActivityInbox } from "../../packages/ui/src/desktop-agent-inbox";
+import * as uiExports from "../../packages/ui/src/index";
+import type { TerminalTabFacts } from "../../packages/ui/src/terminal-agents/attention";
+const WS = "tws_00000000000000000000000000000001";
+const TAB = "tt_00000000000000000000000000000001";
+const NOW = Date.parse("2026-07-06T00:10:00.000Z");
+const agentThread = (id: string, overrides: Record<string, unknown> = {}) => ({
+ id, providerId: "codex", title: "Coding agent run", status: "running", attention: "none",
+ createdAt: "2026-07-06T00:00:00.000Z", updatedAt: "2026-07-06T00:07:00.000Z", ...overrides,
+});
+const summary = (label = "Notes app build completed", extra: Record<string, unknown> = {}) => ({
  runtime: { id: "rt_primary", label: "Main", status: "available" }, capabilities: [], providers: [],
  projects: { items: [], hasMore: false, limit: 20 }, activeThreads: { items: [], hasMore: false, limit: 20 },
  attentionThreads: { items: [], hasMore: false, limit: 20 },
  recentActivity: { items: [{ id: "evt_notes", kind: "thread", label, occurredAt: "2026-07-06T00:03:00.000Z" }], hasMore: false, limit: 20 },
  limits: { maxPromptBytes: 16384, maxAttachmentCount: 8, maxTerminalInputBytes: 8192, maxListItems: 20 }, serverTime: "2026-07-06T00:03:00.000Z",
+ ...extra,
+});
+const herdrTab = (overrides: Partial<TerminalTabFacts> = {}): Record<string, TerminalTabFacts> => ({
+ [`${WS}:${TAB}`]: { ref: { workspaceId: WS, tabId: TAB }, name: "Herdr parity", cwd: "", state: "live", agentStatus: "blocked", statusMessage: "Allow git push?", statusAt: "2026-07-06T00:09:00.000Z", ...overrides },
+});
+const agentSummary = () => summary("Notes app build completed", {
+ activeThreads: { items: [agentThread("thread_run", { title: "Fix composer warning" })], hasMore: false, limit: 20 },
+ attentionThreads: { items: [agentThread("thread_approval", { status: "waiting_for_approval", attention: "approval_required", title: "Approve deploy" })], hasMore: false, limit: 20 },
+ recentThreads: { items: [agentThread("thread_done", { status: "completed", title: "Release notes" })], hasMore: false, limit: 10 },
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("shared app and task inbox", () => {
@@ -55,6 +74,62 @@ describe("shared app and task inbox", () => {
   render(<DesktopActivityInbox scope="main" load={async () => ({ recentActivity: [] })} />);
   fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
   await screen.findByText("Notifications are unavailable.");
-  expect(screen.queryByText("No app or task notifications yet.")).toBeNull();
+  expect(screen.queryByText("No agent activity yet.")).toBeNull();
+ });
+ it("keeps the shared package exports for both renderers", () => {
+  expect(uiExports.DesktopActivityInbox).toBe(DesktopActivityInbox);
+  expect(typeof uiExports.DesktopInboxMenu).toBe("function");
+ });
+ it("shows agents grouped by status with filter counts and a needs-you badge", async () => {
+  render(<DesktopActivityInbox scope="main" load={async () => agentSummary()} terminalTabs={herdrTab()} now={() => NOW} />);
+  await screen.findByRole("button", { name: "Inbox, 2 agents need you" });
+  fireEvent.click(screen.getByRole("button", { name: "Inbox, 2 agents need you" }));
+  await screen.findByRole("heading", { name: "Agents" });
+  expect(screen.getByRole("button", { name: "All 5" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Needs you 2" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Running 1" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Done 2" })).toBeTruthy();
+  expect(screen.getByText("Herdr parity")).toBeTruthy();
+  expect(screen.getByText("Allow git push?")).toBeTruthy();
+  expect(screen.getByText("Approval")).toBeTruthy();
+  expect(screen.queryByText("Coding agent run")).toBeNull();
+  expect(screen.queryByText("Task needs attention")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Running 1" }));
+  expect(screen.getByText("Fix composer warning")).toBeTruthy();
+  expect(screen.queryByText("Herdr parity")).toBeNull();
+  expect(screen.queryByText("Release notes")).toBeNull();
+ });
+ it("opens the exact thread or terminal tab a row came from", async () => {
+  const onOpenTask = vi.fn();
+  const onOpenTerminal = vi.fn();
+  render(<DesktopActivityInbox scope="main" load={async () => agentSummary()} terminalTabs={herdrTab()} onOpenTask={onOpenTask} onOpenTerminal={onOpenTerminal} now={() => NOW} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Approve deploy/ }));
+  expect(onOpenTask).toHaveBeenCalledWith("thread_approval");
+  fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Herdr parity/ }));
+  expect(onOpenTerminal).toHaveBeenCalledWith(`${WS}:${TAB}`);
+ });
+ it("falls back to a thread's own terminal tab when the renderer cannot open chats", async () => {
+  const onOpenTerminal = vi.fn();
+  const load = async () => summary("Notes app build completed", {
+   activeThreads: { items: [agentThread("thread_tab", { title: "Terminal run", terminalRef: { workspaceId: WS, tabId: TAB } })], hasMore: false, limit: 20 },
+  });
+  render(<DesktopActivityInbox scope="main" load={load} onOpenTerminal={onOpenTerminal} now={() => NOW} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Terminal run/ }));
+  expect(onOpenTerminal).toHaveBeenCalledWith(`${WS}:${TAB}`);
+ });
+ it("does not offer a button for a row the renderer cannot open", async () => {
+  render(<DesktopActivityInbox scope="main" load={async () => agentSummary()} onOpenTerminal={vi.fn()} now={() => NOW} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+  await screen.findByText("Approve deploy");
+  expect(screen.queryByRole("button", { name: /Approve deploy/ })).toBeNull();
+ });
+ it("shows an empty state per filter", async () => {
+  render(<DesktopActivityInbox scope="main" load={async () => summary("Notes app build completed")} now={() => NOW} />);
+  fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Needs you 0" }));
+  expect(screen.getByText("Nothing needs you right now.")).toBeTruthy();
  });
 });

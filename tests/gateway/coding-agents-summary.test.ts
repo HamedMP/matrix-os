@@ -486,6 +486,61 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
   });
 
+  it("exposes recently finished threads so clients can show done agents", async () => {
+    const doneThread = {
+      id: "thread_done",
+      providerId: "codex",
+      title: "Ship release notes",
+      status: "completed",
+      attention: "none",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    } as const;
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: {
+        listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
+        listRecentThreads: async () => ({ items: [doneThread], hasMore: false, limit: 10 }),
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.recentThreads.items.map((thread) => thread.id)).toEqual(["thread_done"]);
+  });
+
+  it("keeps the summary available when the recent thread read fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: {
+        listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
+        listRecentThreads: async () => { throw new Error("/home/matrix/home/private"); },
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.recentThreads).toEqual({ items: [], hasMore: false, limit: 10 });
+    expect(JSON.stringify(summary)).not.toContain("/home/matrix/home/private");
+    warn.mockRestore();
+  });
+
+  it("parses summaries from gateways that predate recent threads", () => {
+    const legacy = {
+      runtime: { id: "rt_primary", label: "Main", status: "available" }, capabilities: [], providers: [],
+      projects: { items: [], hasMore: false, limit: 20 }, activeThreads: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 20 },
+      limits: { maxPromptBytes: 16384, maxAttachmentCount: 8, maxTerminalInputBytes: 8192, maxListItems: 20 },
+      serverTime: now.toISOString(),
+    };
+    expect(RuntimeSummarySchema.parse(legacy).recentThreads).toEqual({ items: [], hasMore: false, limit: 10 });
+  });
+
   it("exposes bounded safe preview summaries when the preview adapter is wired", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",

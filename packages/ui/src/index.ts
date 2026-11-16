@@ -324,7 +324,9 @@ export * from "./onboarding-widget/index.js";
 export * from "./get-started/index.js";
 export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
 
-export { DesktopTopBarActions, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { DesktopTopBarActions, DesktopViewMenu } from "./desktop-top-bar.js";
+export { DesktopInboxMenu, DesktopActivityInbox, AGENT_INBOX_PILL_STYLE } from "./desktop-agent-inbox.js";
+export { deriveAgentInbox, formatInboxTime, threadPlacement, type AgentInboxPill, type AgentInboxGroup, type ThreadPlacement, type AgentInboxItem, type AgentInboxModel, type AgentInboxTarget } from "./agent-inbox-model.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
 export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
@@ -368,3 +370,4 @@ export { ScheduledInputText } from "./chat/ScheduledInputText.js";
 export { routineOriginChatEligible } from "./chat/routine-origin.js";
 
 export { DiscordIcon } from "./discord-icon.js";
+export { AgentLogo, isAgentLogoKind, type AgentLogoKind } from "./agent-logo.js";
