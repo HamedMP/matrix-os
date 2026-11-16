@@ -1,10 +1,22 @@
+import { randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
-import { BotToolRequestSchema, SharedBrowserActionResultSchema, type SharedBrowserAction } from "@matrix-os/contracts";
+import { BotBrokerResponseSchema, BotToolRequestSchema, BotToolResultSchema, SharedBrowserActionResultSchema, type BotToolResult, type SharedBrowserAction } from "@matrix-os/contracts";
+import { BotBrokerToolEffectUnknownError, createBotBrokerActions } from "../../../packages/gateway/src/bots/broker-actions.js";
+import { createBotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
+import { createBotSessionsRepository } from "../../../packages/gateway/src/bots/repositories/sessions.js";
+import { BotRuntimeRegistry, type ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
+import { createManagedPiCheckpointsRepository } from "../../../packages/gateway/src/chat/managed-pi-checkpoints.js";
 import { createManagedPiOwnerTools } from "../../../packages/gateway/src/chat/managed-pi-owner-tools.js";
-import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import { createManagedPiSessionsRepository } from "../../../packages/gateway/src/chat/managed-pi-sessions.js";
 import { createSharedBrowserBroker, SharedBrowserError, type SharedBrowserDriver } from "../../../packages/gateway/src/shared-browser/broker.js";
-const binding = { kind: "managed_chat", ownerId: "owner_qa", chatId: "chat_qa", runId: "run_browser_qa", runtimeHandle: `runtime_${"a".repeat(32)}`,
-  executionGeneration: "1", capabilities: ["browser.action"], workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64) } as ManagedPiRuntimeBinding;
+import { NOW, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+
+const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "owner_qa", chatId: "chat_qa", runId: "run_browser_qa", runtimeHandle: `runtime_${"a".repeat(32)}`,
+  executionGeneration: "1", capabilities: ["browser.action"], workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64),
+  route: { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200000, maxOutputTokens: 4096 },
+  accessSourceId: "matrix_included", requestClass: "interactive",
+};
 function setup() {
   const controller = new AbortController();
   const authority = vi.fn(async () => ({ permissionMode: "full_access" }));
@@ -15,6 +27,10 @@ function setup() {
 }
 const request = (id: string, args: SharedBrowserAction = { action: "status" }) =>
   BotToolRequestSchema.parse({ toolCallId: id, capability: "browser.action", args });
+function browserResult(result: BotToolResult) {
+  if (!result.ok) throw new Error("Browser result was lost at the Pi tool boundary");
+  return SharedBrowserActionResultSchema.parse(JSON.parse(result.content[0]!.text));
+}
 it("preserves a replacement run when an older delayed admission fails", async () => {
   const { tools, authority, browser } = setup();
   let release!: () => void;
@@ -90,12 +106,12 @@ it.each([
   if (resume) expect(content).toMatch(/resume agent.*fresh snapshot/i);
   else expect(content).not.toMatch(/resume|took over/i);
 });
-it("recovers a dispatched uncertain click through Stop and a fresh Pi run without replay", async () => {
+it.each([true, false])("retains an uncertain click checkpoint and recovers without replay (CDP dispatch known: %s)", async dispatched => {
   let effects = 0;
   const execute = vi.fn<SharedBrowserDriver["execute"]>(async action => {
     if (action.action === "click") {
       effects++;
-      throw new SharedBrowserError("browser_unavailable", true);
+      throw new SharedBrowserError("browser_unavailable", dispatched);
     }
     return { success: true, observationId: `obs-${effects}`, content: `Recorded clicks: ${effects}` };
   });
@@ -110,35 +126,75 @@ it("recovers a dispatched uncertain click through Stop and a fresh Pi run withou
     signalFor: () => controller.signal,
     sharedBrowser: browser,
   });
+  const { db, destroy } = await createBotStateDatabase();
+  const registry = new BotRuntimeRegistry();
+  registry.bind(binding);
+  const managedCheckpoints = createManagedPiCheckpointsRepository(db);
+  const actions = createBotBrokerActions({
+    db, registry, checkpoints: createBotCheckpointsRepository(db), sessions: createBotSessionsRepository(db),
+    managedCheckpoints, managedSessions: createManagedPiSessionsRepository(db),
+    tools: createBotToolDispatcher({ homePath: "/unused", managedTools: tools }),
+    runs: { loadRunSpec: vi.fn(), readImageChunk: vi.fn() }, events: { publish: vi.fn() },
+    inference: { homePath: "/unused", lifetime: controller.signal },
+  });
+  async function frame(id: string, args: SharedBrowserAction) {
+    return BotBrokerResponseSchema.parse(await actions.handleFrame({
+      version: 1, requestId: randomUUID(), runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration,
+      runId: binding.runId, action: "bot.tool", tool: request(id, args),
+    }));
+  }
   const second = { ...binding, runId: "run_browser_after_stop" };
-  async function dispatch(run: ManagedPiRuntimeBinding, id: string, args: SharedBrowserAction) {
-    const result = await tools.dispatch(run, request(id, args), controller.signal);
-    if (!result.ok) throw new Error("Browser result was lost at the Pi tool boundary");
-    return SharedBrowserActionResultSchema.parse(JSON.parse(result.content[0]!.text));
+  async function dispatch(id: string, args: SharedBrowserAction) {
+    const reply = await frame(id, args);
+    if (!reply.ok) throw new Error(reply.code);
+    return browserResult(BotToolResultSchema.parse(reply.result));
   }
   try {
+    await insertChat(db, binding.chatId, binding.ownerId);
+    await db.insertInto("chat_messages").values({
+      id: "msg_browser", chat_id: binding.chatId, seq: 1, role: "user", state: "committed", purpose: "ai_request",
+      turn_id: null, run_id: null, actor_id: binding.ownerId, parts: JSON.stringify([{ type: "text", text: "Click once." }]),
+      byte_count: 11, search_text: "Click once.", created_at: NOW,
+    }).execute();
+    await db.insertInto("chat_turns").values({
+      id: "cturn_browser", chat_id: binding.chatId, client_request_id: "req_browser", base_message_seq: 0,
+      input_message_id: "msg_browser", status: "running", created_at: NOW, updated_at: NOW,
+    }).execute();
+    await db.insertInto("chat_runs").values({
+      id: binding.runId, chat_id: binding.chatId, turn_id: "cturn_browser", client_request_id: "req_browser", attempt: 1,
+      driver_kind: "matrix_pi", instance_id: "matrix_pi_default", selection: JSON.stringify({ instanceId: "matrix_pi_default", model: binding.route.modelId }),
+      interaction_mode: "default", permission_mode: "full_access", status: "running", history_boundary_seq: 0,
+      capability_snapshot: "{}", created_at: NOW, updated_at: NOW,
+    }).execute();
     await tools.open(binding, () => undefined);
-    const first = await dispatch(binding, "first_snapshot", { action: "snapshot" });
+    const first = await dispatch("first_snapshot", { action: "snapshot" });
     expect(first).toMatchObject({ success: true, observationId: "obs-0", content: "Recorded clicks: 0" });
     const click = { action: "click", observationId: "obs-0", ref: "submit" } as const;
-    const uncertain = await dispatch(binding, "click_once", click);
+    const uncertain = await dispatch("click_once", click);
     expect(uncertain).toMatchObject({
-      success: false, content: expect.stringMatching(/effect is uncertain.*never replay.*Stop agent.*new run/i),
+      success: false, content: expect.stringMatching(dispatched ? /effect is uncertain.*never replay.*Stop agent.*new run/i : /Stop agent.*new run.*verify/i),
       automation: { phase: "unavailable", run: { runId: binding.runId } },
     });
     expect(uncertain.content).not.toMatch(/resume|took over/i);
-    expect(await dispatch(binding, "status_after_click", { action: "status" })).toMatchObject({
+    const checkpoint = { toolCallId: "click_once", phase: "effect_unknown", effectClass: "write", outcomeRef: null };
+    expect(await managedCheckpoints.listForRun(binding)).toContainEqual(expect.objectContaining(checkpoint));
+    expect(await frame("click_once", click)).toMatchObject({ ok: false, code: "denied" });
+    expect(await dispatch("status_after_click", { action: "status" })).toMatchObject({
       success: true, automation: { phase: "unavailable", run: { runId: binding.runId } },
     });
-    const blocked = await dispatch(binding, "snapshot_while_unavailable", { action: "snapshot" });
+    const blocked = await dispatch("snapshot_while_unavailable", { action: "snapshot" });
     expect(blocked).toMatchObject({ success: false, content: expect.stringMatching(/Stop agent.*new run.*verify/i) });
     expect(blocked.content).not.toMatch(/resume|took over/i);
+    expect(await managedCheckpoints.listForRun(binding)).toEqual(expect.arrayContaining([
+      expect.objectContaining(checkpoint),
+      expect.objectContaining({ toolCallId: "snapshot_while_unavailable", phase: "observed_complete" }),
+    ]));
     await expect(browser.control(binding.ownerId, { action: "resume" })).rejects.toMatchObject({ code: "run_unavailable" });
     expect(await browser.control(binding.ownerId, { action: "stop" })).toMatchObject({ phase: "idle", run: null });
-    await expect(dispatch(binding, "retired_snapshot", { action: "snapshot" })).rejects.toMatchObject({ code: "stale_generation" });
+    expect(await frame("retired_snapshot", { action: "snapshot" })).toMatchObject({ ok: false, code: "stale_generation" });
     await tools.closeRun(binding.runId);
     await tools.open(second, () => undefined);
-    expect(await dispatch(second, "fresh_snapshot", { action: "snapshot" })).toMatchObject({
+    expect(browserResult(await tools.dispatch(second, request("fresh_snapshot", { action: "snapshot" }), controller.signal))).toMatchObject({
       success: true, observationId: "obs-1", content: "Recorded clicks: 1",
     });
     expect(execute.mock.calls.map(([action]) => action.action)).toEqual(["snapshot", "click", "snapshot"]);
@@ -147,6 +203,7 @@ it("recovers a dispatched uncertain click through Stop and a fresh Pi run withou
     await tools.closeRun(binding.runId);
     await tools.closeRun(second.runId);
     await browser.close();
+    await destroy();
   }
 });
 it("offers Stop when the input gate fails before Pi dispatches an action", async () => {
@@ -166,14 +223,17 @@ it("offers Stop when the input gate fails before Pi dispatches an action", async
   });
   try {
     await tools.open(binding, () => undefined);
-    const response = await tools.dispatch(binding, request("gate_failure_snapshot", { action: "snapshot" }), controller.signal);
-    if (!response.ok) throw new Error("Browser unavailable result was lost at the Pi tool boundary");
-    const result = SharedBrowserActionResultSchema.parse(JSON.parse(response.content[0]!.text));
-    expect(result).toMatchObject({
+    const { result } = await tools.dispatch(binding, request("gate_failure_snapshot", { action: "snapshot" }), controller.signal)
+      .then(() => { throw new Error("Unavailable Browser result bypassed the broker checkpoint"); }, (error: unknown) => {
+        if (!(error instanceof BotBrokerToolEffectUnknownError)) throw error;
+        return error;
+      });
+    const value = browserResult(result);
+    expect(value).toMatchObject({
       success: false, content: expect.stringMatching(/Stop agent/i),
       automation: { phase: "unavailable", run: { runId: binding.runId } },
     });
-    expect(result.content).not.toMatch(/resume|took over|synthetic input gate failure/i);
+    expect(value.content).not.toMatch(/resume|took over|synthetic input gate failure/i);
     expect(execute).not.toHaveBeenCalled();
     await expect(browser.control(binding.ownerId, { action: "stop" })).resolves.toMatchObject({ phase: "idle" });
   } finally {

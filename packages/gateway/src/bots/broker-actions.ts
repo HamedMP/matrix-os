@@ -47,6 +47,14 @@ export class BotBrokerActionError extends Error {
   }
 }
 
+/** Safe tool guidance to deliver only after recording the dispatch as effect_unknown. */
+export class BotBrokerToolEffectUnknownError extends Error {
+  constructor(readonly result: BotToolResult) {
+    super("Bot tool effect is unknown");
+    this.name = "BotBrokerToolEffectUnknownError";
+  }
+}
+
 /** The run the gateway admitted, and its input images. Implemented by the orchestrator (L8). */
 export interface BotRunSource {
   loadRunSpec(binding: PiRuntimeBinding): Promise<BotRunSpec>;
@@ -267,6 +275,7 @@ export function createBotBrokerActions(deps: {
       }
       await checkpoints.markEffectUnknown({ ...id, now: now().toISOString() });
       if (signal.aborted) throw new BotBrokerActionError("timeout");
+      if (error instanceof BotBrokerToolEffectUnknownError) return error.result;
       console.warn("[bots] tool dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       throw new BotBrokerActionError("unavailable");
     }
