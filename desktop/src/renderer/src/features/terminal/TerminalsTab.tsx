@@ -183,6 +183,7 @@ export default function TerminalsTab({
   renamingNameRef.current = renamingName;
   const busyNamesRef = useRef<string[]>([]);
   busyNamesRef.current = busyNames;
+  const missingRequestRefreshRef = useRef<{ requestId: number; afterSequence: number } | null>(null);
 
   const isShellBusy = (name: string) => busyNames.includes(name);
 
@@ -280,7 +281,18 @@ export default function TerminalsTab({
     }
     const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
     if (!requestedShell) {
-      if (!loading && !creating && !error && loadSequence > 0) {
+      if (loading || creating || error || loadSequence === 0) return;
+      // The agent events stream can name a tab before the periodic list refresh has it,
+      // so a missing tab gets one fresh list before the request is dropped.
+      const refresh = missingRequestRefreshRef.current;
+      if (api && refresh?.requestId !== terminalSessionRequest.requestId) {
+        missingRequestRefreshRef.current = { requestId: terminalSessionRequest.requestId, afterSequence: loadSequence };
+        void syncShellSessions(api).catch((err: unknown) => {
+          console.error("[terminals] Refresh for a requested tab failed:", err instanceof Error ? err.name : "unknown");
+        });
+        return;
+      }
+      if (!refresh || loadSequence > refresh.afterSequence) {
         consumeTerminalSessionRequest(terminalSessionRequest.requestId);
       }
       return;
@@ -288,6 +300,7 @@ export default function TerminalsTab({
     showShellDetail(requestedShell);
     consumeTerminalSessionRequest(terminalSessionRequest.requestId);
   }, [
+    api,
     consumeTerminalSessionRequest,
     creating,
     error,

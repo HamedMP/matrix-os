@@ -561,6 +561,52 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
+  // Fault detected (review of #3300 @b0ffbf47c): Open on an attention card for a tab the
+  // last list refresh had not seen yet was dropped instead of selecting that tab.
+  it("refreshes the list once for a requested tab it has not seen yet", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const load = vi.fn(async () => {
+      const sessions = [
+        { name: "matrix-main", status: "active" as const, placement: "active" as const },
+        { name: "matrix-new", status: "active" as const, placement: "active" as const },
+      ];
+      useShellSessions.setState((state) => ({ sessions, loading: false, loadSequence: state.loadSequence + 1 }));
+      return sessions;
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      loading: false,
+      creating: false,
+      error: null,
+      loadSequence: 1,
+      load,
+    });
+    renderTab();
+
+    act(() => useTabs.getState().requestTerminalSession("matrix-new"));
+
+    expect(await screen.findByRole("heading", { name: "matrix-new" })).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("drops a requested tab that a fresh list still does not have", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const sessions = [{ name: "matrix-main", status: "active" as const, placement: "active" as const }];
+    const load = vi.fn(async () => {
+      useShellSessions.setState((state) => ({ sessions, loading: false, loadSequence: state.loadSequence + 1 }));
+      return sessions;
+    });
+    useShellSessions.setState({ sessions, loading: false, creating: false, error: null, loadSequence: 1, load });
+    renderTab();
+
+    act(() => useTabs.getState().requestTerminalSession("matrix-gone"));
+
+    await waitFor(() => expect(useTabs.getState().terminalSessionRequest).toBeNull());
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("heading", { name: "matrix-gone" })).toBeNull();
+  });
+
   it("keeps a requested Recent pending during a create-triggered canonical refresh", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().requestTerminalSession("matrix-created");
