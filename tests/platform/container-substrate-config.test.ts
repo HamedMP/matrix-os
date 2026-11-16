@@ -163,6 +163,20 @@ describe('container substrate registration', () => {
     }
   });
 
+  it('also sweeps expired pending storage writes when given the sync object store, and clears it on shutdown', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const headObject = vi.fn(async () => ({ exists: false }));
+      const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log, objectStore: { headObject } })!;
+      configured.startBackgroundWork();
+      expect(vi.getTimerCount()).toBe(4);
+      await configured.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not build a client when settings are incomplete', () => {
     const createClient = vi.fn(() => ({ send: vi.fn(), destroy: vi.fn() }));
     expect(createConfiguredContainerSubstrate({ db, env: { ...ENV, MATRIX_CONTAINER_REGION: 'nowhere' }, log, createClient })).toBeNull();

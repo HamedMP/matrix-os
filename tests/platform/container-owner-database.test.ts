@@ -269,7 +269,26 @@ describe('container owner databases', () => {
     expect(second.passwordEpoch).toBe(4);
   });
 
+  it('gives a replacement database none of the block state its deleted predecessor had', async () => {
+    const owners = service();
+    await owners.ensure('user_owner_a', 1, signal());
+    await owners.remove('user_owner_a', signal());
+    // The removed database had been size-blocked, alerted and offered for compaction.
+    await db.executor.updateTable('container_owner_databases').set({
+      writes_blocked_at: '2026-11-10T00:00:00.000Z', size_alerted_at: '2026-11-10T00:00:00.000Z',
+      compaction_offered_at: '2026-11-10T00:00:00.000Z', block_disabled: JSON.stringify([{ kind: 'trigger', oid: 5, mode: 'O' }]),
+    }).execute();
+    log.length = 0;
+    const second = await owners.ensure('user_owner_a', 2, signal());
+    expect(await db.executor.selectFrom('container_owner_databases')
+      .select(['writes_blocked_at', 'size_alerted_at', 'compaction_offered_at', 'block_disabled']).executeTakeFirstOrThrow())
+      .toEqual({ writes_blocked_at: null, size_alerted_at: null, compaction_offered_at: null, block_disabled: null });
+    // The new, empty database is writable from the start.
+    expect(log).toContain(`GRANT CONNECT, CREATE ON DATABASE "${second.databaseName}" TO "${second.roleName}"`);
+  });
+
   /**
+   * Starts `interleave` once, just before the first statement matching each  /**
    * Starts `interleave` once, just before the first statement matching each
    * pattern reaches the cluster, and gives it a moment to run. Owner database
    * work is serialized per owner, so a started operation may instead wait for

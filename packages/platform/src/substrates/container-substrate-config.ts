@@ -2,9 +2,13 @@ import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
+import { createOwnerDatabaseSizeSweeper } from './container-database-size-sweep.js';
+import { createOwnerDatabaseCompactor } from './container-owner-compaction.js';
+import { loadContainerStorageLimits } from '../free-tier/config.js';
+import { createStorageQuota, type StorageQuotaDeps } from '../free-tier/storage-quota.js';
+import { createStorageQuotaSweeper } from '../free-tier/storage-quota-sweep.js';
 import {
   createContainerOwnerDatabases,
-  createOwnerDatabaseSizeSweeper,
   type ContainerOwnerDatabases,
   type OwnerClusterAdmin,
 } from './container-owner-database.js';
@@ -153,6 +157,8 @@ export interface ConfiguredContainerSubstrateDeps {
   microvmsApi?: LambdaMicrovmsApi;
   createClient?: (options: { region: string }) => LambdaMicrovmsSender & { destroy(): void };
   ownerClusterAdmin?: OwnerClusterAdmin;
+  /** The sync object store; when present, expired pending storage writes are swept too. */
+  objectStore?: Pick<StorageQuotaDeps, 'headObject'>;
   log?: (message: string) => void;
 }
 
@@ -177,7 +183,16 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
     connectionLimit: config.ownerDatabase.connectionLimit,
   });
-  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases });
+  // Compaction needs maintenance sessions, which only the real cluster admin provides.
+  const compactor = pgAdmin ? createOwnerDatabaseCompactor({ admin: pgAdmin, ownerDatabases }) : undefined;
+  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases, ...(compactor ? { compactor } : {}) });
+  const objectStore = deps.objectStore;
+  const quotaSweeper = objectStore ? createStorageQuotaSweeper({
+    db: deps.db,
+    quota: createStorageQuota({
+      db: deps.db, limits: loadContainerStorageLimits(deps.env, log), headObject: (key, options) => objectStore.headObject(key, options),
+    }),
+  }) : null;
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
   const runtime = createContainerRuntimeClient({
     provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
@@ -226,9 +241,11 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
       reaper.start();
       reconciler.start();
       sizeSweeper.start();
+      quotaSweeper?.start();
     },
     async shutdown() {
       activity.stopPeriodicFlush();
+      await quotaSweeper?.shutdown();
       await sizeSweeper.shutdown();
       await reconciler.shutdown();
       await reaper.shutdown();

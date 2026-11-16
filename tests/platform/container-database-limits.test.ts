@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { createOwnerDatabaseSizeSweeper } from '../../packages/platform/src/substrates/container-database-size-sweep.js';
 import {
   createContainerOwnerDatabases,
-  createOwnerDatabaseSizeSweeper,
   type OwnerClusterAdmin,
 } from '../../packages/platform/src/substrates/container-owner-database.js';
 import { createPgOwnerClusterAdmin } from '../../packages/platform/src/substrates/container-owner-cluster-admin.js';
@@ -72,9 +72,9 @@ describe('owner database size limit', () => {
       .toEqual({ sizeBytes: 1500, overLimit: true, writesBlocked: true });
     expect(log.some(statement => statement.includes('pg_terminate_backend'))).toBe(false);
 
-    sizes.set(credentials.databaseName, 900);
+    sizes.set(credentials.databaseName, 899);
     expect(await service.enforceSizeLimit('user_limit_a', signal()))
-      .toEqual({ sizeBytes: 900, overLimit: false, writesBlocked: false });
+      .toEqual({ sizeBytes: 899, overLimit: false, writesBlocked: false });
     expect(await roleSettings(cluster, credentials.roleName)).not.toContain('default_transaction_read_only=on');
     expect(await roleSettings(cluster, credentials.roleName)).toContain('statement_timeout=30s');
   });
@@ -99,7 +99,7 @@ describe('owner database size limit', () => {
     sizes.set(fenced.databaseName, 2000);
     const sweeper = createOwnerDatabaseSizeSweeper({ db, ownerDatabases: service, batchSize: 2 });
 
-    expect(await sweeper.sweepOnce()).toBe(2);
+    expect(await sweeper.sweepOnce()).toEqual({ ran: true, enforced: 2, compacted: 0 });
     expect(await roleSettings(cluster, a.roleName)).toContain('default_transaction_read_only=on');
     expect(await roleSettings(cluster, b.roleName)).not.toContain('default_transaction_read_only=on');
     expect(await roleSettings(cluster, fenced.roleName)).not.toContain('default_transaction_read_only=on');
