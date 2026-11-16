@@ -235,8 +235,10 @@ describe("terminal wait", () => {
 
   it("returns a timeout check-in on time when a screen capture hangs", async () => {
     const started = Date.now();
+    // No read finished, so no starting count: `seen` stays unset rather than 0, or the
+    // next check-in would count text already on screen as new.
     await expect(hangingCaptureWaiter().wait(ref, { output: "ready", timeoutMs: 100 }))
-      .resolves.toEqual({ reason: "timeout", seen: 0 });
+      .resolves.toEqual({ reason: "timeout" });
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 

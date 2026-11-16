@@ -156,7 +156,10 @@ export function createTerminalWaiter(options: {
     const ended = (): TerminalWaitResult => {
       if (shutdownController.signal.aborted) return { reason: "shutdown" };
       if (input.signal?.aborted) return { reason: "cancelled" };
-      return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: reportedBaseline() ?? 0 } : {}) };
+      // `seen` only once a read set a starting count: a made-up 0 would make text already
+      // on screen look new on the next check-in.
+      const seen = input.output ? reportedBaseline() : undefined;
+      return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(seen !== undefined ? { seen } : {}) };
     };
     const withinWait = <T>(read: () => Promise<T>) => boundedRead(read, deadline - now(), signal);
     if (signal.aborted) return ended();
