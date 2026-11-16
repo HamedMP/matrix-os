@@ -261,6 +261,12 @@ export function createTerminalAgents(options: {
         const working = [...current.values()].some((child) => child.live && (child.status === undefined || child.status === "working"));
         if (!working) return { reason: "idle" };
       } else {
+        // A helper added since the wait (or its cursor) began is watched from its start:
+        // live, no reports, no status. What it did before this poll is news, and the
+        // others' unread changes are kept as they were.
+        for (const [key, child] of current) {
+          if (!seen.has(key)) seen.set(key, { ref: child.ref, live: true, reports: 0 });
+        }
         for (const [key, before] of seen) {
           const child = current.get(key);
           // A child whose record is gone was removed: that is its exit.

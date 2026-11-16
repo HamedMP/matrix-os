@@ -476,6 +476,27 @@ describe("terminal agents: registry capacity and child baselines", () => {
     await expect(h.agents.waitChildren({ workspaceId, tabId: child.ref.tabId }, { mode: "any", timeoutMs: 0, ...(cursor ? { cursor } : {}) }))
       .resolves.toEqual({ reason: "none" });
   });
+
+  // Fault detected (review of #3298): a helper started after the wait's first snapshot
+  // was never watched, so it could block without waking the parent, and the saved
+  // cursor kept ignoring it on later check-ins.
+  it("watches a helper added between check-ins and reports its news", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const first = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(first.ref.tabId, "working");
+    const checkIn = await h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0 });
+    const cursor = checkIn.reason === "timeout" ? checkIn.cursor : undefined;
+    // Another caller adds a second helper; it starts working, then blocks.
+    const second = await h.agents.run({ name: "lint", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(second.ref.tabId, "working");
+    const quiet = await h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0, ...(cursor ? { cursor } : {}) });
+    expect(quiet).toMatchObject({ reason: "timeout" });
+    h.statuses.set(second.ref.tabId, "blocked");
+    const next = quiet.reason === "timeout" ? quiet.cursor : undefined;
+    await expect(h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0, ...(next ? { cursor: next } : {}) }))
+      .resolves.toEqual({ reason: "changed", child: second.ref, status: "blocked" });
+  });
 });
 
 // Fault detected (seventh review of #3298): a launch whose agent record could not be
