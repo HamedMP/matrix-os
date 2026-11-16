@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import * as Notifications from "expo-notifications";
 import { useGlobalSearchParams, useNavigationContainerRef, useRouter, useSegments } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
+import type { MatrixComputer } from "@matrix-os/contracts";
 
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import {
@@ -40,6 +41,10 @@ const TAP_LOOKUP_TIMEOUT_MS = 10_000;
 function isChatOnScreen(segments: readonly string[]): boolean {
   return isChatScreen(segments)
     || (isChatScreen(segments.slice(0, 3)) && segments.slice(3).join("/") === PROJECT_CHAT);
+}
+
+function hostedGatewayUrl(computer: MatrixComputer): string {
+  return `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`;
 }
 
 function warn(scope: string, err: unknown) {
@@ -107,25 +112,37 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
     return () => Notifications.setNotificationHandler(defaultNotificationHandler);
   }, []);
 
+  // The last computer switch a tap started. A switch cannot be taken back once
+  // its save begins, so it runs to the end and later taps wait for it.
+  const switchingRef = useRef<Promise<void> | null>(null);
+
   /**
    * The computer a notification came from, switched to first when another one
-   * is on screen. A tap that is no longer the latest switches nothing.
+   * is on screen. Only the latest tap starts a switch, and a tap reads which
+   * computer is on screen only once an earlier tap's switch has finished.
    */
   const gatewayFor = useCallback(async (wanted: string | null, isLatest: () => boolean): Promise<GatewaySession | null> => {
-    const session = computer ? await gatewaySession() : null;
-    if (!computer || !session) return null;
-    if (wanted === null || wanted === computer.handle) return session;
-    const inventory = await fetchComputers(session.token);
+    await Promise.allSettled([switchingRef.current]);
+    // Read now rather than from this render, which a switch since may have outdated.
+    const current = queryClient.getQueryData<MatrixComputer | null>(mobileQueryKeys.activeComputer(userId)) ?? null;
+    const token = current ? (await gatewaySession())?.token : null;
+    if (!current || !token) return null;
+    if (wanted === null || wanted === current.handle) return { token, gatewayUrl: hostedGatewayUrl(current) };
+    const inventory = await fetchComputers(token);
     const matches = inventory.items.filter((computer) => computer.handle === wanted);
     // The account's own choice of computer outranks the phone's.
     if (matches.length !== 1 || (inventory.selectedSlot ?? matches[0].runtimeSlot) !== matches[0].runtimeSlot) {
       return null;
     }
     if (!isLatest()) return null;
-    setGateway(await saveSelectedHostedComputer(matches[0]));
-    await queryClient.invalidateQueries({ queryKey: mobileQueryKeys.activeComputer(userId) });
-    return { token: session.token, gatewayUrl: `${HOSTED_GATEWAY_URL}${matches[0].gatewayPath}` };
-  }, [computer, gatewaySession, userId, queryClient, setGateway]);
+    const switching = (async () => {
+      setGateway(await saveSelectedHostedComputer(matches[0]));
+      await queryClient.invalidateQueries({ queryKey: mobileQueryKeys.activeComputer(userId) });
+    })();
+    switchingRef.current = switching;
+    await switching;
+    return { token, gatewayUrl: hostedGatewayUrl(matches[0]) };
+  }, [gatewaySession, userId, queryClient, setGateway]);
 
   /**
    * Opens a tap's destination. Each lookup can be slow, so after every one a

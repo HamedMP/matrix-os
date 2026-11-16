@@ -67,10 +67,18 @@ jest.mock("@/lib/storage", () => ({
   saveSelectedHostedComputer: (...args: unknown[]) => mockSaveSelectedHostedComputer(...args),
 }));
 
-const mockInvalidateQueries = jest.fn(async () => {});
+const mockInvalidateQueries = jest.fn();
+const mockGetQueryData = jest.fn();
 jest.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries, getQueryData: mockGetQueryData }),
 }));
+/** The computer the phone saved last, which the active-computer query reads back when refreshed. */
+let mockSavedComputer: typeof ALICE | null = null;
+const ACTIVE_COMPUTER_KEY = JSON.stringify(["mobile", "computers", "active", "user_1"]);
+const gatewayOf = (computer: typeof ALICE) => ({
+  id: `matrix-os-cloud:${computer.runtimeSlot}:${computer.handle}`,
+  url: `https://app.matrix-os.com${computer.gatewayPath}`,
+});
 
 const CHAT_ID = "chat_mobile_reply";
 const THREAD_ID = "thread_mobile_attention";
@@ -123,6 +131,15 @@ beforeEach(() => {
   mockActiveChatId = null;
   mockGateway.computer = ALICE;
   mockGateway.isComputerPending = false;
+  mockSavedComputer = null;
+  mockGetQueryData.mockImplementation((key: unknown) => (JSON.stringify(key) === ACTIVE_COMPUTER_KEY ? mockGateway.computer : undefined));
+  mockSaveSelectedHostedComputer.mockImplementation(async (computer: typeof ALICE) => {
+    mockSavedComputer = computer;
+    return gatewayOf(computer);
+  });
+  mockInvalidateQueries.mockImplementation(async () => {
+    if (mockSavedComputer) mockGateway.computer = mockSavedComputer;
+  });
   notifications.getLastNotificationResponse.mockReturnValue(null);
   mockFetchTerminalSessions.mockResolvedValue([{ id: TERMINAL }]);
   mockFetchThreadTerminalSession.mockResolvedValue(TERMINAL);
@@ -380,6 +397,47 @@ describe("a notification from another computer", () => {
       "clerk-token", "https://app.matrix-os.com/vm/bob?runtime=preview-1", CHAT_ID, expect.any(Number),
     );
     expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
+  });
+
+  it.each([
+    ["saving it", "save"],
+    ["refreshing the computer on screen", "refresh"],
+  ] as const)("finishes an earlier tap's switch, then opens a later tap on its own computer, when the later tap comes while %s", async (_step, held) => {
+    const LATER_CHAT = "chat_mobile_later";
+    const hold = deferred<void>();
+    mockFetchComputers.mockResolvedValue({ items: [ALICE, BOB], selectedSlot: null });
+    if (held === "save") {
+      mockSaveSelectedHostedComputer.mockImplementationOnce(async (computer: typeof ALICE) => {
+        await hold.promise;
+        mockSavedComputer = computer;
+        return gatewayOf(computer);
+      });
+    } else {
+      mockInvalidateQueries.mockImplementationOnce(async () => {
+        await hold.promise;
+        mockGateway.computer = mockSavedComputer;
+      });
+    }
+    renderRouter();
+
+    tapWhileRunning(chatTap("bob"));
+    await waitFor(() => expect(held === "save" ? mockSaveSelectedHostedComputer : mockInvalidateQueries).toHaveBeenCalled());
+    tapWhileRunning(tap({ v: 1, notificationId: NOTIFICATION_ID, handle: "alice", target: { type: "chat", chatId: LATER_CHAT } }, "n2"));
+    await act(async () => {});
+    // The computer on screen is about to change, so the later tap waits to read it.
+    expect(mockShowChatScreen).not.toHaveBeenCalled();
+
+    await act(async () => hold.settle());
+
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
+    expect(mockGateway.computer).toBe(ALICE);
+    expect(setGateway).toHaveBeenLastCalledWith(gatewayOf(ALICE));
+    expect(mockChatExists).toHaveBeenLastCalledWith(
+      "clerk-token", "https://app.matrix-os.com/vm/alice", LATER_CHAT, expect.any(Number),
+    );
+    expect(mockSelectChat).toHaveBeenCalledTimes(1);
+    expect(mockSelectChat).toHaveBeenCalledWith(LATER_CHAT);
+    expect(mockShowChatList).not.toHaveBeenCalled();
   });
 
   it("stays on the computer on screen when the notification is from it", async () => {
