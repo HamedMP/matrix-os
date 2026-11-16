@@ -135,6 +135,16 @@ describe('monthly compute metering and cap', () => {
     expect(await usage()).toMatchObject({ billedMs: HOUR });
   });
 
+  it('never bills a unit past its provider lifetime, even when the platform notices its end late', async () => {
+    const lifecycle = service();
+    const { generation } = await startAndRegister(lifecycle);
+    advance(3 * 24 * HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
+    expect(await lifecycle.markComputeLost('ctr-1', generation, 'mvm-1')).toBe(true);
+    advance(HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
+  });
+
   it('bills a failed start up to its failure', async () => {
     const provider = fakeProvider();
     vi.mocked(provider.run).mockImplementationOnce(async () => { advance(60_000); throw new Error('boom'); });

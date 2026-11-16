@@ -1,5 +1,6 @@
 import { sql, type ColumnType } from 'kysely';
 import type { PlatformDB } from '../db.js';
+import { CONTAINER_UNIT_MAX_LIFETIME_SECONDS } from '../substrates/container-provider.js';
 
 /**
  * Billed compute per free owner per UTC calendar month (spec 2691, D3). The
@@ -53,6 +54,18 @@ export function monthKey(monthStart: Date): string {
   return monthStart.toISOString().slice(0, 10);
 }
 
+/**
+ * Where an open interval ends: now, or earlier once the unit's provider
+ * lifetime (from the start that opened it) or a failed stop's bound has
+ * certainly ended its compute, however late the platform notices.
+ */
+export function computeIntervalEnd(at: Date, row: { started_at: Date | null; compute_unconfirmed_until: Date | null }): Date {
+  let end = at.getTime();
+  if (row.started_at) end = Math.min(end, row.started_at.getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000);
+  if (row.compute_unconfirmed_until) end = Math.min(end, row.compute_unconfirmed_until.getTime());
+  return new Date(end);
+}
+
 /** Owner-month rows hold closed time; open intervals on the owner's container rows are added here. */
 export async function readComputeUsage(executor: Executor, clerkUserId: string, at: Date): Promise<ComputeUsage> {
   const monthStart = monthStartUtc(at);
@@ -66,16 +79,14 @@ export async function readComputeUsage(executor: Executor, clerkUserId: string, 
     exportWakes: closed?.export_wakes ?? 0,
   };
   const open = await executor.selectFrom('user_machines')
-    .select(['metered_since', 'compute_mode', 'compute_unconfirmed_until'])
+    .select(['metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
     .where('clerk_user_id', '=', clerkUserId).where('substrate', '=', 'container')
     .where('deleted_at', 'is', null).where('metered_since', 'is not', null)
     .execute();
   for (const row of open) {
     if (!row.metered_since) continue;
     const since = Math.max(row.metered_since.getTime(), monthStart.getTime());
-    // A failed stop's unit counts until its lifetime has certainly ended it.
-    const end = row.compute_unconfirmed_until && row.compute_unconfirmed_until.getTime() < at.getTime()
-      ? row.compute_unconfirmed_until.getTime() : at.getTime();
+    const end = computeIntervalEnd(at, row).getTime();
     const elapsed = Math.max(0, end - since);
     if (row.compute_mode === 'export_only') usage.exportMs += elapsed;
     else usage.billedMs += elapsed;

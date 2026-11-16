@@ -1,7 +1,7 @@
 import type { PlatformDB } from '../db.js';
 import { COMPUTE_HOLDING_STATUSES, countRunningContainers, lockCapacity } from '../free-tier/capacity.js';
 import {
-  closeComputeInterval, decideComputeStart, readComputeUsage, recordExportWake,
+  closeComputeInterval, computeIntervalEnd, decideComputeStart, readComputeUsage, recordExportWake,
   type ComputeCapConfig, type ComputeMode,
 } from '../free-tier/compute-meter.js';
 
@@ -19,11 +19,6 @@ type Executor = PlatformDB['executor'];
 
 export type ClaimOutcome = boolean | 'busy' | { limitResetsAt: string };
 
-/** The end of an open interval: now, or earlier when its unit's lifetime had already ended it. */
-export function boundedEnd(at: Date, unconfirmedUntil: Date | null): Date {
-  return unconfirmedUntil && unconfirmedUntil.getTime() < at.getTime() ? unconfirmedUntil : at;
-}
-
 export function holdsCompute(status: unknown): boolean {
   return (COMPUTE_HOLDING_STATUSES as readonly unknown[]).includes(status);
 }
@@ -40,7 +35,7 @@ export function createComputeMetering(deps: {
   async function closing(machineId: string, write: (executor: Executor) => Promise<boolean>): Promise<boolean> {
     return db.transaction(async (trx) => {
       const locked = await trx.executor.selectFrom('user_machines')
-        .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until'])
+        .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container')
         .forUpdate().executeTakeFirst();
       if (!locked) return false;
@@ -50,7 +45,7 @@ export function createComputeMetering(deps: {
           clerkUserId: locked.clerk_user_id,
           mode: locked.compute_mode === 'export_only' ? 'export_only' : 'full',
           openedAt: locked.metered_since,
-          closedAt: boundedEnd(now(), locked.compute_unconfirmed_until),
+          closedAt: computeIntervalEnd(now(), locked),
         });
       }
       return written;
@@ -66,7 +61,7 @@ export function createComputeMetering(deps: {
     return db.transaction(async (trx): Promise<ClaimOutcome> => {
       if (deps.maxRunning !== undefined) await lockCapacity(trx.executor, 'running_runtimes');
       const row = await trx.executor.selectFrom('user_machines')
-        .select(['clerk_user_id', 'status', 'generation', 'metered_since', 'compute_mode', 'compute_unconfirmed_until'])
+        .select(['clerk_user_id', 'status', 'generation', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .forUpdate().executeTakeFirst();
       if (!row || row.status !== from || row.generation !== generation) return false;
@@ -97,7 +92,7 @@ export function createComputeMetering(deps: {
           clerkUserId: row.clerk_user_id,
           mode: row.compute_mode === 'export_only' ? 'export_only' : 'full',
           openedAt: row.metered_since,
-          closedAt: boundedEnd(at, row.compute_unconfirmed_until),
+          closedAt: computeIntervalEnd(at, row),
         });
       }
       if (updated && mode === 'export_only') await recordExportWake(trx.executor, row.clerk_user_id, at);
