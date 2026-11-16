@@ -84,6 +84,20 @@ describe("remembered routine target with current source authority", () => {
   it("requires an owner choice and never selects the first available Bot", async () => {
     await expect(service().resolve(source(), "read")).rejects.toMatchObject({ code: "target_required" });
   });
+  it.each(["target_required", "target_unavailable"] as const)("treats %s as an absent list supplement and logs only its safe code", async code => {
+    const svc = service();
+    if (code === "target_unavailable") {
+      await svc.remember(principal, target);
+      access = false;
+    }
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(db.transaction().execute(trx => svc.resolveListSupplementWithin(trx, source(), {
+        ...scope, botId: BOT, chatId: target.chatId, sourceChatId: "chat_source", bindingCreatedAt: NOW, purpose: "direct_chat",
+      }))).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledExactlyOnceWith("[routine-cli-targets] Remembered list supplement unavailable", code);
+    } finally { warn.mockRestore(); }
+  });
   it.each(["missing", "expired", "future", "revoked", "read", "control", "foreign owner", "foreign computer"])("rejects %s source authority despite a saved default", async problem => {
     const svc = service(); await svc.remember(principal, target);
     const src = source();

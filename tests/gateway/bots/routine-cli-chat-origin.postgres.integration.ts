@@ -462,6 +462,25 @@ it("delivers the ordered continuation group with credentials redacted across row
     expect(rows[0]?.search_text).not.toContain("syntheticFixtureToken");
   } finally { await service.close(); }
 });
+it("commits one receipt when the character limit lands between an emoji pair", async () => {
+  const { terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");
+  const fire = await terminalFixtureFire(f), service = originService(f);
+  const owner = { type: "personal" as const, ownerId: OWNER };
+  const chatId = fire.routine.chat_id, runId = fire.run.run.id, createdAt = f.state.clock;
+  const rootId = "msg_fire_output", continuationId = canonicalAssistantContinuationId(rootId, 1);
+  const text = "a".repeat(23_999);
+  try {
+    await f.chats.appendAssistantDelta(owner, { chatId, runId, messageId: rootId, createdAt, delta: text });
+    await f.chats.appendAssistantDelta(owner, { chatId, runId, messageId: continuationId, createdAt, delta: "🧪 after the limit" });
+    await f.chats.finishRun(owner, { chatId, runId, outcome: "completed", completedAt: createdAt });
+    await service.reconcile(OWNER, "chat_source");
+    await service.reconcile(OWNER, "chat_source");
+    const rows = await f.db.selectFrom("chat_messages").select("parts")
+      .where("role", "=", "system").where("chat_id", "=", "chat_source").execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.parts).toContainEqual({ type: "text", text });
+  } finally { await service.close(); }
+});
 it("bounds recovery reads when the shared production pool has no query or lock timeout", async () => {
   const {sql} = await import("kysely");
   const {machine} = await import("./routine-chat-origin-support.js");
