@@ -309,7 +309,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 
   const openSharedApp = useCallback((target: CollaborativeAppDirectoryItem) => {
     const path = sharedAppWindowPath(target);
-    openApp({ id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps" }, {
+    openApp({
+      id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps",
+      ...(target.iconUrl ? { iconUrl: target.iconUrl } : {}),
+    }, {
       sharedAppTarget: target,
     });
   }, [openApp]);
