@@ -182,6 +182,16 @@ describe("terminal agent verbs: send", () => {
     expect(writes).toEqual([]);
   });
 
+  // Fault detected: with no draft to wait for, a send skipped the second check and
+  // typed into a permission prompt that appeared during the tab lookup.
+  it("checks for a blocked agent again right before writing even when it did not hold", async () => {
+    let checks = 0;
+    const { verbs, writes } = harnessWithStatus(() => (checks++ === 0 ? "working" : "blocked"));
+    await expect(verbs.send(ref, { text: "yes" })).rejects.toMatchObject({ code: "blocked" });
+    expect(writes).toEqual([]);
+    expect(checks).toBe(2);
+  });
+
   // Fault detected: an agent's message is spliced into what the person is typing.
   it("holds while a person is typing and sends after a quiet pause", async () => {
     const { verbs, writes, inputActivity, sleeps } = harness();
