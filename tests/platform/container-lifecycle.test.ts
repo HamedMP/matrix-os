@@ -363,8 +363,24 @@ describe('container lifecycle service', () => {
   const unconfirmed = async () => (await db.executor.selectFrom('user_machines').select('compute_unconfirmed_until')
     .where('machine_id', '=', 'ctr-1').executeTakeFirstOrThrow()).compute_unconfirmed_until;
 
-  it('ends the unit of a start that never registered, so the failed start frees its slot', async () => {
-    const provider = fakeProvider();
+  /** A provider whose units stay described until a terminate takes effect, or only start terminating. */
+  function statefulProvider(options: { terminate?: 'gone' | 'terminating' | 'fails'; old?: ContainerUnit } = {}) {
+    const units = new Map<string, ContainerUnit>(options.old ? [[options.old.unitId, options.old]] : []);
+    return fakeProvider({
+      run: vi.fn(async () => { const created = unit({ createdAt: new Date(clock) }); units.set(created.unitId, created); return created; }),
+      describe: vi.fn(async (unitId: string) => units.get(unitId) ?? null),
+      terminate: vi.fn(async (unitId: string) => {
+        if (options.terminate === 'fails') throw new ContainerProviderError('unavailable');
+        const existing = units.get(unitId);
+        if (!existing) return;
+        if (options.terminate === 'terminating') units.set(unitId, { ...existing, state: 'terminating' });
+        else units.delete(unitId);
+      }),
+    });
+  }
+
+  it('ends the unit of a start that never registered, so the failed start frees its slot once that is confirmed', async () => {
+    const provider = statefulProvider();
     const s = service(provider);
     await s.ensureStarted('ctr-1');
     await s.drain();
@@ -375,8 +391,17 @@ describe('container lifecycle service', () => {
     expect(await countRunningContainers(db.executor, clock)).toBe(0);
   });
 
+  it('keeps the slot of a start that never registered while its unit is only terminating', async () => {
+    const s = service(statefulProvider({ terminate: 'terminating' }));
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    clock = new Date(clock.getTime() + 91_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    expect(await countRunningContainers(db.executor, clock)).toBe(1);
+  });
+
   it('keeps the slot of a start that never registered while its unit cannot be confirmed ended', async () => {
-    const provider = fakeProvider({ terminate: vi.fn(async () => { throw new ContainerProviderError('unavailable'); }) });
+    const provider = statefulProvider({ terminate: 'fails' });
     const s = service(provider);
     await s.ensureStarted('ctr-1');
     await s.drain();
@@ -384,6 +409,22 @@ describe('container lifecycle service', () => {
     expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
     expect(await row()).toMatchObject({ status: 'failed_start' });
     expect((await unconfirmed())?.getTime()).toBeGreaterThanOrEqual(T0.getTime() + 8 * 3_600_000);
+    expect(await countRunningContainers(db.executor, clock)).toBe(1);
+  });
+
+  it('never terminates the old unit a recovery start had kept when that start times out', async () => {
+    // The platform stopped after claiming a recovery start, before replacing or resuming the unit.
+    const old = unit({ unitId: 'mvm-old', state: 'running', createdAt: new Date(T0.getTime() - 3_600_000) });
+    const provider = statefulProvider({ old });
+    await updateUserMachine(db, 'ctr-1', { status: 'starting', substrateRef: 'mvm-old',
+      privateAddress: 'mvm-old.lambda-microvm.eu-west-1.on.aws' });
+    await db.executor.updateTable('user_machines').set({ started_at: T0 }).where('machine_id', '=', 'ctr-1').execute();
+    const s = service(provider);
+    clock = new Date(clock.getTime() + 91_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    expect(provider.terminate).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({ status: 'failed_start', substrateRef: 'mvm-old' });
+    // The kept unit may still run, so it keeps its slot.
     expect(await countRunningContainers(db.executor, clock)).toBe(1);
   });
 
