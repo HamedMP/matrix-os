@@ -10,7 +10,7 @@ import {
 } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 import { heldPaneExitsFromPanes } from "../../packages/terminal-runtime/src/terminal-command-state.js";
-import { startHeldPaneExitSweep } from "../../packages/terminal-runtime/src/held-pane-exit-sweep.js";
+import { startHeldPaneExitSweep, sweepHeldPaneExits } from "../../packages/terminal-runtime/src/held-pane-exit-sweep.js";
 
 const homes: string[] = [];
 afterEach(async () => {
@@ -147,6 +147,32 @@ describe("held-pane exits across workspaces", () => {
     const next = await runtime.ensureWorkspace({ projectId: "next" });
     await expect(runtime.createTab(next.id, { name: "shell", cwd: "" })).resolves.toMatchObject({ status: "running" });
     await runtime.shutdown();
+  });
+
+  // Fault detected (review of #3297): a native tab's pane runs the attach helper, not the
+  // program. The helper can exit while the program keeps running, and the sweep marked
+  // the tab exited with the helper's code, so `wait` reported work that was still going.
+  it("leaves native-host tabs to their host and never records the attach helper's exit", async () => {
+    const recorded: unknown[] = [];
+    const result = await sweepHeldPaneExits({
+      workspaceIds: ["w1"],
+      maxSessions: 4,
+      readWorkspace: async () => ({
+        zellijSessionName: "s1",
+        tabs: {
+          native: { status: "running", zellijTabName: "n", zellijTabId: 1, zellijPaneId: "terminal_1", nativeHost: { id: "h1" } },
+          plain: { status: "running", zellijTabName: "p", zellijTabId: 2, zellijPaneId: "terminal_2" },
+        },
+      }),
+      listHeldPaneExits: async () => [
+        { tabId: 1, paneId: "terminal_1", exitCode: 1 },
+        { tabId: 2, paneId: "terminal_2", exitCode: 0 },
+      ],
+      record: async (ref, _expected, exitCode) => { recorded.push({ tabId: ref.tabId, exitCode }); return true; },
+      logFailed: () => undefined,
+    });
+    expect(recorded).toEqual([{ tabId: "plain", exitCode: 0 }]);
+    expect(result).toEqual({ sessions: 1, exited: 1 });
   });
 });
 

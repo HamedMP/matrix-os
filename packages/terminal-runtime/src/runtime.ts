@@ -855,7 +855,7 @@ export class TerminalRuntime {
       listHeldPaneExits,
       record: (ref, expected, exitCode) => this.runWorkspaceMutation(async () => {
         const tab = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];
-        if (!tab || tab.status === "exited" || tab.status === "failed" || tab.zellijTabName !== expected.zellijTabName
+        if (!tab || tab.nativeHost || tab.status === "exited" || tab.status === "failed" || tab.zellijTabName !== expected.zellijTabName
           || tab.zellijPaneId !== expected.paneId) return false;
         const key = refKey(ref);
         if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);

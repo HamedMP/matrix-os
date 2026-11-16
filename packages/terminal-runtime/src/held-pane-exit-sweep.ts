@@ -11,6 +11,8 @@ interface SweepTab {
   zellijTabName: string;
   zellijTabId: number | null;
   zellijPaneId: string | null;
+  /** Set when the pane runs the native-host attach helper rather than the program. */
+  nativeHost?: unknown;
 }
 
 /**
@@ -32,8 +34,11 @@ export async function sweepHeldPaneExits(input: {
     if (result.sessions >= input.maxSessions) break;
     const workspace = await input.readWorkspace(workspaceId);
     if (!workspace) continue;
+    // A native tab's pane holds the attach helper, which can exit while the program
+    // keeps running; its host owns that tab's lifetime, so the sweep never ends it.
     const live = Object.entries(workspace.tabs).filter(([, tab]) =>
-      tab.status !== "exited" && tab.status !== "failed" && tab.zellijTabId !== null && tab.zellijPaneId !== null);
+      !tab.nativeHost && tab.status !== "exited" && tab.status !== "failed"
+      && tab.zellijTabId !== null && tab.zellijPaneId !== null);
     if (live.length === 0) continue;
     result.sessions += 1;
     try {
