@@ -316,9 +316,10 @@ approval for routine work; people approve the rest.
 | Any | below `5/5` | Not mergeable; fix or defer findings first |
 
 The signal agents check is the approval itself, not a parsed risk label: a
-current-head `5/5` with an `APPROVED` review from the Greptile app
-(`gh pr view <n> --json reviews,reviewDecision`) means Greptile judged the
-risk at or below the cap. A `5/5` without that approval means the PR is above
+trusted `5/5` (current head, or carried over by `review-carryover.mjs check`)
+plus an `APPROVED` review from the Greptile app on that same reviewed commit
+(`gh pr view <n> --json reviews`) means Greptile judged the risk at or below
+the cap. An approval on any other commit does not count. A `5/5` without that approval means the PR is above
 the cap and needs a person; report "needs human approval" and stop. Agents
 never approve their own PRs, never use admin bypass to skip this rule, and
 never treat a merge request as a human approval of a High/Critical PR.
@@ -326,9 +327,10 @@ never treat a merge request as a human approval of a High/Critical PR.
 Stacks merge atomically, so one High/Critical layer holds the whole stack
 until a person approves that layer.
 
-If a push dismisses Greptile's approval but `review-carryover.mjs check`
-accepts the earlier review, request one fresh `@greptileai please review` so
-Greptile can re-approve the new head.
+Approvals are not dismissed on push. Restacks, retargets, and base merges keep
+both the score and the approval through the carry-over check, so they need no
+fresh review. New PR work fails the check and needs a fresh review, which
+also re-decides the approval.
 
 ### Risk definitions
 
@@ -347,9 +349,9 @@ spans tiers, the highest tier wins.
 
 - Greptile Auto-approve: on; Cap risk level: `Medium`; Risk definitions: the
   table above.
-- GitHub ruleset `require approval`: 1 approving review; dismiss stale
-  approvals on push, so an approval of an early low-risk head does not survive
-  a later high-risk push.
+- GitHub ruleset `require approval`: 1 approving review; stale approvals are
+  kept. The risk definitions in Greptile cover follow-up pushes, and agents
+  only trust an approval tied to a carried-over or current-head review.
 - Admin bypass on that ruleset is break-glass only, never a routine merge
   path for agents running with an admin's credentials.
 
