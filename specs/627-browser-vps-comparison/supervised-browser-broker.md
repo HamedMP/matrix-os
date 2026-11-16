@@ -17,6 +17,12 @@ platform owner proof can resolve it. The owner database conditionally consumes
 that challenge, or the exact current Chat grant revision, before the broker
 checks control revision again and dispatches. Browser content is untrusted.
 Status queries expose control metadata and do not observe page content.
+A native Supervised lease without an approval authority can still discover the
+tool and read control status. Its page actions return
+`{ success: false, content: "Browser approvals are unavailable for this Chat." }`
+without automation metadata. The broker returns before it queues the action,
+claims Chrome, or changes control. The tests cover Codex and Claude leases and
+the existing agent-action route.
 
 Pause, takeover, Stop, signal cancellation, expiry and run shutdown fence waits.
 Resume takes a fresh snapshot rather than replaying a pending mutation. A failed

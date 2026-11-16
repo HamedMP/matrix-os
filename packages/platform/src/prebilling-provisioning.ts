@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod/v4';
 import type { PrebillingCheckoutCoordinator } from './billing-routes.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import { HetznerLocationSchema } from './customer-vps-schema.js';
 import type { PlatformDB } from './db.js';
 import type { PrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
 import { prebillingRolloutIncludesUser } from './prebilling-provisioning-config.js';
@@ -61,7 +61,7 @@ export function createPrebillingProvisioningCoordinator(options: {
         handle: identity.handle,
         runtimeSlot: 'primary',
         serverType: current.serverType,
-        location: z.enum(['fsn1', 'nbg1', 'ash', 'hil']).parse(
+        location: HetznerLocationSchema.parse(
           current.regionSlug.replace(/^region_/, ''),
         ),
         developerTools: current.developerTools,

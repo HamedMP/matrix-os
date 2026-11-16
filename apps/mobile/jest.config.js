@@ -13,15 +13,20 @@ module.exports = {
   modulePaths: [path.resolve(__dirname, "../../node_modules")],
   // micromark and its helpers (character-entities,
   // decode-named-character-reference, devlop) are ESM-only and reach every suite
-  // through the @matrix-os/contracts index, so they must be transformed too.
+  // through the @matrix-os/contracts index, so they must be transformed too, as
+  // must react-native-keyboard-controller's ESM jest mock.
   transformIgnorePatterns: [
-    "node_modules/.pnpm/(?!(react-native|react-native-gesture-handler|standard-navigation|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
+    "node_modules/.pnpm/(?!(react-native|react-native-gesture-handler|react-native-keyboard-controller|standard-navigation|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
     "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|standard-navigation|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
   ],
   setupFiles: ["./jest.setup.js"],
   setupFilesAfterEnv: ["./jest.after-env.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
+    "^\\./client\\.js$": "<rootDir>/../../packages/ui/src/routine-action/client.ts",
+    "^\\./use-routine-action\\.js$": "<rootDir>/../../packages/ui/src/routine-action/use-routine-action.ts",
+    "^\\./use-routine-destination\\.js$": "<rootDir>/../../packages/ui/src/routine-destination/use-routine-destination.ts",
+    "^\\.\\./chat-agents/safe-http-status\\.js$": "<rootDir>/../../packages/ui/src/chat-agents/safe-http-status.ts",
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
     // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.

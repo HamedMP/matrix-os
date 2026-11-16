@@ -165,7 +165,7 @@ describe("project collaboration resource authorization", () => {
     return authority.authorize({ scopeId: SCOPE_ID, actorId, action: "read" });
   }
 
-  it("allows viewers to read only bound files, Git state, app data, layout, and agent status", async () => {
+  it("allows an active organization member to read bound files, Git state, app data, layout, and agent status", async () => {
     const resources = adapters();
     const viewer = await context(VIEWER_ID);
     await expect(resources.readFile(viewer, { path: "README.md" })).resolves.toMatchObject({ content: "shared" });
@@ -179,7 +179,7 @@ describe("project collaboration resource authorization", () => {
       .resolves.toMatchObject({ viewState: null });
   });
 
-  it("denies every indirect shared mutation to viewers before a driver or fence runs", async () => {
+  it("allows every bounded project mutation to an active organization member through the fence", async () => {
     const resources = adapters();
     const viewer = await context(VIEWER_ID);
     const attempts = [
@@ -191,11 +191,10 @@ describe("project collaboration resource authorization", () => {
       () => resources.patchLayout(viewer, { canvasId: "cnv_project_alpha_12345678", nodeId: "node_app", clientRequestId: "50000000-0000-4000-8000-000000000116" }),
       () => resources.createExport(viewer, { clientRequestId: "50000000-0000-4000-8000-000000000117" }),
     ];
-    for (const attempt of attempts) {
-      await expect(attempt()).rejects.toMatchObject({ code: "forbidden" });
-    }
-    expect(calls.filter((call) => ["file.write", "file.delete", "git.mutate", "agent.start", "export.create"].includes(call.driver))).toEqual([]);
-    expect(projectFence.withAdmission).not.toHaveBeenCalled();
+    for (const attempt of attempts) await expect(attempt()).resolves.toBeTruthy();
+    expect(calls.filter((call) => ["file.write", "file.delete", "git.mutate", "agent.start", "export.create"].includes(call.driver)))
+      .toHaveLength(5);
+    expect(projectFence.withAdmission).toHaveBeenCalledTimes(6);
   });
 
   it("routes editor writes and runs through the scoped authority fence", async () => {
@@ -231,11 +230,11 @@ describe("project collaboration resource authorization", () => {
       .rejects.toBeInstanceOf(ProjectResourceAdapterError);
   });
 
-  it("keeps exports owner-only and strips owner credentials from driver contexts", async () => {
+  it("allows bounded exports to organization members and strips owner credentials from driver contexts", async () => {
     const resources = adapters();
     await expect(resources.createExport(await context(EDITOR_ID), {
       clientRequestId: "50000000-0000-4000-8000-000000000131",
-    })).rejects.toMatchObject({ code: "forbidden" });
+    })).resolves.toEqual({ exportId: "export_1" });
     await expect(resources.createExport(await context(OWNER_ID), {
       clientRequestId: "50000000-0000-4000-8000-000000000132",
     })).resolves.toEqual({ exportId: "export_1" });

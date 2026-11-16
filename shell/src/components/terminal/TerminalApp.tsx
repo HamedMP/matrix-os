@@ -1,4 +1,5 @@
 "use client";
+import { terminalTabLaunchFields } from "@matrix-os/ui/terminal-launch";
 
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
 import { getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
@@ -615,7 +616,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
           tabId: options.tabId,
           name,
           cwd: requestedCwd,
-          ...(options.cmd ? { command: ["sh", "-lc", options.cmd] } : {}),
+          ...terminalTabLaunchFields(options),
         }),
         signal: AbortSignal.timeout(10_000),
       });

@@ -48,3 +48,28 @@ it('rechecks owner authentication and target state after the paint delay',async(
   const pending=action.call(document,'obs','r1','click',null);input.type='password';
   await vi.advanceTimersByTimeAsync(120);expect(await pending).toMatchObject({ok:false});expect(clicked).not.toHaveBeenCalled();
 });
+
+it('rechecks modal scope before delivering a pending background click', async () => {
+  const clicked = vi.fn();
+  document.querySelector('button')!.addEventListener('click', clicked);
+  const pending = action.call(document, 'obs', 'r1', 'click', null);
+  document.body.insertAdjacentHTML('beforeend', '<section role="dialog" aria-modal="true"><button>Reject all</button></section>');
+  await vi.advanceTimersByTimeAsync(120);
+  expect(await pending).toEqual({ ok: false, reason: 'stale' });
+  expect(clicked).not.toHaveBeenCalled();
+});
+
+it('can deliver a grounded modal click without an HTML string assignment', async () => {
+  document.body.innerHTML = '<section role="dialog" aria-modal="true"><button>Reject all</button></section>';
+  const clicked = vi.fn();
+  document.querySelector('button')!.addEventListener('click', clicked);
+  const trustedTypes = vi.spyOn(ShadowRoot.prototype, 'innerHTML', 'set').mockImplementation(() => {
+    throw new TypeError('TrustedHTML is required');
+  });
+  snapshot.call(document, 'modal');
+  const result = Promise.resolve(action.call(document, 'modal', 'r1', 'click', null)).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(120);
+  expect(await result).toEqual({ ok: true });
+  expect(trustedTypes).not.toHaveBeenCalled();
+  expect(clicked).toHaveBeenCalledOnce();
+});

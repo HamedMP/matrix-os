@@ -82,6 +82,10 @@ export function safeBuildEnv(opts: SafeBuildEnvOptions = {}): Record<string, str
     env[k] = v;
   }
   env.NODE_ENV = "production";
+  // pnpm otherwise downloads the version requested by an app's packageManager
+  // field during readiness. Host builds use the version staged in the bundle.
+  env.npm_config_manage_package_manager_versions = "false";
+  env.NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS = "false";
   if (opts.storeDir) {
     env.npm_config_store_dir = opts.storeDir;
   }

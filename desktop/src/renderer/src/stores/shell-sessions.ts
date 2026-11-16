@@ -1,3 +1,4 @@
+import { terminalTabLaunchFields, isTerminalAgentId } from "@matrix-os/ui/terminal-launch";
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
@@ -25,7 +26,7 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: ShellVisualStatus;
-  agent?: "claude" | "codex" | "opencode" | "pi";
+  agent?: "claude" | "codex" | "hermes" | "opencode" | "pi";
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;
@@ -42,6 +43,7 @@ export interface ShellSessionSummary {
 export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "pinned">>;
 export interface ShellSessionCreateOptions {
   cmd?: string;
+  managedAgent?: import("@matrix-os/ui/terminal-launch").TerminalAgentId;
   agent?: NonNullable<ShellSessionSummary["agent"]>;
 }
 
@@ -150,7 +152,7 @@ function asShellSession(value: unknown, workspace: { id: string; revision: numbe
     shell.visualStatus = record.visualStatus;
   }
   shell.attachCommand = shellConnectCommand(shell);
-  if (agent?.providerId === "claude" || agent?.providerId === "codex" || agent?.providerId === "opencode" || agent?.providerId === "pi") {
+  if (isTerminalAgentId(agent?.providerId)) {
     shell.agent = agent.providerId;
   }
   if (typeof record.subtitle === "string") shell.subtitle = record.subtitle;
@@ -331,8 +333,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       const response = await api.post<{ tab?: unknown }>(`/api/terminal/workspaces/${workspaceId}/tabs`, {
         name: displayName,
         cwd: DEFAULT_CWD,
-        ...(options.cmd ? { command: ["sh", "-lc", options.cmd] } : {}),
-        ...(options.agent ? { agent: { providerId: options.agent } } : {}),
+        ...terminalTabLaunchFields(options),
       });
       if (!isCurrentRuntimeGeneration(generation)) return null;
       const created = asShellSession(response.tab, {

@@ -3,8 +3,17 @@
 The dedicated Linux host runs ephemeral GitHub Actions runners for `ci.yml`
 ([spec 633](../../../specs/633-ci-runner-pool/spec.md)). Each slot starts a
 fresh container for one job, then removes it. CI routes to the pool only while
-the host publishes a fresh `MATRIX_CI_POOL_HEARTBEAT`; otherwise jobs run on
-GitHub-hosted runners.
+the host publishes a fresh `MATRIX_CI_POOL_HEARTBEAT` with four idle slots;
+otherwise jobs run on GitHub-hosted runners. Four unit shards, Pattern Scan
+and both E2E lanes share the admission decision. Seven jobs can queue within
+the four slots; GitHub starts each as a slot becomes free.
+
+The image preinstalls ripgrep, Chromium/Electron system libraries, fonts and
+Xvfb. Pool jobs verify ripgrep and install each workspace's locked Chromium
+revision without `--with-deps`, avoiding apt mirrors during a job. Hosted
+fallback keeps normal dependency installation, with E2E pinned to Ubuntu 24.04.
+A missing system library must fail the real E2E lane; it is not a reason to
+skip tests. Rebuild and qualify the image when Playwright requirements change.
 
 ## One-time setup
 

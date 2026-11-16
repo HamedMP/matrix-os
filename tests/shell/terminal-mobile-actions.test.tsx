@@ -6,6 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode } from "../../shell/src/stores/terminal-store.js";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "../../shell/src/components/terminal/terminal-input-event.js";
 
+vi.mock("@clerk/nextjs", () => {
+  // Standalone UI fixture: no credentials or routine approval authority.
+  const getToken = async () => null;
+  return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) };
+});
+
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: ({ paneTree }: { paneTree: PaneNode }) => {
     const paneId = paneTree.type === "pane" ? paneTree.id : "pane-1";
@@ -112,7 +118,7 @@ describe("TerminalApp mobile actions", () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            agents: (["claude", "codex", "opencode", "pi"] as const).map((id) => ({
+            agents: (["claude", "codex", "hermes", "opencode", "pi"] as const).map((id) => ({
               id,
               installState: "unknown",
               installed: null,
@@ -238,7 +244,10 @@ describe("TerminalApp mobile actions", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New session" }));
 
     const menu = await screen.findByRole("menu", { name: "New session menu" });
-    expect(within(menu).getAllByText("Checking…")).toHaveLength(4);
+    expect(within(menu).getAllByText("Checking…")).toHaveLength(5);
+    for (const label of ["Claude Code", "Codex", "Hermes", "OpenCode", "Pi"]) {
+      expect(within(menu).getByRole("menuitem", { name: new RegExp(`${label}.*Checking`) })).toBeTruthy();
+    }
     expect(within(menu).queryByText("Install")).toBeNull();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Claude Code.*Checking/ }));
 
@@ -246,9 +255,11 @@ describe("TerminalApp mobile actions", () => {
       const payloads = fetchMock.mock.calls
         .filter(([input, init]) => String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`) && init?.method === "POST")
         .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { command?: string[] });
-      expect(payloads).toEqual(expect.arrayContaining([
-        expect.objectContaining({ command: ["sh", "-lc", "claude"] }),
-      ]));
+      expect(payloads).toEqual([{
+        name: "Claude Code",
+        cwd: "projects",
+        managedLaunch: { harness: "claude" },
+      }]);
       expect(payloads.some((payload) => payload.command?.some((part) => part.includes("npm install")))).toBe(false);
     });
   });
@@ -263,6 +274,7 @@ describe("TerminalApp mobile actions", () => {
             agents: [
               { id: "claude", installState: "missing", installed: false },
               { id: "codex", installState: "unknown", installed: null },
+              { id: "hermes", installState: "missing", installed: false },
               { id: "opencode", installState: "installed", installed: true },
               { id: "pi", installState: "unknown", installed: null },
             ],
@@ -282,6 +294,9 @@ describe("TerminalApp mobile actions", () => {
       expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/ })).toBeTruthy();
     });
     expect(within(menu).getAllByText("Install")).toHaveLength(1);
+    const hermes = within(menu).getByRole("menuitem", { name: /Hermes.*Not installed/ });
+    expect(hermes.hasAttribute("disabled")).toBe(true);
+    expect(within(menu).queryByRole("menuitem", { name: /Hermes.*Install/ })).toBeNull();
     expect(within(menu).getByRole("menuitem", { name: /^OpenCode$/ })).toBeTruthy();
     expect(within(menu).queryByRole("menuitem", { name: /Codex.*Install/ })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: /Pi.*Install/ })).toBeNull();

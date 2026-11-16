@@ -1,4 +1,6 @@
 .signin {
+  /* Anchors the titlebar strip so dev/preview status banners above it stay visible. */
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   height: 100%;
@@ -9,7 +11,7 @@
   gap: 16px;
   overflow-y: auto;
 }
-.signin-titlebar { position: fixed; inset: 0 0 auto; height: var(--titlebar-height); background: var(--signin-paper); z-index: 10; }
+.signin-titlebar { position: absolute; inset: 0 0 auto; height: var(--titlebar-height); background: var(--signin-paper); z-index: 10; }
 .signin-scene {
   position: relative;
   min-height: 600px;

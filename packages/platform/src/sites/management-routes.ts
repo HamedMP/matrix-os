@@ -14,14 +14,15 @@ export function createSiteManagementRoutes(options: {
 }): Hono {
     const app = new Hono();
     app.use('*', bodyLimit({ maxSize: 15 * 1024 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) }));
-    async function owner(c: Context, allowAccessLinkPaging = false) {
+    async function owner(c: Context, extraQuery: 'paging' | 'slug' | null = null) {
         if (options.platformSecret.length < 32)
             return null;
         const handle = SafeHandleSchema.safeParse(c.req.param('handle'));
         const appSlug = SiteAppSlugSchema.safeParse(c.req.param('appSlug'));
         const query = z.object({
             runtimeSlot: RuntimeSlotSchema.default('primary'),
-            ...(allowAccessLinkPaging ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(extraQuery === 'paging' ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(extraQuery === 'slug' ? { slug: z.string().max(63).optional() } : {}),
         }).strict().safeParse(c.req.query());
         if (!handle.success || !appSlug.success || !query.success)
             throw new SiteError('invalid_request');
@@ -92,12 +93,16 @@ export function createSiteManagementRoutes(options: {
         return null; throw error; })); if (!input.success)
         throw new SiteError('invalid_request'); return siteResponse(c, await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
     app.get('/:appSlug/access-links', async c => {
-        const identity = await owner(c, true); if (!identity) return denied(c);
+        const identity = await owner(c, 'paging'); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({
             limit: c.req.query('limit'), cursor: c.req.query('cursor'),
         });
         if (!query.success) throw new SiteError('invalid_request');
         return accessLinksResponse(c, await options.service.listAccessLinks(identity, query.data));
+    });
+    app.get('/:appSlug/slug-availability', async c => {
+        const identity = await owner(c, 'slug'); if (!identity) return denied(c);
+        return c.json(await options.service.slugAvailability(identity, { slug: c.req.query('slug') }));
     });
     app.post('/:appSlug/access-links', smallBody, async c => {
         const identity = await owner(c); if (!identity) return denied(c);

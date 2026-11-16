@@ -15,10 +15,12 @@ interface SentMessage {
 }
 
 const mockMutate = jest.fn();
+const mockReset = jest.fn();
 let mockPending = false;
+let mockIsError = false;
 
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
-  useSendChatMessage: () => ({ mutate: mockMutate, isPending: mockPending }),
+  useSendChatMessage: () => ({ mutate: mockMutate, isPending: mockPending, isError: mockIsError, reset: mockReset }),
 }));
 
 const selection = { instanceId: "matrix-ai", model: "sonnet-5" };
@@ -44,6 +46,7 @@ describe("useProjectComposer", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPending = false;
+    mockIsError = false;
   });
 
   it("starts with an empty box that cannot be sent", () => {
@@ -227,6 +230,18 @@ describe("useProjectComposer", () => {
 
       act(() => result.current.removeAttachment(idOf("a")));
       expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["b.jpg"]);
+    });
+
+    it.each(["add", "remove"])("clears the old send error on attachment %s", (action) => {
+      const { result, rerender, initialProps } = renderComposer();
+      act(() => result.current.addAttachments([photo("a")]));
+      mockIsError = true;
+      rerender(initialProps);
+      act(() => {
+        if (action === "add") result.current.addAttachments([photo("b")]);
+        else result.current.removeAttachment(idOf("a"));
+      });
+      expect(mockReset).toHaveBeenCalledTimes(1);
     });
 
     it("stay in the box until the chat is started, then only what was sent is cleared", () => {

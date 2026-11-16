@@ -1,4 +1,6 @@
 "use client";
+import { SharedAppBadge } from "@matrix-os/ui/collaborative-app-sharing";
+import { NewAppDot, sharedTileLabel } from "@matrix-os/ui/share";
 import { PinIcon, PlusIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
@@ -11,6 +13,11 @@ import {
 
 interface AppTileProps {
   name: string;
+  shared?: boolean;
+  /** Sharing organization for an org-shared app (badge = its initial and colour). */
+  sharedOrganization?: { organizationId: string; name: string } | null;
+  /** Newly shared and not opened yet. */
+  isNew?: boolean;
   isOpen: boolean;
   onClick: () => void;
   pinned?: boolean;
@@ -23,19 +30,20 @@ interface AppTileProps {
   onAddToDesktop?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
+export function AppTile({ name, shared, sharedOrganization, isNew = false, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
   const tile = (
     <button
       type="button"
-      aria-label={name}
+      aria-label={sharedTileLabel(name, sharedOrganization, isNew)}
       onClick={onClick}
       data-app-tile
       className="relative flex flex-col items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/50 transition-colors group"
     >
       <div className="relative">
+        {shared ? <SharedAppBadge appName={name} organization={sharedOrganization} /> : null}
         <div
           data-app-icon
           className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all overflow-hidden ${
@@ -81,7 +89,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         )}
       </div>
       <span className="text-xs text-white truncate max-w-[100px]">
-        {name}
+        {isNew ? <NewAppDot /> : null}{name}
       </span>
       {isOpen && (
         <span className="size-1.5 rounded-full bg-primary" />

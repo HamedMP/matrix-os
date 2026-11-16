@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { SurfaceChromeContext, type SurfaceChromeSpec } from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceChrome";
 
-const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), deploy: vi.fn(), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
 const SHARED_TARGET = {
   scopeId: "10000000-0000-4000-8000-000000000001",
   runtimeId: "runtime_owner",
@@ -23,17 +24,33 @@ const SHARED_TARGET = {
   owner: { actorId: "user_owner", displayName: "Nima" },
 };
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
+const orgListing = vi.hoisted(() => ({ value: { state: "loaded", complete: true, organizations: [{ organizationId: "org_matrix", name: "Matrix Team", slug: "matrix", role: "org:member", memberCount: 4, aiSubmission: "members", membershipEpoch: 1 }] } as unknown }));
+vi.mock("../../desktop/src/renderer/src/features/collaboration/useDesktopOrganizations", () => ({ useDesktopOrganizations: () => orgListing.value }));
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => undefined),
 }));
 
+function openOrganizationTab() {
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /Organization/ }), { button: 0 });
+}
+function EmbedHostWithChrome(props: React.ComponentProps<typeof EmbedHost>) {
+  const [chrome, setChrome] = useState<SurfaceChromeSpec | null>(null);
+  const host = useMemo(() => ({ setChrome }), []);
+  return <SurfaceChromeContext.Provider value={host}>
+    <div data-testid="embed-toolbar">{chrome?.rightActions}</div>
+    <EmbedHost {...props} />
+  </SurfaceChromeContext.Provider>;
+}
+
 describe("EmbedHost", () => {
   let openResolve: ((value: { embedId: string; state: "loading" | "auth-required" }) => void) | null = null;
   let rect = { left: 10, top: 20, width: 300, height: 200 };
 
   beforeEach(() => {
+    publishing.client.getConfig.mockClear();
+    publishing.client.deploy.mockClear();
     vi.mocked(invoke).mockClear();
     vi.mocked(onEvent).mockReset();
     vi.mocked(onEvent).mockReturnValue(() => undefined);
@@ -79,23 +96,135 @@ describe("EmbedHost", () => {
     vi.unstubAllGlobals();
   });
 
+  it("checks, shares, and stops organization access inside the single Share popover", async () => {
+    const build = {
+      appId: "notes", catalogId: "30000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), manifestVersion: "1.0.0", buildId: "b".repeat(64),
+      manifestDigest: "c".repeat(64), schemaDigest: "d".repeat(64), assetDigest: "e".repeat(64),
+      bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
+    };
+    const readiness = {
+      readinessId: "40000000-0000-4000-8000-000000000001", build, status: "ready", revision: "2",
+      checks: [{ code: "cleanup", status: "passed" }], verifiedAt: "2026-11-11T18:00:00.000Z",
+    };
+    const activeShare = {
+      scopeId: "10000000-0000-4000-8000-000000000001", organizationId: "org_matrix",
+      owner: { actorId: "user_owner", displayName: "Owner" }, build, readinessId: readiness.readinessId,
+      state: "active", shareRevision: "3", bindingRevision: "4", dataRevision: "5",
+      createdAt: "2026-11-11T18:00:00.000Z", updatedAt: "2026-11-11T18:00:00.000Z",
+    };
+    let share: typeof activeShare | null = null;
+    let readinessReady = false;
+    const gateway = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness")
+        ? readinessReady ? readiness : null
+        : path.endsWith("/registration") ? { registrationIncarnation: build.registrationIncarnation }
+        : path.startsWith("/api/files/") ? Promise.reject(Object.assign(new Error("missing"), { category: "notFound" })) : share),
+      post: vi.fn(async (path: string) => {
+        if (path.endsWith("/readiness/check")) { readinessReady = true; return readiness; }
+        if (path.endsWith("/share/preflight")) return {
+          eligible: true, catalogId: build.catalogId, resourceRevision: "1", readinessId: readiness.readinessId,
+          buildId: build.buildId, confirmationToken: "a".repeat(32),
+        };
+        share = activeShare;
+        return share;
+      }),
+      put: vi.fn(),
+      delete: vi.fn(async () => { share = { ...activeShare, state: "stopped" }; return share; }),
+    };
+    useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member", platformHost: "https://app.matrix-os.com",
+      api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+
+    expect(screen.getAllByRole("button", { name: "Share" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
+    openOrganizationTab();
+    expect(screen.getByLabelText("Share in Matrix Team")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Share with Matrix Team" }));
+    await waitFor(() => expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ organizationId: "org_matrix" })));
+    expect(await screen.findByText("Matrix Team link")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Shared" })).toBeTruthy();
+    expect(publishing.client.getConfig).not.toHaveBeenCalled();
+    expect(publishing.client.deploy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing with Matrix Team" }));
+    await waitFor(() => expect(gateway.delete).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ expectedBindingRevision: "4" })));
+  });
+
+  it("hides the Organization tab when the owner is in no organization", async () => {
+    orgListing.value = { state: "loaded", complete: true, organizations: [] };
+    try {
+      useConnection.setState({ organizationStatus: "none", api: { forRuntime: () => ({ get: vi.fn(async () => null), post: vi.fn() }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+      render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+      fireEvent.click(screen.getByRole("button", { name: "Share" }));
+      await screen.findByRole("dialog", { name: "Share app" });
+      expect(screen.queryByRole("tab", { name: /Organization/ })).toBeNull();
+    } finally {
+      orgListing.value = { state: "loaded", complete: true, organizations: [{ organizationId: "org_matrix", name: "Matrix Team", slug: "matrix", role: "org:member", memberCount: 4, aiSubmission: "members", membershipEpoch: 1 }] };
+    }
+  });
+
+  it("shows a safe error when the readiness check fails and never shares", async () => {
+    const gateway = {
+      get: vi.fn(async (path: string) => path.endsWith("/registration") ? { registrationIncarnation: "a".repeat(64) } : null),
+      post: vi.fn(async () => { throw new Error("postgres password=private"); }),
+      put: vi.fn(),
+      delete: vi.fn(),
+    };
+    useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
+      api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await screen.findByRole("dialog", { name: "Share app" });
+    openOrganizationTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Share with Matrix Team" }));
+    expect(await screen.findByText("Couldn’t check this app right now. Try again.")).toBeTruthy();
+    expect(screen.queryByText(/postgres password/)).toBeNull();
+    expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/readiness/check", expect.objectContaining({ organizationId: "org_matrix" }));
+    expect(gateway.post).not.toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.anything());
+  });
+
+  it("shows a safe message when the current share cannot be read", async () => {
+    const gateway = {
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/share")) throw new Error("database password=private");
+        return null;
+      }),
+      post: vi.fn(),
+      put: vi.fn(),
+      delete: vi.fn(),
+    };
+    useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
+      api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await screen.findByRole("dialog", { name: "Share app" });
+    openOrganizationTab();
+    expect(await screen.findByText("App sharing is unavailable. Try again.")).toBeTruthy();
+    expect(screen.queryByText(/database password/)).toBeNull();
+  });
+
   it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
-    useConnection.setState({ api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    useConnection.setState({ api: { forRuntime: () => ({ get: vi.fn(async () => null) }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
-    const view = render(<EmbedHost kind="app" slug="notes" active />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    const view = render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
+    expect(screen.getByTestId("embed-toolbar").contains(screen.getByRole("button", { name: "Share" }))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     // Overlay-adjusted native activity is false, but the owning surface is still visible.
-    expect(screen.getByRole("dialog", { name: "Publish app" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Share app" })).toBeTruthy();
 
-    view.rerender(<EmbedHost kind="app" slug="notes" active={false} />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active={false} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    view.rerender(<EmbedHost kind="app" slug="notes" active />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active />);
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await screen.findByRole("dialog", { name: "Share app" });
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     view.unmount();
     expect(useUi.getState().rendererOverlayCount).toBe(1);

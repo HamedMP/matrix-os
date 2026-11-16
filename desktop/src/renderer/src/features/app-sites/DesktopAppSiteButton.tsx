@@ -1,14 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
-import { AppSitePanel } from "../../../../../../shell/src/components/app-sites/AppSitePanel";
+import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
+import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
+import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
+import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
-import { Button, Dialog } from "../../design/primitives";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
+import { useDesktopShareOrganization } from "./use-desktop-share-organization";
 
-export function DesktopAppSiteButton({ appSlug }: { appSlug: string }) {
+// TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
+const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(import.meta.env.VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
+
+export function DesktopAppSiteButton({
+  appSlug,
+  appName,
+  portalContainer,
+  buildEpoch = 0,
+}: {
+  appSlug: string;
+  appName?: string;
+  portalContainer?: HTMLElement | null;
+  buildEpoch?: number;
+}) {
   const api = useConnection(state => state.api);
   const runtimeSlot = useConnection(state => state.runtimeSlot);
   const authGeneration = useConnection(state => state.authGeneration);
+  const email = useConnection(state => state.email);
+  const userId = useConnection(state => state.userId);
   const [open, setOpen] = useState(false);
   const acquire = useUi(state => state.acquireRendererOverlay);
   const release = useUi(state => state.releaseRendererOverlay);
@@ -17,5 +37,41 @@ export function DesktopAppSiteButton({ appSlug }: { appSlug: string }) {
     if (!api) return null;
     return createDesktopSiteClient(api, runtimeSlot);
   }, [api, runtimeSlot, authGeneration]);
-  return <Dialog modal={false} onOpenChange={setOpen} trigger={<Button variant="subtle" disabled={!client}>Publish app</Button>} open={open} onClose={() => setOpen(false)} title="Publish app" width={640} placement="center"><div className="max-h-[80vh] space-y-4 overflow-y-auto p-6"><div className="flex items-center justify-between"><h2 className="font-semibold">Publish app</h2><Button variant="ghost" onClick={() => setOpen(false)}>Close</Button></div>{open && client ? <AppSitePanel key={`${runtimeSlot}:${authGeneration}:${appSlug}`} appSlug={appSlug} client={client} /> : null}</div></Dialog>;
+  const collaborationApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null,
+    [api, runtimeSlot, authGeneration]);
+  const name = appDisplayName(appSlug, appName);
+  const share = useShareController({ appSlug, appName: name, client, emailInvites });
+  const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch });
+  return (
+    <AppSiteSharePopover
+      onOpenChange={(next) => { if (next) share.refresh(); setOpen(next); }}
+      portalContainer={portalContainer}
+      trigger={(
+        <Button
+          variant="subtle"
+          disabled={!client}
+          style={{ height: 28, padding: "0 10px", gap: 6, fontSize: 12, background: "var(--bg-app)", color: "var(--text-primary)", border: "1px solid var(--border-default)", boxShadow: "var(--shadow-1)" }}
+        >
+          <ShareTriggerLabel pageMode={share.pageMode} orgShared={organization.shared} />
+        </Button>
+      )}
+      open={open}
+      zIndex={DESKTOP_Z_INDEX.popover}
+    >
+      {open && client ? (
+        <SharePanel
+          key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
+          share={share}
+          appSlug={appSlug}
+          appName={name}
+          client={client}
+          ownerInitial={ownerInitial(email ?? userId)}
+          onClose={() => setOpen(false)}
+          organization={organization.slot}
+          submissions={client && share.site
+            ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
+        />
+      ) : null}
+    </AppSiteSharePopover>
+  );
 }

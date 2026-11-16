@@ -28,7 +28,7 @@ export function createCompanyBotSetup(options:{homePath:string;ownerId:string;re
   const lifetime=new AbortController();
   const db=options.repository.kysely as unknown as Kysely<OwnerCollaborationDatabase>;
   const runtime=createCompanyBotRuntime({ownerId:options.ownerId,modelId:options.modelId,authority:collaboration.authority,
-    policies:collaboration.executionPolicies,ownerSource:collaboration.ownerSource,
+    ownerSource:collaboration.ownerSource,
     resolveModel:createSharedBotModelRouteResolver({providers:options.providers,lifetime:lifetime.signal,
       resolveCodexIdentity:createCodexOwnerIdentityResolver({homePath:options.homePath})}),
     getAdapter:()=>options.getBots()?.adapter,

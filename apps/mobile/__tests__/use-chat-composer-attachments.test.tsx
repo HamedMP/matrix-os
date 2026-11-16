@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { CanonicalChatDetailResponse, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, configure, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { MAX_MESSAGE_ATTACHMENTS, type ComposerAttachment } from "../lib/chat-attachments";
@@ -14,6 +14,7 @@ import { catalogOf, engineInstance } from "./model-test-catalog";
 const mockFetchActiveComputer = jest.fn();
 const mockCreateChat = jest.fn();
 const mockAdmitChatTurn = jest.fn();
+const mockFetchChatDetail = jest.fn();
 const mockUploadChatAttachment = jest.fn();
 const mockRemoveChatAttachment = jest.fn();
 const mockBindDraftChatId = jest.fn();
@@ -38,6 +39,7 @@ jest.mock("@/lib/requests", () => ({
   fetchActiveComputer: (...args: unknown[]) => mockFetchActiveComputer(...args),
   createChat: (...args: unknown[]) => mockCreateChat(...args),
   admitChatTurn: (...args: unknown[]) => mockAdmitChatTurn(...args),
+  fetchChatDetail: (...args: unknown[]) => mockFetchChatDetail(...args),
   uploadChatAttachment: (...args: unknown[]) => mockUploadChatAttachment(...args),
   removeChatAttachment: (...args: unknown[]) => mockRemoveChatAttachment(...args),
   canonicalChatTitle: (text: string) => text,
@@ -137,12 +139,15 @@ describe("chat composer attachments", () => {
   const FIRST_SEND = "optimistic-req_2";
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    configure({ asyncUtilTimeout: 8_000 });
     mockRequestIdCount = 0;
     queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false, gcTime: Infinity } } });
     warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     mockGetToken.mockResolvedValue("clerk-token");
     mockFetchActiveComputer.mockResolvedValue({ handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" });
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
+    mockFetchChatDetail.mockResolvedValue(detailFor("chat_new"));
     mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_new", "msg_new"));
     mockUploadChatAttachment.mockImplementation(async (_token: string, _gateway: string, attachment: ComposerAttachment) => (
       { path: `temporary/desktop-chat/${attachment.id}-${attachment.name}`, created: true }
@@ -155,6 +160,8 @@ describe("chat composer attachments", () => {
     await disposeTestQueryClient(queryClient);
     warn.mockRestore();
     jest.clearAllMocks();
+    jest.useRealTimers();
+    configure({ asyncUtilTimeout: 1_000 });
   });
 
   it("holds what is added, each once, and lets go of what is removed", () => {

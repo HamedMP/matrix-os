@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapChatDatabase } from '../../packages/gateway/src/chat/database.js';
 import { bootstrapCollaborationDatabase } from '../../packages/gateway/src/collaboration/database.js';
 import { CollaborationRepository } from '../../packages/gateway/src/collaboration/repository.js';
+import { BOT_MIGRATIONS } from '../../packages/gateway/src/bots/database-migrations.js';
 import { bootstrapBotDatabase } from '../../packages/gateway/src/bots/database.js';
 import { createBotMemoryRepository } from '../../packages/gateway/src/bots/repositories/memory.js';
 
@@ -57,7 +58,7 @@ describe('shared bot and collaboration empty database fixtures', () => {
     expect((await sql`SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'bot_%' AND table_schema = 'public'`.execute(db)).rows).toEqual([]);
     expect((await sql`SELECT table_name FROM information_schema.tables WHERE table_name = 'chats' AND table_schema = 'public'`.execute(db)).rows)
       .toEqual([{ table_name: 'chats' }]);
-    await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
+    await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: BOT_MIGRATIONS.map(({ version }) => version) });
     await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [] });
     const next = await bots({ migrate: false });
     expect((await sql`SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'bot_%' AND table_schema = 'public'`.execute(next.db)).rows).toEqual([]);

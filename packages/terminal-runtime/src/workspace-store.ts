@@ -143,6 +143,7 @@ export class TerminalWorkspaceStore {
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
+    nativeHost?: TerminalTab["nativeHost"];
     command?: string[];
     agent?: TerminalTab["agent"];
     git?: TerminalTab["git"];
@@ -168,6 +169,7 @@ export class TerminalWorkspaceStore {
         order: Object.keys(workspace.tabs).length,
         accessScope: input.accessScope ?? "owner",
         ...(input.agent ? { agent: input.agent } : {}),
+        ...(input.nativeHost ? { nativeHost: input.nativeHost } : {}),
         ...(input.git ? { git: input.git } : {}),
         createdAt: now,
         updatedAt: now,
@@ -260,7 +262,8 @@ export class TerminalWorkspaceStore {
       tab.zellijTabId = zellijTabId;
       tab.zellijPaneId = zellijPaneId;
       delete tab.startupCommand;
-      tab.status = "running";
+      tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
+      if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
       tab.revision += 1;
       tab.updatedAt = now;
       workspace.status = "running";
@@ -490,6 +493,35 @@ export class TerminalWorkspaceStore {
     });
   }
 
+  /** Finalize only the exact pre-dispatch canonical reservation. No source authority. */
+  async completeNativeDispatch(ref: TerminalRef, expectedIncarnation: string, expected: NonNullable<TerminalTab["nativeHost"]>, outcome: "never-dispatched" | "settled" | "uncertain"): Promise<TerminalTab> {
+    return this.mutate(state => {
+      const workspace = state.workspaces[ref.workspaceId], tab = workspace?.tabs[ref.tabId];
+      if (!tab || !workspace || terminalTabIncarnation(tab) !== expectedIncarnation
+        || tab.nativeHost?.path !== expected.path || tab.nativeHost.generation !== expected.generation) throw new TerminalRuntimeError("conflict");
+      if (outcome === "never-dispatched") {
+        // Only the reserving producer can supply this trusted pre-spawn outcome.
+        delete tab.nativeHost; delete tab.startupCommand; tab.status = "failed"; tab.exitCode = null;
+      } else if (outcome === "settled") delete tab.nativeHost.dispatchPending;
+      else { tab.status = "unavailable"; tab.exitCode = null; }
+      tab.revision++; tab.updatedAt = this.now().toISOString(); workspace.revision++; workspace.updatedAt = tab.updatedAt; state.revision++;
+      return this.toPublicTab(tab);
+    });
+  }
+
+  /** Fence source eligibility durably before requesting native workload stop. */
+  async fenceNativeHost(refInput: TerminalRef, managerStopped = false): Promise<TerminalTab> {
+    const ref = TerminalRefSchema.parse(refInput), now = this.now().toISOString();
+    return this.mutate(state => {
+      const workspace = state.workspaces[ref.workspaceId], tab = workspace?.tabs[ref.tabId];
+      if (!workspace || !tab?.nativeHost) throw new TerminalRuntimeError("not_found");
+      tab.nativeHost = { ...tab.nativeHost, stopRequested: true, ...(managerStopped ? { managerStopped: true } : {}) };
+      tab.status = "unavailable"; tab.exitCode = null; tab.revision++; tab.updatedAt = now;
+      workspace.revision++; workspace.updatedAt = now; state.revision++;
+      return this.toPublicTab(tab);
+    });
+  }
+
   async markTabExited(refInput: TerminalRef, exitCode: number | null = null): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const now = this.now().toISOString();
@@ -497,8 +529,9 @@ export class TerminalWorkspaceStore {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
-      if (tab.status === "exited" && tab.exitCode === exitCode) return this.toPublicTab(tab);
-      tab.status = "exited";
+      if (tab.nativeHost) exitCode = null;
+      if (tab.status === (tab.nativeHost ? "unavailable" : "exited") && tab.exitCode === exitCode) return this.toPublicTab(tab);
+      tab.status = tab.nativeHost ? "unavailable" : "exited";
       tab.exitCode = exitCode;
       tab.revision += 1;
       tab.updatedAt = now;

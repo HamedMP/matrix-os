@@ -507,6 +507,10 @@ install_bundle() {
   section "Extracting Matrix OS"
   tar -xzf "$tmp_bundle" -C /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
+  if [ -f /opt/matrix/bin/matrix-claude-native-recovery.py ] && [ ! -L /opt/matrix/bin/matrix-claude-native-recovery.py ]; then
+    install -d -o root -g root -m 0755 /usr/local/libexec/matrix-claude-native-recovery
+    install -o root -g root -m 0644 /opt/matrix/bin/matrix-claude-native-recovery.py /usr/local/libexec/matrix-claude-native-recovery/launch.py
+  fi
   cleanup_install_tmp
   INSTALL_TMP_BUNDLE=""
   INSTALL_TMP_SUM=""

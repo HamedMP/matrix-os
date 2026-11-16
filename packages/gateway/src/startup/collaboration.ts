@@ -141,6 +141,7 @@ export interface OwnerCollaborationStartupOptions {
   codingAgentProjectManager: ReturnType<typeof createProjectManager>;
   ownerChatExecutionRoots: ChatExecutionRootResolver;
   terminalWorkspaceRuntime: TerminalRuntimeSocketClient;
+  retireTerminalRoutineSource?: Parameters<typeof createCanonicalTerminalCollaborationBridge>[0]["retireRoutineSource"];
 }
 
 export async function constructOwnerCollaboration(options: OwnerCollaborationStartupOptions) {
@@ -204,6 +205,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
         ownerId: collaborationConfig.ownerId ?? "",
         runtime: terminalWorkspaceRuntime,
+        retireRoutineSource: options.retireTerminalRoutineSource,
       });
       runtime.enableSharedTerminal({
         registry: terminalBridge.registry,

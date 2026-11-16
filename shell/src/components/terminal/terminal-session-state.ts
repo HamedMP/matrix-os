@@ -15,7 +15,7 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: "running" | "waiting" | "finished" | "idle";
-  agent?: "claude" | "codex" | "opencode" | "pi";
+  agent?: "claude" | "codex" | "hermes" | "opencode" | "pi";
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;

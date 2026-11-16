@@ -9,6 +9,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | Skill | Purpose |
 | --- | --- |
 | `matrix-app-builder` | Build Matrix apps as Vite React TypeScript projects with `matrix.json` and verified `dist/` output. |
+| `matrix-collaborative-app-builder` | Build or convert owner-hosted collaborative apps, preserve records, check readiness and guide organization sharing. |
 | `matrix-app-ui-patterns` | Build stable app interiors for windowed, mobile, dashboard, data, and canvas contexts. |
 | `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Agent or customer VPSes. |

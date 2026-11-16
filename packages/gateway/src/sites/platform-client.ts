@@ -1,4 +1,4 @@
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 export class SitePlatformError extends Error{constructor(readonly status:400|404|409|503){super('Publishing request failed');}}
 export interface SitePlatformClient {
@@ -6,6 +6,7 @@ export interface SitePlatformClient {
  accessLinks(slug:string,query?:{limit?:number;cursor?:string}):Promise<SiteAccessLinksResponse>;
  createAccessLink(slug:string,body:{baseRevision:number}):Promise<SiteAccessLinkCreateResponse>;
  revokeAccessLink(slug:string,linkId:string):Promise<void>;
+ slugAvailability(slug:string,friendlySlug:string,signal?:AbortSignal):Promise<SiteSlugAvailability>;
 }
 export function createSitePlatformClient(options:{url:string;token:string;handle:string;runtimeSlot?:string}):SitePlatformClient{
  const base=new URL(options.url);if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new Error('Invalid site platform configuration');
@@ -34,5 +35,6 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
   accessLinks:async(slug,query={})=>{const parsed=SiteAccessLinksQuerySchema.parse(query);const params=new URLSearchParams({limit:String(parsed.limit)});if(parsed.cursor)params.set('cursor',parsed.cursor);return request(slug,'GET',undefined,`/access-links?${params}`,undefined,undefined,SiteAccessLinksResponseSchema) as Promise<SiteAccessLinksResponse>;},
   createAccessLink:async(slug,body)=>request(slug,'POST',body,'/access-links',undefined,undefined,SiteAccessLinkCreateResponseSchema) as Promise<SiteAccessLinkCreateResponse>,
   revokeAccessLink:async(slug,linkId)=>{await request(slug,'DELETE',undefined,'/access-links/'+encodeURIComponent(linkId),undefined,undefined,z.object({ok:z.literal(true)}).strict());},
+  slugAvailability:async(slug,friendlySlug,signal)=>request(slug,'GET',undefined,`/slug-availability?${new URLSearchParams({slug:friendlySlug})}`,signal,undefined,SiteSlugAvailabilitySchema) as Promise<SiteSlugAvailability>,
  };
 }

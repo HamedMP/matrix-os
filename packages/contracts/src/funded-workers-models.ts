@@ -1,8 +1,8 @@
 /** Exact managed Workers AI routes reviewed against the Cloudflare catalog.
- * Keep the inexpensive existing default first. Text/tools only: image fetching
- * and provider-owned tools need separate funding/security review.
+ * Keep the inexpensive existing default first. Only models with verified
+ * inline image support advertise vision.
  */
-export const MANAGED_WORKERS_AI_MODEL_IDS = [
+export const LEGACY_MANAGED_WORKERS_AI_MODEL_IDS = [
   "@cf/zai-org/glm-5.3-flash",
   "@cf/deepseek-ai/deepseek-v4-flash-0731",
   "@cf/zai-org/glm-5.3",
@@ -13,6 +13,10 @@ export const MANAGED_WORKERS_AI_MODEL_IDS = [
   "@cf/qwen/qwen3.8-27b",
   "@cf/openai/gpt-oss-20b",
 ] as const;
+export const MANAGED_WORKERS_AI_MODEL_IDS = [
+  ...LEGACY_MANAGED_WORKERS_AI_MODEL_IDS,
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+] as const;
 export type ManagedWorkersAiModelId = typeof MANAGED_WORKERS_AI_MODEL_IDS[number];
 export interface ManagedWorkersAiModel {
   readonly id: ManagedWorkersAiModelId;
@@ -20,6 +24,7 @@ export interface ManagedWorkersAiModel {
   readonly maximumInputTokens: number;
   readonly reasoningEfforts: readonly string[];
   readonly reasoning: boolean;
+  readonly vision: boolean;
   readonly outputTokenField: "max_tokens" | "max_completion_tokens";
 }
 const definitions = [
@@ -32,12 +37,13 @@ const definitions = [
   ["DeepSeek V4 Pro 0813", 1_048_576, ["none", "low", "high", "max"], "max_tokens"],
   ["Qwen 3.8 27B", 262_144, ["low", "medium", "xhigh"], "max_completion_tokens"],
   ["GPT-OSS 20B", 128_000, ["low", "medium", "high"], "max_tokens"],
+  ["DeepSeek V4.1 Flash", 1_048_576, ["none", "low", "high", "max"], "max_completion_tokens", true],
 ] as const;
 export const MANAGED_WORKERS_AI_MODELS: readonly Readonly<ManagedWorkersAiModel>[] = Object.freeze(
   MANAGED_WORKERS_AI_MODEL_IDS.map((id, index) => {
-    const [displayName, maximumInputTokens, reasoningEfforts, outputTokenField] = definitions[index]!;
+    const [displayName, maximumInputTokens, reasoningEfforts, outputTokenField, vision = false] = definitions[index]!;
     return Object.freeze({ id, displayName, maximumInputTokens, reasoning: true,
-      reasoningEfforts: Object.freeze([...reasoningEfforts]), outputTokenField });
+      reasoningEfforts: Object.freeze([...reasoningEfforts]), outputTokenField, vision });
   }),
 );
 export function isManagedWorkersAiModel(id: string): id is ManagedWorkersAiModelId {

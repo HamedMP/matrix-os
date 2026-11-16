@@ -2,7 +2,7 @@ import {describe,expect,it,vi} from 'vitest';
 import {executionBranch,executionControllerSha,verifyIsolatedExecutionOrigin,verifyIsolatedExecutionRun} from '../../scripts/ci/execution-origin.mjs';
 
 const pin='a'.repeat(40),execution='b'.repeat(40),tree='c'.repeat(40),main='d'.repeat(40);
-const repo={owner:'HamedMP',repo:'matrix-os'},workflowPath='.github/workflows/ci.yml';
+const repo={owner:'HamedMP',repo:'matrix-os'},workflowPath='.github/workflows/preview-vps.yml';
 const ref=`refs/heads/ci-execution/${pin}`;
 function fixture(){
  const commits:any={

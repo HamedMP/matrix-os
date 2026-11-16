@@ -4,6 +4,8 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@clerk/nextjs", () => { const getToken = async () => null; return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) }; });
+
 const paneGridSpy = vi.fn();
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 const TAB_ID = "tt_00000000000000000000000000000001";
@@ -154,6 +156,14 @@ describe("TerminalApp workspace contract", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("does not show a routine confirmations entry in hosted Web Terminal", async () => {
+    render(<TerminalApp initialSessionId={REF_KEY} />);
+    await settle();
+
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
   });
 
   it("renders whole-project sharing in the web project group", () => {

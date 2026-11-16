@@ -64,11 +64,6 @@ function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   );
 }
 
-const regionGroupLabels: Record<string, string> = {
-  "eu-central": "Germany",
-  "us-east": "United States",
-  "us-west": "United States",
-};
 const profileDescriptions: Record<string, string> = {
   server_starter: "For everyday use",
   server_builder: "For technical work and building",
@@ -240,7 +235,7 @@ function groupRegions(
 ): { group: string; regions: (typeof MATRIX_BILLING_REGIONS)[number][] }[] {
   const byGroup = new Map<string, (typeof MATRIX_BILLING_REGIONS)[number][]>();
   for (const region of availableRegions) {
-    const group = regionGroupLabels[region.networkZone] ?? "Other";
+    const group = region.countryLabel;
     const bucket = byGroup.get(group);
     if (bucket) bucket.push(region);
     else byGroup.set(group, [region]);

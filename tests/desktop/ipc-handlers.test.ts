@@ -128,8 +128,27 @@ describe("registerIpcHandlers", () => {
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
       version: "1.4.0-canary.2",
       source: null,
+      channel: "stable",
     });
     expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("returns no dev-run label unless the main process configured one", async () => {
+    await expect(makeHarness().invoke("app:get-dev-run")).resolves.toBeNull();
+  });
+
+  it("returns the validated dev-run label and rejects malformed payloads", async () => {
+    const summary = { label: "PR #3314", sha: "abc123def456", branch: "feat/x", platformOrigin: "https://pr-3314-preview.matrix-os.com", apiOrigin: null };
+    await expect(makeHarness({ getDevRunSummary: async () => summary }).invoke("app:get-dev-run")).resolves.toEqual(summary);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(makeHarness({ getDevRunSummary: async () => ({ ...summary, label: "x".repeat(81) }) }).invoke("app:get-dev-run"))
+      .rejects.toThrow("internal error");
+    warn.mockRestore();
+  });
+
+  it("reports the build channel so prerelease builds can quiet advisory notices", async () => {
+    const harness = makeHarness({ desktopChannel: "canary" });
+    await expect(harness.invoke("app:get-version")).resolves.toMatchObject({ channel: "canary" });
   });
 
   it("captures and validates build provenance when handlers register", async () => {
@@ -137,7 +156,7 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ buildSource: source });
     source.commit = "c".repeat(40);
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
-      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] },
+      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] }, channel: "stable",
     });
     expect(() => makeHarness({ buildSource: { commit: "unknown", ancestors: [] } })).toThrow();
   });

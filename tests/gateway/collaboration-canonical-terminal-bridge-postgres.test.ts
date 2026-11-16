@@ -95,6 +95,21 @@ describe("canonical terminal collaboration bridge", () => {
     expect(runtime.writeInput).not.toHaveBeenCalled();
   });
 
+  it("retires the exact personal source before publishing the shared binding", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const retireRoutineSource = vi.fn<(_ref: { workspaceId: string; tabId: string }, _incarnation: string) => void>(() => { throw new Error("Named source retirement failure"); });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never, retireRoutineSource });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    const binding = { scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration, contributorControl: true };
+    await expect(bridge.registry.bindCollaboration(terminalId, binding)).rejects.toThrow("Named source retirement failure");
+    expect(await fixture.db.selectFrom("collaboration_terminal_bindings").selectAll().execute()).toEqual([]);
+    retireRoutineSource.mockImplementation(() => {});
+    await bridge.registry.bindCollaboration(terminalId, binding);
+    expect(retireRoutineSource).toHaveBeenLastCalledWith({ workspaceId, tabId }, tab.incarnation);
+    expect(await bridge.registry.get(terminalId)).toMatchObject({ sharedControlMode: "shared", contributorControl: true });
+  });
+
   it("keeps Contributor control an owner opt-in across bind, read and withdrawal", async () => {
     const repository = new CollaborationRepository(fixture.db);
     await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });

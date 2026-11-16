@@ -1,4 +1,6 @@
-export type DesktopUpdateChannel = "stable" | "beta" | "canary" | "dev";
+import { normalizeDesktopChannel, type DesktopReleaseChannel } from "../shared/channel-identity";
+
+export type DesktopUpdateChannel = DesktopReleaseChannel;
 
 export type UpdateFeedConfig =
   | {
@@ -19,15 +21,11 @@ const DEFAULT_REPO = "matrix-os";
 
 declare const __MATRIX_DESKTOP_UPDATE_CHANNEL__: string | undefined;
 
-function buildUpdateChannel(): string | undefined {
+/** Channel baked in at build time; it also fixes the installed app identity. */
+export function bundledDesktopChannel(): string | undefined {
   return typeof __MATRIX_DESKTOP_UPDATE_CHANNEL__ === "string"
     ? __MATRIX_DESKTOP_UPDATE_CHANNEL__
     : undefined;
-}
-
-function normalizeChannel(value: string | undefined): DesktopUpdateChannel {
-  if (value === "beta" || value === "canary" || value === "dev") return value;
-  return "stable";
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
@@ -46,9 +44,9 @@ function githubChannelFeedUrl(owner: string, repo: string, channel: DesktopUpdat
 export function resolveUpdateFeedConfig(
   env: NodeJS.ProcessEnv,
   isPackaged: boolean,
-  bundledChannel: string | undefined = buildUpdateChannel(),
+  bundledChannel: string | undefined = bundledDesktopChannel(),
 ): UpdateFeedConfig {
-  const channel = normalizeChannel(
+  const channel = normalizeDesktopChannel(
     firstNonEmpty(env.MATRIX_DESKTOP_UPDATE_CHANNEL, env.OPERATOR_UPDATE_CHANNEL, bundledChannel),
   );
   const allowPrerelease = channel !== "stable";

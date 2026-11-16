@@ -33,14 +33,18 @@ single point of failure.
    repository variable `MATRIX_CI_POOL_HEARTBEAT` to `<unix seconds> <idle
    slots>` every minute, counting this host's online, idle runners. Stopping
    the service stops the heartbeat.
-3. **Routing.** The `changes` job sends the 4 unit shards (the critical path)
-   to `matrix-ci` when the run is a `main` push, a merge-queue run or a
-   same-repository PR, the heartbeat is under 3 minutes old and at least 4
-   slots are idle. Otherwise they run on `ubuntu-latest`. Manual dispatches
-   stay hosted because an exact-source refresh can check out a fork PR. E2E,
-   type check, builds and Docker-service lanes always stay hosted, so one run
-   never needs more slots than the pool has. Pool shards use 4 Vitest workers
-   on 8 CPUs.
+3. **Routing.** The `changes` job sends the four unit shards, Pattern Scan and
+   both E2E lanes to `matrix-ci` when the run is a `main` push, merge-queue run
+   or same-repository PR, the heartbeat is under three minutes old and at least
+   four slots are idle. The seven jobs may queue within the four slots; no slot
+   runs two jobs concurrently. Otherwise unit/pattern jobs use `ubuntu-latest`
+   and E2E uses `ubuntu-24.04`. Manual dispatches stay hosted because an
+   exact-source refresh can check out a fork PR. Other lanes always stay hosted.
+   Pool shards use four Vitest workers on eight CPUs.
+   The prepared image supplies ripgrep, browser/Electron system libraries and
+   Xvfb. Pool setup must not call apt: check ripgrep and install only the exact
+   Chromium revisions required by the workspace lockfile. Hosted fallback keeps
+   its dependency installation. Missing image dependencies fail qualification.
 4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
    but a fork PR can edit `ci.yml`, so the runner image enforces it: a
    job-started hook kills the runner, before any step starts, for any job
@@ -50,8 +54,11 @@ single point of failure.
    the same job inventory whichever runner executed it.
 6. **Retire fast-ci.** Delete `ci-dedicated.yml`, the `dedicated-*` scripts,
    the lease runtime under `scripts/ci/runner/`, the qualification harness,
-   `MATRIX_CI_*` routing variables, `ci-execution/*` refs and their contract
-   tests. Remove routing hooks from `ci.yml`, preview and release workflows.
+   the `MATRIX_CI_DEDICATED_*` and `MATRIX_CI_RUNNER_*` variables and their
+   contract tests. Remove routing hooks from `ci.yml`. The preview workflow's
+   isolated execution origin (`MATRIX_CI_ISOLATED_EXECUTION`,
+   `MATRIX_CI_CONTROLLER_SHA`, `ci-execution/*`) is a separate mechanism and
+   stays; see `docs/dev/preview-environments.md`.
 
 ## Failure modes
 
@@ -71,8 +78,8 @@ single point of failure.
 ## Documentation
 
 The pool is contributor-facing CI infrastructure, not a product surface. Update
-`docs/dev/fast-ci.md` and `.github/workflows/README.md` in this repository when
-routing lands, and open a `FinnaAI/matrix-os-site` PR under `content/docs/`
+`scripts/ci/runner-pool/README.md` and `.github/workflows/README.md` in this
+repository when routing lands, and open a `FinnaAI/matrix-os-site` PR under `content/docs/`
 for the contributor CI page once the pool carries `main`.
 
 ## Isolation
@@ -94,8 +101,12 @@ for the contributor CI page once the pool carries `main`.
 
 ## Acceptance
 
-- `main` push or same-repository PR with the pool online and idle: all 4 unit
-  shards run on `matrix-ci`; `CI Results` passes.
+- `main` push or same-repository PR with the pool online and idle: all four unit
+  shards, Pattern Scan and both E2E lanes run on `matrix-ci`; system setup makes
+  no apt request; real browser/Electron assertions execute and `CI Results` passes.
+- Reproduce the setup fault with workflow command tests: the original commands
+  invoke apt/`--with-deps` on a prepared runner; the fixed commands do not.
+  Fork/manual/stale/busy cases retain hosted routing.
 - Stop the pool service: within 3 minutes new runs route hosted and pass; no
   job waits for a self-hosted runner.
 - Fork PR: every job runs hosted.
@@ -111,8 +122,11 @@ for the contributor CI page once the pool carries `main`.
 4. Operator: create the pool's dedicated GitHub App, install the pool on the
    host, and compare pool and hosted shard times over one PR and one `main`
    run.
-5. Retire fast-ci once pool runs are stable, then remove the old lease
-   service from the host.
+5. Retire fast-ci once pool runs are stable (the retirement stack under
+   ENG-240). After it merges, the operator deletes the `MATRIX_CI_DEDICATED_*`
+   and `MATRIX_CI_RUNNER_*_DIGEST` variables, stops the old lease and
+   controller services on the host, and uninstalls the `matrix-ci-qualification`
+   app.
 
 ## Risks
 
@@ -127,6 +141,5 @@ for the contributor CI page once the pool carries `main`.
 - **Mid-run outage.** Shards already routed to a pool that then goes down wait
   for a runner until the job times out; re-run the job once the heartbeat
   routes new runs hosted.
-- **Shared host during rollout.** Until fast-ci is retired, its lease workload
-  and the pool share the host's 32 CPUs. Start the pool with fewer CPUs per
-  slot, or pause fast-ci admission, while comparing timings.
+- **Shared host during rollout.** Until the old lease services are stopped on
+  the host, they and the pool share its 32 CPUs.

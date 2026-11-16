@@ -55,7 +55,10 @@ export async function insertChat(db: Kysely<OwnerBotDatabase>, id: string, owner
  * need true concurrency (PGlite runs every transaction on one session).
  * Requires MATRIX_TEST_POSTGRES_URL naming a dedicated test database.
  */
-export async function createRealBotStateDatabase(connectionString = process.env.MATRIX_TEST_POSTGRES_URL) {
+export async function createRealBotStateDatabase(
+  connectionString = process.env.MATRIX_TEST_POSTGRES_URL,
+  options: { routineAuthority?: boolean } = {},
+) {
   if (!connectionString) throw new Error("MATRIX_TEST_POSTGRES_URL is required");
   if (!new URL(connectionString).pathname.toLowerCase().includes("test")) {
     throw new Error("MATRIX_TEST_POSTGRES_URL must name a dedicated test database");
@@ -70,6 +73,7 @@ export async function createRealBotStateDatabase(connectionString = process.env.
   });
   await bootstrapChatDatabase(db);
   await bootstrapBotDatabase(db);
+  if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
   return {
     db,
     destroy: async () => {

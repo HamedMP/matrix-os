@@ -23,18 +23,21 @@ const unavailable = () => new SharedBrowserError("browser_changed");
 const report = (error: unknown) => console.warn("[browser-approval] Control unavailable", error instanceof SharedBrowserError ? error.code : "operation_failed");
 
 /** One fixed owner/runtime. Raw browser actions and bearer values never enter persistence. */
-export function createBrowserApprovalControl(options: { ownerId: string; handle: string; runtimeSlot: string; authority: Authority; now?: () => number }) {
+export function createBrowserApprovalControl(options: { ownerId: string; handle: string; runtimeSlot: string; authority: Authority; scope?: { chatId: string; expiresAt: number }; now?: () => number }) {
   const runs = new Map<string, Run>(); // <=64; close/abort/30-minute expiry, shutdown drain.
   const now = options.now ?? Date.now;
+  const scope = options.scope && Object.freeze({ ...options.scope });
   let closed = false;
+  const inScope = (chatId: string) => !scope || (chatId === scope.chatId && now() < scope.expiresAt);
   function get(binding: SharedBrowserBinding) {
     const row = runs.get(binding.runId);
-    if (closed || !row || !same(row.binding, binding) || row.signal.aborted) throw unavailable();
+    if (closed || !row || !same(row.binding, binding) || row.signal.aborted || !inScope(binding.chatId)) throw unavailable();
     return row;
   }
   function registerRun(input: { binding: SharedBrowserBinding; signal: AbortSignal; publish: Run["publish"] }) {
     if (closed || input.signal.aborted || input.binding.ownerId !== options.ownerId
       || !["codex", "claude_code", "pi"].includes(input.binding.harness) || runs.has(input.binding.runId) || runs.size >= 64) throw unavailable();
+    if (!inScope(input.binding.chatId)) return undefined;
     const controller = new AbortController();
     let closing: Promise<void> | undefined;
     const row: Run = { binding: Object.freeze({ ...input.binding }), epoch: randomUUID(), controller,
@@ -50,7 +53,7 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
       },
     };
     const abort = () => { void row.close().catch(report); };
-    const timer = setTimeout(abort, 30 * 60_000); timer.unref?.();
+    const timer = setTimeout(abort, Math.max(0, Math.min(30 * 60_000, (scope?.expiresAt ?? Infinity) - now()))); timer.unref?.();
     runs.set(input.binding.runId, row); input.signal.addEventListener("abort", abort, { once: true });
     if (input.signal.aborted) abort();
     return { close: row.close };
@@ -63,12 +66,12 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
     const identity: BrowserApprovalIdentity = { ownerId: row.binding.ownerId, chatId: row.binding.chatId, runId: row.binding.runId,
       approvalId: `browser_${randomUUID().replaceAll("-", "")}`, leaseEpoch: row.epoch, challengeRevision: 0, scopeVersion: 1,
       actionDigest: createHash("sha256").update(`matrix-browser-action:v1\0${JSON.stringify(request.action)}`).digest("hex") };
-    const expiresAt = now() + 5 * 60_000;
+    const expiresAt = Math.min(now() + 5 * 60_000, scope?.expiresAt ?? Infinity);
     const lifecycle: Lifecycle = { kind: "shared_chrome", leaseEpoch: row.epoch, challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(expiresAt).toISOString() };
     row.reservationStarted = true;
     try {
     await options.authority.reserve(identity, expiresAt); signal.throwIfAborted(); get(request.binding);
-    const grant = await options.authority.activeGrant(identity.ownerId, identity.chatId); signal.throwIfAborted();
+    const grant = scope ? null : await options.authority.activeGrant(identity.ownerId, identity.chatId); signal.throwIfAborted();
     if (grant) {
       await options.authority.consumeGrant(identity, grant.id, grant.revision);
       signal.throwIfAborted(); get(request.binding); return;
@@ -103,11 +106,13 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
       // run's epoch alive; consumed and declined decisions remain untouched.
       await options.authority.cancelChallenge(identity).catch(report);
     }
+    if (scope) get(request.binding);
   }
   async function submit(request: { ownerId: string; chatId: string; runId: string; approvalId: string; input: unknown; proof: string }) {
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(request.input);
     const row = runs.get(request.runId), browser = input.browserApproval;
-    if (closed || !row || row.signal.aborted || request.ownerId !== row.binding.ownerId || request.chatId !== row.binding.chatId || !browser) throw unavailable();
+    if (closed || !row || row.signal.aborted || request.ownerId !== row.binding.ownerId || request.chatId !== row.binding.chatId || !browser
+      || !inScope(request.chatId) || (scope && browser.decision === "allow_in_chat")) throw unavailable();
     const prior = row.receipts.get(request.approvalId);
     const pending = row.pending?.identity.approvalId === request.approvalId ? row.pending : undefined;
     const identity = pending?.identity ?? prior?.identity;
@@ -124,6 +129,7 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
     try {
       const decision = await options.authority.decide(tuple, request.proof);
       decisionCommitted = true;
+      if (scope) get(row.binding);
       if (!pending) return { alreadySubmitted: true };
       pending.signal.throwIfAborted(); get(row.binding);
       const allowed = browser.decision === "allow_once" || browser.decision === "allow_in_chat";
@@ -148,11 +154,12 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
   }
   return { registerRun, authorizeAction, submit,
     activeGrant(ownerId: string, chatId: string) {
-      if (closed || ownerId !== options.ownerId) throw unavailable();
+      if (closed || ownerId !== options.ownerId || !inScope(chatId)) throw unavailable();
+      if (scope) return Promise.resolve(null);
       return options.authority.activeGrant(ownerId, chatId);
     },
     revokeGrant(request: { ownerId: string; chatId: string; grantId: string; input: unknown; proof: string }) {
-      if (closed || request.ownerId !== options.ownerId) throw unavailable();
+      if (closed || request.ownerId !== options.ownerId || scope) throw unavailable();
       const input = BrowserGrantRevokeRequestSchema.parse(request.input);
       return options.authority.revoke({ handle: options.handle, runtimeSlot: options.runtimeSlot, actorId: request.ownerId,
         chatId: request.chatId, grantId: request.grantId, ...input }, request.proof);

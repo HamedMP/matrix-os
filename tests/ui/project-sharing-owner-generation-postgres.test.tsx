@@ -167,7 +167,8 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
     await waitFor(() => expect(f.calls.filter(call => call.path.endsWith("/project/inventory")).at(-1))
       .toMatchObject({ status: 200 }), { timeout: 10_000 });
     await screen.findByRole("heading", { name: "Share “Fresh project”" });
-    return screen.findByRole("button", { name: /^General access:/ });
+    await screen.findByRole("heading", { name: "Organization access" });
+    return screen.findByRole("button", { name: "Share whole project" });
   };
   const assertPrivate = async () => {
     expect((await f.db.selectFrom("collaboration_scopes").select(["lifecycle", "authority_generation"]).execute())
@@ -178,14 +179,13 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
     expect(f.calls.some(call => call.path.endsWith("/project/confirm"))).toBe(false);
   };
 
-  it("opens the first-click dialog through real scope creation/read, default grant and filesystem inventory at runtime generation 8", async () => {
+  it("opens the first-click dialog through real scope creation/read and filesystem inventory at runtime generation 8", async () => {
     f = await fixture();
     openShare();
     await expectDialog();
-    expect(f.calls.slice(0, 8).map(call => [call.method, call.path.replace(/\/scopes\/[0-9a-f-]{36}/, "/scopes/:id"), call.status])).toEqual([
+    expect(f.calls.slice(0, 6).map(call => [call.method, call.path.replace(/\/scopes\/[0-9a-f-]{36}/, "/scopes/:id"), call.status])).toEqual([
       ["POST", "/api/collaboration/owner-runtime/connections", 201], ["POST", "/api/collaboration/owner-runtime/sessions", 201],
       ["POST", `${setup}/preflight`, 200], ["POST", setup, 201], ["GET", "/api/collaboration/scopes/:id", 200],
-      ["GET", "/api/collaboration/scopes/:id/grants", 200], ["POST", "/api/collaboration/scopes/:id/grants", 201],
       ["GET", "/api/collaboration/scopes/:id/project/inventory", 200],
     ]);
     expect(f.directory).toHaveBeenCalled();
@@ -196,16 +196,14 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
     await assertPrivate();
   });
 
-  it("resumes an untouched private scope left by a failed setup and creates its unpublished default grant", async () => {
+  it("resumes an untouched private scope without creating a project grant", async () => {
     f = await fixture();
     const preflight = await f.api.post(`${setup}/preflight`, { kind: "project", resourceId: projectId, organizationId }) as { resourceRevision: string; confirmationToken: string };
     await f.api.post(setup, { kind: "project", resourceId: projectId, organizationId, clientRequestId: randomUUID(),
       expectedRevision: preflight.resourceRevision, confirmationToken: preflight.confirmationToken });
     openShare();
     await expectDialog();
-    expect(await f.db.selectFrom("collaboration_grants").select(["audience_kind", "state"]).execute()).toEqual([
-      { audience_kind: "organization", state: "active" },
-    ]);
+    expect(await f.db.selectFrom("collaboration_grants").select(["audience_kind", "state"]).execute()).toEqual([]);
     await assertPrivate();
   });
 
@@ -229,13 +227,17 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
     expect(await f.db.selectFrom("collaboration_directory_outbox").select("event_id").execute()).toEqual([]);
   });
 
-  it("preserves a previously chosen Viewer audience when resuming a private scope", async () => {
+  it("ignores a historical Viewer grant when resuming fixed organization-wide project access", async () => {
     f = await fixture();
     const preflight = await f.api.post(`${setup}/preflight`, { kind: "project", resourceId: projectId, organizationId }) as { resourceRevision: string; confirmationToken: string };
     const scope = await f.api.post(setup, { kind: "project", resourceId: projectId, organizationId, clientRequestId: randomUUID(),
       expectedRevision: preflight.resourceRevision, confirmationToken: preflight.confirmationToken }) as { id: string; revision: string };
-    await f.api.post(`/api/collaboration/scopes/${scope.id}/grants`, { clientRequestId: randomUUID(),
-      expectedRevision: scope.revision, audience: { kind: "organization" }, preset: "viewer" });
+    await f.db.insertInto("collaboration_grants").values({
+      id: randomUUID(), scope_id: scope.id, organization_id: organizationId, audience_kind: "organization",
+      audience_actor_id: null, preset: "viewer", state: "active", policy_version: "legacy-v1", source_id: null,
+      legacy_ceiling: null, expires_at: null, revision: 1, created_by: ownerId,
+      created_at: now.toISOString(), updated_at: now.toISOString(), revoked_at: null,
+    }).execute();
     const before = f.calls.length;
     openShare();
     await expectDialog();
@@ -243,20 +245,21 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
       { preset: "viewer", state: "active" },
     ]);
     expect(f.calls.slice(before).some(call => call.method === "POST" && call.path.endsWith("/grants"))).toBe(false);
+    expect(screen.getByText("Every active current and future member of Matrix Main can work in this project immediately.")).toBeTruthy();
     await assertPrivate();
   });
 
-  it("keeps a private scope Restricted after the owner revoked its earlier organization grant", async () => {
+  it("keeps a historical revoked grant inert while showing fixed organization-wide project access", async () => {
     f = await fixture();
     const preflight = await f.api.post(`${setup}/preflight`, { kind: "project", resourceId: projectId, organizationId }) as { resourceRevision: string; confirmationToken: string };
     const scope = await f.api.post(setup, { kind: "project", resourceId: projectId, organizationId, clientRequestId: randomUUID(),
       expectedRevision: preflight.resourceRevision, confirmationToken: preflight.confirmationToken }) as { id: string; revision: string };
-    const base = `/api/collaboration/scopes/${scope.id}`;
-    const grant = await f.api.post(`${base}/grants`, { clientRequestId: randomUUID(), expectedRevision: scope.revision,
-      audience: { kind: "organization" }, preset: "viewer" }) as { id: string; revision: string };
-    const current = await f.api.get(base) as { revision: string };
-    await f.api.delete(`${base}/grants/${grant.id}`, { clientRequestId: randomUUID(),
-      expectedRevision: current.revision, expectedMemberRevision: grant.revision });
+    await f.db.insertInto("collaboration_grants").values({
+      id: randomUUID(), scope_id: scope.id, organization_id: organizationId, audience_kind: "organization",
+      audience_actor_id: null, preset: "viewer", state: "revoked", policy_version: "legacy-v1", source_id: null,
+      legacy_ceiling: null, expires_at: null, revision: 2, created_by: ownerId,
+      created_at: now.toISOString(), updated_at: now.toISOString(), revoked_at: now.toISOString(),
+    }).execute();
     const before = f.calls.length;
     openShare();
     await expectDialog();
@@ -264,7 +267,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
       { preset: "viewer", state: "revoked" },
     ]);
     expect(f.calls.slice(before).some(call => call.method === "POST" && call.path.endsWith("/grants"))).toBe(false);
-    expect(screen.getByRole("button", { name: "General access: Restricted" })).toBeTruthy();
+    expect(screen.getByText("Every active current and future member of Matrix Main can work in this project immediately.")).toBeTruthy();
     await assertPrivate();
   });
 

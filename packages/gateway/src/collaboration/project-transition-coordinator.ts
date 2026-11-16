@@ -168,6 +168,12 @@ export function createProjectTransitionCoordinator(options: {
       const project = await trx.selectFrom("collaboration_scopes").select("id")
         .where("id", "=", transition.scopeId).forUpdate().executeTakeFirst();
       if (!project) return;
+      const recovering = await trx.selectFrom("collaboration_transitions").select("id")
+        .where("id", "=", input.transitionId)
+        .where("scope_id", "=", project.id)
+        .where("status", "=", "recovering")
+        .forUpdate().executeTakeFirst();
+      if (!recovering) return;
       const inherited = await trx.selectFrom("collaboration_resource_bindings as binding")
         .innerJoin("collaboration_scopes as child", "child.id", "binding.resource_scope_id")
         .select("child.id")

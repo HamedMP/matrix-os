@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { evaluateDesktopReleaseState, readRunningCommit } from "@matrix-os/contracts";
 import type { ApiClient } from "./api";
 import { invoke } from "./operator";
+import { showsReleaseAlignmentNotice } from "../../../shared/channel-identity";
 
 export const RUNTIME_RECONNECTED_EVENT = "matrix:runtime-reconnected";
 const FOCUS_CHECK_COOLDOWN_MS = 15 * 60_000;
@@ -29,9 +30,10 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
           }),
           invoke("app:get-version", {}),
         ]);
-        const { status, protocol } = evaluateDesktopReleaseState(info, desktop.source);
-        if (active) setResult({ api, status,
-          noticeKey: status === "unavailable" ? null : `${desktop.source?.commit ?? "unknown"}:${readRunningCommit(info) ?? "unknown"}:${protocol}` });
+        const state = evaluateDesktopReleaseState(info, desktop.source);
+        const notify = showsReleaseAlignmentNotice(state, desktop.channel ?? "stable");
+        if (active) setResult({ api, status: notify || state.status === "unavailable" ? state.status : "aligned",
+          noticeKey: notify ? `${desktop.source?.commit ?? "unknown"}:${readRunningCommit(info) ?? "unknown"}:${state.protocol}` : null });
       } catch (error: unknown) {
         if (active) {
           console.warn("[runtime-compatibility] check failed:", error instanceof Error ? error.name : "UnknownError");

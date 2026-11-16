@@ -13,7 +13,9 @@ import {
 } from "node:fs/promises";
 import { dirname, extname, relative, join } from "node:path";
 import { DEFAULT_ICON_STYLE, loadSkills } from "@matrix-os/kernel";
-import { AgentSettingsUpdateSchema } from "@matrix-os/contracts";
+import { AgentSettingsUpdateSchema, InstalledSkillManifestPathSchema } from "@matrix-os/contracts";
+import { ChatAgentRecipeResolverError, discoverChatAgentRecipeSkillsRoot } from "../chat/agent-recipe.js";
+import { readInstalledSkillManifest } from "../chat/agent-recipe-skills.js";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
@@ -480,6 +482,25 @@ export function createSettingsRoutes(opts: {
       enabled: true,
     }));
     return c.json(skills);
+  });
+
+  app.get("/skills/manifest", async (c) => {
+    c.header("Cache-Control", "private, no-store");
+    const path = InstalledSkillManifestPathSchema.safeParse(c.req.query("path"));
+    if (!path.success) return c.json({ error: "Invalid skill path" }, 400);
+
+    try {
+      const skillsRoot = await discoverChatAgentRecipeSkillsRoot().catch((error: unknown) => {
+        if (error instanceof ChatAgentRecipeResolverError && error.code === "recipe_unavailable") return undefined;
+        throw error;
+      });
+      const content = await readInstalledSkillManifest({ homePath, skillsRoot }, path.data);
+      if (content === null) return c.json({ error: "Skill unavailable" }, 404);
+      return c.text(content);
+    } catch (error: unknown) {
+      console.warn("[settings] Installed skill unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ error: "Skill unavailable" }, 503);
+    }
   });
 
   // --- Desktop config ---

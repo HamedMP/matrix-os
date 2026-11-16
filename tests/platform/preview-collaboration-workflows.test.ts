@@ -182,6 +182,12 @@ describe("preview platform collaboration home connection", () => {
     } });
     expect(refused.status).not.toBe(0);
     expect(refused.stderr).toContain("connect_share_preview");
+
+    const accepted = spawnSync("bash", ["--noprofile", "--norc", "-euc", validation], { encoding: "utf8", timeout: 5_000, env: {
+      PATH: process.env.PATH, GITHUB_OUTPUT: "/dev/null", CONNECT_COLLABORATION_PREVIEW: "true",
+      CONNECT_SHARE_PREVIEW: "true", CLOUD_RUN_PREVIEW_SERVICE: "", REQUIRE_EXISTING_SERVICE: "false",
+    } });
+    expect(accepted.status, accepted.stderr).toBe(0);
   });
 
   it("reads the owner and its Clerk key only from the protected environment", () => {

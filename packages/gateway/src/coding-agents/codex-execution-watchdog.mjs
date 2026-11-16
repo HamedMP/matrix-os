@@ -45,7 +45,7 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
     if (!advance()) return;
     let failure;
     for (const [toolCallId, tool] of tools) {
-      if (tool.elapsed >= tool.deadline || tool.idle >= idleDeadline) {
+      if (tool.elapsed >= tool.deadline || (tool.trackInactivity && tool.idle >= idleDeadline)) {
         failure = { phase: tool.elapsed >= tool.deadline ? "tool_deadline" : "tool_no_progress", toolCallId, durationMs: Math.round(tool.elapsed) };
         break;
       }
@@ -69,7 +69,9 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
       if (!active || tools.has(id)) return;
       advance();
       if (tools.size >= 500) throw new Error("Execution tracking capacity exceeded");
-      tools.set(id, { elapsed: 0, idle: 0,
+      // Shell commands can be healthy without terminal output (for example,
+      // a CI watcher redirecting to a file). Their duration limit still applies.
+      tools.set(id, { elapsed: 0, idle: 0, trackInactivity: kind !== "commandExecution",
         deadline: kind === "commandExecution" || kind === "collabAgentToolCall" ? commandDeadline : toolDeadline });
     },
     toolCompleted(id) {

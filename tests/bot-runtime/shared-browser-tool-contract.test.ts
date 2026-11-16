@@ -3,12 +3,14 @@ import { BotToolRequestSchema, SharedBrowserActionSchema } from "@matrix-os/cont
 import { createBotTools } from "../../packages/bot-runtime/src/tools.js";
 
 it("gives Pi only a gated shared browser tool with bounded observed actions", async () => {
-  const call = vi.fn(async () => ({ ok: true as const, content: [{ type: "text" as const, text: '{"status":"agent"}' }] }));
+  const call = vi.fn().mockResolvedValue({ ok: true, content: [{ type: "text", text: '{"status":"agent"}' }] });
   const tools = createBotTools({ capabilities: ["browser.action"], broker: { tool: call } as never,
     state: { waitingForPerson: false, effectUnknown: false } });
   expect(tools.map(tool => tool.name)).toEqual(["shared_browser"]);
-  await tools[0]!.execute("browser_1", { action: "status" }, new AbortController().signal);
-  expect(call).toHaveBeenCalledWith(expect.objectContaining({ capability: "browser.action", args: { action: "status" } }));
+  const signal = new AbortController().signal;
+  await tools[0]!.execute("browser_1", { action: "status" }, signal);
+  expect(call).toHaveBeenCalledExactlyOnceWith({ toolCallId: "browser_1", capability: "browser.action", args: { action: "status" } }, signal);
+  expect(call.mock.calls[0]?.[1]).toBe(signal);
   expect(tools[0]!.description).toMatch(/same.*Chrome/i);
   expect(tools[0]!.description).toMatch(/fresh.*snapshot/i);
 });

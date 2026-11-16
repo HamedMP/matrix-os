@@ -2,16 +2,100 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
+import { CollaborationCapabilityEvaluator } from "../../packages/gateway/src/collaboration/capability-evaluator.js";
+import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { CollaborationResourceCatalog } from "../../packages/gateway/src/collaboration/resource-catalog.js";
 import type { CollaborationResourceDriver } from "../../packages/gateway/src/collaboration/resource-actions.js";
 import { StandaloneResourceScopeService } from "../../packages/gateway/src/collaboration/standalone-resource-scope.js";
-import { createRealCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import {
+  createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
+  type CollaborationTestDatabase,
+} from "./collaboration-test-support.js";
 
 const ownerId = "user_standalone_owner";
 const runtimeId = "vps:11111111-1111-4111-8111-111111111111";
 const firstOrganization = "org_standalone_first";
 const secondOrganization = "org_standalone_second";
 const incarnation = "a".repeat(64);
+
+describe("standalone grant compatibility", () => {
+  it("continues requiring an accepted grant for a standalone file scope", async () => {
+    const fixture = await createCollaborationTestDatabase();
+    const now = () => new Date("2026-11-05T00:00:00.000Z");
+    const scopeId = randomUUID();
+    const memberId = "user_standalone_member";
+    try {
+      await bootstrapChatDatabase(fixture.db);
+      await bootstrapCollaborationDatabase(fixture.db);
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: scopeId,
+        owner_type: "personal",
+        owner_id: ownerId,
+        organization_id: firstOrganization,
+        kind: "file",
+        resource_id: randomUUID(),
+        parent_scope_id: null,
+        membership_mode: "direct",
+        lifecycle: "shared",
+        revision: 1,
+        auth_epoch: 1,
+        authority_runtime_id: runtimeId,
+        authority_generation: 1,
+        execution_generation: null,
+        execution_eligibility: null,
+        deleted_at: null,
+        created_at: now().toISOString(),
+        updated_at: now().toISOString(),
+      }).execute();
+      await fixture.db.insertInto("collaboration_members").values({
+        scope_id: scopeId,
+        actor_id: ownerId,
+        role: "owner",
+        status: "accepted",
+        organization_id: firstOrganization,
+        invitation_id: null,
+        invited_by: ownerId,
+        accepted_at: now().toISOString(),
+        expires_at: null,
+        revision: 1,
+        joined_at: now().toISOString(),
+        updated_at: now().toISOString(),
+        dispositioned_at: null,
+      }).execute();
+      const grants = new CollaborationCapabilityRepository(fixture.db, { now, createId: randomUUID });
+      const precondition = createOrganizationPrecondition({
+        now,
+        source: {
+          async assertMembership({ organizationId, actorId }) {
+            return organizationId === firstOrganization && (actorId === ownerId || actorId === memberId)
+              ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
+              : { member: false };
+          },
+        },
+      });
+      const evaluator = new CollaborationCapabilityEvaluator({ db: fixture.db, grants, organizationPrecondition: precondition, now });
+      await expect(evaluator.evaluateEffectiveAccess({ scopeId, actorId: memberId }))
+        .resolves.toMatchObject({ preset: null, actions: [], reasons: ["membership_required"] });
+      const grant = await grants.createGrant({
+        scopeId,
+        actorId: ownerId,
+        clientRequestId: randomUUID(),
+        expectedRevision: 1,
+        payloadHash: "f".repeat(64),
+        audience: { kind: "member", actorId: memberId },
+        preset: "viewer",
+        policyVersion: "standalone-v1",
+      });
+      await evaluator.acceptGrant({ grantId: grant.grantId, actorId: memberId });
+      await expect(evaluator.evaluateEffectiveAccess({ scopeId, actorId: memberId }))
+        .resolves.toMatchObject({ preset: "viewer", reasons: [] });
+    } finally {
+      await fixture.destroy();
+    }
+  });
+});
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("standalone catalog scope real Postgres", () => {
   let fixture: CollaborationTestDatabase;

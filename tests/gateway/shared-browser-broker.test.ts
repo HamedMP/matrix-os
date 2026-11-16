@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SharedBrowserActionResult } from "@matrix-os/contracts";
-import { createSharedBrowserBroker,SharedBrowserError } from "../../packages/gateway/src/shared-browser/broker.js";
+import { createSharedBrowserBroker,SharedBrowserError,type SharedBrowserDriverResult } from "../../packages/gateway/src/shared-browser/broker.js";
 
 const binding = { ownerId: "owner", chatId: "chat-1", runId: "run-1", harness: "pi" as const };
 function deferred<T>() { let resolve!: (value:T)=>void; const promise=new Promise<T>(r=>{resolve=r;}); return {promise,resolve}; }
@@ -12,7 +12,7 @@ async function closeAfterResult(broker: {close():Promise<void>},result:Promise<u
 }
 function setup() {
   const gates: boolean[]=[];
-  const driver={ execute: vi.fn(async (_input:unknown,_signal:AbortSignal): Promise<SharedBrowserActionResult>=>({success:true,observationId:"obs-1",content:"Invoices"})), invalidateObservation:vi.fn(), detach:vi.fn(async()=>{}) };
+  const driver={ execute: vi.fn(async (_input:unknown,_signal:AbortSignal): Promise<SharedBrowserDriverResult>=>({success:true,observationId:"obs-1",content:"Invoices"})), invalidateObservation:vi.fn(), detach:vi.fn(async()=>{}) };
   const broker=createSharedBrowserBroker({ ownerId:"owner", driver, setHumanControl:async(value:boolean)=>{gates.push(value);}, runTtlMs:60_000, drainTimeoutMs:100 });
   const controller=new AbortController(); const grant=broker.openRun(binding,controller.signal);
   return {broker,driver,gates,controller,grant};
@@ -46,6 +46,41 @@ describe("shared Chrome broker ownership and takeover",()=>{
       expect(settled).toBe(false);await s.broker.control("owner",{action:"resume"});expect(await result).toHaveProperty("success",true);
       expect(s.driver.execute).toHaveBeenCalledTimes(3);expect(s.driver.detach).toHaveBeenCalledTimes(2);
     } finally {await closeAfterResult(s.broker,result);}
+  });
+  it.each(["pause", "takeover"] as const)("counts a related target returned while owner %s drains the action", async action => {
+    const s = setup();
+    const entered = deferred<void>();
+    const related = { success: false, handoffRequested: true, targetId: 'tab',
+      relatedTargetHandoff: true, content: 'Chrome needs owner control.' } as const;
+    s.driver.execute.mockImplementationOnce(async (_input, signal) => {
+      entered.resolve();
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      return related;
+    });
+    const pending = s.broker.execute(binding, { action: 'snapshot' }, s.controller.signal);
+    let repeated: Promise<unknown> | undefined;
+    try {
+      await entered.promise;
+      await s.broker.control('owner', { action });
+      expect(s.broker.status()).toMatchObject({ handoff: { content: related.content } });
+      await s.broker.control('owner', { action: 'resume' });
+      expect(await pending).toMatchObject({ success: true, content: 'Invoices' });
+
+      const enteredAgain = deferred<void>();
+      s.driver.execute.mockImplementationOnce(async (_input, signal) => {
+        enteredAgain.resolve();
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        return related;
+      });
+      repeated = s.broker.execute(binding, { action: 'snapshot' }, s.controller.signal);
+      await enteredAgain.promise;
+      await s.broker.control('owner', { action });
+      await vi.waitFor(() => expect(s.broker.status()).toMatchObject({ phase: 'idle', run: null }));
+      expect(await repeated).toMatchObject({ success: false, content: expect.stringContaining('Browser automation stopped') });
+      expect(s.broker.resolveCapability(s.grant.token)).toBeNull();
+    } finally {
+      await Promise.all([s.broker.close(), settleExpectedCleanup(pending), repeated && settleExpectedCleanup(repeated)]);
+    }
   });
   it("never observes under successor authority after a handoff run closes",async()=>{
     const s=setup();s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true});
@@ -90,11 +125,35 @@ describe("shared Chrome broker ownership and takeover",()=>{
     await expect(s.broker.execute(binding,{action:"click",observationId:"obs-1",ref:"r1"},s.controller.signal)).rejects.toHaveProperty("code","observe_again");
     await s.broker.close();
   });
-  it("marks an unknown browser transport result unavailable until explicit recovery",async()=>{
-    const s=setup();s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_unavailable",true));
-    await expect(s.broker.execute(binding,{action:"snapshot"},s.controller.signal)).rejects.toMatchObject({code:"browser_unavailable",dispatched:true});
-    expect(s.broker.status().phase).toBe("unavailable");expect(s.gates).toEqual([false]);
-    await s.broker.control("owner",{action:"stop"});expect(s.broker.status().phase).toBe("idle");await s.broker.close();
+  it("recovers an unknown action result through Stop and a new run without replaying the action", async () => {
+    const s = setup();
+    const next = { ...binding, runId: "run-2" };
+    const signal = s.controller.signal;
+    const click = { action: "click", observationId: "obs-1", ref: "submit" } as const;
+    try {
+      await s.broker.execute(binding, { action: "snapshot" }, signal);
+      s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_unavailable", true));
+      await expect(s.broker.execute(binding, click, signal))
+        .rejects.toMatchObject({ code: "browser_unavailable", dispatched: true });
+      expect(s.broker.status()).toMatchObject({ phase: "unavailable", needsObservation: true });
+      expect(s.gates).toEqual([false]);
+      await expect(s.broker.control("owner", { action: "resume" })).rejects.toHaveProperty("code", "run_unavailable");
+
+      await s.broker.control("owner", { action: "stop" });
+      expect(s.broker.status()).toMatchObject({ phase: "idle", run: null, needsObservation: true });
+      expect(s.broker.resolveCapability(s.grant.token)).toBeNull();
+      expect(s.driver.detach).toHaveBeenCalledOnce();
+      s.broker.openRun(next, signal);
+      await expect(s.broker.execute(next, click, signal)).rejects.toHaveProperty("code", "observe_again");
+      s.driver.execute.mockResolvedValueOnce({ success: true, observationId: "obs-2" });
+      await expect(s.broker.execute(next, { action: "snapshot" }, signal))
+        .resolves.toMatchObject({ success: true, observationId: "obs-2" });
+      expect(s.driver.execute.mock.calls.map(([action]) => action))
+        .toEqual([{ action: "snapshot" }, click, { action: "snapshot" }]);
+      expect(s.gates).toEqual([false, true, false]);
+    } finally {
+      await s.broker.close();
+    }
   });
   it("exports only verified downloads for the exact live run, preserving originals on export failure",async()=>{
     const artifact={documentId:"INV-1",path:"data/browser-artifacts/INV-1.pdf",size:800,sha256:"a".repeat(64),sourceUrl:"https://example.com/invoice.pdf",retrievedAt:new Date().toISOString(),original:true as const};

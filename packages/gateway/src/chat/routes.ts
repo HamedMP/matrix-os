@@ -1,3 +1,4 @@
+import { ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import type { ApprovalProvenance } from "./approval-submission.js";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
@@ -172,7 +173,7 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
-    provenance?: { previewTurnProof?: string },
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse>;
   enqueueQueuedTurn(
     principal: RequestPrincipal,
@@ -601,7 +602,8 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof") },
+        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
+          routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },
       );
       return chatJson(context, projectChatMessageResponse(
         CanonicalChatTurnAdmissionResponseSchema.parse(result),
@@ -793,6 +795,7 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const proof = context.req.header("x-matrix-custom-mcp-approval-proof");
+      const routineProof = context.req.header("x-matrix-routine-action-proof");
       const browserProof = context.req.header("x-matrix-browser-approval-proof");
       const result = await options.service.submitApproval(
         ownerFromPrincipal(options.getPrincipal(context)),
@@ -800,7 +803,7 @@ export function createCanonicalChatRoutes(options: {
         runId,
         approvalId,
         parsed.data,
-        { ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
+        { ...(routineProof ? { routineActionProof: routineProof } : {}), ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
       );
       return chatJson(context, CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {

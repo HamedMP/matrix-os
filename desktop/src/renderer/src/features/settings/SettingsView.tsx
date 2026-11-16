@@ -1,3 +1,4 @@
+import MessagingSection from "./sections/MessagingSection";
 import {
   Blocks,
   Bot,
@@ -39,6 +40,7 @@ export type SettingsSectionId =
   | "runtime"
   | "agents-providers"
   | "identity-personality"
+  | "messaging"
   | "services"
   | "mcps"
   | "skills"
@@ -50,6 +52,7 @@ export type SettingsSectionId =
 
 const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; group: string }[] = [
   { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "AI" },
+  { id: "messaging", label: "Messaging", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
@@ -161,6 +164,7 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
+          {section === "messaging" ? <MessagingSection /> : null}
           {section === "services" ? <IntegrationsSettingsSection active={active} /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}

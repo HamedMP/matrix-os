@@ -1,4 +1,4 @@
-import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinksResponseSchema, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinksResponseSchema, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
 
 export const SITE_CLIENT_MAX_RESPONSE_BYTES = 1_048_576;
 export interface SiteMetadata { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number }
@@ -18,6 +18,8 @@ export interface SiteClient {
   submissions(app: string, cursor: string | null, signal: AbortSignal): Promise<SiteSubmissionsPage>;
   exportSubmissions(app: string, cursor: string | null, signal: AbortSignal): Promise<Blob>;
   deleteSubmission(app: string, id: string, signal: AbortSignal): Promise<void>;
+  /** Friendly-path check for the share popover; `taken` comes from the platform alias registry. */
+  slugAvailability(app: string, slug: string, signal: AbortSignal): Promise<SiteSlugAvailability>;
 }
 export interface SiteTransport {
   get<T>(path: string, options?: { signal: AbortSignal; timeoutMs?: number }): Promise<T>;
@@ -70,5 +72,6 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
     submissions: async (app, cursor, signal) => SiteSubmissionsResponseSchema.parse(await transport.get(`${sitePath(app)}/submissions?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),
     exportSubmissions: (app, cursor, signal) => transport.getBlob(`${sitePath(app)}/submissions/export?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
     deleteSubmission: async (app, id, signal) => { await transport.delete(`${sitePath(app)}/submissions/${encodeURIComponent(id)}`, undefined, { signal }); },
+    slugAvailability: async (app, slug, signal) => SiteSlugAvailabilitySchema.parse(await transport.get(`${sitePath(app)}/slug-availability?${new URLSearchParams({ slug })}`, { signal })),
   };
 }

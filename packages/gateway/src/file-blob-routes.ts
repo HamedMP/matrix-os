@@ -101,6 +101,7 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     return c.body(body, 200, {
       "Content-Type": getMimeType(extname(basename(resolved))),
       "Content-Length": String(stats.size),
+      "Cache-Control": "private, no-store",
     });
   });
 
@@ -184,25 +185,21 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
 
     if (!resolved) return invalidPath(c);
     const uploadPath = resolved;
-    try {
-      const existing = await lstat(uploadPath);
-      if (existing.isDirectory()) return c.json({ error: "not_file" }, 400);
-      if (!parsed.force) return c.json({ error: "file_exists" }, 409);
-    } catch (err: unknown) {
-      if (
-        !(err instanceof Error) ||
-        !("code" in err) ||
-        (err as NodeJS.ErrnoException).code !== "ENOENT"
-      ) {
-        throw err;
-      }
-    }
-
     const operation = async (): Promise<Response> => {
+      let mode = parsed.secret ? 0o600 : 0o644;
+      try {
+        const existing = await lstat(uploadPath);
+        if (existing.isDirectory()) return c.json({ error: "not_file" }, 400);
+        if (!parsed.force) return c.json({ error: "file_exists" }, 409);
+        // A replacement must retain any restrictions on the original file.
+        if (existing.isFile()) mode = existing.mode & (parsed.secret ? 0o600 : 0o777);
+      } catch (error: unknown) {
+        if (!isMissingFileError(error)) throw error;
+      }
+
       const body = Buffer.from(await c.req.arrayBuffer());
       const parent = dirname(uploadPath);
       const tmpPath = `${uploadPath}.matrix-upload-${randomUUID()}.tmp`;
-      const mode = parsed.secret ? 0o600 : 0o644;
 
       try {
         await mkdir(parent, { recursive: true, mode: 0o700 });

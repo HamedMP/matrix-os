@@ -411,3 +411,42 @@ describe("Preview turn dispatch admission", () => {
   );
 
 });
+
+it("binds a routine Full Access proof only after a fresh direct turn and before dispatch", async () => {
+  const instance = await createTestPGlite();
+  const repository = new ChatRepository(instance.dialect);
+  await repository.bootstrap();
+  const providerCatalog = catalog();
+  providerCatalog.instances[0]!.supports.permissionModes = ["supervised", "full_access"];
+  const order: string[] = [];
+  const redeem = vi.fn(async () => {
+    order.push("proof");
+    return () => { order.push("release"); };
+  });
+  const provider = adapter(async function* () {
+    order.push("start");
+    yield { type: "run.completed", outcome: "completed" };
+  });
+  const orchestrator = new CanonicalChatOrchestrator({ repository, catalog: { getCatalog: async () => providerCatalog },
+    adapters: new CanonicalChatProviderRegistry([provider]), beforeRoutineFullAccessDispatch: redeem });
+  try {
+    await repository.create(owner, { id: "chat_verified_origin", clientRequestId: "req_verified_create", title: "Verified origin" });
+    const input = {
+      clientRequestId: "req_verified_origin", baseRevision: 0, parts: [{ type: "text" as const, text: "Propose a routine" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, permissionMode: "full_access", interactionMode: "default",
+    };
+    const provenance = { routineFullAccessProof: "verified-browser-proof" };
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_verified_origin", input, provenance);
+    await orchestrator.drain();
+    expect(order).toEqual(["proof", "start", "release"]);
+    expect(redeem).toHaveBeenCalledWith(expect.objectContaining({ principal, owner, chatId: "chat_verified_origin",
+      proof: provenance.routineFullAccessProof, run: expect.objectContaining({ id: admitted.run.id, turnId: admitted.turn.id, status: "accepted" }),
+      body: input }));
+    expect(await orchestrator.admitTurn(principal, owner, "chat_verified_origin", input, provenance))
+      .toMatchObject({ admission: "already_accepted" });
+    expect(redeem).toHaveBeenCalledTimes(1);
+  } finally {
+    await orchestrator.drain();
+    await repository.kysely.destroy();
+  }
+});

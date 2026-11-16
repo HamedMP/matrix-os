@@ -274,7 +274,10 @@ describe("owner-hosted Company Brain durable sources", () => {
       const guarded=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition,authorize:async(request)=>{
         const context=await live.authorize(request);if(request.scopeId===childScope) revoked=true;return context;
       }}});
-      await expect(guarded.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"EvOrgRevoked"})).rejects.toMatchObject({code:"not_found"});
+      const capture=guarded.captureSlackMention(projectScope,childScope,actors.editor,
+        revokedActor===actors.owner ? input : {...input,eventId:"EvOrgRevoked"});
+      if(revokedActor===actors.owner) await expect(capture).resolves.toEqual(first);
+      else await expect(capture).rejects.toMatchObject({code:"not_found"});
       expect(await db.selectFrom("company_brain_documents").select("source_id").execute()).toHaveLength(1);
     }
     await expect(service.captureSlackMention(projectScope,childScope,actors.editor,{...input,approval:{...input.approval,ownerId:actors.editor}})).rejects.toMatchObject({code:"forbidden"});

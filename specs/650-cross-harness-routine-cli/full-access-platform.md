@@ -36,6 +36,16 @@ The exact-operation prerequisite and Full Access verification routes share this 
 
 Missing/foreign/expired provenance or unavailable verification leaves the dependent source at its prior exact-operation ceiling. A proof cannot approve schedule activation, enable background models, grant integrations, change revisions, authorize a shared/foreign Chat or convert unknown/cancel-pending outcomes into success.
 
+## Direct submissions from trusted private Chat
+
+The existing Full Access selection authorizes routine operations for a qualifying private Chat turn. The authenticated HTTP proxy can issue a `direct_turn` proof for a fresh immediate turn in Full Access. It reuses the Full Access header, signing purpose, 60-second bound and existing verification endpoint. The direct tuple binds the exact admitted request digest, request ID, owner, Computer, runtime slot and Chat. It carries no consent scope ID. The existing `scope_decision` and scope-bound `turn` formats retain their original meaning.
+
+The Gateway redeems the proof only for the fresh ordinary Run admitted from that request. The registered provider source still supplies the actual live Run and native generation. Routine authority is scoped to the validated destination and rechecked during authorization and consumption. Supervised and eligible callers with no verified direct proof retain exact-operation confirmation. Shared or organization Chat, queued and automated Runs, device-only requests, and mismatched or stale proofs cannot issue direct authority.
+
+A creation command still submits a proposal to the existing Bot. Its independent **Approve schedule** action is required for activation. Source verification grants no model or integration permission.
+
+A Runtime paired with a Platform that cannot mint or verify the direct proof uses the existing confirmation behavior. A Platform can forward the new proof to an older Gateway while the public Chat request remains compatible. Test the matched Platform and Gateway on Dev before claiming live provider acceptance.
+
 ## Evidence and delivery
 
 Failure-first tests exercise the actual existing proxy and actual registered `createApp` internal route. SQL integration fixtures use Kysely/PGlite, not a server PostgreSQL instance. Tests include device/legacy sessions, malformed/slow/oversized reads, caller-header stripping, wrong purpose/kind/tuple/digest, transport-key forgery, current machine changes, lookup outages and admission release. Local compilation and source imports are separate from a deployed matching verifier and live Gateway/Dev flow.

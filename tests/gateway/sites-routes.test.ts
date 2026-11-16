@@ -69,3 +69,28 @@ it('bounds forged site proofs by the trusted transport IP despite rotating Cloud
  expect(statuses.slice(0,120)).toEqual(Array(120).fill(401));
  expect(statuses[120]).toBe(429); expect(verifier).toHaveBeenCalledTimes(120);
 });
+
+describe('owner friendly-path availability', () => {
+ // Outcome: the share popover can show Available/Taken before publishing.
+ // Faults: unvalidated query reaching the platform, or platform errors leaking.
+ it('validates the query and forwards only the friendly path', async () => {
+  const platform = { request: vi.fn(), slugAvailability: vi.fn().mockResolvedValue({ status: 'taken', suggestions: ['crm-app'] }) };
+  const app = ownerApp('owner', platform);
+  const ok = await app.request('/api/apps/event/site/slug-availability?slug=crm');
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toEqual({ status: 'taken', suggestions: ['crm-app'] });
+  expect(platform.slugAvailability).toHaveBeenCalledWith('event', 'crm', expect.any(AbortSignal));
+  expect((await app.request('/api/apps/event/site/slug-availability')).status).toBe(400);
+  expect((await app.request(`/api/apps/event/site/slug-availability?slug=${'x'.repeat(64)}`)).status).toBe(400);
+  expect((await app.request('/api/apps/event/site/slug-availability?slug=crm&extra=1')).status).toBe(400);
+  expect(platform.slugAvailability).toHaveBeenCalledTimes(1);
+ });
+ it('rejects collaborators and hides platform failures', async () => {
+  const { SitePlatformError } = await import('../../packages/gateway/src/sites/platform-client.js');
+  const platform = { request: vi.fn(), slugAvailability: vi.fn().mockRejectedValue(new SitePlatformError(409)) };
+  expect((await ownerApp('collaborator', platform).request('/api/apps/event/site/slug-availability?slug=crm')).status).toBe(403);
+  const failed = await ownerApp('owner', platform).request('/api/apps/event/site/slug-availability?slug=crm');
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toEqual({ error: 'Site unavailable' });
+ });
+});

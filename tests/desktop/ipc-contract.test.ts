@@ -7,6 +7,10 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
+  it("does not allow the renderer to write auth profile or choose a device-auth origin", () => {
+    expect(INVOKE_CHANNELS["state:set"].request.safeParse({ key: "profile", value: { platformHost: "https://attacker.example" } }).success).toBe(false);
+    expect(INVOKE_CHANNELS["auth:start-device-flow"].request.safeParse({ intent: "sign-in", platformHost: "https://attacker.example" }).success).toBe(false);
+  });
   it("matches the shared drive folder byte range at the IPC boundary",()=>{
     const input={scopeId:"00000000-0000-4000-8000-000000000001",organizationId:"org_example",runtimeSlot:"primary",authGeneration:1,folder:"f".repeat(798)};
     const schema=INVOKE_CHANNELS["runtime:organization-drive-upload"].request;
@@ -86,10 +90,12 @@ describe("IPC contract", () => {
     const channel = INVOKE_CHANNELS["app:get-version"];
 
     expect(channel.request.safeParse({}).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0-canary.2", source: null }).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "a".repeat(40), ancestors: [] } }).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "unknown", ancestors: [] } }).success).toBe(false);
-    expect(channel.response.safeParse({ version: "x".repeat(129), source: null }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0-canary.2", source: null, channel: "canary" }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "a".repeat(40), ancestors: [] }, channel: "stable" }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "unknown", ancestors: [] }, channel: "stable" }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "x".repeat(129), source: null, channel: "stable" }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0", source: null }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0", source: null, channel: "nightly" }).success).toBe(false);
   });
 
   it("exposes bounded authenticated identity fields without credentials", () => {
