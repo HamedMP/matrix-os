@@ -121,6 +121,19 @@ describe("drawer terminal screen", () => {
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
+  it("does not show a routine confirmations entry for the selected Computer", () => {
+    const current = mockUseComputerTerminals();
+    mockUseComputerTerminals.mockReturnValue({
+      ...current,
+      computer: { handle: "fixture-pc", runtimeSlot: "review1", gatewayPath: "/vm/fixture-pc?runtime=review1" },
+    });
+
+    render(<TerminalScreen />);
+
+    expect(screen.getByText("review-pr-42")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
+  });
+
   it("renders VPS sessions and uses semantic status colors", () => {
     render(<TerminalScreen />);
 
@@ -437,19 +450,4 @@ describe("drawer terminal screen", () => {
     expect(screen.getByTestId("terminal-manage-sheet")).toBeTruthy();
     expect(mockPush).not.toHaveBeenCalled();
   });
-});
-
-it("the actual Native Mobile Terminal route exposes current Computer routine confirmations without a fake Chat or automatic decision", async () => {
-  const current = mockUseComputerTerminals();
-  mockUseComputerTerminals.mockReturnValue({ ...current, computer: { handle: "fixture-pc", runtimeSlot: "review1", gatewayPath: "/vm/fixture-pc?runtime=review1" } });
-  const bytes = new TextEncoder().encode(JSON.stringify({ challenges: [] }));
-  const fetching = jest.spyOn(global, "fetch").mockImplementation(async () => { let sent = false; return { ok: true, headers: new Headers(), body: { getReader: () => ({ read: async () => sent ? { done: true } : (sent = true, { done: false, value: bytes }), releaseLock: () => {}, cancel: async () => {} }) } } as unknown as Response; });
-  try {
-    render(<TerminalScreen/>); expect(fetching).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByText("Routine confirmations"));
-    await screen.findByText("No pending routine confirmations on this Computer.");
-    await act(async () => {});
-    expect(fetching).toHaveBeenCalledWith("https://app.matrix-os.com/vm/fixture-pc/~runtime/review1/api/routine-cli/actions", expect.objectContaining({ method: "GET", headers: expect.objectContaining({ authorization: "Bearer fixture-owner-clerk" }) }));
-    expect(fetching.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
-  } finally { fetching.mockRestore(); }
 });

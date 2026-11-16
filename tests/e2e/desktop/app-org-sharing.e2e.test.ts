@@ -79,23 +79,20 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
   it("keeps the native app behind one owner popover and never publishes when sharing", async () => {
     await page.getByRole("button", { name: "Open App Launcher" }).click();
     await page.getByText("Pomodoro", { exact: true }).last().click();
-    const trigger = page.getByRole("button", { name: "Publish app", exact: true });
+    const trigger = page.getByRole("button", { name: "Share", exact: true });
     await trigger.waitFor();
     await trigger.click();
     const dialog = page.getByRole("dialog", { name: "Share app" });
     await dialog.waitFor();
-    await dialog.getByText("Matrix Team").waitFor();
-    expect(await page.getByRole("button", { name: "Publish app", exact: true }).count()).toBe(1);
-    expect(await dialog.getByText(/including guests/).count()).toBe(1);
-    await dialog.getByRole("button", { name: "Check collaboration" }).click();
-    await dialog.getByText("Ready to share").waitFor();
-    if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-ready.png") });
-    await dialog.getByRole("button", { name: "Share with your org" }).click();
-    await dialog.getByText("Shared with Matrix Team").waitFor();
+    await dialog.getByRole("tab", { name: /Organization/ }).click();
+    await dialog.getByText("Matrix Team", { exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: "Share", exact: true }).count()).toBe(1);
+    // Readiness is rechecked on Share; a ready result shares at once.
+    await dialog.getByRole("button", { name: "Share with Matrix Team" }).click();
+    await dialog.getByText("Matrix Team link").waitFor();
     if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-active.png") });
-    await dialog.getByRole("button", { name: "Stop sharing" }).click();
-    await dialog.getByText("Sharing stopped").waitFor();
-    expect(await dialog.getByText("This app is private.").count()).toBe(1);
+    await dialog.getByRole("button", { name: "Stop sharing with Matrix Team" }).click();
+    await dialog.getByRole("button", { name: "Share with Matrix Team" }).waitFor();
     expect(publicationMutations).toEqual([]);
   }, 60_000);
 });

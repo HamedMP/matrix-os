@@ -26,7 +26,6 @@ import {
   createMemoryStore,
   createWatchdog,
   DEFAULT_APPROVAL_POLICY,
-  loadHandle,
   restoreModule,
   type ApprovalPolicy,
   type Heartbeat,
@@ -39,12 +38,8 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
-import {
-  appendFile as appendFileAsync,
-  mkdir as mkdirAsync,
-  writeFile as writeFileAsync,
-} from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { appendFile as appendFileAsync } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
@@ -56,15 +51,11 @@ import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
 import { authMiddleware } from "./auth.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
-import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
-import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
 import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
-import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
-import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
-import { createInitialChatAdapters } from "./server/initial-chat-adapters.js";
 import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
 import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
@@ -124,6 +115,7 @@ import {
 import { ConversationRunRegistry } from "./conversation-run-registry.js";
 import { saveSummary, summarizeConversation } from "./conversation-summary.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { createCronChannelTrigger } from "./cron/channel-trigger.js";
 import { createCronService, type CronService } from "./cron/service.js";
 import { createCronStore } from "./cron/store.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
@@ -244,10 +236,8 @@ import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { startGatewayPlugins } from "./server/plugin-startup.js";
 import { registerSettingsRoutes } from "./server/settings-routes.js";
-import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
-import { createSyncRoutes, createUnconfiguredSyncRoutes } from "./sync/routes.js";
 
 import type { WSContext } from "hono/ws";
 import {
@@ -256,7 +246,6 @@ import {
 import type { ChatRepository } from "./chat/repository.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 import type { MessagingKyselyRepository } from "./messages/repository.js";
-import { createMessagingRoutes } from "./messages/routes.js";
 import { wsConnectionsActive } from "./metrics.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
@@ -271,6 +260,7 @@ import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, re
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
+import { registerGatewayMessagingRoutes, registerGatewaySyncAndSocialRoutes } from "./server/owner-data-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
@@ -300,10 +290,7 @@ export {
   type TerminalSessionRouteRegistry,
 } from "./terminal-session-routes.js";
 
-export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
-  await mkdirAsync(dirname(persistPath), { recursive: true });
-  await writeFileAsync(persistPath, "[]\n");
-}
+export { resetVolatilePtySessionList } from "./server/volatile-pty-session-list.js";
 
 const MAX_MAIN_WS_CLIENTS = 100;
 
@@ -842,6 +829,8 @@ export async function createGateway(config: GatewayConfig) {
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let nativeClaudeChatRuntime: GatewayNativeClaudeChatRuntime | null = null;
+  let nativeClaudeRecovery: Parameters<typeof startGatewayClaudeNativeRecovery>[0] | undefined;
   let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1132,22 +1121,14 @@ export async function createGateway(config: GatewayConfig) {
   const { channelManager, pushAdapter, codingAgentAttentionNotifications } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
+    pushTokens: ownerDatabaseServices?.pushTokens ?? null,
   });
 
   // Cron service -- scheduled tasks from ~/system/cron.json
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
   const cronService: CronService = createCronService({
     store: cronStore,
-    onTrigger: (job) => {
-      if (job.target?.channel && job.target?.chatId) {
-        const formatted = formatForChannel(job.target.channel, job.message);
-        channelManager.send({
-          channelId: job.target.channel,
-          chatId: job.target.chatId,
-          text: formatted,
-        });
-      }
-    },
+    onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
   });
   cronService.start();
 
@@ -1606,62 +1587,20 @@ export async function createGateway(config: GatewayConfig) {
         ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
-    const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
-      ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-      ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
-      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
-    if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-      canonicalAdapters.push(createClaudeChatProviderAdapter({
+    const chatAdapters = createGatewayChatAdapters({
+      initial: { homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
         ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
-        homePath,
-        credentialKey: toolOutputKey,
-        resolveCredentialLaunch: resolveClaudeCredentialLaunch,
-        matrixMcpCapabilityIssuer: matrixMcpCapabilities,
-        ...(previewDriveClient ? { previewDriveClient } : {}),
-        customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
-          ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
-          : undefined,
-      }));
-    }
-    if (codingAgentThreadStore) {
-      if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "codex",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port,
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
-        }));
-      }
-      if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "pi",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
-        }));
-      }
-      if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "opencode",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
-        }));
-      }
-    }
-    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
-    if (botServices?.managedAdapter) {
-      canonicalAdapters.push(botServices.managedAdapter);
-      canonicalExecutableDriverKinds.push("matrix_pi");
-    }
+        ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
+        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port },
+      providers: codingAgentProviders, threads: codingAgentThreadStore,
+      claude: { resolveCredentialLaunch: resolveClaudeCredentialLaunch, matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        ...(previewDriveClient ? { previewDriveClient } : {}) },
+      ...(internalPlatformUrl && internalPlatformToken && internalHandle
+        ? { customMcpApproval: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } } : {}),
+      botAdapter: botServices?.adapter, managedBotAdapter: botServices?.managedAdapter,
+    });
+    nativeClaudeChatRuntime = chatAdapters.nativeClaude;
+    if (botServices?.managedAdapter) canonicalExecutableDriverKinds.push("matrix_pi");
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
       executionAdmissionFence,
@@ -1671,7 +1610,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
       agents: chatAgents,
       ...(botServices ? { botChats: botServices.botChats } : {}),
-      adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
+      adapters: new CanonicalChatProviderRegistry(chatAdapters.adapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       ...(gatewayCollaboration ? {
@@ -1679,10 +1618,13 @@ export async function createGateway(config: GatewayConfig) {
       } : {}),
       onAiGeneration: recordAiGeneration,
       ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
+      ...(process.env.MATRIX_PREVIEW_RUNTIME !== "true" && botServices?.routineCli
+        ? { beforeRoutineFullAccessDispatch: botServices.routineCli.beforeRoutineFullAccessDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    nativeClaudeChatRuntime?.bind(() => canonicalChatOrchestrator);
     botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
@@ -1709,6 +1651,16 @@ export async function createGateway(config: GatewayConfig) {
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
+    }
+    if (nativeClaudeChatRuntime) {
+      const collaborationGuard = canonicalChatCollaborationGuard;
+      nativeClaudeRecovery = {
+        runtime: nativeClaudeChatRuntime, configuredOwnerIds: codingAgentOwnerIds,
+        repository: chatRepository, credentialKey: toolOutputKey,
+        catalog: canonicalChatProviderCatalog, executionRoots: canonicalChatExecutionRoots,
+        assertPersonalExecutionAllowed: collaborationGuard
+          ? (owner, chatId) => collaborationGuard.assertPersonalExecutionAllowed(owner, chatId) : undefined,
+      };
     }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
@@ -1844,49 +1796,17 @@ export async function createGateway(config: GatewayConfig) {
   });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
-  if (messagingRepository) {
-    app.route("/api/messages", createMessagingRoutes({
-      repository: messagingRepository,
-      getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
-      appserviceOwnerId: process.env.MATRIX_MESSAGING_APPSERVICE_OWNER_ID ?? process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
-      hermesCapabilitySecret: process.env.MATRIX_MESSAGING_HERMES_CAPABILITY_SECRET,
-    }));
-  } else {
-    app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
-    app.all("/api/messages", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
-  }
+  registerGatewayMessagingRoutes(app, messagingRepository);
 
   registerCanvasGatewayRoutes({
     app, upgradeWebSocket, canvasService, canvasSubscriptionHub,
     gatewayCollaboration, logUnexpectedWsSendFailure,
   });
 
-  // 066: Sync API routes
-  if (syncDeps) {
-    app.route("/api/sync", createSyncRoutes({
-      ...syncDeps,
-      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
-    }));
-  } else {
-    app.route("/api/sync", createUnconfiguredSyncRoutes({
-      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
-    }));
-  }
-
-  // T2030-T2037: Social API routes
-  const getCurrentUser = () => {
-    const identity = loadHandle(homePath);
-    return identity.handle || "@me";
-  };
-  let socialRoutes: SocialRoutes | undefined;
-  if (appDb && queryEngine) {
-    await bootstrapSocialSchema(appDb);
-    socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
-    app.route("/api/social", socialRoutes);
-  } else {
-    app.all("/api/social/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
-  }
+  const socialRoutes = await registerGatewaySyncAndSocialRoutes({
+    app, appDb, homePath, queryEngine, syncDeps,
+    getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
+  });
 
   await registerOperationalRoutes({
     app, homePath, runningVersion, queryEngine, pluginRegistry,
@@ -1899,6 +1819,12 @@ export async function createGateway(config: GatewayConfig) {
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
   configureEdgeRequestDeadlines(server);
   injectWebSocket(server);
+  if (nativeClaudeRecovery) server.once("listening", () => {
+    if (!nativeClaudeRecovery) return;
+    void startGatewayClaudeNativeRecovery(nativeClaudeRecovery).catch((error: unknown) => {
+      logBestEffortFailure("Claude native recovery startup failed", error);
+    });
+  });
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
     onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
@@ -1924,6 +1850,8 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      nativeClaudeRecovery = undefined;
+      nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
@@ -1974,6 +1902,8 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close())]);
+      nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();
       botServices = undefined;
@@ -2000,6 +1930,7 @@ export async function createGateway(config: GatewayConfig) {
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
+      pushAdapter.dispose();
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
@@ -2033,6 +1964,7 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb?.destroy();
       await posthogErrorTracker.shutdown();
       server.close();
+      if (nativeClose.status === "rejected") throw nativeClose.reason;
     },
   };
 }

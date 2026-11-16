@@ -142,7 +142,7 @@ it.each(["expiry", "failed join"])("canonical %s retires the actual held service
     nativeHosts: { attachCommand: async ref => ["/fixed/node", "/fixed/terminal-io-attach.mjs", ref.path], inspect: async () => ({ status: "running" }), stop: async () => ({ status: "unknown" }) } });
   cleanup.push(() => runtime.shutdown()); const workspace = await runtime.ensureWorkspace();
   const register = vi.fn(async () => { throw new Error("No synthetic positive source"); });
-  const coordinator = createCanonicalTerminalLaunch({ homePath: f.home, generation: f.options.generation, runtime, computerId: "computer-current", ownerIds: ["clerk_actual"], interactiveHostEquivalent: true,
+  const coordinator = createCanonicalTerminalLaunch({ homePath: f.home, generation: f.options.generation, runtime, computerId: "computer-current", ownerIds: ["clerk_actual"],
     host: { start: input => f.service.start({ ...input, onBound: async startup => { held.push(startup); return input.onBound?.(startup); } }) },
     launcher: { build: async () => f.launch }, readProcess: f.options.readProcess,
     routines: { runtime: { register }, isShared: async () => false, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
@@ -169,7 +169,7 @@ async function canonicalServiceFixture(holdLaunch = false) {
   const client = new TerminalRuntimeSocketClient({ socketPath: f.home + "/r.sock" }), workspace = await client.ensureWorkspace();
   const register = vi.fn(async () => { throw new Error("No synthetic positive source"); });
   const coordinator = createCanonicalTerminalLaunch({ homePath: f.home, generation: f.options.generation, runtime: client, host: f.service,
-    computerId: "computer-current", ownerIds: ["clerk_actual"], interactiveHostEquivalent: true, launcher: { build: async () => f.launch }, readProcess: f.options.readProcess,
+    computerId: "computer-current", ownerIds: ["clerk_actual"], launcher: { build: async () => f.launch }, readProcess: f.options.readProcess,
     routines: { runtime: { register }, isShared: async () => false, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
   cleanup.push(coordinator.close);
   return { ...f, store, client, runtime, coordinator, workspace, register, start: () => coordinator.launch({ userId: "clerk_actual", source: "jwt" }, workspace.id,

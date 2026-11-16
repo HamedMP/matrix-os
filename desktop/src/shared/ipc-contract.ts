@@ -1,4 +1,5 @@
 import { DesktopPreviewSummarySchema } from "./preview-pair";
+import { DesktopDevRunSummarySchema } from "./dev-run-label";
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
@@ -10,6 +11,7 @@ import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
+import { SHARED_APP_DEEP_LINK_EVENTS, SHARED_APP_DEEP_LINK_INVOKE } from "./shared-app-deep-link-ipc";
 import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
 import {
   AppGenerateEventSchema,
@@ -160,6 +162,7 @@ const BoundedJsonValue = z.unknown().refine(
 
 export const INVOKE_CHANNELS = {
   ...TERMINAL_WINDOW_INVOKE,
+  ...SHARED_APP_DEEP_LINK_INVOKE,
   ...LOCAL_TERMINAL_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
@@ -375,6 +378,7 @@ export const INVOKE_CHANNELS = {
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
   "app:get-preview": { request: Empty, response: DesktopPreviewSummarySchema.nullable() },
+  "app:get-dev-run": { request: Empty, response: DesktopDevRunSummarySchema.nullable() },
   "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {
@@ -536,6 +540,7 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
+  ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,

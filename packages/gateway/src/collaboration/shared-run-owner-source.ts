@@ -2,15 +2,14 @@
  * S08 / T044: the owner-source decision the shared AI runtime consults before
  * it prepares a provider adapter for a queued shared run.
  *
- * The decision comes from the scope's execution policy: the owner's selected
- * V3 source and harness, the effective submit mode for the requesting member
- * and the current policy revision. A scope without a policy is unavailable:
- * no run may execute on the owner's default kernel credential without an
- * explicit owner selection. Any refusal is a preparation error that keeps the
- * queued request in place; nothing falls back to another source, and the
- * owner's private provider session is never consulted.
+ * Project Chats use their persisted agent/model with the matching current
+ * owner Provider Settings route. Legacy standalone scopes use their execution
+ * policy. Every admission and dispatch fence resolves fresh owner authority;
+ * unavailable routes never fall back to another source.
  */
 import { createHash } from "node:crypto";
+import { CanonicalChatModelSelectionSchema } from "@matrix-os/contracts";
+import type { CollaborationChatProviderRoute } from "../ai-providers/snapshot-read-options.js";
 import type { Kysely } from "kysely";
 import type {
   AiProviderSnapshotV3,
@@ -61,7 +60,7 @@ function fresh(staleAfter: string | null, now: number): boolean {
 }
 
 /**
- * Resolves exactly the owner's global Provider Settings V3 `active` tuple.
+ * Resolves exactly the Provider Settings V3 `active` tuple selected for this read.
  * It never scans for an alternate ready source, Instance, or model.
  */
 export function resolveCurrentOwnerRoute(
@@ -133,6 +132,23 @@ function sameOwnerRoute(current: SharedRunOwnerSourceDecision, expected: SharedR
     && current.providerInstanceId === expected.providerInstanceId
     && current.providerAccessSourceId === expected.providerAccessSourceId
     && current.modelId === expected.modelId;
+}
+
+/** Keep native model IDs verbatim; shared-ai-runtime validates them in the native Chat catalog. */
+export function bindOwnerRouteToChatModel(
+  decision: SharedRunOwnerSourceDecision | null,
+  chatRoute?: CollaborationChatProviderRoute,
+): SharedRunOwnerSourceDecision | null {
+  if (!decision || !chatRoute) return decision;
+  if (DRIVER_BY_HARNESS[decision.harness] !== chatRoute.driverKind) return null;
+  return {
+    ...decision,
+    modelId: chatRoute.modelId,
+    allowedModelIds: [chatRoute.modelId],
+    routeGeneration: createHash("sha256").update(JSON.stringify({
+      sourceRouteGeneration: decision.routeGeneration, nativeModelId: chatRoute.modelId,
+    })).digest("hex"),
+  };
 }
 
 /**
@@ -260,6 +276,38 @@ export class SharedRunOwnerSource {
     const execution = await resolveExecutionScope(this.db, input.scopeId);
     if (!execution || execution.ref.kind !== "project") return undefined;
     if (execution.scope.owner_id !== input.ownerId) return null;
-    return resolveCurrentOwnerRoute(await this.snapshots.getSnapshotV3(input.ownerId), this.now());
+    // Resolve from the persisted Chat binding at every admission/dispatch fence.
+    // Multiple enabled owner agents must not replace the Chat's chosen agent.
+    const chat = await this.db.selectFrom("collaboration_scopes as scope")
+      .innerJoin("chats as chat", "chat.id", "scope.resource_id")
+      .select(["chat.bound_driver_kind", "chat.bound_instance_id", "chat.current_selection"])
+      .where("scope.id", "=", input.scopeId)
+      .where("scope.kind", "=", "chat")
+      .where("chat.owner_type", "=", "personal")
+      .where("chat.owner_id", "=", input.ownerId)
+      .where("chat.lifecycle", "=", "active")
+      .executeTakeFirst();
+    let chatRoute: CollaborationChatProviderRoute | undefined;
+    if (chat && (chat.bound_driver_kind === "claude_code" || chat.bound_driver_kind === "codex"
+      || chat.bound_driver_kind === null && chat.current_selection !== null)) {
+      let raw = chat.current_selection;
+      try {
+        if (typeof raw === "string") raw = JSON.parse(raw);
+      } catch (error: unknown) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return null;
+      }
+      const selection = CanonicalChatModelSelectionSchema.safeParse(raw);
+      if (!selection.success || chat.bound_instance_id !== null
+        && selection.data.instanceId !== chat.bound_instance_id) return null;
+      const driverKind = chat.bound_driver_kind
+        ?? (selection.data.instanceId === "codex_default" ? "codex"
+          : selection.data.instanceId === "claude_code_default" ? "claude_code" : null);
+      if (driverKind === "codex" || driverKind === "claude_code") {
+        chatRoute = { driverKind, modelId: selection.data.model };
+      }
+    }
+    const decision = resolveCurrentOwnerRoute(await this.snapshots.getSnapshotV3(input.ownerId, chatRoute), this.now());
+    return bindOwnerRouteToChatModel(decision, chatRoute);
   }
 }

@@ -182,7 +182,8 @@ export async function createGatewayCollaboration(options: {
   // S08: one owner-selected source per execution scope, resolved at construction.
   const ownerProviderSnapshots = options.providerSnapshotReader
     ? {
-      getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot({
+      getSnapshotV3: (_ownerId: string, collaborationChatRoute?: import("../ai-providers/snapshot-read-options.js").CollaborationChatProviderRoute) => options.providerSnapshotReader!.getSnapshot({
+        ...(collaborationChatRoute ? { collaborationChatRoute } : {}),
         refresh: true,
         suppressFundedProbes: true,
         includeNativeAccountMetadata: false,

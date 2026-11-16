@@ -128,6 +128,7 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+chmod 0644 "$STAGE_DIR/bin/matrix-claude-native-recovery.py"
 # Native Browser services live outside app/. Stage separate guarded Preview and
 # customer lifecycle payloads; customer setup is scheduled after core readiness.
 pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"

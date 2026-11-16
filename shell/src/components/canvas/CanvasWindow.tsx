@@ -325,7 +325,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      <AppSiteButton appSlug={publishingSlug} portalContainer={portalContainer} />
+      <AppSiteButton appSlug={publishingSlug} appName={win.title} portalContainer={portalContainer} />
     </div>
   ) : null;
 

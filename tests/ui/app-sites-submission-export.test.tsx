@@ -98,3 +98,15 @@ describe("cached visitor export privacy", () => {
   });
 
 });
+
+describe("Share popover visitor submissions", () => {
+  // Outcome: the owner sees why a submissions read failed inside the Share popover.
+  // Fault: the section swallowing the hook's error, leaving an empty list.
+  it("shows a failed submissions read beside the list", async () => {
+    const { SiteSubmissionsSection } = await import("../../shell/src/components/app-sites/SiteSubmissionsSection");
+    const api = client(vi.fn().mockRejectedValue(new Error("Submissions unavailable")));
+    render(<SiteSubmissionsSection appSlug="launch" client={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "Visitor submissions" }));
+    expect((await screen.findByRole("alert")).textContent).toBeTruthy();
+  });
+});

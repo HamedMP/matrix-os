@@ -26,7 +26,13 @@ export function createSharedBrowserMcpServer(options: { gatewayPort: number; tok
       return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
     } catch (error: unknown) {
       console.warn("[shared-browser-mcp] Action unavailable", error instanceof Error ? error.name : "UnknownError");
-      return { isError: true, content: [{ type: "text" as const, text: "Browser action unavailable. If the owner paused or took over, stop until they resume; then obtain a fresh snapshot before continuing. Never replay an uncertain action." }] };
+      return {
+        isError: true,
+        content: [{
+          type: "text" as const,
+          text: "Browser action unavailable. Its effect is uncertain. Check the current Browser state and verify the outcome before continuing. Never replay an uncertain action.",
+        }],
+      };
     }
   });
   return server;

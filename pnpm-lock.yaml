@@ -1263,6 +1263,9 @@ importers:
       '@noble/hashes':
         specifier: 2.3.0
         version: 2.3.0
+      '@radix-ui/react-collapsible':
+        specifier: 1.1.12
+        version: 1.1.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -1278,6 +1281,9 @@ importers:
       '@radix-ui/react-select':
         specifier: 2.2.6
         version: 2.2.6(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@radix-ui/react-tabs':
+        specifier: 1.1.13
+        version: 1.1.13(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       lucide-react:
         specifier: ^0.563.0
         version: 0.563.0(react@19.2.6)
@@ -25739,7 +25745,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
+      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
@@ -28751,7 +28757,7 @@ snapshots:
 
   har-validator@5.1.5:
     dependencies:
-      ajv: 6.15.0
+      ajv: 6.14.0
       har-schema: 2.0.0
 
   has-bigints@1.1.0: {}

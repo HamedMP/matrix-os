@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
@@ -244,6 +245,18 @@ describe("project collaboration app adapter", () => {
       revision: 2,
     });
     expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ transaction: expect.anything() }));
+  });
+
+  it("returns timestamp-bearing project rows read by Postgres in the locked transaction", async () => {
+    await sql`CREATE TABLE board_cards (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)`.execute(fixture.db);
+    await sql`INSERT INTO board_cards VALUES ('row_1', 'Dated', '2026-11-12T13:44:05.123Z')`.execute(fixture.db);
+    bridge.execute = vi.fn(async (input) => (await sql`SELECT * FROM board_cards`.execute(input.transaction!)).rows);
+    const owner = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: OWNER_ID, action: "read" });
+    const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "read" });
+    const action = { appId: APP_ID, action: { app: "board", table: "cards", action: "find" } };
+    const expected = { result: [{ id: "row_1", title: "Dated", created_at: "2026-11-12T13:44:05.123Z" }], revision: 2 };
+    await expect(adapter().queryWithRevision(owner, action)).resolves.toEqual(expected);
+    await expect(adapter().queryWithRevision(editor, action)).resolves.toEqual(expected);
   });
 
   it("rejects owner credentials and cannot route an action to another app", async () => {

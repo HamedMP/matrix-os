@@ -7,6 +7,7 @@ import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
 } from "./authority.js";
+import { BridgeJsonError, toBridgeJson } from "./bridge-json.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -68,13 +69,13 @@ function projectNamespace(scopeId: string, appId: string): string {
 }
 
 function jsonValue(value: unknown): unknown {
-  const parsed = z.json().safeParse(value);
-  if (!parsed.success) throw new ProjectAppAdapterError("unavailable");
-  const encoded = JSON.stringify(parsed.data);
-  if (Buffer.byteLength(encoded, "utf8") > MAX_RESULT_BYTES) {
+  try {
+    return toBridgeJson(value, MAX_RESULT_BYTES);
+  } catch (error: unknown) {
+    if (!(error instanceof BridgeJsonError)) throw error;
+    console.warn("[collaboration-project-app] bridge result rejected", error.reason);
     throw new ProjectAppAdapterError("unavailable");
   }
-  return parsed.data;
 }
 
 function jsonb(value: unknown) {

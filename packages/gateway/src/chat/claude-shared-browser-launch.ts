@@ -15,6 +15,11 @@ export function configureClaudeSharedBrowser(launch: AgentLaunchSpec, run: Nativ
   if (index < 0) { const separator = launch.args.indexOf("--"); launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--mcp-config", JSON.stringify(config)); }
   else launch.args[index + 1] = JSON.stringify(config);
   Object.assign(launch.env, run.mcpServer.env);
+  configureClaudeSharedBrowserPresentation(launch);
+}
+
+/** Stable launch arguments used for source comparison before any Browser Run lease. */
+export function configureClaudeSharedBrowserPresentation(launch: AgentLaunchSpec): void {
   // Only this exact gateway-owned tool is pre-approved natively. Its broker
   // still checks the immutable Full access or supervised lease before dispatch.
   const allowed = launch.args.indexOf("--allowedTools");

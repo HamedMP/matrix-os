@@ -60,4 +60,4 @@ Task 5a execution details and version-bound qualification limits: [Claude source
 
 Task 5c execution details and separate native qualification gates: [Hermes source boundary](./hermes-sources.md).
 
-Task7c canonical Terminal entry, current configuration limits and CLI/lifecycle semantics: [Terminal entry boundary](./terminal-entry.md). Required Task7d private native configuration handoff remains implementation work; normal-menu routine availability is not claimed.
+The [Terminal entry boundary](./terminal-entry.md) covers canonical workflow admission, the managed-menu private login environment handoff, and remaining workspace and provider qualification limits.

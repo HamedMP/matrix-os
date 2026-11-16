@@ -21,7 +21,9 @@ import { OWNER, BOT, NOW } from "./bot-state-support.js";
 import type { ChatGptPlanAuthority } from "../../../packages/gateway/src/bots/chatgpt-plan.js";
 /** Real canonical admission/task/private admission/registry/approval/outbox. Only host runtime calls,
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
-export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog; actualSourceOnly?: boolean }) {
+export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog; actualSourceOnly?: boolean;
+  beforeRoutineFullAccessDispatch?: ConstructorParameters<typeof CanonicalChatOrchestrator>[0]["beforeRoutineFullAccessDispatch"];
+}) {
   await bootstrapCollaborationDatabase(db as unknown as Kysely<OwnerCollaborationDatabase>);
   const f = await requestFixture(db, { actualSourceOnly: extra?.actualSourceOnly }), registry = new BotRuntimeRegistry();
   const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"]; resolveRoutineSource?: ChatGptPlanAuthority["resolve"] } = {};
@@ -62,6 +64,7 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
   const adapter = createMatrixBotChatProviderAdapter(adapterOptions);
   canonical = new CanonicalChatOrchestrator({ repository: f.chats, adapters: new CanonicalChatProviderRegistry([adapter, ...(extra?.adapters ?? [])]),
     catalog: withBotProviderInstance({ getCatalog: async () => (extra?.catalog ?? { revision: "fixture", drivers: [], instances: [] }) }),
+    beforeRoutineFullAccessDispatch: extra?.beforeRoutineFullAccessDispatch,
     agentContext: new ChatAgentContext({ repository: f.chats, agents: f.agents, enabled: () => true,
       botChats: { directBot: async (owner, chat) => owner.type === "personal" ? await createBotBindingsRepository(db).directChatId({ ownerId: owner.ownerId, botId: BOT }).then(id => id === chat ? BOT : null) : null } }),
     now: () => new Date(f.state.clock) });

@@ -13,6 +13,15 @@ export type ShellOrganizationListing =
 
 export function useShellOrganizations(refreshKey = 0): ShellOrganizationListing {
   const { userId } = useAuth();
+  return useShellOrganizationsFor(userId ?? null, refreshKey);
+}
+
+/**
+ * Clerk-free core keyed by any stable account identity (the owner's
+ * collaboration participant on window-chrome surfaces that render outside
+ * Clerk-only subtrees, such as the Share popover and the launcher).
+ */
+export function useShellOrganizationsFor(userId: string | null, refreshKey = 0): ShellOrganizationListing {
   const origin = useBrowserOrigin();
   const requestKey = origin && userId ? `${origin}:${userId}` : null;
   const [result, setResult] = useState<{ requestKey: string | null; listing: ShellOrganizationListing }>({
