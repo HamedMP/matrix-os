@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHmac, randomBytes as nodeRandomBytes } from 'node:crypto';
 import { sql, type ColumnType, type Generated, type Selectable } from 'kysely';
 import type { PlatformDB } from '../db.js';
@@ -96,7 +97,17 @@ function isDuplicate(error: unknown): boolean {
 }
 
 export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps) {
-  const { db, admin } = deps;
+  const { admin } = deps;
+  const platformDb = deps.db;
+  /**
+   * Inside a serialized operation, record queries run on the connection that
+   * holds the owner lock. Borrowing more from the pool there could exhaust it:
+   * every holder would wait on its own next query.
+   */
+  const lockConnection = new AsyncLocalStorage<PlatformDB['executor']>();
+  const db = {
+    get executor(): PlatformDB['executor'] { return lockConnection.getStore() ?? platformDb.executor; },
+  };
   if (deps.passwordSecret.length < 32) throw new Error('Owner database password secret must be at least 32 characters');
   if (!Number.isSafeInteger(deps.sizeLimitBytes) || deps.sizeLimitBytes < 1) throw new Error('Owner database size limit is invalid');
   const connectionLimit = deps.connectionLimit ?? 5;
@@ -218,7 +229,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
    */
   async function serialized<T>(clerkUserId: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
     const key = `matrix:container-owner-db:${clerkUserId}`;
-    return db.kysely.connection().execute(async (connection) => {
+    return platformDb.kysely.connection().execute(async (connection) => {
       const deadline = Date.now() + OWNER_LOCK_WAIT_MS;
       for (;;) {
         signal.throwIfAborted();
@@ -229,7 +240,7 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
         await new Promise(resolve => setTimeout(resolve, OWNER_LOCK_POLL_MS));
       }
       try {
-        return await work();
+        return await lockConnection.run(connection as unknown as PlatformDB['executor'], work);
       } finally {
         await sql`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`.execute(connection);
       }
