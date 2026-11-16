@@ -69,6 +69,15 @@ export async function initializeCustomerFundedStarterPolicy(
     }
     if (existing && (!existing.enabled || (existing.expires_at !== null && !(Date.parse(existing.expires_at) > atMs))
       || !models.some(model => parseModels(existing.allowed_model_ids).includes(model)))) return false;
+    // A free runtime registered before the monthly allowance kept the $5 starter budget; raise exactly
+    // that default to the allowance budget, never a budget an operator set.
+    const upgraded = existing !== undefined && machine.provisioning_class === 'free'
+      && Number(existing.monthly_budget_microusd) === STARTER_MICROUSD
+      && Boolean(await trx.executor.updateTable('ai_funded_runtime_policies').set({
+        monthly_budget_microusd: STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD,
+        revision: sql<number>`revision + 1`, updated_at: at,
+      }).where('machine_id', '=', machineId).where('monthly_budget_microusd', '=', STARTER_MICROUSD)
+        .returning('machine_id').executeTakeFirst());
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
       allowed_model_ids: JSON.stringify(models),
@@ -101,7 +110,7 @@ export async function initializeCustomerFundedStarterPolicy(
         : row.source_reference !== LEGACY_SOURCE || !row.entry_id.startsWith(LEGACY_PREFIX)))) {
       throw new Error('Conflicting permanent starter entitlement');
     }
-    if (prior.length === 1) return Boolean(inserted);
+    if (prior.length === 1) return Boolean(inserted) || upgraded;
     const repo = createAiFundedPolicyRepository({ db: trx,
       credentialHashSecret: env.AI_FUNDED_CREDENTIAL_HASH_SECRET ?? '', now: () => new Date(at) });
     await repo.grantCreditInTransaction(trx, { entryId,
