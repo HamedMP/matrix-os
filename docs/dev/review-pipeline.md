@@ -352,6 +352,10 @@ spans tiers, the highest tier wins.
 - GitHub ruleset `require approval`: 1 approving review; stale approvals are
   kept. The risk definitions in Greptile cover follow-up pushes, and agents
   only trust an approval tied to a carried-over or current-head review.
+  Known gap: GitHub itself still counts an older Greptile approval after a
+  later push, so a manual UI merge is not blocked yet. A required check that
+  enforces the same rule is tracked in
+  [ENG-498](https://linear.app/matrix-os/issue/ENG-498/cireview-required-check-that-greptile-approval-matches-the-merged-head).
 - Admin bypass on that ruleset is break-glass only, never a routine merge
   path for agents running with an admin's credentials.
 
