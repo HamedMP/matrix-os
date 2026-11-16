@@ -358,3 +358,55 @@ describe("Organization → Connections wiring (Web Desktop and Web Canvas Settin
     }
   });
 });
+
+describe("Organization page switcher (Web Desktop and Web Canvas Settings)", () => {
+  function organizationsRoute(organizations: OrganizationManagementSummary[]) {
+    apiState.get.mockImplementation(async (path: string) => {
+      if (path === "/api/organizations") return { complete: true, organizations };
+      if (path.startsWith("/api/organizations/org_northwind/members")) return { members };
+      if (path === "/api/organizations/org_northwind/invitations") return { invitations: [] };
+      throw new Error(`Unexpected path: ${path}`);
+    });
+  }
+
+  // Fault: the page offers no way to change the active organization, or the menu links back to the page itself.
+  it("switches the active organization from the page header without a self-link to settings", async () => {
+    organizationsRoute([northwind, acme]);
+    render(<OrganizationSection />);
+    await screen.findByText(/Nima Boscarino/);
+
+    const trigger = screen.getByRole("button", { name: "Switch organization, current organization Northwind" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Invite members" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Organization settings" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Acme Studio/ }));
+
+    expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_acme" });
+    expect(readOrganizationSelection("user_nima")).toBe("org_acme");
+    expect(screen.getByText("nima@example.com")).toBeTruthy();
+  });
+
+  // Fault: a user on Personal is told to use a title-bar switcher that no longer exists.
+  it("offers the switcher in the no-organization state", async () => {
+    clerkState.organization = null;
+    organizationsRoute([northwind, acme]);
+    render(<OrganizationSection />);
+
+    expect(await screen.findByText("Choose an organization with the switcher above to manage it here.")).toBeTruthy();
+    expect(screen.queryByText(/title bar/)).toBeNull();
+    const trigger = screen.getByRole("button", { name: "Switch organization, current organization Personal" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /Northwind/ }));
+    expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_northwind" });
+  });
+
+  it("keeps the member count as plain text for members when the settings action is hidden", () => {
+    render(
+      <DropdownMenuPrimitive.Root defaultOpen>
+        <OrganizationSwitcherView organizations={[acme]} organizationId={acme.organizationId} onSelect={() => undefined} onOpenInvite={() => undefined} showSettingsAction={false} />
+      </DropdownMenuPrimitive.Root>,
+    );
+    expect(screen.queryByRole("button", { name: "View 8 members" })).toBeNull();
+    expect(screen.getByText("8 members")).toBeTruthy();
+  });
+});

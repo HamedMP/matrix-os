@@ -13,23 +13,49 @@ import { useDesktopOrganizationActions } from "./useDesktopOrganizationActions";
 
 const MENU_ITEM = "flex min-h-9 cursor-default items-center gap-2.5 rounded-md px-2 text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]";
 
+function ActiveOrganizationSummary({ active, onViewMembers }: {
+  active: OrganizationManagementSummary | null;
+  onViewMembers?: (organizationId: string) => void;
+}) {
+  const memberLabel = active ? `${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}` : "Your private workspace";
+  return (
+    <div className="flex items-center gap-3 px-2 py-2">
+      {active ? <OrganizationMark name={active.name} size={36} /> : (
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg" style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}><UserRound size={17} /></span>
+      )}
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{active?.name ?? "Personal"}</p>
+        {active && onViewMembers ? (
+          <button type="button" aria-label={`View ${memberLabel}`} onClick={() => onViewMembers(active.organizationId)} className="text-xs hover:underline" style={{ color: "var(--text-tertiary)" }}>
+            {memberLabel}
+          </button>
+        ) : <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>{memberLabel}</p>}
+      </div>
+    </div>
+  );
+}
+
 export function OrganizationSwitcherView({
   organizations,
   organizationId,
   onSelect,
   onOpenSettings,
   onOpenInvite,
+  showSettingsAction = true,
 }: {
   organizations: readonly OrganizationManagementSummary[];
   organizationId: string | null;
   onSelect: (organizationId: string | null) => void;
-  onOpenSettings: (organizationId: string) => void;
+  onOpenSettings?: (organizationId: string) => void;
   onOpenInvite: (organization: OrganizationManagementSummary) => void;
+  /** False on the Organization page itself, where a link back to the page would be a no-op. */
+  showSettingsAction?: boolean;
 }) {
   const active = organizationId
     ? organizations.find((organization) => organization.organizationId === organizationId) ?? organizations[0]
     : null;
   const admin = active?.role === "org:admin";
+  const openSettings = showSettingsAction ? onOpenSettings : undefined;
 
   return (
     <>
@@ -54,29 +80,19 @@ export function OrganizationSwitcherView({
           className="w-[280px] rounded-xl border p-1.5 outline-none"
           style={{ zIndex: DESKTOP_Z_INDEX.popover, borderColor: "var(--border-default)", background: "var(--bg-overlay)", boxShadow: "var(--shadow-2)" }}
         >
-          <div className="flex items-center gap-3 px-2 py-2">
-            {active ? <OrganizationMark name={active.name} size={36} /> : (
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg" style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}><UserRound size={17} /></span>
-            )}
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{active?.name ?? "Personal"}</p>
-              {active && !admin ? (
-                <button type="button" aria-label={`View ${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}`} onClick={() => onOpenSettings(active.organizationId)} className="text-xs hover:underline" style={{ color: "var(--text-tertiary)" }}>
-                  {active.memberCount} {active.memberCount === 1 ? "member" : "members"}
-                </button>
-              ) : <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>{active ? `${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}` : "Your private workspace"}</p>}
-            </div>
-          </div>
+          <ActiveOrganizationSummary active={active ?? null} onViewMembers={admin ? undefined : openSettings} />
           {admin ? (
             <div className="space-y-2 px-1 pb-2 pt-1">
               <DropdownMenu.Item className={`${MENU_ITEM} min-h-7 justify-center border`} style={{ borderColor: "var(--border-default)" }} onSelect={() => { if (active) onOpenInvite(active); }}>
                 <Plus aria-hidden="true" size={15} style={{ color: "var(--text-tertiary)" }} />
                 Invite members
               </DropdownMenu.Item>
-              <DropdownMenu.Item className={`${MENU_ITEM} min-h-7 justify-center border`} style={{ borderColor: "var(--border-default)" }} onSelect={() => { if (active) onOpenSettings(active.organizationId); }}>
-                <Settings aria-hidden="true" size={15} style={{ color: "var(--text-tertiary)" }} />
-                Organization settings
-              </DropdownMenu.Item>
+              {openSettings ? (
+                <DropdownMenu.Item className={`${MENU_ITEM} min-h-7 justify-center border`} style={{ borderColor: "var(--border-default)" }} onSelect={() => { if (active) openSettings(active.organizationId); }}>
+                  <Settings aria-hidden="true" size={15} style={{ color: "var(--text-tertiary)" }} />
+                  Organization settings
+                </DropdownMenu.Item>
+              ) : null}
             </div>
           ) : null}
           <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
@@ -104,18 +120,44 @@ export function OrganizationSwitcherView({
 }
 
 export default function OrganizationSwitcher() {
-  const [open, setOpen] = useState(false);
-  const [inviteOrganization, setInviteOrganization] = useState<OrganizationManagementSummary | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const listing = useDesktopOrganizations(refreshKey);
-  const organizationId = useConnection((state) => state.organizationId);
   const selectOrganization = useConnection((state) => state.selectOrganization);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
+  const refresh = useCallback(() => setRefreshKey((current) => current + 1), []);
+
+  if (listing.state !== "loaded") return null;
+  const openSettings = (selectedOrganizationId: string) => {
+    selectOrganization(selectedOrganizationId);
+    requestSettingsSection("organization");
+    openTab({ kind: "settings", title: "Settings" });
+  };
+  return <OrganizationSwitcherMenu organizations={listing.organizations} onChanged={refresh} onOpenSettings={openSettings} />;
+}
+
+/**
+ * The switcher over an organization listing the caller already holds, so the
+ * Organization page can mount it without a second directory read.
+ */
+export function OrganizationSwitcherMenu({
+  organizations,
+  onChanged,
+  onOpenSettings,
+  showSettingsAction = true,
+}: {
+  organizations: readonly OrganizationManagementSummary[];
+  onChanged: () => void;
+  onOpenSettings?: (organizationId: string) => void;
+  showSettingsAction?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inviteOrganization, setInviteOrganization] = useState<OrganizationManagementSummary | null>(null);
+  const organizationId = useConnection((state) => state.organizationId);
+  const selectOrganization = useConnection((state) => state.selectOrganization);
   const acquireRendererOverlay = useUi((state) => state.acquireRendererOverlay);
   const releaseRendererOverlay = useUi((state) => state.releaseRendererOverlay);
-  const refresh = useCallback(() => setRefreshKey((current) => current + 1), []);
-  const actions = useDesktopOrganizationActions(inviteOrganization?.organizationId ?? null, refresh);
+  const actions = useDesktopOrganizationActions(inviteOrganization?.organizationId ?? null, onChanged);
 
   useEffect(() => {
     if (!open && !inviteOrganization) return;
@@ -123,21 +165,17 @@ export default function OrganizationSwitcher() {
     return releaseRendererOverlay;
   }, [acquireRendererOverlay, inviteOrganization, open, releaseRendererOverlay]);
 
-  if (listing.state !== "loaded" || listing.organizations.length === 0) return null;
-  const openSettings = (selectedOrganizationId: string) => {
-    selectOrganization(selectedOrganizationId);
-    requestSettingsSection("organization");
-    openTab({ kind: "settings", title: "Settings" });
-  };
+  if (organizations.length === 0) return null;
 
   return (
     <>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
         <OrganizationSwitcherView
-          organizations={listing.organizations}
+          organizations={organizations}
           organizationId={organizationId}
           onSelect={selectOrganization}
-          onOpenSettings={openSettings}
+          onOpenSettings={onOpenSettings}
+          showSettingsAction={showSettingsAction}
           onOpenInvite={setInviteOrganization}
         />
       </DropdownMenu.Root>

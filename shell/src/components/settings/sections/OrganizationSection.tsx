@@ -8,6 +8,7 @@ import { MoreHorizontal, Plus } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
 import { DeleteOrganizationDialog, InviteMembersDialog, LeaveOrganizationDialog, MakeAdminDialog, RemoveMemberDialog, RenameOrganizationDialog } from "@/components/organization/OrganizationDialogs";
 import { OrganizationMark } from "@/components/organization/OrganizationMark";
+import { OrganizationSwitcherMenu } from "@/components/organization/OrganizationSwitcher";
 import { organizationInitials } from "@/components/organization/organization-mark";
 import { useShellOrganizationDirectory } from "@/components/organization/useShellOrganizationDirectory";
 import { useShellOrganizationActions } from "@/components/organization/useShellOrganizationActions";
@@ -16,6 +17,14 @@ import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 
 function roleLabel(role: OrganizationManagementMember["role"]): string {
   return role === "org:admin" ? "Admin" : "Member";
+}
+
+function OrganizationHeader({ description, switcher }: { description: string; switcher?: ReactNode }) {
+  return <div className="mb-6 flex items-start justify-between gap-4"><div className="min-w-0"><h2 className="text-lg font-semibold">Organization</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>{switcher ? <div className="shrink-0">{switcher}</div> : null}</div>;
+}
+
+function NoOrganizationState({ hasOrganizations, switcher }: { hasOrganizations: boolean; switcher: ReactNode }) {
+  return <div className="mx-auto max-w-2xl p-6"><OrganizationHeader description="Select an organization to see its details and members." switcher={switcher} /><div className="rounded-xl border border-border/70 p-6 text-center text-sm text-muted-foreground">{hasOrganizations ? "Choose an organization with the switcher above to manage it here." : "You’re not in an organization yet."}</div></div>;
 }
 
 function PersonMark({ name }: { name: string }) {
@@ -39,6 +48,7 @@ export function OrganizationSectionView({
   onDelete,
   busy = false,
   connections,
+  switcher,
 }: {
   organization: OrganizationManagementSummary;
   currentActorId: string | null;
@@ -57,6 +67,8 @@ export function OrganizationSectionView({
   busy?: boolean;
   /** Organization → Connections (spec 2691): the admin panel, or the member visibility notice. */
   connections?: ReactNode;
+  /** The active-organization switcher shown beside the page heading. */
+  switcher?: ReactNode;
 }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -66,7 +78,7 @@ export function OrganizationSectionView({
   const description = admin ? `Details and members of ${organization.name}.` : `You’re a member of ${organization.name}.`;
   return (
     <div className="mx-auto max-w-2xl p-6">
-      <div className="mb-6"><h2 className="text-lg font-semibold">Organization</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>
+      <OrganizationHeader description={description} switcher={switcher} />
       <section className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-card p-4">
         <div className="flex min-w-0 items-center gap-3"><OrganizationMark name={organization.name} className="size-11" /><div className="min-w-0"><h3 className="truncate text-[15px] font-semibold">{organization.name}</h3><p className="text-xs text-muted-foreground">{organization.memberCount} {organization.memberCount === 1 ? "member" : "members"}</p></div></div>
         {admin ? <div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={!onChangeLogo} onClick={onChangeLogo}>Change logo</Button><Button size="sm" variant="outline" disabled={!onRename} onClick={onRename}>Rename</Button></div> : null}
@@ -120,7 +132,8 @@ export default function OrganizationSection() {
 
   if (listing.state === "loading" || (organization && directory.state === "loading")) return <p role="status" className="p-6 text-sm text-muted-foreground">Loading organization…</p>;
   if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="p-6 text-sm text-destructive">Organization settings are unavailable. Try again.</p>;
-  if (!organization) return <div className="mx-auto max-w-2xl space-y-6 p-6"><div><h2 className="text-lg font-semibold">Organization</h2><p className="mt-1 text-sm text-muted-foreground">Select an organization to see its details and members.</p></div><div className="rounded-xl border border-border/70 p-6 text-center text-sm text-muted-foreground">Select an organization from the title bar to manage it here.</div></div>;
+  const switcher = <OrganizationSwitcherMenu organizations={listing.organizations} onChanged={refresh} showSettingsAction={false} />;
+  if (!organization) return <NoOrganizationState hasOrganizations={listing.organizations.length > 0} switcher={switcher} />;
 
   const selectedMember = directory.members.find((member) => member.actorId === memberActionActorId) ?? null;
   const leave = async () => {
@@ -154,6 +167,7 @@ export default function OrganizationSection() {
       onDelete={deleteOrganization}
       busy={actions.busy}
       connections={<OrganizationMcpSettings admin={organization.role === "org:admin"} organizationName={organization.name} withClient={withMcpClient} />}
+      switcher={switcher}
     />
     <input ref={logoInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" aria-label="Organization logo file" onChange={(event) => {
       const file = event.target.files?.[0];
