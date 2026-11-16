@@ -57,3 +57,13 @@ describe('Matrix.page authoritative Clerk identity', () => {
     await expect(resolveSiteClerkIdentity('Bearer session.jwt.token', oversized)).rejects.toMatchObject({ code: 'unavailable' });
   });
 });
+
+it('accepts the installed SDK UserJSON without an invented deprovisioned field', async () => {
+ const { deprovisioned: _unused, ...sdkUser } = user;
+ const deps=fixture();
+ deps.fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify(sdkUser)));
+ await expect(resolveSiteClerkIdentity('Bearer session.jwt.token',deps)).resolves.toEqual({
+  clerkUserId:'user_recipient',clerkSessionId:'sess_browser',
+  verifiedEmails:['primary@example.com','secondary@example.com'],
+ });
+});
