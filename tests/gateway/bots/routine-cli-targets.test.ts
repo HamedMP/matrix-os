@@ -7,6 +7,7 @@ import type { RoutineCliAction } from "../../../packages/contracts/src/bots/rout
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
+import { createRoutineCliPreferencesRepository } from "../../../packages/gateway/src/bots/repositories/routine-cli-preferences.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createRoutineCliTargetService, type RoutineCliSourceContext } from "../../../packages/gateway/src/bots/routine-cli-targets.js";
 import { BOT, NOW, OWNER, OTHER_OWNER, at, createBotStateDatabase, insertChat } from "./bot-state-support.js";
@@ -58,6 +59,25 @@ describe("remembered routine target with current source authority", () => {
       : { kind, taskId: "task_abcdefgh", runId: "run_child", runtimeHandle: "runtime_one" };
     expect(await svc.resolve(src, "read")).toMatchObject({ botId: BOT });
     live = false; await expect(svc.resolve(src, "read")).rejects.toMatchObject({ code: "permission_denied" });
+  });
+  it.each([
+    { botId: `bot_routine${"a".repeat(32)}`, chatId: "chat_retained_bot" },
+    { botId: "bot_normalrecipe", chatId: `chat_routine_${"b".repeat(32)}` },
+  ])("denies a retained coordinator even with a live binding and default preference: $chatId", async target => {
+    const owner = { type: "personal" as const, ownerId: OWNER };
+    await agents.createRecipeBot(owner, { id: target.botId, createHash: "b".repeat(64),
+      fields: { name: "Retained Bot", description: "", instructions: "Read", selection: { instanceId: "matrix_pi_default", model: "auto" } },
+      recipeRef: { recipeId: "report", version: "1" } });
+    await insertChat(db, target.chatId);
+    await createBotBindingsRepository(db).bindDirect({ ...scope, ...target, now: NOW });
+    const svc = service();
+    await expect(svc.remember(principal, { ...target, baseRevision: 0 })).rejects.toMatchObject({ code: "target_unavailable" });
+    await createRoutineCliPreferencesRepository(db).save({ ...scope, target: { ...target, bindingCreatedAt: NOW }, baseRevision: 0, now: NOW });
+    await expect(svc.resolve(source(), "read")).rejects.toMatchObject({ code: "target_unavailable" });
+    await expect(svc.resolve(source(), "propose")).rejects.toMatchObject({ code: "target_unavailable" });
+    await expect(svc.resolve(source(), "control")).rejects.toMatchObject({ code: "target_unavailable" });
+    await expect(db.transaction().execute(trx => svc.resolveOwnerDefaultWithin(trx, principal)))
+      .rejects.toMatchObject({ code: "target_unavailable" });
   });
   it("requires an owner choice and never selects the first available Bot", async () => {
     await expect(service().resolve(source(), "read")).rejects.toMatchObject({ code: "target_required" });

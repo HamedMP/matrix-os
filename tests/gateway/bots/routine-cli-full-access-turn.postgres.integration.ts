@@ -1,6 +1,7 @@
-import { CanonicalProviderCatalogSchema, ROUTINE_FULL_ACCESS_PROOF_HEADER, type RoutineCliOperation } from "@matrix-os/contracts";
+import { canonicalChatApprovals, CanonicalProviderCatalogSchema, ROUTINE_ACTION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER, type RoutineCliOperation } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
+import { bootstrapBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createRoutineCliRuntime } from "../../../packages/gateway/src/bots/routine-cli-runtime.js";
 import { createBotRoutineExecution } from "../../../packages/gateway/src/bots/routine-execution.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunInput } from "../../../packages/gateway/src/chat/provider-adapter.js";
@@ -11,6 +12,7 @@ import { createRoutineFullAccessVerificationRoutes } from "../../../packages/pla
 import { authenticatedApprovalProxyProofs } from "../../../packages/platform/src/owner-approval-proofs.js";
 import { buildPlatformVerificationToken } from "../../../packages/platform/src/platform-token.js";
 import { createRealBotStateDatabase } from "./bot-state-support.js";
+import { retainRoutinePreviewSchema } from "./fixtures/retained-routine-preview-schema.js";
 import { proposalFixture } from "./routine-cli-proposal-support.js";
 import { invocation } from "./routine-cli-source-support.js";
 import { insertRoutine, propose, scope, TARGET_A, TARGET_B } from "./routine-cli-request-support.js";
@@ -46,9 +48,12 @@ async function setup(work: (input: CanonicalProviderRunInput) => AsyncGenerator<
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required");
   data = await createRealBotStateDatabase(url, { routineAuthority: true });
+  await retainRoutinePreviewSchema(data.db);
+  await expect(bootstrapBotDatabase(data.db)).resolves.toEqual({ applied: [] });
   const adapter: CanonicalChatProviderAdapter = { driverKind: "codex", stateSchemaVersion: 1,
     parseState: value => value, serializeState: value => value, start: work };
   fixture = await proposalFixture(data.db, vi.fn, { actualSourceOnly: true, catalog, adapters: [adapter],
+    routineActions: { submitChat: (...args) => runtime.submitChat(...args) },
     beforeRoutineFullAccessDispatch: input => runtime.beforeRoutineFullAccessDispatch(input) });
   const lookup = { resolveMachine: async () => machine };
   const platform = new Hono();
@@ -76,7 +81,7 @@ async function setup(work: (input: CanonicalProviderRunInput) => AsyncGenerator<
   };
   const requestTurn = (path: string, raw: object, proof?: string) => app.request(path, { method: "POST",
     headers: { "content-type": "application/json", ...(proof ? { [ROUTINE_FULL_ACCESS_PROOF_HEADER]: proof } : {}) }, body: JSON.stringify(raw) });
-  return { newTurn, requestTurn };
+  return { app, newTurn, requestTurn };
 }
 
 async function proofFor(path: string, body: object) {
@@ -136,6 +141,55 @@ it("browser-attested Full Access uses a real capability and leaves a separate ca
   const duplicate = await chat.requestTurn(turn.path, turn.input, proof);
   expect(await duplicate.json()).toMatchObject({ admission: "already_accepted" });
   expect(counters.proof).toHaveBeenCalledTimes(1);
+}, 10_000);
+
+it("signed Supervised confirmation submits the proposal and leaves a separate schedule approval on retained v18", async () => {
+  const operation = propose(874);
+  const toolResult = Promise.withResolvers<Awaited<ReturnType<typeof runtime.execute>>>();
+  const handoffObserved = Promise.withResolvers<void>();
+  gates.push(handoffObserved.resolve);
+  const chat = await setup(async function* (input) {
+    const event = Promise.withResolvers<import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalProviderRunEvent>();
+    const source = await runtime.registerChat({ input, provider: "codex", signal: input.signal, current: () => !input.signal.aborted,
+      publish: event.resolve });
+    const call = { operation, invocationId: invocation(875), signal: input.signal };
+    try {
+      const waiting = source.authorize(call);
+      yield await Promise.race([event.promise, waiting.then(() => { throw new Error("Expected source confirmation"); })]);
+      expect(await waiting).toBe(true);
+      toolResult.resolve(await runtime.execute({ operation, token: (await source.issue(call)).takeToken() }));
+      await handoffObserved.promise;
+    } catch (error: unknown) {
+      toolResult.reject(error);
+    }
+    yield { type: "run.completed", outcome: "completed" };
+  });
+  const turn = await chat.newTurn("supervised_retained_proposal", "supervised");
+  const response = await chat.requestTurn(turn.path, turn.input);
+  expect(response.status).toBe(202);
+  const readApproval = async () => {
+    const detail = await fixture.chats.exportChat(owner, turn.chatId);
+    return detail && canonicalChatApprovals(detail).find(approval => approval.pending);
+  };
+  await expect.poll(readApproval, { timeout: 3_000 }).toMatchObject({ allowedDecisions: ["approve", "decline", "cancel"], pending: true });
+  const approval = (await readApproval())!;
+  expect(await data.db.selectFrom("routine_cli_proposals").select("client_request_id").execute()).toEqual([]);
+  expect(await data.db.selectFrom("bot_approvals").select("approval_id").execute()).toEqual([]);
+  const path = `/api/chats/${turn.chatId}/runs/${approval.runId}/approvals/${approval.approvalId}`;
+  const body = { actionDigest: approval.actionDigest, decision: "approve", clientRequestId: `req_${"e".repeat(32)}` };
+  const signed = await proofFor(path, body);
+  const decided = await chat.app.request(path, { method: "POST",
+    headers: { "content-type": "application/json", [ROUTINE_ACTION_PROOF_HEADER]: signed }, body: JSON.stringify(body) });
+  expect(decided.status).toBe(200);
+  await expect(toolResult.promise).resolves.toMatchObject({ kind: "receipt", receipt: { requestId: operation.requestId, disposition: "queued" } });
+  await expect.poll(() => data.db.selectFrom("routine_cli_proposals").select("stage")
+    .where("client_request_id", "=", operation.requestId).executeTakeFirst(), { timeout: 3_000 })
+    .toMatchObject({ stage: "pending_approval" });
+  handoffObserved.resolve();
+  await fixture.canonical.drain();
+  expect(await data.db.selectFrom("bot_approvals").select(["tool", "status"]).execute())
+    .toEqual([{ tool: "routine.activate", status: "pending" }]);
+  expect(await data.db.selectFrom("bot_routines").select("routine_id").execute()).toEqual([]);
 }, 10_000);
 
 it("a new destination revision fences an issued Full Access capability before consume", async () => {
