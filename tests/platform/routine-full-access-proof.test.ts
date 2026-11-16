@@ -2,7 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { authenticatedApprovalProxyProof } from "../../packages/platform/src/canonical-owner-approval-proxy.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
-import { mintRoutineFullAccessProof, verifyRoutineFullAccessProof } from "../../packages/platform/src/routine-full-access-proof.js";
+import { verifyRoutineFullAccessProof } from "../../packages/platform/src/routine-full-access-proof.js";
 import { mintRoutineActionProof, verifyRoutineActionProof } from "../../packages/platform/src/routine-action-proof.js";
 import { ROUTINE_FULL_ACCESS_SCOPE_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER, ROUTINE_ACTION_PROOF_HEADER, RoutineFullAccessTupleSchema,
   routineFullAccessTurnRequestIdentity } from "@matrix-os/contracts";
@@ -15,7 +15,7 @@ const secret = "synthetic-purpose-separated-full-origin-secret";
 const challengeId = `rcfull_${"a".repeat(32)}`;
 const path = `/api/chats/chat_owner/routine-cli/full-access/challenges/${challengeId}/decision`;
 const body = { scopeDigest: "b".repeat(64), decision: "approve", clientRequestId: "de000000-0000-4000-8000-000000000001" };
-const machine = { machineId: "machine_owner", handle: "owner-pc", runtimeSlot: "primary", provisioningClass: "customer" as const, clerkUserId: "user_owner" };
+const machine = { machineId: "machine_owner", handle: "owner-pc", runtimeSlot: "primary", provisioningClass: "customer" as const, clerkUserId: "user_owner", status: "running", activationState: "authorized" as const, deletedAt: null };
 const identity = { handle: machine.handle, userId: machine.clerkUserId, runtimeSlot: machine.runtimeSlot, source: "auth" as const };
 const clerkAuth = createClerkAuth({ verifyToken: async () => ({ sub: identity.userId, sid: "session_owner", exp: Math.floor(Date.now() / 1000) + 120 }) });
 afterEach(() => vi.restoreAllMocks());
@@ -75,8 +75,39 @@ it("binds an explicitly authorized Computer when the browser session still names
   });
 });
 
-it.each([undefined, "", "rcfull_fake"])("does not mint a turn proof from full_access mode without a valid scope reference %s", async scope => {
-  expect(await proxy(turn, { path: "/api/chats/chat_owner/turns" }, scope === undefined ? {} : { [ROUTINE_FULL_ACCESS_SCOPE_HEADER]: scope })).toBeNull();
+it.each(["", "rcfull_fake"])("does not treat an invalid legacy scope reference (%s) as a direct turn", async scope => {
+  expect(await proxy(turn, { path: "/api/chats/chat_owner/turns" }, { [ROUTINE_FULL_ACCESS_SCOPE_HEADER]: scope })).toBeNull();
+});
+
+it("attests the exact browser turn before the Gateway qualifies its selected provider", async () => {
+  const request = { ...turn, selection: { ...turn.selection, instanceId: "codex_default" } };
+  const proof = await proxy(request, { path: "/api/chats/chat_owner/turns" });
+  const value = parsed(proof);
+  const expected = RoutineFullAccessTupleSchema.parse({ kind: "direct_turn", handle: machine.handle,
+    runtimeSlot: machine.runtimeSlot, machineId: machine.machineId, ownerId: identity.userId, chatId: "chat_owner",
+    clientRequestId: request.clientRequestId, requestDigest: createHash("sha256").update(routineFullAccessTurnRequestIdentity(request)).digest("hex") });
+  expect(value).toMatchObject(expected);
+  expect(value).not.toHaveProperty("scopeId");
+  expect(verifyRoutineFullAccessProof(proof as string, expected, secret)).toMatchObject(expected);
+  for (const patch of [{ ownerId: "user_foreign" }, { machineId: "replacement" }, { runtimeSlot: "other" }, { chatId: "chat_foreign" },
+    { clientRequestId: "req_different" }, { requestDigest: "0".repeat(64) }]) {
+    expect(verifyRoutineFullAccessProof(proof as string, { ...expected, ...patch }, secret), JSON.stringify(patch)).toBeNull();
+  }
+});
+
+it("keeps nondefault interactions, inactive or Preview machines, and unverified sessions out of direct Full Access", async () => {
+  const patch = { path: "/api/chats/chat_owner/turns" };
+  for (const changed of [{ permissionMode: "supervised" }, { interactionMode: "plan" }, { origin: "human" }]) {
+    expect(await proxy({ ...turn, ...changed }, patch)).toBeNull();
+  }
+  for (const changed of [{ provisioningClass: "preview" as const }, { status: "recovering" }, { activationState: "awaiting_billing" as const },
+    { deletedAt: new Date().toISOString() }, { clerkUserId: "user_foreign" }]) {
+    expect(await proxy(turn, { ...patch, machine: { ...machine, ...changed } })).toBeNull();
+  }
+  const verify = vi.fn();
+  expect(await proxy({ ...turn, permissionMode: "supervised" }, { ...patch, clerkAuth: { ...clerkAuth, verify } })).toBeNull();
+  expect(verify).not.toHaveBeenCalled();
+  expect(await proxy(turn, { ...patch, identity: { ...identity, sessionProvenance: "clerk-device" }, clerkAuth: undefined })).toBeNull();
 });
 
 it.each(["queued-turns", "turns/retry", "turns/continue", "runs/run_one/turns", "terminal/turns"])("does not attest the non-ordinary %s path", async suffix => {

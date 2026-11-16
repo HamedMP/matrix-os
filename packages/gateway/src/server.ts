@@ -1618,6 +1618,8 @@ export async function createGateway(config: GatewayConfig) {
       } : {}),
       onAiGeneration: recordAiGeneration,
       ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
+      ...(process.env.MATRIX_PREVIEW_RUNTIME !== "true" && botServices?.routineCli
+        ? { beforeRoutineFullAccessDispatch: botServices.routineCli.beforeRoutineFullAccessDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
