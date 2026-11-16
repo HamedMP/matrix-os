@@ -346,3 +346,24 @@ it("keeps the paging-limit notice when every capped row is already listed", () =
     mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />);
   expect(screen.getByText("Showing the newest 1,000 chats in this project.")).toBeTruthy();
 });
+
+it("lists the project's Chats with live status and opens the exact Chat on Web Desktop", () => {
+  const onSelectChat = vi.fn();
+  const record = (id: string, title: string, running: boolean) => ({
+    chat: { id, title, lifecycle: "active" as const, attention: "none" as const, revision: 1, messageCount: 1,
+      createdAt: "2026-11-10T10:00:00.000Z", updatedAt: "2026-11-10T10:00:00.000Z" },
+    projectId: "proj_france",
+    ...(running ? { activeRun: { runId: "run_1", turnId: "turn_1", status: "running" as const } } : {}),
+  });
+  const conversations: RenameableConversation[] = [
+    { id: "chat_a", title: "Plan the trip", preview: "Booked the train", messageCount: 1, updatedAt: 0, canonicalRecord: record("chat_a", "Plan the trip", true) },
+    { id: "chat_b", title: "Pack list", preview: "", messageCount: 1, updatedAt: 0, canonicalRecord: record("chat_b", "Pack list", false) },
+  ];
+  render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" identity="owner"
+    conversations={conversations} onSelectChat={onSelectChat} />);
+  const running = screen.getByRole("button", { name: "Open Plan the trip, Running" });
+  expect(running.textContent).toContain("Booked the train");
+  expect(screen.getByRole("button", { name: "Open Pack list, Done" })).toBeTruthy();
+  fireEvent.click(running);
+  expect(onSelectChat).toHaveBeenCalledWith("chat_a");
+});

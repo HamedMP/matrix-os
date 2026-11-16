@@ -757,7 +757,8 @@ function ChatAppContent({
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
-              gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority} /> : undefined}
+              gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
+              conversations={projectChats(ordinaryConversations, projectHome)} onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
