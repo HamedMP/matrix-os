@@ -304,6 +304,28 @@ describe('sync broker storage quota for container runtimes', () => {
     expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
   });
 
+  it('keeps a renewed pending record when a reconcile that read the expired one settles late', async () => {
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    let quota!: ReturnType<typeof createStorageQuota>;
+    let renewed = false;
+    const headObject = vi.fn(async () => {
+      if (!renewed) {
+        renewed = true;
+        // A multipart completion renews the key while this reconcile is reading the store.
+        await quota.notePending(FREE_OWNER, key, false);
+      }
+      return { exists: false };
+    });
+    quota = createStorageQuota({ db, limits: { maxBytes: 1000, maxFiles: 10 }, headObject, now: () => new Date(clock) });
+    await quota.notePending(FREE_OWNER, key, false);
+    clock += 3 * 60_000;
+    await quota.reconcile(FREE_OWNER);
+    const rows = await db.executor.selectFrom('runtime_storage_objects').select(['object_key', 'pending_until'])
+      .where('object_key', '=', key).execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pending_until).not.toBeNull();
+  });
+
   it('reclaims a signed upload that never arrived once its URL has expired', async () => {
     const target = app();
     expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 900)).status).toBe(200);

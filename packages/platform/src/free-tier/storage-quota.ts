@@ -264,10 +264,11 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
         const prior = await trx.executor.selectFrom('runtime_storage_objects').select('reservation_id')
           .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).executeTakeFirst();
         if (prior) {
-          await sql`UPDATE runtime_storage_objects SET
+          // A new reservation per renewal: a reconcile that read the earlier one cannot settle this one.
+          await sql`UPDATE runtime_storage_objects SET reservation_id = ${reservationId}::uuid,
               pending_until = GREATEST(${at}::timestamptz, COALESCE(signed_until, ${at}::timestamptz)), updated_at = now()
             WHERE clerk_user_id = ${ownerId} AND object_key = ${key}`.execute(trx.executor);
-          return { ok: true, reservationId: prior.reservation_id };
+          return { ok: true, reservationId };
         }
         if (countsAsFile && usage.count + 1 > limits.maxFiles) return { ok: false, code: 'file_limit_reached', priorExisted: false };
         await trx.executor.insertInto('runtime_storage_objects').values({
