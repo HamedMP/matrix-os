@@ -4,8 +4,9 @@ import type { PlatformDB, UserMachinesTable } from '../db.js';
 import {
   CONTAINER_UNIT_MAX_LIFETIME_SECONDS, ContainerProviderError, type ContainerProvider, type ContainerUnit,
 } from './container-provider.js';
-import type { EnsureRunningResult } from './types.js';
-import { countRunningContainers, lockCapacity } from '../free-tier/capacity.js';
+import type { EnsureRunningOptions, EnsureRunningResult } from './types.js';
+import type { ComputeCapConfig } from '../free-tier/compute-meter.js';
+import { createComputeMetering, holdsCompute } from './container-compute-metering.js';
 
 /**
  * Container runtime status machine (data-model.md). Every transition is one
@@ -69,6 +70,8 @@ export interface ContainerLifecycleDeps {
   maxConcurrentLaunches?: number;
   /** Global ceiling on runtimes holding compute; a start beyond it answers busy. */
   maxRunning?: number;
+  /** Monthly billed-compute cap for container owners; metering runs either way. */
+  computeCap?: ComputeCapConfig;
   logError?: (message: string, detail: Record<string, string | number>) => void;
 }
 
@@ -123,6 +126,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   if (deps.maxRunning !== undefined && (!Number.isSafeInteger(deps.maxRunning) || deps.maxRunning < 1)) {
     throw new Error('Container running ceiling is invalid');
   }
+  const { closing, claimStart } = createComputeMetering({ db, now, maxRunning: deps.maxRunning, computeCap: deps.computeCap });
   const launches = new Set<Promise<void>>();
   /** Launch slots held by starts whose claim is still in flight, so a burst cannot overshoot the cap. */
   let claiming = 0;
@@ -148,7 +152,23 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     generation: number,
     set: Updateable<UserMachinesTable>,
   ): Promise<boolean> {
-    const updated = await db.executor.updateTable('user_machines')
+    // A stop that could not confirm its unit suspended leaves the interval open: the unit may still run.
+    if (set.status === undefined || holdsCompute(set.status) || set.compute_unconfirmed_until) {
+      return transitionWith(db.executor, machineId, from, generation, set);
+    }
+    // An earlier unit still unconfirmed keeps the interval open, unless this write confirms it ended.
+    return closing(machineId, executor => transitionWith(executor, machineId, from, generation, { ...set, metered_since: null }),
+      set.compute_unconfirmed_until === null ? undefined : executor => transitionWith(executor, machineId, from, generation, set));
+  }
+
+  async function transitionWith(
+    executor: PlatformDB['executor'],
+    machineId: string,
+    from: readonly ContainerStatus[],
+    generation: number,
+    set: Updateable<UserMachinesTable>,
+  ): Promise<boolean> {
+    const updated = await executor.updateTable('user_machines')
       .set(set.status === undefined ? set : { ...set, status_changed_at: now() })
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
@@ -166,9 +186,14 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
    * is unknown. A later start clears it once the provider confirms the unit ended.
    */
   async function holdUnconfirmed(machineId: string, expiresAt: Date | null): Promise<void> {
-    const until = (expiresAt ?? new Date(now().getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000)).toISOString();
+    const at = now();
+    const until = (expiresAt ?? new Date(at.getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000)).toISOString();
+    // A failed start may already have closed the interval; metering resumes from here, bounded by the deadline.
     await db.executor.updateTable('user_machines')
-      .set({ compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)` })
+      .set({
+        compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)`,
+        metered_since: sql<Date>`COALESCE(metered_since, ${at.toISOString()}::timestamptz)`,
+      })
       .where('machine_id', '=', machineId).where('substrate', '=', 'container').execute();
   }
 
@@ -295,7 +320,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
     if (!await reopenGateway(row)) return false;
     await transition(row.machine_id, ['starting'], row.generation, {
-      status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
+      status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null,
+      unit_expires_at: previous.expiresAt, ...sessionWithin(previous),
     });
     return true;
   }
@@ -329,7 +355,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         }
         // Only a recovery resume can leave less than a whole session; sessionWithin bounds it.
         await transition(row.machine_id, ['starting'], generation, {
-          status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
+          status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null,
+      unit_expires_at: previous.expiresAt, ...sessionWithin(previous),
         });
         return;
       }
@@ -357,7 +384,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         throw new ContainerProviderError('unavailable');
       }
       const recorded = await transition(row.machine_id, ['starting'], next.generation, {
-        substrate_ref: created.unitId, private_address: created.endpointHost,
+        substrate_ref: created.unitId, private_address: created.endpointHost, unit_expires_at: created.expiresAt,
       });
       if (!recorded) await endUnusedUnit(row.machine_id, created.unitId, 'fenced', created.expiresAt);
       if (previous && previous.state !== 'terminated' && await terminateQuietly(previous.unitId, 'replaced')) {
@@ -379,33 +406,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     launches.add(tracked);
   }
 
-  /** The running ceiling is counted and the claim made under one capacity lock, so concurrent starts cannot pass it. */
-  async function claimStart(machineId: string, from: ContainerStatus, generation: number): Promise<boolean | 'busy'> {
-    // An unconfirmed earlier unit keeps its deadline: a recovery start that fails before learning
-    // its fate must not free the slot that unit may still hold.
-    const set = {
-      status: 'starting', started_at: now(), failure_code: null, failure_at: null, status_changed_at: now(),
-    };
-    if (deps.maxRunning === undefined) return transition(machineId, [from], generation, set);
-    const maxRunning = deps.maxRunning;
-    return db.transaction(async (trx): Promise<boolean | 'busy'> => {
-      await lockCapacity(trx.executor, 'running_runtimes');
-      // A failed stop's unconfirmed unit already holds its slot, so its recovery needs no other.
-      const own = await trx.executor.selectFrom('user_machines').select(['status', 'compute_unconfirmed_until'])
-        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
-        .executeTakeFirst();
-      const holdsSlot = own?.compute_unconfirmed_until !== null && own?.compute_unconfirmed_until !== undefined
-        && own.compute_unconfirmed_until.getTime() > now().getTime();
-      if (await countRunningContainers(trx.executor, now()) - (holdsSlot ? 1 : 0) >= maxRunning) return 'busy';
-      const updated = await trx.executor.updateTable('user_machines').set(set)
-        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
-        .where('status', '=', from).where('generation', '=', generation)
-        .returning('machine_id').executeTakeFirst();
-      return Boolean(updated);
-    });
-  }
-
-  async function ensureStarted(machineId: string): Promise<EnsureRunningResult> {
+  async function ensureStarted(machineId: string, options: EnsureRunningOptions = {}): Promise<EnsureRunningResult> {
     const row = await load(machineId);
     if (!row) return { state: 'failed', code: 'needs_recovery' };
     const status = row.status as ContainerStatus;
@@ -446,8 +447,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (launches.size + claiming >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
     claiming += 1;
     try {
-      const claimed = await claimStart(machineId, status, row.generation);
+      const claimed = await claimStart(machineId, status, row.generation, options.exportIntent === true);
       if (claimed === 'busy') return { state: 'busy' };
+      if (typeof claimed === 'object') return { state: 'limit_reached', limit: 'compute', resetsAt: claimed.limitResetsAt };
       if (claimed) track(launch({ ...row, status: 'starting' }, status === 'needs_recovery'));
     } finally {
       claiming -= 1;
@@ -577,35 +579,42 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     const row = await load(machineId);
     if (!row || row.generation !== generation) return 'stale_generation';
     if (row.substrate_ref) await provider.terminate(row.substrate_ref, AbortSignal.any([signal, callSignal()]));
-    await db.executor.updateTable('user_machines')
-      .set({
-        substrate_ref: null,
-        private_address: null,
-        compute_unconfirmed_until: null,
-        status: sql<string>`CASE WHEN status IN ('running', 'starting', 'quiescing') THEN 'stopped' ELSE status END`,
-        status_changed_at: now(),
-      })
-      .where('machine_id', '=', machineId)
-      .where('substrate', '=', 'container')
-      .where('generation', '=', generation)
-      .where(eb => row.substrate_ref === null ? eb('substrate_ref', 'is', null) : eb('substrate_ref', '=', row.substrate_ref))
-      .execute();
+    await closing(machineId, async executor => {
+      const updated = await executor.updateTable('user_machines')
+        .set({
+          substrate_ref: null,
+          private_address: null,
+          metered_since: null,
+          compute_unconfirmed_until: null,
+          status: sql<string>`CASE WHEN status IN ('running', 'starting', 'quiescing') THEN 'stopped' ELSE status END`,
+          status_changed_at: now(),
+        })
+        .where('machine_id', '=', machineId)
+        .where('substrate', '=', 'container')
+        .where('generation', '=', generation)
+        .where(eb => row.substrate_ref === null ? eb('substrate_ref', 'is', null) : eb('substrate_ref', '=', row.substrate_ref))
+        .returning('machine_id')
+        .executeTakeFirst();
+      return Boolean(updated);
+    });
     return 'destroyed';
   }
 
   /** The provider ended a running unit (lifetime or loss): the runtime is stopped and the next start runs fresh. */
   async function markComputeLost(machineId: string, generation: number, unitId: string): Promise<boolean> {
-    const updated = await db.executor.updateTable('user_machines')
-      .set({ status: 'stopped', status_changed_at: now(), substrate_ref: null, private_address: null, compute_unconfirmed_until: null })
-      .where('machine_id', '=', machineId)
-      .where('substrate', '=', 'container')
-      .where('deleted_at', 'is', null)
-      .where('status', '=', 'running')
-      .where('generation', '=', generation)
-      .where('substrate_ref', '=', unitId)
-      .returning('machine_id')
-      .executeTakeFirst();
-    return Boolean(updated);
+    return closing(machineId, async executor => {
+      const updated = await executor.updateTable('user_machines')
+        .set({ status: 'stopped', status_changed_at: now(), substrate_ref: null, private_address: null, metered_since: null, compute_unconfirmed_until: null })
+        .where('machine_id', '=', machineId)
+        .where('substrate', '=', 'container')
+        .where('deleted_at', 'is', null)
+        .where('status', '=', 'running')
+        .where('generation', '=', generation)
+        .where('substrate_ref', '=', unitId)
+        .returning('machine_id')
+        .executeTakeFirst();
+      return Boolean(updated);
+    });
   }
 
   return {

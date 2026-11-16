@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { z } from 'zod/v4';
+import { COMPUTE_MODE_HEADER } from '@matrix-os/contracts';
 import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   PLATFORM_SESSION_PROXY_HEADER,
@@ -28,6 +29,7 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   'x-matrix-routine-creation-proof',
   'x-matrix-routine-full-access-proof',
   'x-matrix-preview-drive-turn-proof',
+  COMPUTE_MODE_HEADER,
 ]);
 
 export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {

@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { DEFAULT_STORAGE_QUOTA_LIMITS, type StorageQuotaLimits } from './storage-quota.js';
+import { DEFAULT_COMPUTE_CAP_CONFIG, type ComputeCapConfig } from './compute-meter.js';
 
 export interface FreeTierConfig {
   /** Global ceiling on non-deleted free runtimes; creation beyond it is refused as busy. */
@@ -79,4 +80,33 @@ export function loadContainerStorageLimits(
     return DEFAULT_STORAGE_QUOTA_LIMITS;
   }
   return { maxBytes: parsed.data.MATRIX_CONTAINER_HOME_MAX_BYTES, maxFiles: parsed.data.MATRIX_CONTAINER_HOME_MAX_FILES };
+}
+
+const COMPUTE_FIELDS = {
+  MATRIX_FREE_COMPUTE_CAP_HOURS: z.coerce.number().int().min(1).max(744).default(DEFAULT_COMPUTE_CAP_CONFIG.capMs / 3_600_000),
+  MATRIX_FREE_EXPORT_WAKES_PER_MONTH: z.coerce.number().int().min(0).max(31).default(DEFAULT_COMPUTE_CAP_CONFIG.exportWakesPerMonth),
+  MATRIX_FREE_EXPORT_WAKE_MINUTES: z.coerce.number().int().min(1).max(60).default(DEFAULT_COMPUTE_CAP_CONFIG.exportWindowMs / 60_000),
+} as const;
+
+/**
+ * The monthly compute cap for container owners (spec 2691, D3), read once at
+ * startup. Container runtimes are always metered, so an invalid override is
+ * logged by name and the decided defaults stay in force.
+ */
+export function loadComputeCapConfig(
+  env: NodeJS.ProcessEnv,
+  log: (message: string) => void = (message) => console.warn(message),
+): ComputeCapConfig {
+  const raw = Object.fromEntries(Object.keys(COMPUTE_FIELDS).map((key) => [key, env[key] === '' ? undefined : env[key]]));
+  const parsed = z.object(COMPUTE_FIELDS).safeParse(raw);
+  if (!parsed.success) {
+    const invalid = [...new Set(parsed.error.issues.map((issue) => String(issue.path[0])))].sort();
+    log(`[platform] compute cap uses defaults; invalid settings: ${invalid.join(', ')}`);
+    return DEFAULT_COMPUTE_CAP_CONFIG;
+  }
+  return {
+    capMs: parsed.data.MATRIX_FREE_COMPUTE_CAP_HOURS * 3_600_000,
+    exportWakesPerMonth: parsed.data.MATRIX_FREE_EXPORT_WAKES_PER_MONTH,
+    exportWindowMs: parsed.data.MATRIX_FREE_EXPORT_WAKE_MINUTES * 60_000,
+  };
 }

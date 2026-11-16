@@ -471,4 +471,20 @@ describe('container storage ledger cleanup', () => {
         .toEqual([{ clerk_user_id: 'user_other' }]);
     } finally { await db.destroy(); }
   });
+
+  it('erases the owner compute usage history, export wakes included, and keeps other owners', async () => {
+    const db = await fixture();
+    try {
+      for (const owner of ['user_owner', 'user_other']) {
+        for (const month of ['2026-10-01', '2026-11-01']) {
+          await db.executor.insertInto('runtime_compute_usage').values({
+            clerk_user_id: owner, month_start: month, billed_ms: 3_600_000, export_ms: 60_000, export_wakes: 1,
+          }).execute();
+        }
+      }
+      await eraseOwnerPlatformData(db, 'user_owner');
+      expect(await db.executor.selectFrom('runtime_compute_usage').select('clerk_user_id').orderBy('month_start').execute())
+        .toEqual([{ clerk_user_id: 'user_other' }, { clerk_user_id: 'user_other' }]);
+    } finally { await db.destroy(); }
+  });
 });

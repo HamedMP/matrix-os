@@ -51,7 +51,7 @@ import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
 import { getActiveUserMachineByHandle } from './database/user-machines.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
-import { decideContainerWake, relayContainerWebSocket } from './substrates/container-websocket.js';
+import { computeModeOf, decideContainerWake, relayContainerWebSocket } from './substrates/container-websocket.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -429,7 +429,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       if (runningMachine.substrate === 'container') {
         if (!substrates) { refuse(503); return; }
         const wake = await decideContainerWake({ db, substrates, machine: runningMachine, identity });
-        if (wake.kind !== 'proceed') { refuse(503); return; }
+        if (wake.kind !== 'proceed') { refuse(wake.kind === 'limit_reached' ? 429 : 503); return; }
         const resolution = substrates.resolveUpstream(wake.machine, { path: webSocketProxyPath });
         if (resolution.kind !== 'upstream' || !isSafeWebSocketUpgradePath(webSocketProxyPath)) {
           refuse(resolution.kind === 'upstream' ? 400 : 503);
@@ -438,7 +438,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         relayContainerWebSocket({
           req, socket: socket as Socket, head, upstream: resolution.upstream,
           upstreamPath: stripWebSocketUpgradeToken(webSocketProxyPath),
-          forwardedHeaders: buildUpgradeHeaders(wake.machine.handle, true),
+          forwardedHeaders: buildUpgradeHeaders(wake.machine.handle, true), computeMode: computeModeOf(wake.machine),
           refuse, adoptUpstream, onResponded: () => { upstreamResponded = true; },
         });
         return;

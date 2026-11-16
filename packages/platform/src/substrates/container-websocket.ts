@@ -1,11 +1,13 @@
 import type { IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
 import { connect as connectTls } from 'node:tls';
-import type { RuntimeState } from '@matrix-os/contracts';
+import { COMPUTE_MODE_HEADER, type ComputeMode, type RuntimeState } from '@matrix-os/contracts';
 import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { EnsureRunningResult, RuntimeUpstream } from './types.js';
+import { nextMonthStartUtc } from '../free-tier/compute-meter.js';
+import { isExportIntent, isExportOnlyRequest, type ExportRequestLike } from './container-export-only.js';
 
 /**
  * WebSocket proxying to a container runtime. The provider endpoint
@@ -27,7 +29,27 @@ const PORT_HEADER = 'x-aws-proxy-port';
 export type ContainerWakeDecision =
   | { kind: 'proceed'; machine: UserMachineRecord }
   | { kind: 'not_ready'; state: Extract<RuntimeState, 'waking' | 'busy' | 'failed'>; result: EnsureRunningResult }
+  | { kind: 'limit_reached'; resetsAt: string; retryAfterSeconds: number }
   | { kind: 'unavailable' };
+
+/** An export-only unit serves only export and read requests; a WebSocket (no request given) never qualifies. */
+function exportOnlyGate(machine: UserMachineRecord, request: ExportRequestLike | undefined, at: Date): ContainerWakeDecision | null {
+  if (machine.computeMode !== 'export_only' || (request && isExportOnlyRequest(request))) return null;
+  const resetsAt = nextMonthStartUtc(machine.startedAt ? new Date(machine.startedAt) : at);
+  // The month turned while this unit runs; it stops within its export window and then wakes normally.
+  if (resetsAt.getTime() <= at.getTime()) return { kind: 'not_ready', state: 'busy', result: { state: 'busy' } };
+  return limitReached(resetsAt.toISOString(), at);
+}
+
+function limitReached(resetsAt: string, at: Date): ContainerWakeDecision {
+  const seconds = Math.ceil((Date.parse(resetsAt) - at.getTime()) / 1_000);
+  return { kind: 'limit_reached', resetsAt, retryAfterSeconds: Number.isFinite(seconds) ? Math.max(1, seconds) : 1 };
+}
+
+/** The mode the gateway on a container unit runs in; only the platform sets it. */
+export function computeModeOf(machine: UserMachineRecord): ComputeMode {
+  return machine.computeMode === 'export_only' ? 'export_only' : 'full';
+}
 
 /**
  * Owner requests may start compute; any other caller reaches the runtime only
@@ -39,14 +61,18 @@ export async function decideContainerWake(input: {
   substrates: SubstrateRegistry;
   machine: UserMachineRecord;
   identity: { userId: string; source?: string };
+  /** The upstream request, for export intent and the export-only gate; absent for WebSocket upgrades. */
+  request?: ExportRequestLike;
   logError?: (message: string, detail: Record<string, string>) => void;
 }): Promise<ContainerWakeDecision> {
-  const { machine, identity } = input;
+  const { machine, identity, request } = input;
   if (machine.substrate !== 'container') return { kind: 'proceed', machine };
   const lookup = input.substrates.get('container');
   if (!lookup.ok) return { kind: 'proceed', machine };
+  const now = () => lookup.substrate.now?.() ?? new Date();
   const owner = identity.source === 'auth' && Boolean(identity.userId) && identity.userId === machine.clerkUserId;
   if (!owner) {
+    if (machine.computeMode === 'export_only') return { kind: 'unavailable' };
     if (input.substrates.resolveUpstream(machine, { path: '/' }).kind === 'upstream') return { kind: 'proceed', machine };
     try {
       const routable = await lookup.substrate.ensureRoutable?.({
@@ -63,7 +89,7 @@ export async function decideContainerWake(input: {
   try {
     result = await lookup.substrate.ensureRunning({
       machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
-    }, AbortSignal.timeout(ENSURE_RUNNING_TIMEOUT_MS));
+    }, AbortSignal.timeout(ENSURE_RUNNING_TIMEOUT_MS), { exportIntent: request ? isExportIntent(request) : false });
   } catch (error: unknown) {
     (input.logError ?? ((message, detail) => console.error(message, detail)))(
       '[container-wake] ensure running failed', { cause: error instanceof Error ? error.name : 'unknown' });
@@ -72,11 +98,12 @@ export async function decideContainerWake(input: {
   if (result.state === 'starting') return { kind: 'not_ready', state: 'waking', result };
   if (result.state === 'busy') return { kind: 'not_ready', state: 'busy', result };
   if (result.state === 'failed') return { kind: 'not_ready', state: 'failed', result };
+  if (result.state === 'limit_reached') return limitReached(result.resetsAt, now());
   const current = await getUserMachine(input.db, machine.machineId);
   if (!current || current.deletedAt) {
     return { kind: 'not_ready', state: 'failed', result: { state: 'failed', code: 'needs_recovery' } };
   }
-  return { kind: 'proceed', machine: current };
+  return exportOnlyGate(current, request, now()) ?? { kind: 'proceed', machine: current };
 }
 
 function isProviderProtocol(value: string): boolean {
@@ -131,6 +158,8 @@ export interface ContainerWebSocketRelay {
   upstreamPath: string;
   /** Header lines from the shared builder, without the client's subprotocol header. */
   forwardedHeaders: string;
+  /** From the machine row; any client line of the same name is dropped first. */
+  computeMode: ComputeMode;
   refuse(status: 502 | 503): void;
   adoptUpstream(upstream: Socket): boolean;
   onResponded(): void;
@@ -157,7 +186,7 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
   }
   const host = relay.upstream.hostHeader;
   const connect = relay.connect ?? ((options, onConnect) => connectTls({ ...options, rejectUnauthorized: true }, onConnect));
-  const headers = withoutLines(relay.forwardedHeaders, ['sec-websocket-protocol', AUTH_HEADER, PORT_HEADER, 'host']);
+  const headers = withoutLines(relay.forwardedHeaders, ['sec-websocket-protocol', AUTH_HEADER, PORT_HEADER, 'host', COMPUTE_MODE_HEADER]);
   let settled = false;
   const deadline = setTimeout(() => {
     if (settled) return;
@@ -175,7 +204,7 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
       return;
     }
     const lines = [`${relay.req.method ?? 'GET'} ${relay.upstreamPath} HTTP/1.1`, `Host: ${host}`,
-      ...(headers ? [headers] : []), `Sec-WebSocket-Protocol: ${protocols}`];
+      ...(headers ? [headers] : []), `${COMPUTE_MODE_HEADER}: ${relay.computeMode}`, `Sec-WebSocket-Protocol: ${protocols}`];
     upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
     if (relay.head.length > 0) upstream.write(relay.head);
     let buffered = Buffer.alloc(0);

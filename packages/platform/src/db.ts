@@ -114,6 +114,10 @@ export interface UserMachinesTable {
   last_flushed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** A stop could not confirm the unit suspended; it may hold compute until at most this time. */
   compute_unconfirmed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  metered_since: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** When the provider ends the unit now serving this row; bounds its metered time. */
+  unit_expires_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  compute_mode: Generated<string>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -862,6 +866,7 @@ export interface PlatformDatabase {
   free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
   runtime_storage_usage: import('./free-tier/storage-quota.js').RuntimeStorageUsageTable;
   runtime_storage_objects: import('./free-tier/storage-quota.js').RuntimeStorageObjectsTable;
+  runtime_compute_usage: import('./free-tier/compute-meter.js').RuntimeComputeUsageTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
@@ -1044,6 +1049,8 @@ export interface UserMachineRecord {
   privateAddress: string | null;
   lastActivityAt: string | null;
   startedAt: string | null;
+  /** Container runtimes only: an export-only start admits nothing but export and read routes. */
+  computeMode?: 'full' | 'export_only';
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';

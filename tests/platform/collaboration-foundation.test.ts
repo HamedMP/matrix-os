@@ -94,6 +94,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'container-owner-databases',
       'free-tier',
       'container-limits',
+      'runtime-compute',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });

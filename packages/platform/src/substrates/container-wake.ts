@@ -1,11 +1,17 @@
+import { randomBytes } from 'node:crypto';
 import type { Context } from 'hono';
-import type { RuntimeState } from '@matrix-os/contracts';
+import { COMPUTE_MODE_HEADER, type RuntimeState } from '@matrix-os/contracts';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
 import { getVpsBootPage } from '../vps-boot-page.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { RuntimeUpstream } from './types.js';
-import { decideContainerWake } from './container-websocket.js';
+import { computeModeOf, decideContainerWake } from './container-websocket.js';
 import { isMeaningfulOwnerRequest } from './idle-reaper.js';
+import { EXPORT_ROUTE, type ExportRequestLike } from './container-export-only.js';
+import { computeCapPageCsp, renderComputeCapPage } from './compute-cap-page.js';
+import { readExplicitVmRoute } from '../session-routing-identity.js';
+
+export { isExportOnlyRequest } from './container-export-only.js';
 
 /**
  * Only an authenticated request from a container runtime's owner starts its
@@ -42,6 +48,52 @@ function stateResponse(input: ContainerWakeInput, state: RuntimeState, retryAfte
   return c.html(getVpsBootPage({ status: state === 'waking' ? 'starting' : state }), 503);
 }
 
+/**
+ * The monthly compute cap answers 429 with Retry-After at the reset: it is a
+ * quota with a known end, not an outage (503 is what clients retry) and not
+ * an access denial (403 means sign-in, entitlement, or waitlist to clients).
+ * The body's `limit_reached` is a terminal state for the shared client
+ * model, so it does not retry; the reset is days away in any case. A browser
+ * navigation gets the platform's own cap page instead.
+ */
+function limitResponse(input: ContainerWakeInput, resetsAt: string, retryAfterSeconds: number): Response {
+  const { c } = input;
+  input.applyNoStoreHeaders(c);
+  c.header('Retry-After', String(retryAfterSeconds));
+  if (input.respondWithJson) {
+    return c.json({ error: 'Matrix computer limit reached', runtimeState: 'limit_reached', limit: 'compute', resetsAt }, 429);
+  }
+  const nonce = randomBytes(18).toString('base64url');
+  c.header('Content-Security-Policy', computeCapPageCsp(nonce));
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'no-referrer');
+  const exportPath = isOwner(input) ? `${explicitPrefix(input) ?? ''}${EXPORT_ROUTE}` : null;
+  return c.html(renderComputeCapPage({ resetsAt, exportPath, nonce }), 429);
+}
+
+function isOwner(input: ContainerWakeInput): boolean {
+  const { identity, machine } = input;
+  return identity.source === 'auth' && Boolean(identity.userId) && identity.userId === machine.clerkUserId;
+}
+
+/** The explicit `/vm/<handle>` prefix when this request used it; it is the platform's own. */
+function explicitPrefix(input: ContainerWakeInput): string | null {
+  const prefix = `/vm/${input.machine.handle}`;
+  const path = input.c.req.path;
+  return path === prefix || path.startsWith(`${prefix}/`) ? prefix : null;
+}
+
+/**
+ * The path the runtime would see: an explicit `/vm/<handle>` route, with or
+ * without `~runtime/<slot>`, is judged by its parsed upstream path.
+ */
+function upstreamRequest(input: ContainerWakeInput): ExportRequestLike {
+  const { c } = input;
+  const explicit = explicitPrefix(input) === null ? null : readExplicitVmRoute(c.req.path);
+  const path = explicit && explicit.handle === input.machine.handle ? explicit.upstreamPath : c.req.path;
+  return { method: c.req.method, path, header: name => c.req.header(name) };
+}
+
 const RETRY_AFTER: Record<'waking' | 'busy' | 'failed', string | null> = {
   waking: WAKING_RETRY_AFTER_SECONDS, busy: BUSY_RETRY_AFTER_SECONDS, failed: null,
 };
@@ -53,8 +105,9 @@ const RETRY_AFTER: Record<'waking' | 'busy' | 'failed', string | null> = {
  */
 export async function prepareContainerUpstream(input: ContainerWakeInput): Promise<ContainerWakeOutcome> {
   observeOwnerActivity(input);
-  const decision = await decideContainerWake(input);
+  const decision = await decideContainerWake({ ...input, request: upstreamRequest(input) });
   if (decision.kind === 'proceed') return decision;
+  if (decision.kind === 'limit_reached') return { kind: 'respond', response: limitResponse(input, decision.resetsAt, decision.retryAfterSeconds) };
   if (decision.kind === 'unavailable') {
     input.applyNoStoreHeaders(input.c);
     return { kind: 'respond', response: input.c.json({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' }, 503) };
@@ -67,9 +120,8 @@ export async function prepareContainerUpstream(input: ContainerWakeInput): Promi
  * is quiescing can cancel it. Only the owner's own verified session counts.
  */
 function observeOwnerActivity(input: ContainerWakeInput): void {
-  const { machine, identity, c } = input;
-  if (machine.substrate !== 'container' || identity.source !== 'auth' || !identity.userId
-    || identity.userId !== machine.clerkUserId) return;
+  const { machine, c } = input;
+  if (machine.substrate !== 'container' || !isOwner(input)) return;
   if (!isMeaningfulOwnerRequest({ method: c.req.method, path: c.req.path, header: name => c.req.header(name) })) return;
   const lookup = input.substrates.get('container');
   if (lookup.ok) lookup.substrate.recordOwnerActivity?.(machine.machineId);
@@ -78,6 +130,15 @@ function observeOwnerActivity(input: ContainerWakeInput): void {
 /** Platform-to-runtime credentials are set last so a client header of the same name cannot replace them. */
 export function applyUpstreamCredentials(headers: Headers, upstream: RuntimeUpstream): void {
   for (const [name, value] of Object.entries(upstream.headers ?? {})) headers.set(name, value);
+}
+
+/**
+ * Every request to a container carries the row's compute mode, replacing any
+ * client value; a VPS never receives the header.
+ */
+export function applyComputeModeHeader(headers: Headers, machine: UserMachineRecord): void {
+  headers.delete(COMPUTE_MODE_HEADER);
+  if (machine.substrate === 'container') headers.set(COMPUTE_MODE_HEADER, computeModeOf(machine));
 }
 
 /** Never hand a runtime credential back to the client, even if the upstream echoes it. */

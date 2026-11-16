@@ -4,7 +4,7 @@ import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import { createOwnerDatabaseSizeSweeper } from './container-database-size-sweep.js';
 import { createOwnerDatabaseCompactor } from './container-owner-compaction.js';
-import { loadContainerStorageLimits } from '../free-tier/config.js';
+import { loadComputeCapConfig, loadContainerStorageLimits } from '../free-tier/config.js';
 import { createStorageQuota, type StorageQuotaDeps } from '../free-tier/storage-quota.js';
 import { createStorageQuotaSweeper } from '../free-tier/storage-quota-sweep.js';
 import {
@@ -197,12 +197,14 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
   const runtime = createContainerRuntimeClient({
     provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
   });
+  const computeCap = loadComputeCapConfig(deps.env, log);
   const lifecycle = createContainerLifecycleService({
     db: deps.db,
     provider,
     // A resumed unit gets a whole new session, so it must outlive that session and its stop.
     minResumeLifetimeMs: config.idle.maxSessionMs + CONTAINER_QUIESCE_TIMEOUT_MS,
     maxRunning: config.maxRunning,
+    computeCap,
     reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);
@@ -220,7 +222,7 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     },
   });
   const activity = createActivityTracker({ db: deps.db });
-  const reaper = createIdleReaper({ db: deps.db, lifecycle, runtime, activity, config: config.idle });
+  const reaper = createIdleReaper({ db: deps.db, lifecycle, runtime, activity, config: { ...config.idle, computeCap } });
   const reconciler = createOrphanReconciler({ db: deps.db, provider });
   const substrate = createContainerSubstrate({
     lifecycle,
