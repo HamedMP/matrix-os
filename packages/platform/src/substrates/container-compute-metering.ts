@@ -31,14 +31,25 @@ export function createComputeMetering(deps: {
 }) {
   const { db, now } = deps;
 
-  /** Runs a write that ends compute and closes the interval it ends; the write must clear `metered_since`. */
-  async function closing(machineId: string, write: (executor: Executor) => Promise<boolean>): Promise<boolean> {
+  /**
+   * Runs a write that ends compute and closes the interval it ends; the write must clear `metered_since`.
+   * With `keepOpen`, a row whose earlier unit is still unconfirmed (`compute_unconfirmed_until` ahead)
+   * runs that write instead and keeps metering: the unit may still run until its fate is confirmed.
+   */
+  async function closing(
+    machineId: string,
+    write: (executor: Executor) => Promise<boolean>,
+    keepOpen?: (executor: Executor) => Promise<boolean>,
+  ): Promise<boolean> {
     return db.transaction(async (trx) => {
       const locked = await trx.executor.selectFrom('user_machines')
         .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container')
         .forUpdate().executeTakeFirst();
       if (!locked) return false;
+      if (keepOpen && locked.compute_unconfirmed_until && locked.compute_unconfirmed_until.getTime() > now().getTime()) {
+        return keepOpen(trx.executor);
+      }
       const written = await write(trx.executor);
       if (written && locked.metered_since) {
         await closeComputeInterval(trx.executor, {

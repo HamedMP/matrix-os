@@ -125,6 +125,48 @@ describe('monthly compute metering and cap', () => {
     expect(await usage()).toMatchObject({ billedMs: 9 * HOUR });
   });
 
+  it('keeps metering a failed stop\'s unit through a recovery start that fails before learning its fate', async () => {
+    const provider = fakeProvider();
+    vi.mocked(provider.suspend).mockRejectedValue(new Error('provider down'));
+    const lifecycle = service(provider);
+    const { generation } = await startAndRegister(lifecycle);
+    advance(HOUR);
+    expect(await lifecycle.stop('ctr-1', generation, AbortSignal.timeout(1_000))).toBe('needs_recovery');
+    advance(HOUR);
+    vi.mocked(provider.describe).mockRejectedValue(new Error('provider down'));
+    await lifecycle.ensureStarted('ctr-1');
+    await lifecycle.drain();
+    expect((await getUserMachine(db, 'ctr-1'))?.status).toBe('failed_start');
+    advance(2 * HOUR);
+    // The unit the stop never suspended may still run until its lifetime ends it.
+    expect(await usage()).toMatchObject({ billedMs: 4 * HOUR });
+    advance(10 * HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
+  });
+
+  it('keeps metering the unit of a start that never registered while its termination is unconfirmed', async () => {
+    const provider = fakeProvider();
+    vi.mocked(provider.terminate).mockRejectedValue(new Error('provider down'));
+    const lifecycle = service(provider);
+    await lifecycle.ensureStarted('ctr-1');
+    await lifecycle.drain();
+    advance(91_000);
+    expect(await lifecycle.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    advance(HOUR);
+    expect(await usage()).toMatchObject({ billedMs: HOUR + 91_000 });
+  });
+
+  it('stops metering a start that never registered once its unit is terminated', async () => {
+    const provider = fakeProvider();
+    const lifecycle = service(provider);
+    await lifecycle.ensureStarted('ctr-1');
+    await lifecycle.drain();
+    advance(91_000);
+    expect(await lifecycle.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    advance(HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 91_000 });
+  });
+
   it('stops metering a failed stop whose unit was confirmed suspended', async () => {
     const lifecycle = service();
     const { generation } = await startAndRegister(lifecycle);

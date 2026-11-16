@@ -156,7 +156,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (set.status === undefined || holdsCompute(set.status) || set.compute_unconfirmed_until) {
       return transitionWith(db.executor, machineId, from, generation, set);
     }
-    return closing(machineId, executor => transitionWith(executor, machineId, from, generation, { ...set, metered_since: null }));
+    // An earlier unit still unconfirmed keeps the interval open, unless this write confirms it ended.
+    return closing(machineId, executor => transitionWith(executor, machineId, from, generation, { ...set, metered_since: null }),
+      set.compute_unconfirmed_until === null ? undefined : executor => transitionWith(executor, machineId, from, generation, set));
   }
 
   async function transitionWith(
@@ -184,9 +186,14 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
    * is unknown. A later start clears it once the provider confirms the unit ended.
    */
   async function holdUnconfirmed(machineId: string, expiresAt: Date | null): Promise<void> {
-    const until = (expiresAt ?? new Date(now().getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000)).toISOString();
+    const at = now();
+    const until = (expiresAt ?? new Date(at.getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000)).toISOString();
+    // A failed start may already have closed the interval; metering resumes from here, bounded by the deadline.
     await db.executor.updateTable('user_machines')
-      .set({ compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)` })
+      .set({
+        compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)`,
+        metered_since: sql<Date>`COALESCE(metered_since, ${at.toISOString()}::timestamptz)`,
+      })
       .where('machine_id', '=', machineId).where('substrate', '=', 'container').execute();
   }
 
