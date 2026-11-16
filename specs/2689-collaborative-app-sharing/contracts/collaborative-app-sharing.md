@@ -220,6 +220,23 @@ Request body (DELETE still receives the mutating body limit):
 
 The existing `Shared with me` aggregate may include this projection, but an app item is always typed as `app`; it never falls through to Chat/project rendering.
 
+Owner presentation (ENG-490): with `fields=display`, each item also carries optional `name` (owner manifest name, at most 120 characters) and `iconUrl` (exactly `/api/collaboration/shared-apps/:scopeId/icon?v=<sha256>` for the item's own scope). Released clients parse items strictly and never send `fields`, so the platform omits both keys for them. `GET /api/collaboration/shared-apps/:scopeId` accepts the same opt-in. The launch target fills `name` and `iconUrl` the same way. Clients never fall back to the member's own `/icons/<slug>` artwork; a missing or failed icon keeps the letter tile.
+
+### `GET /api/collaboration/shared-apps/:scopeId/icon?v=<sha256>`
+
+- Authentication: platform Matrix session (Electron Desktop: bearer attached by the trusted core on the platform origin).
+- Authority: active current-membership app share + current organization membership; otherwise `404`.
+- Validation: Zod `uuid` scope; `v` optional 64-hex; any other or repeated query key is `422`.
+- Response: stored raster bytes (`image/png`, `image/webp`, `image/jpeg` only, re-sniffed before serving) with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`. A matching `v` is `private, max-age=31536000, immutable`; otherwise `private, no-cache`. `ETag` is the quoted address, so `If-None-Match` returns `304`.
+- Rate limit: per-actor sliding window with a bounded LRU tracker.
+
+### `PUT /internal/collaboration/app-icons/:sha256`
+
+- Authentication: owner runtime service bearer + `x-matrix-runtime-id`, the same as the directory route.
+- Body: raw icon bytes, Hono `bodyLimit` at 256 KB (`COLLABORATIVE_APP_ICON_MAX_BYTES`). The platform recomputes sha256, rejects mismatches, and sniffs magic bytes (PNG/WebP/JPEG; SVG, HTML and anything else get `422`).
+- Storage: per-runtime content address, idempotent upsert that refreshes `last_uploaded_at`. A runtime keeps at most 64 icons; its oldest unreferenced icon is evicted first, and when every stored icon is referenced the upload gets `409`. Stale unreferenced icons (7 days) are swept in bounded batches after uploads.
+- The platform never fetches owner URLs (no SSRF surface). Directory events name an icon by `app.iconSha256`. The platform keeps it only when the same runtime uploaded that address and the share is not stopped; otherwise it drops the icon.
+
 ### `POST /api/collaboration/shared-apps/:scopeId/launch`
 
 Request:
@@ -317,6 +334,8 @@ Clients deduplicate by event/sequence and perform an authoritative read. Events 
 | Share preflight/create | Owner Matrix session | Exact app owner + current membership + current ready build | No |
 | Read/stop share | Owner Matrix session | Exact app owner + current revisions for stop | No |
 | Discover shared app | Platform Matrix session | Current membership in share organization | No |
+| Read shared app icon | Platform Matrix session | Active share + current membership | No |
+| Upload shared app icon | Owner runtime service bearer | Uploading runtime only; bytes scoped to that runtime | No |
 | Create/renew launch | Platform session + owner direct-session exchange | Active exact share + current membership + ready build | No |
 | Load bootstrap/assets | Platform session; owner relay signs upstream | Launch actor + active share + current membership + exact build | No |
 | Read app data | Signed owner-runtime direct session | Active share + current membership + declared table | No |
@@ -354,3 +373,4 @@ Unknown, long, provider/path/database-looking messages are replaced by safe copy
 - Only newly created ready app scopes use current-membership full access.
 - Older clients render an app entry as “client update required”; they do not treat it as Chat/project or fall back to a local same-slug app.
 - Native Mobile may list “Open on web” but is not qualified to run V1 shared apps.
+- Shared app presentation is additive. Deploy order: platform (migration + routes) first, then host bundle, then Electron. A gateway that meets a platform without presentation fields gets `422` for the presentation-bearing event and resends routing metadata alone. Clients opt in with `fields=display`, so released strict clients are unaffected.
