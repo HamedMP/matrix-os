@@ -46,7 +46,7 @@ function connect() {
 export default function (pi) {
   pi.registerTool({
     name: "matrix_routines", label: "Routines",
-    description: "Use the fixed Matrix routines CLI. Supply routine intent only. Mutations need the exact owner decision. For a queued proposal, use request with its original requestId while this turn is live to observe pending approval. Reconcile an unknown mutation by its original requestId and never retry it automatically. Activation, background model consent and integrations are separate.",
+    description: "When the person asks to schedule work, use propose through the fixed Matrix routines CLI. A proposal awaits separate human approval. For a queued proposal, use request with its original requestId while this turn is live to observe pending approval. Use a new requestId for a new mutation and the current revision for controls. Reconcile unknown outcomes with request and the original requestId. Never retry a mutation automatically. Activation, background model consent and integrations are separate.",
     parameters: __MATRIX_ROUTINE_SCHEMA__,
     async execute(toolCallId, operation, signal, _onUpdate, ctx) {
       const context = { sessionId: ctx?.sessionManager?.getSessionId(), toolCallId };

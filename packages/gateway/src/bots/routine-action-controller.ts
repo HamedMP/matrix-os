@@ -4,14 +4,14 @@ import { randomBytes } from "node:crypto";
 import type { Kysely, Transaction } from "kysely";
 import { z } from "zod/v4";
 import { RoutineCliOperationSchema, RoutineCliRememberTargetSchema, RoutineActionIdSchema, RoutineActionSubmitSchema, RoutineActionViewSchema, ROUTINE_ACTION_NOTICE,
-  type RoutineCliAction, type RoutineCliOperation, type RoutineActionProof, type RoutineActionTuple,
+  ROUTINE_DIRECT_CHAT_ACTION_DESTINATION, type RoutineCliAction, type RoutineCliOperation, type RoutineActionProof, type RoutineActionTuple,
   type RoutineActionSubmit, type RoutineActionView } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { RoutineCliSourceContextSchema, type RoutineCliSourceContext } from "./routine-cli-source-context.js";
 import { createRoutineCliSourceService, type RoutineCliVerifiedInvocation, type RoutineCliSourceReference } from "./routine-cli-source.js";
-import { createRoutineCliTargetService, type RoutineCliResolvedTarget, type RoutineCliTargetDependencies } from "./routine-cli-targets.js";
+import { createRoutineCliTargetService, routineDirectChatProposalScope, type RoutineCliResolvedTarget, type RoutineCliRememberedTarget, type RoutineCliTargetDependencies } from "./routine-cli-targets.js";
 import { createRoutineCliRequestsRepository } from "./repositories/routine-cli-requests.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
@@ -21,13 +21,13 @@ import { routineActionHash, routineActionPolicy, type RoutineActionSourceRegistr
 
 type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal; onOwnerWait?: (waiting: boolean) => void };
 type TargetCeiling = Readonly<Pick<RoutineCliResolvedTarget, "botId" | "chatId"> &
-  Partial<Pick<RoutineCliResolvedTarget, "bindingCreatedAt" | "preferenceRevision">>>;
+  Partial<Pick<RoutineCliRememberedTarget, "bindingCreatedAt" | "preferenceRevision">>>;
 const withinCeiling = (target: RoutineCliResolvedTarget, ceiling?: TargetCeiling) => !ceiling
   || target.botId === ceiling.botId && target.chatId === ceiling.chatId
     && (ceiling.bindingCreatedAt === undefined || target.bindingCreatedAt === ceiling.bindingCreatedAt)
-    && (ceiling.preferenceRevision === undefined || target.preferenceRevision === ceiling.preferenceRevision);
+    && (ceiling.preferenceRevision === undefined || "preferenceRevision" in target && target.preferenceRevision === ceiling.preferenceRevision);
 type Entry = { handle: RoutineSourceHandle; reference: RoutineCliSourceReference; invocationId: string; operation: RoutineCliOperation;
-  operationDigest: string; target: RoutineCliResolvedTarget; boundTarget?: TargetCeiling; originalReceipt: boolean; fingerprint: string; mode: "allow" | "ask";
+  operationDigest: string; target: RoutineCliResolvedTarget; listSupplement?: RoutineCliRememberedTarget; boundTarget?: TargetCeiling; originalReceipt: boolean; fingerprint: string; mode: "allow" | "ask";
   expiresAt: number; challengeId: string; actionDigest: string; status: RoutineActionView["status"]; issued: boolean;
   decision?: RoutineActionSubmit; settle(value: boolean): void; waiting: Promise<boolean>; detach(): void;
   resolutionPublished: boolean; publishResolution(): void };
@@ -38,7 +38,9 @@ const actionFor = (operation: RoutineCliOperation): RoutineCliAction => operatio
 export function createRoutineCliActionController(options: {
   db: Kysely<OwnerBotDatabase>; scope: RoutineCliScope; agents: Pick<ChatAgentStore, "get">; registry: RoutineActionSourceRegistry;
   platform: { handle: string; machineId: string; runtimeSlot: string; verify(tuple: RoutineActionTuple, proof: string, signal?: AbortSignal): Promise<RoutineActionProof> };
-  canAccessTarget: NonNullable<RoutineCliTargetDependencies["canAccessTarget"]>; now?: () => number; ttlMs?: number;
+  canAccessTarget: NonNullable<RoutineCliTargetDependencies["canAccessTarget"]>;
+  directChatContexts?: RoutineCliTargetDependencies["directChatContexts"];
+  now?: () => number; ttlMs?: number;
 }) {
   const scope = RoutineCliScopeSchema.parse(options.scope), now = options.now ?? Date.now, ttl = options.ttlMs ?? ROUTINE_CLI_OWNER_WAIT_MS;
   if (!options.db?.transaction || !options.registry?.validateWithin || !options.platform?.verify || !options.canAccessTarget
@@ -83,8 +85,12 @@ export function createRoutineCliActionController(options: {
   const authorized = (entry: Entry) => entry.mode === "allow" || entry.status === "approved";
   const targetWithin = async (entry: Entry, trx: Transaction<OwnerBotDatabase>) => {
     const target = entry.originalReceipt ? await targets.validatePinnedWithin(trx, entry.handle.source, actionFor(entry.operation), entry.target)
-      : await targets.resolveWithin(trx, entry.handle.source, actionFor(entry.operation), entry.target);
+      : await targets.resolveWithin(trx, entry.handle.source, actionFor(entry.operation), entry.target, entry.operation);
     if (!withinCeiling(target, entry.boundTarget)) throw new RoutineCliError("permission_denied");
+    if (entry.operation.operation === "list") {
+      const supplement = await targets.resolveListSupplementWithin(trx, entry.handle.source, target);
+      if (targetKey(supplement) !== targetKey(entry.listSupplement)) throw new RoutineCliError("revision_conflict");
+    }
     return target;
   };
   const sources = createRoutineCliSourceService({ db: options.db, scope, now: () => new Date(now()),
@@ -99,11 +105,15 @@ export function createRoutineCliActionController(options: {
     },
   });
   const targets = createRoutineCliTargetService({ db: options.db, scope, agents: options.agents, now: () => new Date(now()),
-    revalidateSource: sources.revalidateSource, canAccessTarget: options.canAccessTarget });
-  const targetKey = (target: RoutineCliResolvedTarget) => routineActionHash([target.ownerId, target.computerId, target.botId, target.chatId, target.bindingCreatedAt, target.preferenceRevision]);
+    revalidateSource: sources.revalidateSource, canAccessTarget: options.canAccessTarget, directChatContexts: options.directChatContexts });
+  const targetKey = (target: RoutineCliResolvedTarget | undefined) => target && routineActionHash([
+    target.ownerId, target.computerId, target.botId, target.chatId, target.bindingCreatedAt,
+    ...("purpose" in target ? [target.purpose, target.sourceChatId] : [target.preferenceRevision]),
+  ]);
   const authorizeTarget: NonNullable<RoutineCliRequestDependencies["authorizeTarget"]> = async (input) => {
     const entry = match(input.source, input.operation, input.invocation);
-    return !!entry && authorized(entry) && withinCeiling(input.target, entry.boundTarget) && targetKey(input.target) === targetKey(entry.target);
+    return !!entry && authorized(entry) && withinCeiling(input.target, entry.boundTarget) && targetKey(input.target) === targetKey(entry.target)
+      && targetKey(input.listSupplement) === targetKey(entry.listSupplement);
   };
   const fresh = async (entry: Entry) => {
     if (!live(entry)) throw new RoutineCliError("permission_denied");
@@ -111,7 +121,9 @@ export function createRoutineCliActionController(options: {
     if (!live(entry)) throw new RoutineCliError("permission_denied");
   };
   const project = (entry: Entry): RoutineActionView => RoutineActionViewSchema.parse({ challengeId: entry.challengeId, actionDigest: entry.actionDigest,
-    intent: entry.operation, target: { botId: entry.target.botId, chatId: entry.target.chatId },
+    intent: entry.operation, target: "purpose" in entry.target
+      ? { botId: ROUTINE_DIRECT_CHAT_ACTION_DESTINATION, chatId: entry.target.sourceChatId }
+      : { botId: entry.target.botId, chatId: entry.target.chatId },
     sourceLabel: entry.handle.source.identity.kind === "terminal_launch" ? `Terminal ${entry.handle.source.identity.sessionId}`
       : entry.handle.source.identity.kind === "chat_run" ? `Chat ${entry.handle.source.identity.chatId}` : `Bot task ${entry.handle.source.identity.taskId}`,
     sourceKind: entry.handle.source.identity.kind, operation: entry.operation.operation, expiresAt: new Date(entry.expiresAt).toISOString(),
@@ -123,20 +135,38 @@ export function createRoutineCliActionController(options: {
   };
   const prepare = async (handle: RoutineSourceHandle, reference: RoutineCliSourceReference, call: Call, targetCeiling?: TargetCeiling) => {
     const operation = freezeIntent(RoutineCliOperationSchema.parse(call.operation)), invocationId = z.uuid().parse(call.invocationId).toLowerCase();
-    // An original receipt remains readable in its original target after the owner's default changes.
-    const boundTarget = handle.source.identity.kind === "chat_run" && actionFor(operation) === "read" ? undefined : targetCeiling;
+    // A verified Chat lease keeps its exact remembered binding. Original receipts remain readable
+    // in their originally authorized targets even after the owner's default changes.
+    const chatSource = handle.source.identity.kind === "chat_run";
+    const boundTarget = chatSource && actionFor(operation) === "read" ? undefined : targetCeiling;
+    const pinned = chatSource && boundTarget?.bindingCreatedAt !== undefined && boundTarget.preferenceRevision !== undefined
+      ? { ...scope, botId: boundTarget.botId, chatId: boundTarget.chatId, bindingCreatedAt: boundTarget.bindingCreatedAt,
+        preferenceRevision: boundTarget.preferenceRevision } : undefined;
     sweep(); if (closed || !options.registry.has(handle) || call.signal.aborted || entries.has(invocationId)) throw new RoutineCliError("permission_denied");
     if (entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("unavailable");
     const registered = options.registry.read(handle.source)!;
     const mode = routineActionPolicy(handle.source, registered.policy, actionFor(operation));
     if (mode === "deny") throw new RoutineCliError("permission_denied");
+    const origin = operation.operation === "propose" ? routineDirectChatProposalScope(handle.source) : undefined;
+    const operationDigest = routineActionHash(operation);
+    if (!pinned && origin && operation.operation === "propose" && options.directChatContexts) {
+      const invocation = { sourceId: reference.sourceId, invocationId, operationDigest };
+      const shouldProvision = await options.db.transaction().execute(async trx => {
+        if (await ledger.get(scope, operation.requestId, trx)) return false;
+        if (!await sources.revalidateSource(handle.source, "propose", trx, invocation)) throw new RoutineCliError("permission_denied");
+        return true;
+      });
+      // Definition/workspace provisioning never owns source, capability or request transaction locks.
+      if (shouldProvision) await options.directChatContexts.ensure(origin, AbortSignal.any([call.signal, handle.signal]));
+    }
     const prepared = await options.db.transaction().execute(async trx => {
       const receipt = "requestId" in operation ? await ledger.get(scope, operation.requestId, trx) : undefined;
-      if (receipt && operation.operation !== "request" && receipt.operationDigest !== routineActionHash(operation)) throw new RoutineCliError("request_conflict");
+      if (receipt && operation.operation !== "request" && receipt.operationDigest !== operationDigest) throw new RoutineCliError("request_conflict");
       const target = receipt ? await targets.validatePinnedWithin(trx, handle.source, actionFor(operation), receipt.target)
-        : await targets.resolveWithin(trx, handle.source, actionFor(operation));
+        : await targets.resolveWithin(trx, handle.source, actionFor(operation), pinned, operation);
       if (!withinCeiling(target, boundTarget)) throw new RoutineCliError("permission_denied");
-      return { target: freezeIntent(target), originalReceipt: !!receipt };
+      const supplement = operation.operation === "list" ? await targets.resolveListSupplementWithin(trx, handle.source, target) : undefined;
+      return { target: freezeIntent(target), listSupplement: freezeIntent(supplement), originalReceipt: !!receipt };
     });
     if (call.signal.aborted || !options.registry.has(handle) || options.registry.read(handle.source)?.fingerprint !== registered.fingerprint
       || entries.has(invocationId) || entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("permission_denied");
@@ -150,7 +180,7 @@ export function createRoutineCliActionController(options: {
     // remove its registry entry before the original Chat's idle tracker is drained.
     // Requests and all authority checks still require the live registry.
     const publish = registered.producer.publish?.bind(registered.producer);
-    const entry: Entry = { handle, reference, invocationId, operation, boundTarget, operationDigest: routineActionHash(operation), ...prepared,
+    const entry: Entry = { handle, reference, invocationId, operation, boundTarget, operationDigest, ...prepared,
       fingerprint: registered.fingerprint, mode, expiresAt, challengeId, actionDigest: routineActionHash({ purpose: "routine_cli_owner_action:v1",
         source: handle.source, sourceId: reference.sourceId, invocationId, operation, boundTarget, target: prepared.target, policy: registered.fingerprint, expiresAt, challengeId }),
       status: mode === "ask" ? "pending" : "approved", issued: false, waiting, settle, detach: () => {}, resolutionPublished: false,
@@ -203,7 +233,16 @@ export function createRoutineCliActionController(options: {
       entry.settle(input.decision === "approve"); return { submission: "accepted" as const };
     };
   return {
-    sources, targets, authorizeTarget,
+    sources, authorizeTarget,
+    targets: {
+      ...targets,
+      async resolveNewRequestWithin(trx: Transaction<OwnerBotDatabase>, source: RoutineCliSourceContext, operation: RoutineCliOperation,
+        invocation: RoutineCliVerifiedInvocation) {
+        const entry = match(source, operation, invocation);
+        if (!entry || !authorized(entry)) throw new RoutineCliError("permission_denied");
+        return targetWithin(entry, trx);
+      },
+    },
     async register(producer: RoutineSourceProducer, targetCeiling?: TargetCeiling) {
       const boundTarget = targetCeiling ? freezeIntent(RoutineCliRememberTargetSchema.pick({ botId: true, chatId: true }).extend({
         bindingCreatedAt: z.iso.datetime({ offset: true }).optional(),
@@ -241,11 +280,16 @@ export function createRoutineCliActionController(options: {
         async revoke() { options.registry.revoke(handle); await sources.revoke(reference); },
       };
     },
-    get(principal: RequestPrincipal, id: string) { return project(getEntry(principal.userId, id)); },
+    // The exact owner challenge is reachable from its Chat card. The display
+    // projection never publishes the execution binding or changes the proof digest.
+    get: (principal: RequestPrincipal, id: string) => project(getEntry(principal.userId, id)),
     list(principal: RequestPrincipal, includeChat = false) {
-      requireOwnerId(principal.userId); sweep(); return [...entries.values()].filter(entry => entry.mode === "ask" && (includeChat || entry.handle.source.identity.kind === "terminal_launch")).map(project);
+      requireOwnerId(principal.userId); sweep();
+      return [...entries.values()].filter(entry => entry.mode === "ask" && !("purpose" in entry.target)
+        && (includeChat || entry.handle.source.identity.kind === "terminal_launch")).map(project);
     },
-    submit: (principal: RequestPrincipal, id: string, input: RoutineActionSubmit, proof: string) => submitForOwner(principal.userId, id, input, proof),
+    submit: (principal: RequestPrincipal, id: string, input: RoutineActionSubmit, proof: string) =>
+      submitForOwner(principal.userId, id, input, proof),
     async submitChat(ownerId: string, chatId: string, runId: string, id: string, input: RoutineActionSubmit, proof: string) {
       const entry = getEntry(ownerId, id), identity = entry.handle.source.identity;
       if (!(identity.kind === "chat_run" && identity.chatId === chatId && identity.runId === runId

@@ -4,6 +4,7 @@ import type { BotToolRequest, CanonicalOwnerScope } from "@matrix-os/contracts";
 import { createBotRoutineControl } from "./routine-control.js";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotRoutineApprovals } from "./routine-approval.js";
+import { directRoutineOriginLiveSql } from "./routine-direct-chat-lifecycle.js";
 import { routineSelection } from "./routine-authorization.js";
 import { createBotRoutinesRepository } from "./repositories/routines.js";
 import { createBotTasksRepository } from "./repositories/tasks.js";
@@ -123,7 +124,10 @@ export function createBotRoutineExecution(deps: {
       const selected = await createBotRoutinesRepository(tx.db).getFire(input.ownerId, input.fireId);
       if (!selected) return false;
       const routine = await tx.db.selectFrom("bot_routines").select(["status", "chat_id", "bot_id", "revision"])
-        .where("owner_id", "=", input.ownerId).where("routine_id", "=", selected.routineId).forUpdate().executeTakeFirst();
+        .where("owner_id", "=", input.ownerId).where("routine_id", "=", selected.routineId)
+        .where(directRoutineOriginLiveSql({ ownerId: sql.ref("bot_routines.owner_id"), botId: sql.ref("bot_routines.bot_id"), chatId: sql.ref("bot_routines.chat_id"),
+          computerId: sql.ref("bot_routines.origin_computer_id"), requestId: sql.ref("bot_routines.origin_request_id") }))
+        .forUpdate().executeTakeFirst();
       const fire = await tx.db.selectFrom("bot_routine_fires").selectAll()
         .where("owner_id", "=", input.ownerId).where("fire_id", "=", input.fireId).forUpdate().executeTakeFirst();
       if (!routine || routine.status !== "active" || !fire || fire.status !== "dispatched" || !fire.lease_expires_at) return false;

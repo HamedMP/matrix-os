@@ -1,4 +1,6 @@
-import { ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
+import { ROUTINE_CREATION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
+import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import type { ApprovalProvenance } from "./approval-submission.js";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
@@ -14,6 +16,7 @@ import {
   ChatAssistantTextWireVersionSchema,
   ChatQuestionDescriptionWireVersionSchema,
   ChatMessageWireVersionSchema,
+  ChatRoutineReceiptWireVersionSchema,
   projectChatMessageResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -180,6 +183,7 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalQueueChatTurnRequest,
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(
     owner: ChatOwner,
@@ -319,6 +323,7 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
+    if (isRoutineDirectResourcePath(context.req.path)) return notFound(context);
     if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
       || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
       || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
@@ -326,6 +331,8 @@ export function createCanonicalChatRoutes(options: {
       || (context.req.queries("assistantTextVersion")?.length ?? 0) > 1
       || !ChatQuestionDescriptionWireVersionSchema.safeParse(context.req.query("questionDescriptionVersion")).success
       || (context.req.queries("questionDescriptionVersion")?.length ?? 0) > 1
+      || !ChatRoutineReceiptWireVersionSchema.safeParse(context.req.query("routineReceiptVersion")).success
+      || (context.req.queries("routineReceiptVersion")?.length ?? 0) > 1
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
       || !ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion")).success
       || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1
@@ -372,6 +379,8 @@ export function createCanonicalChatRoutes(options: {
     try {
       const parsed = CanonicalCreateChatRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
+      // The schema guarantees req_. Keep scheduler backing Chat keys private across retries.
+      if (isRoutineDirectChatId(parsed.data.clientRequestId.slice("req_".length))) return validationError(context);
       const result = await options.service.create(
         ownerFromPrincipal(options.getPrincipal(context)),
         parsed.data,
@@ -562,6 +571,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -585,6 +595,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -602,7 +613,8 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
+        { routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
+          previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
           routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },
       );
       return chatJson(context, projectChatMessageResponse(
@@ -612,6 +624,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
@@ -629,6 +642,7 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
+        { routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER) },
       );
       return chatJson(context, CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
     } catch (error: unknown) {
@@ -707,6 +721,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -737,6 +752,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
       } catch (error: unknown) {
         return handleError(context, error);
