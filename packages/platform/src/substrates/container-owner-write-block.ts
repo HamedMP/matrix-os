@@ -157,8 +157,16 @@ $block$`;
 }
 
 /** Idempotent: re-running it while blocked also catches anything granted since. */
+/**
+ * Blocks writes. Inside the one transaction, REASSIGN OWNED holds every moved
+ * table locked until commit and the owner loses the rights to add triggers,
+ * so any trigger or rule still enabled after the recorded ones are disabled
+ * was added after the caller's read: it is captured and disabled there too.
+ * The statements' last result lists those late ones for the caller to record;
+ * if that recording never happens they stay disabled, which fails safe.
+ */
 export function writeBlockStatements(names: WriteBlockNames, recorded: readonly DisabledByBlock[]): string[] {
-  return withMemberships(names, [
+  return [...withMemberships(names, [
     `REVOKE CREATE ON DATABASE ${names.databaseSql} FROM ${names.ownerSql}`,
     `REVOKE CREATE ON SCHEMA public FROM ${names.ownerSql}`,
     `GRANT CREATE ON DATABASE ${names.databaseSql} TO ${names.holderSql}`,
@@ -166,16 +174,26 @@ export function writeBlockStatements(names: WriteBlockNames, recorded: readonly 
     `REASSIGN OWNED BY ${names.ownerSql} TO ${names.holderSql}`,
     regrantExactly(names.ownerName, names.holderName),
     disableRecorded(names.holderName, recorded),
-  ]);
+    `CREATE TEMP TABLE matrix_block_late AS ${enabledTriggersAndRules(names)}`,
+    disableLate(),
+  ]), 'SELECT kind, oid, mode FROM matrix_block_late'];
 }
 
-/**
- * Disables recorded triggers and rules still enabled. Run after the block has
- * moved ownership, for any the owner created between the trigger read and
- * the move: once the holder owns the tables, the owner can create no more.
- */
-export function writeBlockDisableStatements(names: WriteBlockNames, recorded: readonly DisabledByBlock[]): string[] {
-  return withMemberships(names, [disableRecorded(names.holderName, recorded)]);
+/** Disables what the block captured in `matrix_block_late`. */
+function disableLate(): string {
+  return `DO $block$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT t.tgrelid::regclass AS rel, t.tgname AS name FROM matrix_block_late l
+    JOIN pg_trigger t ON l.kind = 'trigger' AND t.oid = l.oid::oid LOOP
+    EXECUTE format('ALTER TABLE %s DISABLE TRIGGER %I', r.rel, r.name);
+  END LOOP;
+  FOR r IN SELECT w.ev_class::regclass AS rel, w.rulename AS name FROM matrix_block_late l
+    JOIN pg_rewrite w ON l.kind = 'rule' AND w.oid = l.oid::oid LOOP
+    EXECUTE format('ALTER TABLE %s DISABLE RULE %I', r.rel, r.name);
+  END LOOP;
+END
+$block$`;
 }
 
 export function writeRestoreStatements(names: WriteBlockNames, recorded: readonly DisabledByBlock[]): string[] {

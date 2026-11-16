@@ -5,7 +5,6 @@ import { z } from 'zod/v4';
 import type { PlatformDB } from '../db.js';
 import {
   enabledTriggersAndRules,
-  writeBlockDisableStatements,
   writeBlockStatements,
   writeRestoreStatements,
   type DisabledByBlock,
@@ -284,6 +283,11 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
    */
   async function recordEnabled(row: Row, names: WriteBlockNames, signal: AbortSignal): Promise<DisabledByBlock[]> {
     const enabled = recordedDisabled(await admin.executeInDatabase(row.database_name, [enabledTriggersAndRules(names)], signal) ?? []);
+    return mergeRecorded(row, enabled);
+  }
+
+  /** Adds entries to the row's record of what the block disabled, in one statement. */
+  async function mergeRecorded(row: Row, enabled: DisabledByBlock[]): Promise<DisabledByBlock[]> {
     const merged = await sql<{ block_disabled: unknown }>`UPDATE container_owner_databases SET block_disabled = (
         SELECT jsonb_agg(e ORDER BY e->>'kind', (e->>'oid')::bigint) FROM (
           SELECT DISTINCT ON (e->>'kind', e->>'oid') e FROM (
@@ -307,11 +311,10 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     if (changed) await terminateSessions(row.role_name, signal);
     await ensureHolder(names, signal);
     const recorded = await recordEnabled(row, names, signal);
-    await admin.executeInDatabase(row.database_name, writeBlockStatements(names, recorded), signal);
-    // The owner could reconnect and add a trigger between the read above and the ownership move.
-    // Now the holder owns every table, so one more read catches all of them.
-    const late = await recordEnabled(row, names, signal);
-    await admin.executeInDatabase(row.database_name, writeBlockDisableStatements(names, late), signal);
+    // A trigger the owner added after the read above is disabled inside the block transaction and
+    // returned here, so the restore re-enables it too.
+    const late = recordedDisabled(await admin.executeInDatabase(row.database_name, writeBlockStatements(names, recorded), signal) ?? []);
+    if (late.length > 0) await mergeRecorded(row, late);
   }
 
   /** The record is cleared with the block flag, after the triggers are back on. */
