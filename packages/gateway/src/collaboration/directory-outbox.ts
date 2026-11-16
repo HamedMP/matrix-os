@@ -3,6 +3,7 @@ import type { Kysely, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 import { PROJECT_CHAT_ROUTE_EVENT } from "./project-chat-routes.js";
+import type { CollaborativeAppPresentation } from "./collaborative-app-presentation.js";
 
 const BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 20;
@@ -51,6 +52,7 @@ export class CollaborationDirectoryOutbox {
   private readonly now: () => Date;
   private readonly fetchImpl: typeof fetch;
   private readonly endpoint: string;
+  private readonly iconEndpoint: string;
   private timer?: ReturnType<typeof setInterval>;
   private active?: Promise<number>;
   private closing = false;
@@ -63,12 +65,18 @@ export class CollaborationDirectoryOutbox {
     fetchImpl?: typeof fetch;
     now?: () => Date;
     startTimer?: boolean;
+    /**
+     * ENG-490: the owner's manifest name and raster icon for a shared app, read from the same
+     * files the owner launcher uses. Best-effort presentation: a failure only omits it.
+     */
+    resolveAppPresentation?: (appId: string) => Promise<CollaborativeAppPresentation | null>;
   }) {
     const baseUrl = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     if (Buffer.byteLength(options.serviceToken) < 32) {
       throw new Error("Collaboration directory service token is unavailable");
     }
     this.endpoint = `${baseUrl.origin}/internal/collaboration/directory`;
+    this.iconEndpoint = `${baseUrl.origin}/internal/collaboration/app-icons`;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
     if (options.startTimer !== false) {
@@ -127,18 +135,20 @@ export class CollaborationDirectoryOutbox {
         })),
       });
       try {
-        const response = await this.fetchImpl(this.endpoint, {
-          method: "PUT",
-          redirect: "error",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${this.options.serviceToken}`,
-            "content-type": "application/json",
-            "x-matrix-runtime-id": this.options.runtimeId,
-          },
-          body: JSON.stringify(payload),
-        });
+        const presented = payload.app && payload.app.state !== "stopped"
+          ? await this.presentApp(payload.app.appId)
+          : {};
+        if (presented === "retry") {
+          await this.settleFailedAttempt(event);
+          continue;
+        }
+        let response = await this.putDirectoryEvent(payload.app ? { ...payload, app: { ...payload.app, ...presented } } : payload);
+        // A platform that predates presentation fields rejects them as unknown; resend routing
+        // metadata alone so a host bundle shipped ahead of the platform never stalls a share.
+        if (response.status === 422 && Object.keys(presented).length > 0) {
+          await response.body?.cancel();
+          response = await this.putDirectoryEvent(payload);
+        }
         await response.body?.cancel();
         if (!response.ok) {
           console.warn("[collaboration-directory] platform rejected event", response.status);
@@ -159,6 +169,60 @@ export class CollaborationDirectoryOutbox {
       }
     }
     return delivered;
+  }
+
+  private putDirectoryEvent(payload: ReturnType<typeof CollaborationDirectoryEventSchema.parse>): Promise<Response> {
+    return this.fetchImpl(this.endpoint, {
+      method: "PUT",
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.options.serviceToken}`,
+        "content-type": "application/json",
+        "x-matrix-runtime-id": this.options.runtimeId,
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Resolves the owner's presentation and uploads its icon bytes before the event names their
+   * address. A refused icon (4xx) is omitted so the launcher keeps its letter tile; an
+   * unavailable platform retries the whole event so the address never outruns the bytes.
+   */
+  private async presentApp(appId: string): Promise<{ name?: string; iconSha256?: string } | "retry"> {
+    if (!this.options.resolveAppPresentation) return {};
+    let presentation: CollaborativeAppPresentation | null;
+    try {
+      presentation = await this.options.resolveAppPresentation(appId);
+    } catch (error: unknown) {
+      console.warn("[collaboration-directory] app presentation unavailable", error instanceof Error ? error.name : "UnknownError");
+      return {};
+    }
+    if (!presentation) return {};
+    const name = presentation.name ? { name: presentation.name } : {};
+    if (!presentation.icon) return name;
+    const response = await this.fetchImpl(`${this.iconEndpoint}/${presentation.icon.sha256}`, {
+      method: "PUT",
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.options.serviceToken}`,
+        "content-type": presentation.icon.contentType,
+        "x-matrix-runtime-id": this.options.runtimeId,
+      },
+      body: presentation.icon.bytes,
+    });
+    await response.body?.cancel();
+    if (response.ok) return { ...name, iconSha256: presentation.icon.sha256 };
+    if (response.status >= 500 || response.status === 401 || response.status === 403 || response.status === 429) {
+      console.warn("[collaboration-directory] platform unavailable for app icon", response.status);
+      return "retry";
+    }
+    console.warn("[collaboration-directory] platform refused app icon", response.status);
+    return name;
   }
 
   /** A failed final attempt will never be retried: mark it so it stops holding back its scope. */

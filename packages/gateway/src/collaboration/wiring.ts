@@ -25,6 +25,10 @@ import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationDirectoryOutbox } from "./directory-outbox.js";
+import {
+  createCollaborativeAppPresentationResolver,
+  type CollaborativeAppPresentation,
+} from "./collaborative-app-presentation.js";
 import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
 import { CollaborationControlClient, isMembershipEvidenceEvictor } from "./control-client.js";
@@ -310,6 +314,9 @@ export async function createGatewayCollaboration(options: {
     preflightSecret: confirmationSecret,
     source: options.projectSource,
   }) : undefined;
+  // ENG-490: installed once collaborative apps initialize with the owner home; until then app
+  // events carry routing metadata only.
+  let resolveAppPresentation: ((appId: string) => Promise<CollaborativeAppPresentation | null>) | undefined;
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -317,6 +324,7 @@ export async function createGatewayCollaboration(options: {
     serviceToken: options.config.serviceToken,
     ...(options.outboxFetch ? { fetchImpl: options.outboxFetch } : {}),
     startTimer: options.startTimers,
+    resolveAppPresentation: async (appId) => resolveAppPresentation ? resolveAppPresentation(appId) : null,
   });
   const eventRegistry = new CollaborationEventRegistry({
     db: options.db,
@@ -552,6 +560,7 @@ export async function createGatewayCollaboration(options: {
         store: input.builds,
       });
       resourceServices.builds = input.builds;
+      resolveAppPresentation = createCollaborativeAppPresentationResolver({ homePath: input.homePath });
       collaborativeAppReadiness = {
         ownerId: input.ownerId,
         repository: input.repository,

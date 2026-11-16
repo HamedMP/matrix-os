@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationDirectoryOutbox } from "../../packages/gateway/src/collaboration/directory-outbox.js";
+import { CollaborationResourceCatalog } from "../../packages/gateway/src/collaboration/resource-catalog.js";
+import { createHash } from "node:crypto";
 import {
   collaborationActors,
   collaborationIds,
@@ -345,6 +347,146 @@ describe("CollaborationDirectoryOutbox", () => {
     await worker.shutdown();
   });
 });
+
+describe("CollaborationDirectoryOutbox shared app presentation (ENG-490)", () => {
+  let fixture: CollaborationTestDatabase;
+
+  beforeEach(async () => {
+    fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedScopeAndOutbox(fixture);
+    await seedActiveAppShare(fixture);
+  });
+
+  afterEach(async () => {
+    await fixture.destroy();
+  });
+
+  function worker(fetchImpl: typeof fetch, resolveAppPresentation?: (appId: string) => Promise<unknown>) {
+    return new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "https://platform.internal",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      now: () => now,
+      startTimer: false,
+      ...(resolveAppPresentation ? { resolveAppPresentation: resolveAppPresentation as never } : {}),
+    });
+  }
+
+  const presentation = async (appId: string) => appId === "team-tracker" ? {
+    name: "Team Tracker",
+    icon: { sha256: appIconSha256, contentType: "image/png" as const, bytes: new Uint8Array(appIcon) },
+  } : null;
+
+  function directoryPayloads(fetchImpl: ReturnType<typeof vi.fn>) {
+    return fetchImpl.mock.calls
+      .filter(([url]) => String(url).endsWith("/internal/collaboration/directory"))
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string) as { app?: Record<string, unknown> });
+  }
+
+  it("uploads the owner's raster icon before publishing its address and manifest name", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
+    expect(await outbox.runOnce()).toBe(1);
+    const [iconUrl, iconInit] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(iconUrl).toBe(`https://platform.internal/internal/collaboration/app-icons/${appIconSha256}`);
+    expect(iconInit).toMatchObject({ method: "PUT", redirect: "error" });
+    expect(iconInit.signal).toBeInstanceOf(AbortSignal);
+    const headers = new Headers(iconInit.headers);
+    expect(headers.get("authorization")).toBe("Bearer runtime-service-secret-0123456789abcdef");
+    expect(headers.get("x-matrix-runtime-id")).toBe(collaborationIds.runtime);
+    expect(headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(iconInit.body as Uint8Array)).toEqual(appIcon);
+    expect(directoryPayloads(fetchImpl)[0]?.app).toMatchObject({
+      appId: "team-tracker", state: "active", name: "Team Tracker", iconSha256: appIconSha256,
+    });
+    await outbox.shutdown();
+  });
+
+  it("publishes the name without an icon address when the platform refuses the icon", async () => {
+    const fetchImpl = vi.fn(async (url: string) => new Response(null, {
+      status: url.includes("/app-icons/") ? 422 : 204,
+    }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
+    expect(await outbox.runOnce()).toBe(1);
+    const app = directoryPayloads(fetchImpl)[0]?.app;
+    expect(app).toMatchObject({ name: "Team Tracker" });
+    expect(app).not.toHaveProperty("iconSha256");
+    await outbox.shutdown();
+  });
+
+  it("retries the whole event when the platform is unavailable for the icon upload", async () => {
+    const fetchImpl = vi.fn(async (url: string) => new Response(null, {
+      status: url.includes("/app-icons/") ? 503 : 204,
+    }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
+    expect(await outbox.runOnce()).toBe(0);
+    expect(directoryPayloads(fetchImpl)).toEqual([]);
+    expect((await fixture.db.selectFrom("collaboration_directory_outbox").select("delivered_at")
+      .executeTakeFirstOrThrow()).delivered_at).toBeNull();
+    await outbox.shutdown();
+  });
+
+  it("falls back to routing metadata alone for a platform that predates presentation fields", async () => {
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes("/app-icons/")) return new Response(null, { status: 404 });
+      const body = JSON.parse(init.body as string) as { app?: Record<string, unknown> };
+      return new Response(null, { status: body.app && "name" in body.app ? 422 : 204 });
+    });
+    const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
+    expect(await outbox.runOnce()).toBe(1);
+    const payloads = directoryPayloads(fetchImpl);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]?.app).not.toHaveProperty("name");
+    expect(payloads[1]?.app).not.toHaveProperty("iconSha256");
+    await outbox.shutdown();
+  });
+
+  it("delivers routing metadata when presentation cannot be resolved", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, async () => { throw new Error("EACCES"); });
+    expect(await outbox.runOnce()).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(directoryPayloads(fetchImpl)[0]?.app).toMatchObject({ appId: "team-tracker" });
+    expect(directoryPayloads(fetchImpl)[0]?.app).not.toHaveProperty("name");
+    await outbox.shutdown();
+  });
+});
+
+const appIcon = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("owner-icon")]);
+const appIconSha256 = createHash("sha256").update(appIcon).digest("hex");
+
+/** Turns the seeded scope into an active current-membership app share of `team-tracker`. */
+async function seedActiveAppShare(fixture: CollaborationTestDatabase): Promise<void> {
+  const catalog = await new CollaborationResourceCatalog(fixture.db).register({
+    ownerId: collaborationActors.owner, projectId: null, kind: "app", path: "team-tracker", incarnation: "a".repeat(64),
+  });
+  const readinessId = "80000000-0000-4000-8000-000000000001";
+  await fixture.db.insertInto("collaboration_app_readiness").values({
+    id: readinessId, owner_id: collaborationActors.owner, catalog_id: catalog.id, registration_incarnation: "a".repeat(64),
+    app_id: "team-tracker", manifest_version: "1.0.0", build_id: "b".repeat(64), manifest_digest: "c".repeat(64),
+    schema_digest: "d".repeat(64), asset_digest: "e".repeat(64), bridge_contract_version: "matrix-app-bridge-v1",
+    runtime_abi: "matrix-runtime-v1", artifact_ref: "builds/team-tracker", status: "ready",
+    gate_results: JSON.stringify([{ code: "declaration", status: "passed" }]), verified_at: now.toISOString(),
+    invalidated_at: null, invalidation_reason: null, verifier_version: "v1", revision: 1,
+    created_at: now.toISOString(), updated_at: now.toISOString(),
+  } as never).execute();
+  await fixture.db.updateTable("collaboration_scopes").set({ kind: "app", resource_id: catalog.id })
+    .where("id", "=", collaborationIds.scope).execute();
+  await fixture.db.insertInto("collaboration_app_bindings").values({
+    scope_id: collaborationIds.scope, catalog_id: catalog.id, registration_incarnation: "a".repeat(64),
+    readiness_id: readinessId, build_id: "b".repeat(64), data_revision: 0, state: "active", revision: 1,
+    created_at: now.toISOString(), updated_at: now.toISOString(), stopped_at: null,
+  } as never).execute();
+  await fixture.db.updateTable("collaboration_directory_outbox").set({
+    resource_kind: "app", discovery_state: "accepted",
+    recipient_actor_ids: JSON.stringify([collaborationActors.owner]),
+  }).execute();
+  await fixture.db.updateTable("collaboration_events").set({ resource_kind: "app", resource_id: catalog.id }).execute();
+}
 
 async function seedScopeAndOutbox(fixture: CollaborationTestDatabase): Promise<void> {
   await fixture.db.insertInto("collaboration_scopes").values({
