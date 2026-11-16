@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
+import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import { createContainerOwnerDatabases, type ContainerOwnerDatabases, type OwnerClusterAdmin } from './container-owner-database.js';
 import { createContainerLifecycleService, type ContainerLifecycleService } from './container-lifecycle-service.js';
@@ -30,12 +31,16 @@ const FIELDS = {
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_PORT: port(5432),
   MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET: z.string().min(32),
   MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES: z.coerce.number().int().positive().default(1024 ** 3),
+  /** Platform origin the runtime calls for registration and lifecycle reports. */
+  MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
+  PLATFORM_SECRET: z.string().min(32),
 } as const;
 
 const ConfigSchema = z.object(FIELDS);
 
 export interface ContainerSubstrateConfig {
   region: string;
+  platform: { url: string; secret: string };
   provider: LambdaMicrovmsProviderConfig;
   ownerDatabase: {
     adminUrl: string;
@@ -65,6 +70,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
     ok: true,
     config: {
       region: c.MATRIX_CONTAINER_REGION,
+      platform: { url: c.MATRIX_CONTAINER_PLATFORM_URL, secret: c.PLATFORM_SECRET },
       provider: {
         imageIdentifier: c.MATRIX_CONTAINER_IMAGE,
         ...(c.MATRIX_CONTAINER_IMAGE_VERSION ? { imageVersion: c.MATRIX_CONTAINER_IMAGE_VERSION } : {}),
@@ -87,6 +93,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
 
 export interface ConfiguredContainerSubstrate {
   substrate: OnDemandRuntimeSubstrate;
+  platformSecret: string;
   lifecycle: ContainerLifecycleService;
   ownerDatabases: ContainerOwnerDatabases;
   shutdown(): Promise<void>;
@@ -135,6 +142,12 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
         runtimeSlot: context.runtimeSlot,
         generation: context.generation,
         runtimeTokenEpoch: context.runtimeTokenEpoch,
+        platform: {
+          url: config.platform.url,
+          runtimeToken: buildPlatformContainerRuntimeToken(
+            { handle: context.handle, machineId: context.machineId, runtimeSlot: context.runtimeSlot },
+            config.platform.secret, context.runtimeTokenEpoch),
+        },
         database: {
           host: config.ownerDatabase.runtimeHost,
           port: config.ownerDatabase.runtimePort,
@@ -153,6 +166,7 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
   });
   return {
     substrate,
+    platformSecret: config.platform.secret,
     lifecycle,
     ownerDatabases,
     async shutdown() {

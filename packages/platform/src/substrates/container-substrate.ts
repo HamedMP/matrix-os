@@ -51,6 +51,8 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
   const cacheMax = deps.credentialCacheMax ?? DEFAULT_CREDENTIAL_CACHE_MAX;
   /** Endpoint credentials keyed by unit; Map order is recency order. */
   const credentials = new Map<string, EndpointCredential>();
+  /** In-flight mint-only refreshes keyed by unit, so concurrent callers share one provider call. */
+  const routableMints = new Map<string, Promise<boolean>>();
 
   function remainingMs(credential: EndpointCredential): number {
     return credential.expiresAt.getTime() - now().getTime();
@@ -143,6 +145,35 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
         return { state: 'failed', code: 'provider_unavailable' };
       }
       return result;
+    },
+
+    async ensureRoutable(ref, signal): Promise<boolean> {
+      const machine = await deps.loadMachine(ref.machineId);
+      const unitId = machine?.substrateRef;
+      if (!machine || machine.status !== 'running' || !unitId || machine.generation !== ref.generation
+        || !validHost(machine.privateAddress)) return false;
+      const current = cached(unitId);
+      if (current && remainingMs(current) > CREDENTIAL_REFRESH_MS) return true;
+      const pending = routableMints.get(unitId);
+      if (pending) return pending;
+      if (routableMints.size >= cacheMax) return false;
+      const mint = (async () => {
+        try {
+          const credential = await provider.mintEndpointCredential(unitId, signal);
+          const after = await deps.loadMachine(ref.machineId);
+          // A unit replaced or stopped while minting must not become routable through this credential.
+          if (after?.status !== 'running' || after.substrateRef !== unitId || after.generation !== ref.generation) return false;
+          remember(unitId, credential);
+          return true;
+        } catch (error: unknown) {
+          console.error('[container-substrate] routable credential unavailable', error instanceof Error ? error.name : 'Unknown');
+          return false;
+        } finally {
+          routableMints.delete(unitId);
+        }
+      })();
+      routableMints.set(unitId, mint);
+      return mint;
     },
 
     async stop(ref, signal) {

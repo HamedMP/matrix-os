@@ -36,6 +36,7 @@ import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleF
 import { issueSyncJwt } from './sync-jwt.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { applyUpstreamCredentials, prepareContainerUpstream, stripUpstreamCredentials } from './substrates/container-wake.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -719,7 +720,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
-      const machine = await getActiveUserMachineByHandle(
+      let machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
         explicitVmRoute.runtimeSlot ?? (
@@ -759,6 +760,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const explicitWake = await prepareContainerUpstream({ c, db, substrates, machine, identity,
+        respondWithJson: isGatewayPath, applyNoStoreHeaders });
+      if (explicitWake.kind === 'respond') return explicitWake.response;
+      machine = explicitWake.machine;
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const resolution = substrates.resolveUpstream(machine, { path: explicitVmRoute.upstreamPath, queryString: qs });
       if (resolution.kind === 'substrate_unavailable') {
@@ -812,6 +817,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
+      applyUpstreamCredentials(headers, resolution.upstream);
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
@@ -841,6 +847,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        stripUpstreamCredentials(responseHeaders, resolution.upstream);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
@@ -892,8 +899,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (requestedActiveMachine
-        && substrates.resolveUpstream(requestedActiveMachine, { path }).kind === 'upstream') {
+      // A container that is not routable yet still takes the proxy path: the owner's request wakes it there.
+      if (requestedActiveMachine && (requestedActiveMachine.substrate === 'container'
+        || substrates.resolveUpstream(requestedActiveMachine, { path }).kind === 'upstream')) {
         runningMachine = requestedActiveMachine;
       } else if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
@@ -950,6 +958,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const sessionWake = await prepareContainerUpstream({ c, db, substrates, machine: runningMachine, identity,
+        respondWithJson: isGatewayPath || isCodeDomain, applyNoStoreHeaders });
+      if (sessionWake.kind === 'respond') return sessionWake.response;
+      runningMachine = sessionWake.machine;
       const resolution = substrates.resolveUpstream(runningMachine, { path, queryString: qs });
       if (resolution.kind === 'substrate_unavailable') {
         return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
@@ -995,6 +1007,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('accept-encoding', 'identity');
         headers.set('connection', 'close');
       }
+      applyUpstreamCredentials(headers, resolution.upstream);
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         const platformUserId =
@@ -1034,6 +1047,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        stripUpstreamCredentials(responseHeaders, resolution.upstream);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);

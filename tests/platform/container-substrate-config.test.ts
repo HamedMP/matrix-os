@@ -7,6 +7,7 @@ import {
 import type { LambdaMicrovmsApi } from '../../packages/platform/src/substrates/container-provider.js';
 import type { OwnerClusterAdmin } from '../../packages/platform/src/substrates/container-owner-database.js';
 import { createPlatformSubstrateRegistry } from '../../packages/platform/src/substrates/platform-substrates.js';
+import { buildPlatformContainerRuntimeToken } from '../../packages/platform/src/platform-token.js';
 import { createTestPGlite } from '../helpers/pglite-test-helper.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
@@ -20,6 +21,8 @@ const ENV = {
   MATRIX_CONTAINER_OWNER_DB_ADMIN_URL: 'postgres://admin:admin-secret@127.0.0.1:5432/postgres',
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_HOST: 'owners.internal.example',
   MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET: SECRET,
+  MATRIX_CONTAINER_PLATFORM_URL: 'https://platform.internal.example',
+  PLATFORM_SECRET: 'q'.repeat(48),
 };
 
 function fakeApi(): LambdaMicrovmsApi {
@@ -49,6 +52,13 @@ describe('container substrate configuration', () => {
       invalid: ['MATRIX_CONTAINER_IMAGE', 'MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET'],
     });
     expect(JSON.stringify(result)).not.toContain('admin-secret');
+  });
+
+  it('requires the platform origin and secret the runtime needs to register', () => {
+    const { MATRIX_CONTAINER_PLATFORM_URL: _url, ...withoutUrl } = ENV;
+    expect(loadContainerSubstrateConfig({ ...withoutUrl, PLATFORM_SECRET: 'short' })).toEqual({
+      ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_PLATFORM_URL', 'PLATFORM_SECRET'],
+    });
   });
 
   it('applies defaults and parses lists', () => {
@@ -131,6 +141,11 @@ describe('container substrate registration', () => {
         runtimeSlot: 'primary',
         generation: 2,
         runtimeTokenEpoch: 2,
+        platform: {
+          url: 'https://platform.internal.example',
+          runtimeToken: buildPlatformContainerRuntimeToken(
+            { handle: 'alice', machineId: 'ctr-1', runtimeSlot: 'primary' }, ENV.PLATFORM_SECRET, 2),
+        },
         database: {
           host: 'owners.internal.example', port: 5432, name: owner.database_name, user: owner.role_name,
           password: configured.ownerDatabases.passwordFor(owner.role_name, 2),

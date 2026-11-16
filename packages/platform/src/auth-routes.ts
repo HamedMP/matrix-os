@@ -29,6 +29,7 @@ import {
 import type { ClerkAuth } from './clerk-auth.js';
 import { approvalPage, approvalSuccessPage } from './device-approval-page.js';
 import { registerSupportIdentityRoute } from './support-identity-routes.js';
+import { getOwnContainerRuntime, projectContainerRuntime } from './substrates/container-runtime-state.js';
 
 const DEVICE_BODY_LIMIT = 4096;
 const DEVICE_EXPIRES_IN_SEC = 2700;
@@ -233,7 +234,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         clerkUserId,
         runtimeSlot,
       );
-      return machine ? { handle: machine.handle, runtimeSlot: machine.runtimeSlot } : null;
+      // A stopped container is not running, but its owner may sign in; the first request wakes it.
+      const target = machine ?? await getOwnContainerRuntime(transactionDb, clerkUserId, runtimeSlot);
+      return target ? { handle: target.handle, runtimeSlot: target.runtimeSlot } : null;
     },
     issueToken: async ({ clerkUserId, runtimeSlot, handle: approvedHandle }) => {
       const container = config.ignoreLegacyContainers || runtimeSlot
@@ -361,8 +364,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
           case 'expired':
             captureAuthEvent("cli_device_token_expired");
             return c.json({ error: 'expired_token' }, 410);
-          case 'approved':
+          case 'approved': {
             captureAuthEvent("cli_device_token_issued");
+            const runtime = projectContainerRuntime(
+              await getActiveUserMachineByHandle(config.db, result.handle, result.runtimeSlot ?? undefined));
             return c.json({
               accessToken: result.token,
               expiresAt: result.expiresAt,
@@ -372,7 +377,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
               ...(result.profile?.displayName ? { displayName: result.profile.displayName } : {}),
               ...(result.profile?.imageUrl ? { imageUrl: result.profile.imageUrl } : {}),
               ...(result.profile?.email ? { email: result.profile.email } : {}),
+              ...(runtime ? { runtime } : {}),
             });
+          }
         }
       } catch (err) {
         console.error('[device/token] failed:', err instanceof Error ? err.message : String(err));

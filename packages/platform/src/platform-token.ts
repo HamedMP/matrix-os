@@ -59,3 +59,14 @@ export function buildPlatformSpeechRuntimeVerificationToken(
     .update(runtimeTokenPayload("matrix-platform-speech-runtime", identity, epoch))
     .digest("hex");
 }
+
+/** Container runtime to platform lifecycle routes; bound to the token epoch that moves with the generation. */
+export function buildPlatformContainerRuntimeToken(
+  identity: RuntimeIdentity,
+  platformSecret: string,
+  epoch: number,
+): string {
+  return createHmac("sha256", platformSecret)
+    .update(runtimeTokenPayload("matrix-container-runtime", identity, epoch))
+    .digest("hex");
+}

@@ -53,6 +53,8 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import { createConfiguredContainerSubstrate } from './substrates/container-substrate-config.js';
+import { createContainerInternalRoutes } from './substrates/container-internal-routes.js';
+import { createContainerRegistrationFunding } from './customer-funded-starter-policy.js';
 import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
 import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import type { LambdaMicrovmsApi } from './substrates/container-provider.js';
@@ -262,6 +264,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  containerInternalRoutes?: Hono;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
@@ -1135,6 +1138,7 @@ async function startPlatformServerWithCleanup(
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const freeTierConfig = loadConfiguredFreeTier(appEnv);
+  const substrateRegistry = createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []);
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1154,6 +1158,12 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    containerInternalRoutes: containerSubstrate
+      ? createContainerInternalRoutes({
+        db, lifecycle: containerSubstrate.lifecycle, platformSecret: containerSubstrate.platformSecret,
+        onRegistered: createContainerRegistrationFunding(db),
+      })
+      : undefined,
     whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
@@ -1170,7 +1180,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []),
+    substrateRegistry,
     freeTier: createFreeTierRuntime({ db, config: freeTierConfig, ownerDatabases: containerSubstrate?.ownerDatabases }),
     env: appEnv,
   });
@@ -1271,6 +1281,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    substrates: substrateRegistry,
   });
 }
 

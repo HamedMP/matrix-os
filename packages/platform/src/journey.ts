@@ -13,6 +13,7 @@ import {
   type UserMachineRecord,
 } from './db.js';
 import { getRuntimeAccessDecision, type BillingEntitlement } from './billing.js';
+import { projectContainerRuntime, type RuntimeStateProjection } from './substrates/container-runtime-state.js';
 import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
 import {
   getActivePrebillingIntent,
@@ -57,6 +58,8 @@ export interface JourneyState {
   failure?: { retryable: boolean; attempt: number };
   settling?: { since: string; delayed: boolean };
   readiness?: JourneyReadinessAnnotation;
+  /** Container runtimes only (spec 2691); VPS journeys never carry it. */
+  runtime?: RuntimeStateProjection;
 }
 
 export interface JourneyDerivationInputs {
@@ -125,7 +128,7 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     maxProvisionAttempts,
     appOrigin,
   } = inputs;
-  const access = getRuntimeAccessDecision(entitlement, now);
+  const access = getRuntimeAccessDecision(entitlement, now, liveMachine?.substrate);
 
   if (!access.runtimeProxyAllowed) {
     // Billing branch. Settling only applies pre-activation; a lapsed entitlement
@@ -179,6 +182,9 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     };
   }
 
+  const runtime = projectContainerRuntime(liveMachine);
+  if (runtime) return deriveContainerJourney(runtime, inputs);
+
   switch (liveMachine.status) {
     case 'provisioning':
     case 'recovering':
@@ -230,6 +236,26 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
         nextAction: { kind: 'start_provision' },
       };
   }
+}
+
+/** A container is never built by the client: it is open, waking, migrating, or needs support. */
+function deriveContainerJourney(runtime: RuntimeStateProjection, inputs: JourneyDerivationInputs): JourneyState {
+  if (runtime.state === 'migrating') {
+    return { phase: 'provisioning', detail: 'Moving your Matrix computer…', nextAction: { kind: 'wait' }, runtime };
+  }
+  if (inputs.liveMachine?.status === 'needs_recovery') {
+    return {
+      phase: 'provisioning_failed', detail: 'Your Matrix computer needs attention from support.',
+      nextAction: { kind: 'contact_support' }, failure: { retryable: false, attempt: inputs.liveMachine.attempt }, runtime,
+    };
+  }
+  if (!inputs.firstRun) {
+    return { phase: 'first_run', detail: 'Finish setting up your Matrix computer.', nextAction: { kind: 'begin_first_run' }, runtime };
+  }
+  return {
+    phase: 'ready', detail: 'Your Matrix computer is ready.', nextAction: { kind: 'open_shell', url: shellUrl(inputs.appOrigin) },
+    ...(inputs.readiness ? { readiness: inputs.readiness } : {}), runtime,
+  };
 }
 
 export interface LoadJourneyDeps {

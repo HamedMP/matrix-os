@@ -52,6 +52,11 @@ export interface RuntimeSubstrate {
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
   ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;
+  /**
+   * Makes an already-running runtime routable from this instance without
+   * starting or changing anything; for callers who may not wake it.
+   */
+  ensureRoutable?(ref: RuntimeRef, signal: AbortSignal): Promise<boolean>;
 }
 
 export interface SubstrateComputeRecord {

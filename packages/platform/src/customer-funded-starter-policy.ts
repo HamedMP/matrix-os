@@ -5,7 +5,7 @@ import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
-import { ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
+import { freeRuntimeModelIds, ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
 
 const STARTER_MICROUSD = 5_000_000;
 const STARTER_SOURCE = 'matrix-ai-lifetime-starter';
@@ -49,14 +49,17 @@ export async function initializeCustomerFundedStarterPolicy(
       .select(['clerk_user_id', 'runtime_slot', 'provisioning_class', 'status', 'activation_state', 'deleted_at'])
       .where('machine_id', '=', machineId).forUpdate().executeTakeFirst();
     if (!machine || machine.clerk_user_id !== identity.clerk_user_id || machine.runtime_slot !== 'primary'
-      || machine.provisioning_class !== 'customer' || machine.status !== 'running'
+      || (machine.provisioning_class !== 'customer' && machine.provisioning_class !== 'free') || machine.status !== 'running'
       || machine.activation_state !== 'authorized' || machine.deleted_at !== null) return false;
     const global = await trx.executor.selectFrom('ai_funded_global_policy').selectAll()
       .where('policy_id', '=', 'default').forUpdate().executeTakeFirstOrThrow();
     if (!global.enabled) return false;
     const policy = FundedAiGlobalPolicySchema.parse({ enabled: global.enabled, revision: global.revision,
       allowedModelIds: JSON.parse(global.allowed_model_ids) as unknown, updatedAt: global.updated_at });
-    const models = ordinaryCustomerModelIds(policy.allowedModelIds);
+    // A free container runtime is limited to the managed models (spec 2691 D2).
+    const models = machine.provisioning_class === 'free'
+      ? freeRuntimeModelIds(policy.allowedModelIds)
+      : ordinaryCustomerModelIds(policy.allowedModelIds);
     if (models.length === 0) return false;
     const existing = await trx.executor.selectFrom('ai_funded_runtime_policies').selectAll()
       .where('machine_id', '=', machineId).forUpdate().executeTakeFirst();
@@ -103,4 +106,14 @@ export async function initializeCustomerFundedStarterPolicy(
       sourceReference: STARTER_SOURCE, expiresAt: null }, at);
     return true;
   });
+}
+
+/** Registration hook for container runtimes: the same once-per-owner starter policy as a VPS. */
+export function createContainerRegistrationFunding(
+  db: PlatformDB, options: { env?: NodeJS.ProcessEnv; now?: () => Date } = {},
+): (machineId: string) => Promise<void> {
+  const now = options.now ?? (() => new Date());
+  return async (machineId) => {
+    await initializeCustomerFundedStarterPolicy(db, machineId, { now: now().toISOString(), env: options.env });
+  };
 }
