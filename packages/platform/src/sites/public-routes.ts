@@ -7,6 +7,7 @@ import { timingSafeTokenEquals } from '../platform-token.js';
 import { createBoundedRateLimiter } from '../request-admission.js';
 import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
+import { siteEmailViewerPage } from './email-auth-page.js';
 import { APP_CSP, PAGE_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
 import { clearSiteViewerCookie } from './access-links.js';
@@ -126,7 +127,11 @@ export function createSitePublicRoutes(options: {
             }
             emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
                 { access_mode: 'private_email', access_state: 'authorized' });
-            return c.html(sitePage(site));
+            const key = options.email?.publishableKey;
+            if (!key) throw new SiteError('unavailable');
+            const page = siteEmailViewerPage(sitePage(site), site.id, key);
+            c.header('Content-Security-Policy', page.csp);
+            return c.html(page.html);
         }
         if (site.accessMode === 'private_link') {
             if (!await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
