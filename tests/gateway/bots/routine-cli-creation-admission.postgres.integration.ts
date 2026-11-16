@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import { Pool } from 'pg';
-import { CanonicalProviderCatalogSchema } from '@matrix-os/contracts';
+import { CanonicalCreateChatTurnRequestSchema, CanonicalProviderCatalogSchema } from '@matrix-os/contracts';
 import { createRealCollaborationTestDatabase, type CollaborationTestDatabase } from '../collaboration-test-support.js';
 import { ChatRepository } from '../../../packages/gateway/src/chat/repository.js';
 import type { ChatDatabase } from '../../../packages/gateway/src/chat/database.js';
@@ -9,19 +9,37 @@ import { CanonicalChatProviderRegistry } from '../../../packages/gateway/src/cha
 import { admitCanonicalTurn, type TurnAdmissionOptions } from '../../../packages/gateway/src/chat/turn-admission.js';
 import { enqueueCanonicalQueuedTurn } from '../../../packages/gateway/src/chat/queue-admission.js';
 import { createRoutineCreationAdmission } from '../../../packages/gateway/src/chat/routine-creation-policy.js';
-import { fixture as browser,machine,identity,turn,transport } from '../../platform/routine-origin-proof-support.js';
-const owner={type:'personal' as const,ownerId:identity.userId},principal={userId:identity.userId,source:'jwt' as const},chatId='chat_source';
+import { routineOriginBrowserFixture } from './routine-origin-browser-support.js';
+
+const browser = routineOriginBrowserFixture('user_owner');
+const { machine } = browser;
+const owner = { type: 'personal' as const, ownerId: machine.clerkUserId };
+const principal = { userId: owner.ownerId, source: 'jwt' as const };
+const chatId = 'chat_source';
+const turn = CanonicalCreateChatTurnRequestSchema.parse({
+  clientRequestId: 'req_policy',
+  baseRevision: 1,
+  parts: [{ type: 'text', text: 'Schedule' }],
+  selection: { instanceId: 'claude_code_default', model: 'model' },
+  interactionMode: 'default',
+  permissionMode: 'supervised',
+  routineCreation: 'matrix',
+});
 const catalog=CanonicalProviderCatalogSchema.parse({revision:'catalog',drivers:[{kind:'claude_code',displayName:'Claude',adapterVersion:'1.0.0',capabilityClass:'coding_agent'}],
  instances:[{id:'claude_code_default',driverKind:'claude_code',displayName:'Claude',availability:'available',workspaceRequirement:'project_optional',catalogRevision:'catalog',
  models:[{id:'model',displayName:'Model',availability:'available',capabilities:['tools'],supportsVision:false,supportsToolUse:true}],options:[],skills:[],commands:[],setupActions:[],
  supports:{rootChat:true,resume:true,cancellation:true,steering:'same_run',attachments:[],tools:[],approvals:true,userInput:true,worktrees:'optional',resources:[],interactionModes:['default'],permissionModes:['supervised']}}]});
 const adapters=new CanonicalChatProviderRegistry([{driverKind:'claude_code',stateSchemaVersion:1,parseState:v=>v,serializeState:v=>v,async *start(){yield {type:'run.completed',outcome:'completed'};}}]);
 let data:CollaborationTestDatabase,repository:ChatRepository,reopened:Kysely<ChatDatabase>|undefined;
-const creation=createRoutineCreationAdmission({...machine,verifyCreation:transport().client.verifyCreation});
+const creation=createRoutineCreationAdmission({...machine,verifyCreation:browser.client.verifyCreation});
 beforeEach(async()=>{data=await createRealCollaborationTestDatabase(process.env.MATRIX_TEST_POSTGRES_URL??process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL);repository=new ChatRepository(data.db);await repository.bootstrap();await repository.create(owner,{id:chatId,clientRequestId:'req_create',title:'Source'});});
 afterEach(async()=>{await reopened?.destroy();reopened=undefined;await data?.destroy();});
 function deps():TurnAdmissionOptions{return{repository,catalog:{getCatalog:async()=>catalog},adapters,assertOpen(){},assertPersonalExecutionAllowed:async()=>{},reconcileActiveRuns:async()=>{},reservePendingDispatch(){},releasePendingDispatch(){},atCapacity:()=>false,hasStoppingExecution:()=>false,startDispatch:async()=>{},beforeRoutineCreationAdmission:creation};}
-async function proof(body:typeof turn,path='turns'){const result=await browser(`/api/chats/${chatId}/${path}`,body);if(typeof result.proof!=='string')throw new Error('browser proof unavailable');return {routineCreationProof:result.proof};}
+async function proof(body: typeof turn, path = 'turns') {
+  const signed = await browser.creationProof(`/api/chats/${chatId}/${path}`, body);
+  if (typeof signed !== 'string') throw new Error('browser proof unavailable');
+  return { routineCreationProof: signed };
+}
 it('acknowledges an exact accepted turn without fresh browser proof or dispatch', async () => {
   const selected = { ...turn, baseRevision: 0 };
   const provenance = await proof(selected);

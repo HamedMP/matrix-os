@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { createClerkAuth } from "../../../packages/platform/src/clerk-auth.js";
 import { authenticatedApprovalProxyProofs } from "../../../packages/platform/src/owner-approval-proofs.js";
 import { createRoutineOriginVerificationRoutes } from "../../../packages/platform/src/routine-origin-proof-routes.js";
+import { authenticatedRoutineOriginProxyProof } from "../../../packages/platform/src/routine-origin-proxy.js";
 import { buildPlatformVerificationToken } from "../../../packages/platform/src/platform-token.js";
 import { createRoutineOriginPlatformClient } from "../../../packages/gateway/src/bots/routine-origin-platform-client.js";
 
@@ -19,16 +20,27 @@ export function routineOriginBrowserFixture(ownerId: string) {
     lookup: { resolveMachine: async () => machine } });
   const client = createRoutineOriginPlatformClient({ platformUrl: "https://purpose.fixture.test", handle: machine.handle,
     token: buildPlatformVerificationToken(machine.handle, secret), fetcher: async (url, init) => internal.fetch(new Request(url, init)) });
-  return { machine, client,
+  async function proxyInput(path: string, body: object) {
+    const token = await new SignJWT({ sid: "sess_origin_composition" }).setProtectedHeader({ alg: "HS256" })
+      .setSubject(ownerId).setIssuer("fixture-clerk").setExpirationTime("2m").sign(key);
+    const request = new Request(`https://app.fixture.test${path}`, {
+      method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+    });
+    return { request, method: "POST", path, handle: machine.handle,
+      identity: { source: "auth" as const, userId: ownerId, handle: machine.handle, runtimeSlot: machine.runtimeSlot },
+      machine, clerkAuth, platformSecret: secret };
+  }
+  return {
+    machine,
+    client,
+    async creationProof(path: string, body: object) {
+      return authenticatedRoutineOriginProxyProof(await proxyInput(path, body));
+    },
     async proof(sourceChatId: string, interactionId: string, body: object) {
-      const token = await new SignJWT({ sid: "sess_origin_composition" }).setProtectedHeader({ alg: "HS256" })
-        .setSubject(ownerId).setIssuer("fixture-clerk").setExpirationTime("2m").sign(key);
       const path = `/api/chats/${sourceChatId}/routine-origin/${interactionId}/resolve`;
-      const proofs = await authenticatedApprovalProxyProofs({ request: new Request(`https://app.fixture.test${path}`, {
-        method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) }),
-      method: "POST", path, handle: machine.handle, identity: { source: "auth", userId: ownerId,
-        handle: machine.handle, runtimeSlot: machine.runtimeSlot }, machine, clerkAuth, platformSecret: secret });
+      const proofs = await authenticatedApprovalProxyProofs(await proxyInput(path, body));
       if (!Array.isArray(proofs) || proofs.length !== 1) throw new Error("Fixture browser decision was not attested");
       return proofs[0]!;
-    } };
+    },
+  };
 }
