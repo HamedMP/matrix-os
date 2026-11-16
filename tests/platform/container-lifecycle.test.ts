@@ -205,6 +205,50 @@ describe('container lifecycle service', () => {
     expect(await row()).toMatchObject({ status: 'starting', failureCode: null });
   });
 
+  it.each([
+    ['failed_start', 'running'],
+    ['failed_start', 'pending'],
+    ['stopped', 'running'],
+  ] as const)('behind a %s row, replaces a provider-%s unit instead of trusting it', async (status, unitState) => {
+    await updateUserMachine(db, 'ctr-1', {
+      status, substrateRef: 'mvm-old', failureCode: status === 'failed_start' ? 'start_timeout' : null,
+      failureAt: status === 'failed_start' ? '2026-11-10T11:00:00.000Z' : null,
+    });
+    const provider = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: unitState })) });
+    const s = service(provider);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'starting' });
+    await s.drain();
+    expect(provider.resume).not.toHaveBeenCalled();
+    expect(provider.run).toHaveBeenCalledTimes(1);
+    expect(provider.terminate).toHaveBeenCalledWith('mvm-old', expect.any(AbortSignal));
+    expect(await row()).toMatchObject({ status: 'starting', generation: 2, substrateRef: 'mvm-new' });
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'starting' });
+  });
+
+  it('moves a stop that never finished to needs_recovery after the quiesce bound', async () => {
+    await updateUserMachine(db, 'ctr-1', { status: 'running', substrateRef: 'mvm-old' });
+    const stuck = new AbortController();
+    const provider = fakeProvider({
+      suspend: vi.fn((_id: string, signal: AbortSignal) => new Promise<void>((_, reject) => {
+        signal.addEventListener('abort', () => reject(new ContainerProviderError('timeout')));
+      })),
+    });
+    const s = service(provider);
+    const stopping = s.stop('ctr-1', 1, stuck.signal);
+    await vi.waitFor(() => expect(provider.suspend).toHaveBeenCalledTimes(1));
+    expect((await row()).status).toBe('quiescing');
+
+    clock = new Date(T0.getTime() + 20 * 60_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'starting' });
+    clock = new Date(T0.getTime() + 23 * 60_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'needs_recovery' });
+    expect(await row()).toMatchObject({ status: 'needs_recovery', failureCode: 'quiesce_timeout' });
+
+    stuck.abort();
+    expect(await stopping).toBe('needs_recovery');
+    expect((await row()).failureCode).toBe('quiesce_timeout');
+  });
+
   it('reports provider capacity as busy', async () => {
     const s = service(fakeProvider({ run: vi.fn(async () => { throw new ContainerProviderError('capacity'); }) }));
     await s.ensureStarted('ctr-1');

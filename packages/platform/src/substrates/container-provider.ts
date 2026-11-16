@@ -1,10 +1,9 @@
 /**
  * Provider-neutral container compute, plus its AWS Lambda MicroVMs implementation.
  *
- * `LambdaMicrovmsApi` mirrors the request and response shapes of
- * `@aws-sdk/client-lambda-microvms` (checked against 3.1161.0). The SDK is not a
- * dependency yet; an adapter only has to forward each call as
- * `client.send(new <Name>Command(input), options)`.
+ * `LambdaMicrovmsApi` is the subset of `@aws-sdk/client-lambda-microvms` this
+ * module uses. `lambda-microvms-client.ts` implements it with the SDK client, so
+ * the compiler checks these shapes against the SDK's types; tests use fakes.
  */
 
 export const CONTAINER_UNIT_MAX_LIFETIME_SECONDS = 28_800;

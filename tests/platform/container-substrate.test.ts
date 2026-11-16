@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createContainerLifecycleService } from '../../packages/platform/src/substrates/container-lifecycle-service.js';
-import type { ContainerProvider, ContainerUnit } from '../../packages/platform/src/substrates/container-provider.js';
+import { ContainerProviderError, type ContainerProvider, type ContainerUnit } from '../../packages/platform/src/substrates/container-provider.js';
 import {
   ContainerSubstrateError,
   createContainerSubstrate,
@@ -134,6 +134,35 @@ describe('container substrate', () => {
   it('reports a credential failure as provider unavailable', async () => {
     const { substrate: s } = substrate(fakeProvider({ mintEndpointCredential: vi.fn(async () => { throw new Error('boom'); }) }));
     expect(await s.ensureRunning(ref(), signal())).toEqual({ state: 'failed', code: 'provider_unavailable' });
+  });
+
+  it.each([
+    ['gone', new ContainerProviderError('not_found'), null],
+    ['terminated', new ContainerProviderError('conflict'), 'terminated'],
+  ] as const)('starts fresh when a running unit is %s instead of failing every request', async (_label, error, describedState) => {
+    const provider = fakeProvider({
+      mintEndpointCredential: vi.fn(async () => { throw error; }),
+      describe: vi.fn(async () => describedState
+        ? { unitId: 'mvm-a', state: describedState, endpointHost: HOST, createdAt: T0, expiresAt: T0 }
+        : null),
+    });
+    const { substrate: s, lifecycle } = substrate(provider);
+    expect(await s.ensureRunning(ref(), signal())).toEqual({ state: 'starting' });
+    await lifecycle.drain();
+    expect(provider.run).toHaveBeenCalledTimes(1);
+    expect(await getUserMachine(db, 'ctr-1')).toMatchObject({ status: 'starting', generation: 3, substrateRef: 'mvm-a' });
+    expect(provider.describe).toHaveBeenCalledTimes(describedState ? 1 : 0);
+  });
+
+  it('keeps a live unit when minting fails transiently', async () => {
+    const provider = fakeProvider({
+      mintEndpointCredential: vi.fn(async () => { throw new ContainerProviderError('throttled'); }),
+      describe: vi.fn(async () => ({ unitId: 'mvm-a', state: 'running' as const, endpointHost: HOST, createdAt: T0, expiresAt: null })),
+    });
+    const { substrate: s } = substrate(provider);
+    expect(await s.ensureRunning(ref(), signal())).toEqual({ state: 'failed', code: 'provider_unavailable' });
+    expect(provider.describe).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, 'ctr-1')).toMatchObject({ status: 'running', generation: 2, substrateRef: 'mvm-a' });
   });
 
   it('starts a stopped runtime through the lifecycle', async () => {
