@@ -14,7 +14,10 @@ import { stubLegacyChatFetch } from '../../shell/legacy-navigation-fetch-fixture
 vi.mock('@/hooks/useSocket', () => ({ useSocket: () => ({ connected: true }) }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it.each(['attachment', 'scope read'] as const)('uses the accepted source revision when a real routine result commits during awaited %s preparation', async preparation => {
+it.each([
+  { change: 'only a routine result', rename: false },
+  { change: 'a routine result and a Chat rename', rename: true },
+])('preserves attachment admission semantics when $change commits during upload', async ({ rename }) => {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error('MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required');
   const data = await createRealBotStateDatabase(url), f = await proposalFixture(data.db, vi.fn);
@@ -40,10 +43,6 @@ it.each(['attachment', 'scope read'] as const)('uses the accepted source revisio
       }
       if (path.includes('/api/chats?')) return Response.json({ items: [(await detail())!.record] });
       if (path.includes('/api/chats/chat_source?')) return Response.json(await detail());
-      if (path.includes('/routine-cli/full-access')) {
-        if (preparation === 'scope read') { uploading = true; await upload; }
-        return Response.json({ revision: 0, eligibility: 'eligible', origin: 'browser_required', consent: null, challenge: null });
-      }
       if (path.includes('/api/files/blob?')) {
         uploading = true; await upload;
         return Response.json({ ok: true, path: new URL(path, 'http://fixture.test').searchParams.get('path'), size: 5 });
@@ -68,26 +67,31 @@ it.each(['attachment', 'scope read'] as const)('uses the accepted source revisio
       throw new Error('Unexpected revision seam request');
     }));
     hook = renderHook(() => useCanonicalChatState());
-    await waitFor(() => expect(hook!.result.current.routineFullAccessChat).toMatchObject({ revision: before.record.chat.revision }));
+    await waitFor(() => expect(hook!.result.current.routineOriginChat).toMatchObject({ revision: before.record.chat.revision }));
     const selection = hook.result.current.providerSelection;
     act(() => hook!.result.current.requestComposerDraft('Unsent next owner draft'));
     let submitted!: Promise<boolean>;
-    act(() => { submitted = Promise.resolve(hook!.result.current.submitMessage('Next owner request', preparation === 'attachment' ? [{ name: 'notes.txt', type: 'text/plain', data: 'data:text/plain;base64,aGVsbG8=' }] : undefined, {
+    act(() => { submitted = Promise.resolve(hook!.result.current.submitMessage('Next owner request', [{ name: 'notes.txt', type: 'text/plain', data: 'data:text/plain;base64,aGVsbG8=' }], {
       instanceId: 'claude_code_default', model: 'fixture-model', interactionMode: 'default', permissionMode: 'full_access',
     })).then(Boolean); });
     await waitFor(() => expect(uploading).toBe(true));
-    await act(async () => { await origin.reconcile(OWNER, 'chat_source'); });
+    await act(async () => {
+      await origin.reconcile(OWNER, 'chat_source');
+      if (rename) {
+        await f.chats.rename(owner, 'chat_source', { title: 'Changed by the owner', expectedTitleVersion: before.record.chat.titleVersion });
+      }
+    });
     const committed = (await detail())!;
-    expect(committed.record.chat.revision).toBe(before.record.chat.revision + 1);
-    await waitFor(() => expect(hook!.result.current.routineFullAccessChat).toMatchObject({ revision: committed.record.chat.revision }));
+    expect(committed.record.chat.revision).toBe(before.record.chat.revision + (rename ? 2 : 1));
+    await waitFor(() => expect(hook!.result.current.routineOriginChat).toMatchObject({ revision: committed.record.chat.revision }));
     expect(hook.result.current.composerDraftRequest?.text).toBe('Unsent next owner draft');
     expect(hook.result.current.providerSelection).toEqual(selection);
     let accepted = false;
     await act(async () => { releaseUpload(); accepted = await submitted; });
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.baseRevision).toBe(committed.record.chat.revision);
+    expect(requests[0]!.baseRevision).toBe(rename ? before.record.chat.revision : committed.record.chat.revision);
     expect(requests[0]!.permissionMode).toBe('full_access');
-    expect(accepted).toBe(true);
+    expect(accepted).toBe(!rename);
   } finally {
     releaseUpload(); hook?.unmount(); events.shutdown(); wire?.close(); await origin.close(); await f.close(); await data.destroy();
   }
