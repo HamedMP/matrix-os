@@ -30,7 +30,7 @@ function unavailable(operation: RoutineCliOperation): RoutineCliEnvelope {
     : { v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } };
 }
 /** Shared Terminal source. Actual native writer is attested by the held host before
- * this entry; this repeats root/start/ancestry checks around owner waits and consume.
+ * this entry; this repeats root/start/ancestry checks around authorization and consume.
  * Never creates a Chat/run/Bot binding or infers policy from CLI --yolo flags. */
 export function createTerminalRoutineSource(options: {
   runtime: Pick<RoutineCliRuntime, "register">; computerId: string; binPath: string; endpoint: string; homePath: string;
@@ -109,7 +109,7 @@ export function createTerminalRoutineSource(options: {
             if (!live() || actionSignal.aborted || invocations.size >= 256) return false;
             invocationId = input.invocationId; invocations.set(invocationId, { digest: routineActionHash(input.operation), writer: observed, signal: actionSignal });
             const allowed = await port.authorize(input);
-            // The controller owner wait/transactions have settled before manager preflight.
+            // The controller authorization transactions have settled before manager preflight.
             return allowed && (!options.preflightCurrent || await options.preflightCurrent()) && await actualRoot() && !actionSignal.aborted;
           }, issue: port.issue, cancel: port.cancel });
         invokers.add(invoker);

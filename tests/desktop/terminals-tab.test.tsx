@@ -141,6 +141,19 @@ describe("TerminalsTab", () => {
     expect(document.querySelector("[data-terminal-overview] h1")).toBeNull();
   });
 
+  it("does not show a routine confirmations entry in signed-in Electron Terminal", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active" }],
+      loading: false,
+      error: null,
+    });
+
+    renderTab();
+
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
+  });
+
   it("changes only the inner shell palette while native Terminal chrome stays on Desktop tokens", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active" }],

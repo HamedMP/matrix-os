@@ -1,16 +1,16 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { resolveWithinHome } from "../path-security.js";
 import { TerminalHostLaunchSchema } from "./host-descriptor.js";
 export const TerminalHarnessSchema = z.enum(["claude", "codex", "hermes", "opencode", "pi"]);
 export type TerminalHarness = z.infer<typeof TerminalHarnessSchema>;
 /** A user selects a server-owned builder. No argv/env/identity/target/permission overrides. */
 export const TerminalManagedLaunchSchema = z.object({ harness: TerminalHarnessSchema }).strict();
 export type TerminalManagedLaunch = z.infer<typeof TerminalManagedLaunchSchema>;
+const NATIVE_LOGIN_PATH = "/opt/matrix/app/node_modules/.bin";
 const commands: Record<TerminalHarness, { command: string; displayName: string; args: string[] }> = {
   claude: { command: "claude", displayName: "Claude", args: [] },
   codex: { command: "codex", displayName: "Codex", args: ["--no-alt-screen"] },
@@ -56,13 +56,24 @@ export function createTerminalNativeLauncher(options: { homePath: string; nodePr
         errorCode: state.installState === "installed" ? null : state.installState === "missing" ? "agent_missing" : "agent_check_failed" };
     },
     async build(raw: TerminalManagedLaunch, cwd: string) {
-      const { harness } = TerminalManagedLaunchSchema.parse(raw), path = resolveWithinHome(home, cwd);
-      if (!path || cwd.includes("\0")) throw new Error("Terminal launch unavailable");
-      const [actualHome, actualCwd] = await Promise.all([realpath(home), realpath(path)]), rel = relative(actualHome, actualCwd);
-      if (rel.startsWith("..") || isAbsolute(rel) || !(await stat(actualCwd)).isDirectory()) throw new Error("Terminal launch unavailable");
-      const state = await ready(harness);
-      if (state.installState !== "installed") throw new Error("Terminal launch unavailable");
-      return TerminalHostLaunchSchema.parse({ command: state.path, args: [...commands[harness].args], cwd: actualCwd, env, inheritEnv: false });
+      const { harness } = TerminalManagedLaunchSchema.parse(raw);
+      if (cwd.includes("\0") || cwd !== "" && (isAbsolute(cwd) || cwd.split(sep).some(part => !part || part === "." || part === ".."))) {
+        throw new Error("Terminal launch unavailable");
+      }
+      const [actualHome, actualCwd] = await Promise.all([realpath(home), realpath(join(home, cwd))]), rel = relative(actualHome, actualCwd);
+      if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel) || !(await stat(actualCwd)).isDirectory()) throw new Error("Terminal launch unavailable");
+      const [, loginFlag, command] = terminalNativeOrdinaryCommand({ harness });
+      // Resolve the tool after the same owner login profile as the Zellij command.
+      // Append the packaged CLI after login, since profiles can replace PATH.
+      return TerminalHostLaunchSchema.parse({
+        command: "/usr/bin/env",
+        args: ["sh", loginFlag, 'export PATH="$PATH:' + NATIVE_LOGIN_PATH + '"; ' + command],
+        cwd: actualCwd,
+        env: { HOME: home, MATRIX_HOME: home, PATH: [join(home, ".local", "bin"), "/opt/matrix/bin", join(prefix, "bin"), "/usr/local/bin", "/usr/bin", "/bin"].join(":"),
+          TERM: "xterm-256color", COLORTERM: "truecolor" },
+        inheritEnv: false,
+        profile: "login-shell",
+      });
     },
   };
 }

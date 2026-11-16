@@ -17,7 +17,9 @@ it("threads actual principal privately through workspace orchestrator/manager an
   const result = await orchestrator.startSession({ ownerScope: { type: "user", id: principal.userId }, principal,
     request: { sessionId: "sess_native_prepared", kind: "agent", agent: "pi", prompt: "native prompt", model: "native-model" } } as never);
   expect(result.ok).toBe(true);
-  expect(prepared).toHaveBeenCalledWith(expect.objectContaining({ principal, workspaceId, launch, harness: "pi", policy: expect.objectContaining({ originCeiling: "exact" }) }));
+  expect(prepared).toHaveBeenCalledWith(expect.objectContaining({ principal, workspaceId, launch, harness: "pi", policy: expect.objectContaining({
+    live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full",
+  }) }));
   expect(terminalRuntime.createTab).not.toHaveBeenCalled();
   expect(await readFile(home + "/system/sessions/sess_native_prepared.json", "utf8")).not.toMatch(/actual_owner.*jwt|terminalPrincipal|native prompt|native-model/);
 });

@@ -1,15 +1,16 @@
 # Canonical Terminal entry and current qualification
 
-Task7c joins real canonical Terminal records to the existing routine source/controller and packaged CLI. Canonical Matrix Bot remains the scheduled executor. This slice is not complete normal Terminal availability: required private native configuration handoff remains Task7d.
+The managed Terminal agent menu joins the canonical Terminal record and retained native process to the existing routine controller and packaged CLI. The canonical Matrix Bot remains the scheduled executor.
 
 ## Launch and source availability
 
-The shared Terminal menu exposes Claude Code, Codex, Hermes, OpenCode and Pi across Web Desktop/Web Canvas, Electron Desktop and Web Mobile. A deliberate selection sends only `managedLaunch.harness`; arbitrary command/agent hints cannot request source authority. Hermes readiness checks its actual installed executable/version and does not claim account authentication. Missing Hermes has no fabricated npm install package. Native Mobile does not currently expose this Terminal launcher; its existing receipt/review surface is unchanged.
+Where the existing managed Terminal agent menu is available, selecting Claude Code, Codex, Hermes, OpenCode or Pi sends only `managedLaunch.harness`. A generic shell and arbitrary command or agent hints carry no routine authority. Hermes readiness checks the actual installed executable and version. Native Mobile does not expose this Terminal launcher.
 
-| Variant | Native workload behavior | Routine source in Task7c |
+| Variant | Native workload behavior | Routine source |
 | --- | --- | --- |
-| Existing normal menu/login-shell environment | Original fixed `sh -lc` command/config retained | Unavailable pending required private configuration handoff |
-| Existing workspace launch with inherited/credential/provider environment | Exact existing launcher/sandbox/model/prompt/config retained | Unavailable pending required private configuration handoff |
+| Verified owner-private managed menu | Original fixed `sh -lc` agent command uses the owner login configuration in the retained PTY | Gateway grants routine Full Access after verifying the host, process and exact current tab |
+| Generic shell or manually typed provider command | Existing personal shell behavior | Unbound |
+| Workspace launch with an environment or command that cannot use the existing safe descriptor | Existing launcher, sandbox, model and configuration retained | Unbound |
 | Trusted prepared launch exactly representable by safe host descriptor | Existing prepared argv/environment preserved | Join path implemented; supported-host/native qualification still required |
 | Named safe-environment five-entry test fixtures | Actual canonical record/source/CLI/HTTP/PG path | Contract/integration evidence only; no real native/account qualification |
 | Plan/review/read-only/shared/org, configured-only owner or Preview | Existing permitted ordinary behavior retained | No new routine mutation authority |
@@ -17,7 +18,7 @@ The shared Terminal menu exposes Claude Code, Codex, Hermes, OpenCode and Pi acr
 | Missing host/runtime prerequisite before dispatch | Original ordinary launch | Unavailable |
 | Possible dispatch with uncertain join/ack | Retain I/O/history/recovery when present | No fallback, retry or invented source |
 
-The trusted interactive-equivalence switch defaults off in production and is not a public field. Unknown native configuration cannot be silently replaced by a stripped safe environment. The all-five fixture matrix does not qualify normal owner environments, real systemd/Zellij, the shipped Linux x64 package or provider accounts. OpenCode Terminal selection is separate from the owner-deferred native6aN Chat adapter.
+For the managed menu, the host descriptor carries the fixed login command and a safe launch environment. The supervisor passes the bounded owner login environment over its direct child IPC. The native login profile still selects the provider executable and configuration. The packaged CLI is appended to PATH. The host verifies the process tree rooted at the server-selected launch and the exact private tab incarnation. The retained launch proves kernel process identity and descendant lineage. Fixture coverage across providers is separate from acceptance on an installed Linux host and an existing provider account. OpenCode Terminal selection is separate from the native OpenCode Chat adapter.
 
 The existing runtime resource-owner rule still requires one configured owner and retains its Preview resource mapping. Actual routine source owner is the verified JWT/platform principal, never an alias to configured-container or Preview owner. Missing Computer/routine dependency denies source without changing ordinary workload ownership.
 
@@ -37,7 +38,7 @@ Caller EOF/extra frames/cancellation revoke the pending owner wait and null the 
 
 Gateway/viewer shutdown drains proof and leaves the native workload/I/O alive. A reserved dispatch stays pending/unknown until its producer settles; it is never reconstructed as a running source. Restore may reattach confirmed live I/O with status unavailable while preserving an unresolved dispatch marker; it never reruns the workload. Explicit stop still attempts the manager stop, but an unsettled dispatch cannot become a confirmed deletion. Its actual record/stop fence remains until settlement or explicit operator recovery, so a possible late dispatch cannot lose its canonical recovery association. After settlement, ordinary explicit stop/delete remains available. Restore reattaches only existing I/O. A manager active state is not native success; exited helper status/exit0 cannot establish native completion or permit ended-native archival. Stopped/unknown host restore stays unavailable even if an old helper pane remains. Explicit workload stop writes a durable fence before manager stop and retains unavailable/native-exit-null on uncertainty. Explicit user deletion after manager-stopped confirmation retains existing deletion semantics for the Terminal record/pane; canonical routine/request/approval/history remains in owner Postgres.
 
-A separate public site documentation PR must use the final availability matrix after required Task7d implementation/review and remaining qualification gates. Do not advertise all five normal Terminal entries as routine-enabled from this slice. Nima capability discovery/skills ownership is unchanged.
+Public documentation uses the availability matrix above and the exact provider and surface evidence observed on an installed release.
 
 A personal native Terminal requires an exact unshared tab incarnation at admission and during source validation. Starting a canonical share retires that incarnation's private source before publishing the binding. Removing the binding does not recreate the retired source. Sharing and source retirement leave the Terminal's native I/O available.
 
