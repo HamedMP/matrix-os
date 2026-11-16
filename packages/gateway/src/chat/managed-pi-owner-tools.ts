@@ -1,6 +1,7 @@
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
+import { sharedBrowserFailureResult } from "../shared-browser/action-failure.js";
 import type { BotToolCapability, BotToolRequest, BotToolResult, CanonicalChatApprovalDecision, CanonicalOwnerScope } from "@matrix-os/contracts";
 import type { BotIntegrationClient, BotIntegrationConnection } from "../bots/integration-client.js";
 import { BotBrokerActionError } from "../bots/broker-actions.js";
@@ -210,14 +211,11 @@ export function createManagedPiOwnerTools(deps: {
       if (!prepared || prepared.args !== JSON.stringify(request.args)) throw new BotBrokerActionError("denied");
       if (request.capability === "browser.action") {
         if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
-        try { return text(await deps.sharedBrowser.execute(browserBinding(binding), request.args, signal)); }
+        const sharedBinding = browserBinding(binding);
+        try { return text(await deps.sharedBrowser.execute(sharedBinding, request.args, signal)); }
         catch (error: unknown) {
-          if (error instanceof SharedBrowserError && !error.dispatched && error.code === "tab_limit") {
-            return text({ success: false, content: error.message, automation: deps.sharedBrowser.status() });
-          }
-          if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy"].includes(error.code)) {
-            return text({ success: false, content: "Browser control changed. Wait for the owner to resume, then take a fresh snapshot; never replay the refused action.", automation: deps.sharedBrowser.status() });
-          }
+          const failure = sharedBrowserFailureResult(error, sharedBinding, deps.sharedBrowser, { includeUnavailable: true });
+          if (failure) return text(failure);
           if (error instanceof SharedBrowserError && error.code === "run_unavailable" && !error.dispatched) throw new BotBrokerActionError("stale_generation");
           throw error;
         }
