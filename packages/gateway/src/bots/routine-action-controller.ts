@@ -240,7 +240,15 @@ export function createRoutineCliActionController(options: {
         invocation: RoutineCliVerifiedInvocation) {
         const entry = match(source, operation, invocation);
         if (!entry || !authorized(entry)) throw new RoutineCliError("permission_denied");
-        return targetWithin(entry, trx);
+        try {
+          return await targetWithin(entry, trx);
+        } catch (error: unknown) {
+          // A changed remembered target invalidates the already issued approval.
+          if ("preferenceRevision" in entry.target && error instanceof RoutineCliError && error.code === "revision_conflict") {
+            throw new RoutineCliError("permission_denied");
+          }
+          throw error;
+        }
       },
     },
     async register(producer: RoutineSourceProducer, targetCeiling?: TargetCeiling) {
