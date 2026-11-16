@@ -159,10 +159,10 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
   async function tables(
     query: DatabaseSessionQuery, target: CompactionTarget, owner: string,
   ): Promise<{ names: string[]; oids: number[] }> {
-    const fetch = async (after: number) => (await query(HOLDER_TABLES, [target.holderName, after, maxTables]))
+    const readWindow = async (after: number) => (await query(HOLDER_TABLES, [target.holderName, after, maxTables]))
       .map((row) => ({ oid: Number(row.oid), name: String(row.name) }));
-    let rows = await fetch(windowAfter.get(owner) ?? 0);
-    if (rows.length === 0) rows = await fetch(0);
+    let rows = await readWindow(windowAfter.get(owner) ?? 0);
+    if (rows.length === 0) rows = await readWindow(0);
     windowAfter.delete(owner);
     // A short window was the last one, so the next attempt starts over.
     if (rows.length === maxTables) windowAfter.set(owner, rows[rows.length - 1]!.oid);
