@@ -95,32 +95,34 @@ export function createTerminalWaiter(options: {
 
   async function run(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalWaitResult> {
     const deadline = now() + input.timeoutMs;
-    // One read source per request: a frozen snapshot can lack text the live screen
-    // shows, so counts from the two never mix. A runtime that can capture is read live,
-    // and a failed capture skips that poll. Only a runtime that has never captured in
-    // this request (unsupported, or older than the gateway) falls back to the snapshot.
-    let source: "live" | "snapshot" = options.runtime.captureScreen ? "live" : "snapshot";
+    // A frozen snapshot can lack text the live screen shows, so each source keeps its
+    // own baseline and their counts never mix. Every poll tries the live screen first,
+    // so capture that recovers is used again. A failed capture skips the poll; only
+    // while live has never worked in this request, and after a few failures in a row
+    // (unsupported, or a runtime older than the gateway), the poll reads the snapshot.
+    const canCapture = Boolean(options.runtime.captureScreen);
     let liveSeen = false;
     let liveFailures = 0;
-    const readText = async (): Promise<string | undefined> => {
-      if (source === "live") {
+    const readText = async (): Promise<{ source: "live" | "snapshot"; text: string } | undefined> => {
+      if (canCapture) {
         const live = await liveText(ref);
         if (live !== undefined) {
           liveSeen = true;
-          return live;
+          liveFailures = 0;
+          return { source: "live", text: live };
         }
         liveFailures += 1;
         if (liveSeen || liveFailures < LIVE_CAPTURE_ATTEMPTS) return undefined;
-        source = "snapshot";
       }
-      return snapshotText(ref);
+      return { source: "snapshot", text: await snapshotText(ref) };
     };
     // A follow-up request continues the caller's baseline, so text printed between
-    // two check-ins still counts as new. Otherwise the first successful read sets it.
-    let baseline = input.seen;
-    if (input.output && baseline === undefined) {
-      const text = await readText();
-      if (text !== undefined) baseline = countOccurrences(text, input.output);
+    // two check-ins still counts as new. Otherwise a source's first read sets its own.
+    const baselines: { live?: number; snapshot?: number } = { live: input.seen, snapshot: input.seen };
+    const reportedBaseline = () => (liveSeen ? baselines.live : baselines.snapshot ?? baselines.live);
+    if (input.output && input.seen === undefined) {
+      const read = await readText();
+      if (read) baselines[read.source] = countOccurrences(read.text, input.output);
     }
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
@@ -130,15 +132,16 @@ export function createTerminalWaiter(options: {
       const tab = await findTab(ref);
       if (tab.status === "exited" || tab.status === "failed") return { reason: "exited", exitCode: tab.exitCode ?? null };
       if (input.output) {
-        const text = await readText();
-        if (text !== undefined) {
-          const count = countOccurrences(text, input.output);
+        const read = await readText();
+        if (read) {
+          const count = countOccurrences(read.text, input.output);
+          const baseline = baselines[read.source];
           if (baseline !== undefined && count > baseline) return { reason: "output" };
           // A read holds only recent history: matches that scrolled out (or a cleared
           // screen) lower the count, so the baseline drops with it and the next match
           // still counts. Missed only if an old match leaves and a new one arrives
           // between two polls 500 ms apart, i.e. thousands of lines in that time.
-          baseline = count;
+          baselines[read.source] = count;
         }
       } else {
         lastStatus = (await options.status.get(ref))?.status;
@@ -146,7 +149,7 @@ export function createTerminalWaiter(options: {
       }
       const remaining = deadline - now();
       if (remaining <= 0) {
-        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: baseline ?? 0 } : {}) };
+        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: reportedBaseline() ?? 0 } : {}) };
       }
       await sleep(Math.min(pollMs, remaining), signal);
     }

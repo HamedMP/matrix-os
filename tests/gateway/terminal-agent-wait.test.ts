@@ -174,6 +174,21 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { output: "ready", timeoutMs: 5_000 })).resolves.toEqual({ reason: "output" });
   });
 
+  // Fault detected (review of #3297): three failed captures switched the request to the
+  // frozen snapshot for good, so a message printed after capture recovered was missed.
+  it("goes back to the live screen when capture recovers after several failures", async () => {
+    const { waiter } = harness({
+      statuses: ["idle"],
+      screens: [["boot"]],
+      captures: [
+        null as never, null as never, null as never, null as never,
+        { viewport: ["boot"], scrollback: [] },
+        { viewport: ["boot", "ready on :3000"], scrollback: [] },
+      ],
+    });
+    await expect(waiter.wait(ref, { output: "ready", timeoutMs: 10_000 })).resolves.toEqual({ reason: "output" });
+  });
+
   // Fault detected: a runtime that cannot capture at all (older than the gateway) made
   // every output wait time out instead of using the snapshot.
   it("uses the snapshot when the runtime never captures", async () => {
