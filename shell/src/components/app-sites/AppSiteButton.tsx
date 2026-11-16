@@ -64,7 +64,8 @@ export function AppSiteButton({
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          submissions={share.site
+          // Only apps that declare public forms can receive visitor submissions.
+          submissions={share.site?.config.forms.length
             ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
         />
       ) : null}

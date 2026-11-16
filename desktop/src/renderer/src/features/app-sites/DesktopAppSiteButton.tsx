@@ -68,7 +68,8 @@ export function DesktopAppSiteButton({
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          submissions={client && share.site
+          // Only apps that declare public forms can receive visitor submissions.
+          submissions={share.site?.config.forms.length
             ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
         />
       ) : null}
