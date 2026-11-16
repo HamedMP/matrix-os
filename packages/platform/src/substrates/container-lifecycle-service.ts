@@ -213,8 +213,21 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   async function revived(row: MachineRow, previous: ContainerUnit | null): Promise<boolean> {
     if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
     if (!await reopenGateway(row)) return false;
-    await transition(row.machine_id, ['starting'], row.generation, { status: 'running', failure_code: null, failure_at: null });
+    await transition(row.machine_id, ['starting'], row.generation, {
+      status: 'running', failure_code: null, failure_at: null, ...sessionWithin(previous),
+    });
     return true;
+  }
+
+  /**
+   * A reused unit gets a new session from its claim. When less than a whole
+   * session and its stop remain of the unit's lifetime, the session clock
+   * starts early, so the maximum-session stop and its flush finish in time.
+   */
+  function sessionWithin(unit: ContainerUnit): { started_at?: Date } {
+    const minimum = deps.minResumeLifetimeMs ?? 0;
+    if (!unit.expiresAt || unit.expiresAt.getTime() - now().getTime() >= minimum) return {};
+    return { started_at: new Date(unit.expiresAt.getTime() - minimum) };
   }
 
   async function launch(row: MachineRow, recovering: boolean): Promise<void> {
@@ -230,14 +243,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
           });
           return;
         }
-        // A recovery resume can leave less than a whole session: its session clock starts early, so the
-        // maximum-session stop and its flush finish before the provider ends the unit.
-        const minimum = deps.minResumeLifetimeMs ?? 0;
-        const shortened = recovering && previous.expiresAt
-          && previous.expiresAt.getTime() - now().getTime() < minimum
-          ? { started_at: new Date(previous.expiresAt.getTime() - minimum) } : {};
+        // Only a recovery resume can leave less than a whole session; sessionWithin bounds it.
         await transition(row.machine_id, ['starting'], generation, {
-          status: 'running', failure_code: null, failure_at: null, ...shortened,
+          status: 'running', failure_code: null, failure_at: null, ...sessionWithin(previous),
         });
         return;
       }

@@ -205,6 +205,24 @@ describe('container lifecycle service', () => {
     });
   });
 
+  it('ends a revived running unit\'s session before the unit expires', async () => {
+    await updateUserMachine(db, 'ctr-1', { status: 'needs_recovery', substrateRef: 'mvm-old', privateAddress: 'mvm-old.lambda-microvm.eu-west-1.on.aws' });
+    const sessionAndStop = 4 * 3_600_000 + 22 * 60_000;
+    clock = new Date(T0.getTime() + 7 * 3_600_000);
+    const expiresAt = new Date(T0.getTime() + 8 * 3_600_000);
+    const provider = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: 'running', expiresAt })) });
+    const s = createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, minResumeLifetimeMs: sessionAndStop,
+      reviveInPlace: async () => true, buildBootPayload: async () => '{}',
+    });
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(provider.run).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({
+      status: 'running', substrateRef: 'mvm-old', startedAt: new Date(expiresAt.getTime() - sessionAndStop).toISOString(),
+    });
+  });
+
   it('treats a unit the provider no longer knows as run fresh, not as a failure', async () => {
     await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-expired' });
     const provider = fakeProvider();
