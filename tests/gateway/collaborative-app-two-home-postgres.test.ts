@@ -133,6 +133,40 @@ describe("collaborative app owner/member common Postgres data", () => {
     expect(onCommitted).toHaveBeenCalledTimes(1);
   });
 
+  it("serves Team Tracker's documented bridge payloads, which omit app, to a member and binds them to the shared app", async () => {
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "read" });
+    // Exact payloads from skills/matrix/collaborative-app-builder/assets/team-tracker/src/App.tsx.
+    const list = { action: "find", table: "tasks", limit: 100, orderBy: { title: "asc" } };
+    const listed = await adapter.query(member, appId, list);
+    expect(listed).toMatchObject({ revision: 0 });
+    expect(listed.result).toHaveLength(20);
+    const insert = { action: "insert", table: "tasks", data: { id: "task-new", title: "Ship it", done: false } };
+    await expect(adapter.mutate(member, appId, { clientRequestId: randomUUID(), expectedRevision: 0, action: insert }))
+      .resolves.toEqual({ result: { id: "task-new" }, revision: 1, replayed: false });
+    await expect(adapter.query(member, appId, { action: "findOne", table: "tasks", id: "task-new" }))
+      .resolves.toMatchObject({ result: { id: "task-new", title: "Ship it", done: false }, revision: 1 });
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 1,
+      action: { action: "update", table: "tasks", id: "task-new", data: { done: true } },
+    })).resolves.toMatchObject({ revision: 2 });
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 2, action: { action: "delete", table: "tasks", id: "task-new" },
+    })).resolves.toMatchObject({ revision: 3 });
+    expect((await adapter.query(member, appId, list)).result).toHaveLength(20);
+
+    await expect(adapter.query(member, appId, { ...list, app: "other_app" })).rejects.toMatchObject({ code: "invalid_action" });
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 3, action: { ...insert, app: "other_app" },
+    })).rejects.toMatchObject({ code: "invalid_action" });
+    await expect(adapter.query(member, appId, { action: "listApps" })).rejects.toMatchObject({ code: "invalid_action" });
+    await expect(adapter.query(member, appId, [list])).rejects.toMatchObject({ code: "invalid_action" });
+    await expect(adapter.query(member, appId, "find")).rejects.toMatchObject({ code: "invalid_action" });
+    await expect(adapter.query(member, appId, { action: "insert", table: "tasks", data: { id: "x", title: "x" } }))
+      .rejects.toMatchObject({ code: "invalid_action" });
+    await expect(sql<{ count: string }>`SELECT count(*)::text AS count FROM teamtracker.tasks`.execute(fixture.db))
+      .resolves.toMatchObject({ rows: [{ count: "20" }] });
+  });
+
   it("loads an existing timestamp-bearing task identically for the owner and a member, then edits and deletes it", async () => {
     onCommitted.mockClear();
     await sql`DELETE FROM teamtracker.tasks`.execute(fixture.db);
