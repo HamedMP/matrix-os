@@ -56,8 +56,8 @@ it("installed unauthenticated agents retain the connection guide", () => {
 
 it("styles missing and failed installation red while disconnected remains yellow", () => {
   const css = readFileSync("packages/ui/src/agents-providers/agents-providers.css", "utf8");
-  expect(css).toMatch(/\.matrix-ap-status-chip\[data-state="not-installed"\], \.matrix-ap-status-chip\[data-state="install-failed"\] \{ color: var\(--matrix-ap-danger\);/);
-  expect(css).toMatch(/\.matrix-ap-status-chip\[data-state="not-connected"\] \{ color: var\(--matrix-ap-warning\);/);
+  expect(css).toMatch(/\.matrix-ap-status-chip\[data-state="not-installed"\], \.matrix-ap-status-chip\[data-state="install-failed"\] \{ color: var\(--matrix-ap-danger-text\);/);
+  expect(css).toMatch(/\.matrix-ap-status-chip\[data-state="not-connected"\] \{ color: var\(--matrix-ap-warning-text\);/);
   render(<HarnessRail harnesses={[harness]} sources={[]} selectedId={null} disabled={false}
     onSelect={vi.fn()} onEnable={vi.fn()} canEnable={() => false} renderDetails={() => null} />);
   expect(screen.getByText("Not installed")).toHaveAttribute("data-state", "not-installed");

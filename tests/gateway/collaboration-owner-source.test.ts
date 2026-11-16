@@ -632,6 +632,59 @@ describe("S08 owner-selected AI source", () => {
       scopeId: PROJECT_CHAT_SCOPE, chatId: collaborationIds.chat, ownerId: collaborationActors.owner, requestingActorId, driverKind,
     });
 
+    it("reads the persisted Chat agent/model for admission and rechecks it before dispatch", async () => {
+      await fixture.db.insertInto("chats").values({
+        id: collaborationIds.chat, owner_type: "personal", owner_id: collaborationActors.owner,
+        create_request_id: "req_shared_route", project_id: "project_collaboration_primary",
+        title: "Bound project Chat", lifecycle: "active", attention: "none", revision: 1,
+        message_count: 0, collaboration: null, user_state: null, shell_state: null,
+        fork_provenance: null, last_message_preview: null,
+        current_selection: JSON.stringify({ instanceId: "claude_code_default", model: "claude-opus-5" }),
+        bound_driver_kind: "claude_code", bound_instance_id: "claude_code_default",
+        bound_at_turn_id: "cturn_route", created_at: NOW, updated_at: NOW,
+      }).execute();
+      const read = vi.spyOn(snapshots, "getSnapshotV3");
+      try {
+        const ownerSource = source();
+        const input = { scopeId: PROJECT_CHAT_SCOPE, ownerId: collaborationActors.owner };
+        expect(await ownerSource.admission(input)).toBe("ready");
+        const decision = await ownerSource.prepare(run(collaborationActors.editor));
+        expect(read).toHaveBeenLastCalledWith(collaborationActors.owner, {
+          driverKind: "claude_code", modelId: "claude-opus-5",
+        });
+        expect(await ownerSource.matchesCurrent({ ...input, expected: decision })).toBe(true);
+        await fixture.db.updateTable("chats").set({
+          current_selection: JSON.stringify({ instanceId: "claude_code_default", model: "sonnet" }),
+        }).where("id", "=", collaborationIds.chat).execute();
+        const nativeDecision = await ownerSource.prepare(run(collaborationActors.editor));
+        expect(nativeDecision.modelId).toBe("sonnet");
+        expect(nativeDecision.routeGeneration).not.toBe(decision.routeGeneration);
+        expect(await ownerSource.matchesCurrent({ ...input, expected: decision })).toBe(false);
+        await fixture.db.updateTable("chats").set({
+          bound_driver_kind: "codex", bound_instance_id: "codex_default",
+          current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6" }),
+        }).where("id", "=", collaborationIds.chat).execute();
+        // A source that ignored the Chat binding cannot authorize a fallback.
+        expect(await ownerSource.matchesCurrent({ ...input, expected: decision })).toBe(false);
+        expect(read).toHaveBeenLastCalledWith(collaborationActors.owner, { driverKind: "codex", modelId: "gpt-5.6" });
+        snapshot = ownerSnapshot({ active: { providerInstanceId: "inst_codex", accessSourceId: "src_openai_key", modelId: "gpt-5.6" } });
+        await expect(ownerSource.prepare(run(collaborationActors.editor, "codex"))).resolves.toMatchObject({
+          harness: "codex", modelId: "gpt-5.6",
+        });
+        await fixture.db.updateTable("chats").set({
+          bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null,
+        }).where("id", "=", collaborationIds.chat).execute();
+        // A configured Chat can also establish its first binding with both agents enabled.
+        expect(await ownerSource.admission(input)).toBe("ready");
+        expect(read).toHaveBeenLastCalledWith(collaborationActors.owner, { driverKind: "codex", modelId: "gpt-5.6" });
+        await fixture.db.updateTable("chats").set({ current_selection: JSON.stringify("invalid-json") })
+          .where("id", "=", collaborationIds.chat).execute();
+        expect(await ownerSource.admission(input)).toBe("missing");
+      } finally {
+        read.mockRestore();
+      }
+    });
+
     it("uses the owner's current global route for a project without any project policy", async () => {
       await expect(source().prepare(run(collaborationActors.owner))).resolves.toMatchObject({
         authorityKind: "provider_settings_active", providerInstanceId: "inst_claude_profile",

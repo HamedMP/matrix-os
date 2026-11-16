@@ -83,6 +83,8 @@
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
     "#collaborative-app-sharing": "./src/collaborative-app-sharing.ts",
+    "#collaborative-app-handoff": "./src/collaborative-app-handoff.ts",
+    "#shared-app-link": "./src/shared-app-link.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",

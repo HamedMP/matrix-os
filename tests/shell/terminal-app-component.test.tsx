@@ -158,6 +158,14 @@ describe("TerminalApp workspace contract", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not show a routine confirmations entry in hosted Web Terminal", async () => {
+    render(<TerminalApp initialSessionId={REF_KEY} />);
+    await settle();
+
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
+  });
+
   it("renders whole-project sharing in the web project group", () => {
     const projectShell: ShellSessionSummary = {
       name: REF_KEY,

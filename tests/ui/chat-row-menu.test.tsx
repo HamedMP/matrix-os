@@ -40,3 +40,20 @@ it('reports right-click and dropdown visibility independently through open and E
   expect(dropdownChanged).toHaveBeenLastCalledWith(false);
   expect(contextChanged).not.toHaveBeenCalled();
 });
+
+it('highlights every menu item with the hover surface, not the accent fill', async () => {
+  // Electron Desktop's --accent is its near-white primary fill, so focus:bg-accent hid the focused label.
+  render(<ChatContextMenu chatId="chat_row" dropdownTrigger={<button>Actions</button>}
+    primaryAction={{label: 'Mark as unread', onSelect: vi.fn()}}
+    items={[{label: 'Move to project', children: [{label: 'kiki', onSelect: vi.fn()}]}, {label: 'Delete', danger: true, onSelect: vi.fn()}]}>
+    <button>Chat row</button>
+  </ChatContextMenu>);
+  fireEvent.keyDown(screen.getByRole('button', {name: 'Actions'}), {key: 'Enter'});
+  await screen.findByRole('menu');
+  const items = screen.getAllByRole('menuitem');
+  expect(items.map(item => item.textContent)).toEqual(['Mark as unread', 'Copy chat ID', 'Move to project›', 'Delete']);
+  for (const item of items) {
+    expect(item.className, item.textContent ?? '').toContain('focus:bg-[var(--bg-hover,var(--accent))]');
+    expect(item.className, item.textContent ?? '').not.toMatch(/(?:^|\s)focus:bg-accent(?:\s|$)/);
+  }
+});

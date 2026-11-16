@@ -84,3 +84,21 @@ it("keeps the actual Hermes admission distinct and never treats native full acce
   expect(actual.producer.source.harness).toBe("hermes");
   expect(actual.producer.readPolicy()).toMatchObject({ live: true, originCeiling: "exact" });
 });
+it("narrowing one attested generation into Plan releases its Full Access and cannot restore it", () => {
+  let live = true;
+  const release = vi.fn(() => { live = false; });
+  const bindFullAccess = vi.fn(() => ({
+    target: { ownerId: input.owner.ownerId, computerId: "computer_one", botId: "bot_target", chatId: "chat_target",
+      preferenceRevision: 1, bindingCreatedAt: "2026-11-16T00:00:00.000Z" },
+    current: () => live, validateWithin: vi.fn(async () => live), release,
+  }));
+  const actual = createChatRoutineSourceProducer({ input, provider: "codex", computerId: "computer_one",
+    signal: input.signal, current: () => true, publish: vi.fn(), bindFullAccess });
+  expect(actual.producer.readPolicy()).toMatchObject({ live: true, originCeiling: "full" });
+  actual.narrowNativeMode("plan");
+  expect(release).toHaveBeenCalledTimes(1);
+  expect(actual.producer.readPolicy()).toMatchObject({ live: true, interactionMode: "plan", originCeiling: "read" });
+  actual.narrowNativeMode("default");
+  expect(actual.producer.readPolicy()).toMatchObject({ interactionMode: "plan", originCeiling: "read" });
+  expect(bindFullAccess).toHaveBeenCalledTimes(1);
+});

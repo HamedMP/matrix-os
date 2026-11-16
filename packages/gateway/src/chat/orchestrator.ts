@@ -215,6 +215,7 @@ export class CanonicalChatOrchestrator {
     onSharedEvent?: (scopeId: string) => Promise<void>;
     beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
       clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
+    beforeRoutineFullAccessDispatch?: import("./turn-admission.js").TurnAdmissionOptions["beforeRoutineFullAccessDispatch"];
     sharedExecutionCoordinatorFactory?: (
       options: SharedChatExecutionCoordinatorOptions,
     ) => SharedChatExecutionCoordinator;
@@ -322,7 +323,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
-    provenance?: { previewTurnProof?: string },
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,

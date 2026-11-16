@@ -142,7 +142,7 @@ function QuickOpenInner({ onClose }: { onClose: () => void }) {
             </p>
           ) : null}
           {openError ? (
-            <p className="px-3 py-2 text-sm" style={{ color: "var(--danger)" }} role="status">
+            <p className="px-3 py-2 text-sm" style={{ color: "var(--danger-text)" }} role="status">
               {openError}
             </p>
           ) : null}

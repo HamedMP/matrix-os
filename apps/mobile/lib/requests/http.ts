@@ -28,6 +28,14 @@ interface AuthenticatedRequest {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
+/** Safe display copy plus the status of an actual HTTP refusal, if received. */
+export class AuthenticatedRequestError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "AuthenticatedRequestError";
+  }
+}
+
 export function buildGatewayRequestUrl(
   baseUrl: string,
   path: string,
@@ -70,7 +78,7 @@ export async function fetchAuthenticatedResponse<T>(
   }: AuthenticatedRequest,
   read: (response: Response) => Promise<T>,
 ): Promise<T> {
-  if (!token.trim()) throw new Error(errorMessage);
+  if (!token.trim()) throw new AuthenticatedRequestError(errorMessage);
 
   const timeout = createRequestTimeout(timeoutMs);
   const combined = signal ? new AbortController() : null;
@@ -87,12 +95,14 @@ export async function fetchAuthenticatedResponse<T>(
       signal: combined?.signal ?? timeout.signal,
     });
     if (!response.ok && !expectedStatuses?.includes(response.status)) {
-      throw new Error("Request failed");
+      throw new AuthenticatedRequestError(errorMessage, response.status);
     }
     return await read(response);
   } catch (error: unknown) {
     console.warn("[mobile] Request unavailable", error instanceof Error ? error.name : "UnknownError");
-    throw new Error(errorMessage);
+    // Only the typed error above proves an HTTP response was received. Network
+    // and parsing errors stay uncertain, with no raw body or error text exposed.
+    throw new AuthenticatedRequestError(errorMessage, error instanceof AuthenticatedRequestError ? error.status : undefined);
   } finally {
     signal?.removeEventListener("abort", abort); timeout.signal.removeEventListener("abort", abort); timeout.cancel();
   }

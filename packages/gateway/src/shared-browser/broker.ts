@@ -13,7 +13,7 @@ export interface SharedBrowserDriver {
 export class SharedBrowserError extends Error {
   constructor(readonly code: "run_unavailable" | "browser_busy" | "browser_changed" | "observe_again" | "browser_unavailable" | "approval_unavailable" | "invalid_action" | "tab_limit", readonly dispatched = false) {
     super(code === "observe_again" ? "Observe Chrome again before continuing." : code === "browser_busy" ? "Chrome is controlled by another Chat."
-      : code === "browser_changed" ? "Browser control changed. Observe again after the owner resumes."
+      : code === "browser_changed" ? "Browser control changed. Check the current Browser state before continuing."
       : code === "approval_unavailable" ? "Browser approvals are unavailable for this Chat."
       : code === "tab_limit" ? "The Browser has reached its agent tab limit. Switch to an existing tab, or ask the owner to close an unneeded tab before opening another."
       : "The browser action is unavailable.");

@@ -287,7 +287,8 @@ export class CollaborativeAppLaunchSessions {
     }
     const headers = new Headers({
       "cache-control": "private, no-store",
-      "content-security-policy": "sandbox allow-scripts; base-uri 'none'; object-src 'none'",
+      // Forms must submit so app onSubmit handlers run; form-action 'none' still blocks every navigation.
+      "content-security-policy": "sandbox allow-scripts allow-forms; form-action 'none'; base-uri 'none'; object-src 'none'",
       "content-type": contentType,
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",

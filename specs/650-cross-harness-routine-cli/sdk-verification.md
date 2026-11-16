@@ -28,7 +28,7 @@ Production must correlate its own actual native process, ACK, observed tool-use 
 
 ## Claude 2.1.280 compatibility
 
-This lane added `2.1.280` alongside `2.1.240`. The current exact list also includes `2.1.317`, qualified separately below; adjacent or future versions remain denied for routine calls. Unrelated Bash keeps native behavior. This compatibility check does not attest an executable or replace canonical source, exact owner action, private target, routine approval, background authorization or integration policy.
+This lane added `2.1.280` alongside `2.1.240`. The current exact list also includes `2.1.317` and `2.1.325`, qualified separately below; adjacent or future versions remain denied for routine calls. Unrelated Bash keeps native behavior. This compatibility check does not attest an executable or replace canonical source, exact owner action, private target, routine approval, background authorization or integration policy.
 
 Official `@anthropic-ai/claude-code-linux-{arm64,x64}` **2.1.280** tarballs were verified against their registry SHA512 integrity before extracting the single regular executable:
 
@@ -58,9 +58,22 @@ The actual bundled production router also reproduces the intended Red on both ar
 
 These are native protocol and actual-router observations with explicitly synthetic execution. A matching installed candidate digest or successful native authentication does not establish actual Chat selection, source admission, published CLI/backend integration or a real account lifecycle. Those remain separate acceptance gates.
 
+## Claude 2.1.325 compatibility
+
+The official npm `@anthropic-ai/claude-code-linux-{arm64,x64}` **2.1.325** tarballs matched the registry SHA512 integrity before their single regular executable was extracted.
+
+| Linux architecture | Extracted executable SHA256 | Execution environment |
+| --- | --- | --- |
+| arm64 | `7b6e484b1989a5a14a4b354709ccc8672518a3ec5b9ccd7981fc6254327fde67` | Native arm64 Node 24.18.0 |
+| x64 | `0dc4f4a9a165fc60746d7ae8489712e5fc352f1e7ad4eb22e7141bd0812eb0cf` | Emulated x64 Node 24.18.0 on an arm64 host |
+
+The existing offline production-router fixture used the real native frames on each architecture. With the previous predicate, the matching initialize ACK, Bash partial message and correlated callback arrived, but the router denied the command, executed zero times and returned a native error tool result (`production_router_version_gate`). With the exact `2.1.325` alternative, the router executed once and the native tool result contained only the rewritten marker. Native exited zero in both cases; fixture exits were 1 before and 0 after, without OOM, pending children or retained containers. No real Matrix CLI, provider request or account was used by this fixture.
+
+The portable hook suite first failed only the two new `2.1.325` positive cases. After the fix, 72 hook, command and source tests passed with no skips, including denial of `2.1.324` and `2.1.326`. The ACK, callback and tool identity checks are unchanged.
+
 ## Reproduce the native/router boundary
 
-The committed files under `tests/gateway/claude-routine-hook-native/` are required Linux qualification scripts, outside default portable Vitest collection. Use an independently reviewed existing Node24+ Linux image and a matching public 2.1.280 or 2.1.317 native artifact above. Set `NODE24_IMAGE` to its immutable cached image ID, `CLAUDE_PLATFORM` to `linux/arm64` or `linux/amd64`, and `CLAUDE_NATIVE` to the absolute executable path. Cross-architecture emulation must be reported explicitly.
+The committed files under `tests/gateway/claude-routine-hook-native/` are required Linux qualification scripts, outside default portable Vitest collection. Use an independently reviewed existing Node24+ Linux image and a matching public 2.1.280, 2.1.317, or 2.1.325 native artifact above. Set `NODE24_IMAGE` to its immutable cached image ID, `CLAUDE_PLATFORM` to `linux/arm64` or `linux/amd64`, and `CLAUDE_NATIVE` to the absolute executable path. Cross-architecture emulation must be reported explicitly.
 
 ```bash
 set -eu

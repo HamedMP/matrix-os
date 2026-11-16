@@ -20,6 +20,8 @@ import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
+import { createGitReader, resolveDesktopDevRunSummary } from "./dev-run-label";
+import { desktopDevRunTitle, parseDesktopDevRunLabel } from "../shared/dev-run-label";
 import { createCredentialStore } from "./auth/credential-store";
 import {
   installGatewayCors,
@@ -78,7 +80,7 @@ import {
   type FittedWindowBounds,
   type WindowBounds,
 } from "./platform/window-bounds";
-import { windowChromeOptions } from "./platform/window-chrome";
+import { WINDOWS_TITLEBAR_HEIGHT, windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { bundledDesktopChannel } from "./update-config";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
@@ -91,6 +93,7 @@ import { installBrowserProductSessionCookie } from "./embeds/browser-product-ses
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
 import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
+import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -112,6 +115,8 @@ import {
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
+// Unpacked dev runs only: names this build in the window title and a banner.
+const devRunLabel = parseDesktopDevRunLabel(process.env.MATRIX_DESKTOP_DEV_LABEL, app.isPackaged);
 
 const channelIdentity = resolveDesktopChannelIdentity(bundledDesktopChannel());
 configureDesktopIdentity(app, {
@@ -180,10 +185,33 @@ function focusMainWindow(): void {
   win.focus();
 }
 
-function handleDeepLink(url: string): void {
-  if (!isMatrixOsDeepLink(url)) return;
-  focusMainWindow();
+// Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
+const sharedAppDeepLinks = createSharedAppDeepLinks({
+  schemes: channelIdentity.deepLinkSchemes,
+  send: (link) => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return false;
+    sendEvent("deeplink:shared-app", link);
+    return true;
+  },
+});
+{
+  // Windows/Linux cold start passes the link in argv; the renderer takes it once it listens.
+  const coldStartLink = process.argv.find(isMatrixOsDeepLink);
+  if (coldStartLink) sharedAppDeepLinks.handle(coldStartLink);
 }
+
+/** Set once the app is ready: reopens the main window through the single-flight path. */
+let restoreMainWindowForDeepLink: (() => void) | null = null;
+
+const handleDeepLink = createDesktopDeepLinkHandler({
+  isDeepLink: isMatrixOsDeepLink,
+  hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
+  focusMainWindow,
+  // Before the app is ready the startup path opens the main window itself.
+  reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
+  links: sharedAppDeepLinks,
+});
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -227,6 +255,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     ...windowChromeOptions(process.platform),
     backgroundColor: "#0e0e13",
     show: false,
+    ...(devRunLabel ? { title: desktopDevRunTitle(devRunLabel) } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -238,6 +267,10 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
+  if (devRunLabel) {
+    // The renderer's <title> would otherwise replace the dev label.
+    win.on("page-title-updated", (event) => { event.preventDefault(); win.setTitle(desktopDevRunTitle(devRunLabel)); });
+  }
   bindPreviewStartupAcknowledgement(win.webContents);
 
   // window.open / target=_blank from the renderer goes to the system browser only.
@@ -331,6 +364,10 @@ if (!gotLock) {
       const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
       const runtimeSelectionOrigin = previewContext?.apiOrigin ?? process.env.MATRIX_API_ORIGIN
         ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
+      const devRunSummary = devRunLabel ? resolveDesktopDevRunSummary({ label: devRunLabel, platformOrigin: platformHost,
+        apiOrigin: runtimeSelectionOrigin, readGit: createGitReader(app.getAppPath()) }).catch((error: unknown) => {
+        logMainError("dev run label unavailable", error); return null;
+      }) : null;
 
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
@@ -672,6 +709,10 @@ if (!gotLock) {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
+      registerSharedAppDeepLinkIpc(ipcMain, {
+        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
+        take: () => sharedAppDeepLinks.take(),
+      });
       registerIpcHandlers(ipcMain, {
         authorizeSender,
         // Windows is out of scope for the Terminal window (spec 651).
@@ -729,6 +770,10 @@ if (!gotLock) {
           if (mainWindow.isMaximized()) mainWindow.unmaximize();
           else mainWindow.maximize();
         },
+        setTitlebarOverlay: (colors) => {
+          if (process.platform !== "win32" || !mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.setTitleBarOverlay({ ...colors, height: WINDOWS_TITLEBAR_HEIGHT });
+        },
         getWhatsNew: async () => {
           const stored = await store.get("desktopUpdateRelease");
           if (!stored || stored.version !== app.getVersion()) {
@@ -743,6 +788,7 @@ if (!gotLock) {
         },
         getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
           sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
+        getDevRunSummary: () => devRunSummary ?? Promise.resolve(null),
         getAppVersion: () => app.getVersion(),
         desktopChannel: channelIdentity.channel,
         buildSource: readDesktopBuildSource(),
@@ -814,6 +860,9 @@ if (!gotLock) {
           height: requestedBounds.height,
         });
         mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
+        // A reloaded or crashed renderer must take held org links again before they are sent.
+        mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("render-process-gone", () => sharedAppDeepLinks.rendererReset());
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
@@ -822,6 +871,7 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
+          sharedAppDeepLinks.rendererReset();
         });
       };
 
@@ -833,6 +883,9 @@ if (!gotLock) {
         if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return Promise.resolve(); }
         reopening ??= (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow()).finally(() => { reopening = null; });
         return reopening;
+      };
+      restoreMainWindowForDeepLink = () => {
+        void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
       };
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,

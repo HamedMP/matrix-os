@@ -100,6 +100,21 @@ jest.mock("expo-haptics", () => ({
   },
 }));
 
+// The package's own mock, with named stand-ins for the provider and the
+// keyboard-avoiding view, so a test can find them and read what they were told.
+jest.mock("react-native-keyboard-controller", () => {
+  const mock = jest.requireActual("react-native-keyboard-controller/jest");
+  const { View } = require("react-native");
+  const mockReact = require("react");
+  function KeyboardProvider({ children }) {
+    return children;
+  }
+  function KeyboardAvoidingView({ behavior, keyboardVerticalOffset, automaticOffset, contentContainerStyle, ...props }) {
+    return mockReact.createElement(View, props);
+  }
+  return { ...mock, KeyboardProvider, KeyboardAvoidingView };
+});
+
 jest.mock("expo-clipboard", () => ({
   setStringAsync: jest.fn(() => Promise.resolve()),
   getStringAsync: jest.fn(() => Promise.resolve("")),

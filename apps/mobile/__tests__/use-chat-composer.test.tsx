@@ -6,6 +6,7 @@ import type { CanonicalChatDetailResponse, CanonicalChatModelSelection } from "@
 const mockFetchActiveComputer = jest.fn();
 const mockCreateChat = jest.fn();
 const mockAdmitChatTurn = jest.fn();
+const mockFetchChatDetail = jest.fn();
 const mockBindDraftChatId = jest.fn();
 let mockRequestIdCount = 0;
 
@@ -27,6 +28,7 @@ jest.mock("@/lib/requests", () => ({
   fetchActiveComputer: (...args: unknown[]) => mockFetchActiveComputer(...args),
   createChat: (...args: unknown[]) => mockCreateChat(...args),
   admitChatTurn: (...args: unknown[]) => mockAdmitChatTurn(...args),
+  fetchChatDetail: (...args: unknown[]) => mockFetchChatDetail(...args),
   canonicalChatTitle: (text: string) => text,
   canonicalChatRequestId: () => `req_${++mockRequestIdCount}`,
   mobileQueryKeys: {
@@ -39,7 +41,7 @@ jest.mock("@/lib/requests", () => ({
 
 import React from "react";
 import * as Haptics from "expo-haptics";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, configure, renderHook, waitFor } from "@testing-library/react-native";
 import { disposeTestQueryClient } from "./query-test-cleanup";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -92,17 +94,22 @@ describe("chat composer send lifecycle", () => {
   }
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    configure({ asyncUtilTimeout: 8_000 });
     mockRequestIdCount = 0;
     queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false, gcTime: Infinity } } });
     invalidateQueries = jest.spyOn(queryClient, "invalidateQueries");
     mockFetchActiveComputer.mockResolvedValue({ handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" });
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
+    mockFetchChatDetail.mockResolvedValue(detailFor("chat_new", []));
   });
 
   afterEach(async () => {
     cleanup();
     await disposeTestQueryClient(queryClient);
     jest.clearAllMocks();
+    jest.useRealTimers();
+    configure({ asyncUtilTimeout: 1_000 });
   });
 
   it("plays a light tap as a message leaves, and none for an empty draft", async () => {

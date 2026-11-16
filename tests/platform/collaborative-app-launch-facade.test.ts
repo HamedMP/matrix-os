@@ -187,13 +187,18 @@ describe("collaborative app authenticated launch facade", () => {
     expect(asset.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
     expect(asset.headers.get("cache-control")).toBe("private, no-store");
-    expect(asset.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
+    // Forms must dispatch submit (React onSubmit) but can never navigate, re-base or embed plugins.
+    expect(asset.headers.get("content-security-policy")?.split(";").map((part) => part.trim())).toEqual([
+      "sandbox allow-scripts allow-forms", "form-action 'none'", "base-uri 'none'", "object-src 'none'",
+    ]);
     const html = await asset.text();
     expect(html).toContain(`<base href="/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/">`);
     expect(html).toContain(`"actorId":"${actorId}"`);
     expect(html).toContain('"organizationId":"org_matrix_team"');
     expect(html).toContain("matrix:shared-app:query");
     expect(html).toContain("matrix:shared-app:mutate");
+    expect(html).toContain("retryMutation");
+    expect(html).toContain("matrix:shared-app:retry");
     expect(html).toContain("matrix:shared-app:changed");
     expect(html).toContain("matrix:shared-app:ready");
     expect(html).toContain("MatrixOS.collaboration");

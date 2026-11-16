@@ -47,6 +47,13 @@ describe("IPC sender policy", () => {
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
   });
 
+  it("lets only the main window recolour the native title bar overlay", () => {
+    const { main, terminal, authorize, from } = setup();
+    const colors = { color: "#fafafa", symbolColor: "#242323" };
+    expect(authorize(from(main), "window:set-titlebar-overlay", colors)).toBe(true);
+    expect(authorize(from(terminal), "window:set-titlebar-overlay", colors)).toBe(false);
+  });
+
   it("lets the Terminal window read its appearance and no other saved state", () => {
     const { main, terminal, authorize, from } = setup();
     expect(authorize(from(terminal), "state:get", { key: "appearance" })).toBe(true);

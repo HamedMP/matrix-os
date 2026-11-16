@@ -16,12 +16,10 @@ export function routineFullAccessPath(method: string, path: string): { kind: "sc
 }
 const digest = (tuple: RoutineFullAccessTuple) => createHash("sha256").update(DOMAIN + JSON.stringify(tuple)).digest("hex");
 
-/** Browser provenance for a particular request only; Gateway must redeem live consent. */
-export function mintRoutineFullAccessProof(input: { method: string; path: string; body: string; secret: string; scopeId?: string | null;
-  handle: string; runtimeSlot: string; machineId: string; ownerId: string; sessionExpiresAt: number; now?: number }): string | null {
-  const route = routineFullAccessPath(input.method, input.path), now = input.now ?? Date.now();
-  if (!route || !input.secret || !Number.isSafeInteger(input.sessionExpiresAt) || input.sessionExpiresAt <= now
-    || Buffer.byteLength(input.body) > (route.kind === "turn" ? 128 * 1024 : 4000)) return null;
+export function routineFullAccessTuple(input: { method: string; path: string; body: string; scopeId?: string | null;
+  handle: string; runtimeSlot: string; machineId: string; ownerId: string }): RoutineFullAccessTuple | null {
+  const route = routineFullAccessPath(input.method, input.path);
+  if (!route || Buffer.byteLength(input.body) > (route.kind === "turn" ? 128 * 1024 : 4000)) return null;
   let raw: unknown;
   try { raw = JSON.parse(input.body); } catch (error: unknown) { if (error instanceof SyntaxError) return null; throw error; }
   const routing = { handle: input.handle, runtimeSlot: input.runtimeSlot, machineId: input.machineId, ownerId: input.ownerId, chatId: route.chatId };
@@ -31,16 +29,28 @@ export function mintRoutineFullAccessProof(input: { method: string; path: string
     if (!body.success) return null;
     candidate = { ...routing, ...body.data, kind: route.kind, challengeId: route.challengeId };
   } else {
-    const body = CanonicalCreateChatTurnRequestSchema.safeParse(raw), scope = RoutineFullAccessIdSchema.safeParse(input.scopeId);
-    if (!body.success || !scope.success || body.data.permissionMode !== "full_access" || body.data.interactionMode !== "default"
-      || !body.data.selection.instanceId.startsWith("claude_code_")) return null;
-    candidate = { ...routing, kind: route.kind, scopeId: scope.data, clientRequestId: body.data.clientRequestId,
+    const body = CanonicalCreateChatTurnRequestSchema.safeParse(raw);
+    if (!body.success || body.data.permissionMode !== "full_access" || body.data.interactionMode !== "default") return null;
+    const request = { ...routing, clientRequestId: body.data.clientRequestId,
       requestDigest: createHash("sha256").update(routineFullAccessTurnRequestIdentity(body.data)).digest("hex") };
+    if (input.scopeId == null) {
+      candidate = { ...request, kind: "direct_turn" };
+    } else {
+      const scope = RoutineFullAccessIdSchema.safeParse(input.scopeId);
+      if (!scope.success || !body.data.selection.instanceId.startsWith("claude_code_")) return null;
+      candidate = { ...request, kind: route.kind, scopeId: scope.data };
+    }
   }
   const tuple = RoutineFullAccessTupleSchema.safeParse(candidate);
-  if (!tuple.success) return null;
-  const value = { ...tuple.data, purpose: "routine_cli_full_access_origin", version: 1,
-    expiresAt: Math.min(now + TTL, input.sessionExpiresAt), nonce: randomBytes(16).toString("hex"), bodyDigest: digest(tuple.data) };
+  return tuple.success ? tuple.data : null;
+}
+
+/** Attests browser provenance for one request. Gateway separately checks the active private Chat and Run. */
+export function mintRoutineFullAccessProof(input: { tuple: RoutineFullAccessTuple; secret: string; sessionExpiresAt: number; now?: number }): string | null {
+  const now = input.now ?? Date.now();
+  if (!input.secret || !Number.isSafeInteger(input.sessionExpiresAt) || input.sessionExpiresAt <= now) return null;
+  const value = { ...input.tuple, purpose: "routine_cli_full_access_origin", version: 1,
+    expiresAt: Math.min(now + TTL, input.sessionExpiresAt), nonce: randomBytes(16).toString("hex"), bodyDigest: digest(input.tuple) };
   const encoded = Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encoded}.${createHmac("sha256", input.secret).update(DOMAIN + encoded).digest("hex")}`;
 }

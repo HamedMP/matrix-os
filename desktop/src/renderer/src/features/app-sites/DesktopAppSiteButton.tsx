@@ -1,19 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
-import { AppSiteSharePanel } from "../../../../../../shell/src/components/app-sites/AppSiteSharePanel";
+import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
+import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
+import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import { DesktopAppOrgSharingSection } from "./DesktopAppOrgSharingSection";
+import { useDesktopShareOrganization } from "./use-desktop-share-organization";
+
+// TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
+const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(import.meta.env.VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
 
 export function DesktopAppSiteButton({
   appSlug,
+  appName,
   portalContainer,
   buildEpoch = 0,
 }: {
   appSlug: string;
+  appName?: string;
   portalContainer?: HTMLElement | null;
   buildEpoch?: number;
 }) {
@@ -32,33 +39,37 @@ export function DesktopAppSiteButton({
   }, [api, runtimeSlot, authGeneration]);
   const collaborationApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null,
     [api, runtimeSlot, authGeneration]);
+  const name = appDisplayName(appSlug, appName);
+  const share = useShareController({ appSlug, appName: name, client, emailInvites });
+  const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch });
   return (
     <AppSiteSharePopover
-      onOpenChange={setOpen}
+      onOpenChange={(next) => { if (next) share.refresh(); setOpen(next); }}
       portalContainer={portalContainer}
       trigger={(
         <Button
           variant="subtle"
           disabled={!client}
-          style={{ height: 28, padding: "0 10px", fontSize: 12, background: "var(--bg-app)", color: "var(--text-primary)", border: "1px solid var(--border-default)", boxShadow: "var(--shadow-1)" }}
+          style={{ height: 28, padding: "0 10px", gap: 6, fontSize: 12, background: "var(--bg-app)", color: "var(--text-primary)", border: "1px solid var(--border-default)", boxShadow: "var(--shadow-1)" }}
         >
-          Publish app
+          <ShareTriggerLabel pageMode={share.pageMode} orgShared={organization.shared} />
         </Button>
       )}
       open={open}
       zIndex={DESKTOP_Z_INDEX.popover}
     >
       {open && client ? (
-        <AppSiteSharePanel
+        <SharePanel
           key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
+          share={share}
           appSlug={appSlug}
+          appName={name}
           client={client}
-          ownerIdentity={email ?? userId ?? "local-user"}
+          ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
-          organizationSharing={collaborationApi ? <DesktopAppOrgSharingSection
-            key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
-            appId={appSlug} api={collaborationApi} buildEpoch={buildEpoch}
-          /> : null}
+          organization={organization.slot}
+          submissions={client && share.site
+            ? <SiteSubmissionsSection appSlug={appSlug} client={client} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

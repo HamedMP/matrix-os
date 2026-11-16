@@ -179,6 +179,7 @@ export default function ProjectRoute() {
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          sendError: composer.sendError,
           speech,
           ...composerAddProps({
             catalog,

@@ -1,4 +1,3 @@
-import { DesktopRoutineConfirmations } from "./DesktopRoutineConfirmations";
 import { RefreshCw, SquareTerminal } from "@renderer/lib/hugeicons";
 import { systemTerminalLabel } from "@renderer/lib/platform-labels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -358,7 +357,6 @@ export default function TerminalsTab({
 
   return (
     <TerminalSidebarLayout header={(controls) => (<>
-      <DesktopRoutineConfirmations/>
       <TerminalSessionHeader shown={controls.shown} sidebarId={controls.sidebarId} buttonRef={controls.collapseButtonRef} onToggle={controls.onToggle}
         disabled={!api} creating={creating} agentStatuses={agentStatuses} checkingAgentStatuses={checkingAgentStatuses}
         onRefreshAgentStatuses={() => void refreshAgentStatuses()} onCreateShell={() => void createShell()}

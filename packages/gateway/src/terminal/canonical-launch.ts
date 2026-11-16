@@ -30,8 +30,6 @@ export function createCanonicalTerminalLaunch(options: {
   runtime: Pick<TerminalWorkspaceRouteRuntime, "listWorkspaces" | "createTab" | "prepareNativeTab" | "completeNativeTab">;
   host?: Pick<ReturnType<typeof createTerminalHostService>, "start">;
   launcher: Pick<ReturnType<typeof createTerminalNativeLauncher>, "build">;
-  /** Trusted composition only. Production interactive equivalence needs private configuration handoff. */
-  interactiveHostEquivalent?: boolean;
   homePath: string; generation: string; computerId: string; ownerIds: readonly string[];
   routines?: { runtime: Pick<RoutineCliRuntime, "register">; binPath: string; endpoint: string;
     isShared(ref: TerminalRef, incarnation: string, trx?: Parameters<RoutineSourceProducer["validateWithin"]>[1]): Promise<boolean> };
@@ -51,14 +49,16 @@ export function createCanonicalTerminalLaunch(options: {
     const ref = { workspaceId, tabId: input.tabId! }, key = keyOf(ref);
     const existing = await readTab(ref);
     if (existing) return existing; // Repeated client tab identity never starts a second native root or restores proof.
-    if (!prepared && (!options.host || options.interactiveHostEquivalent !== true)) return options.runtime.createTab(workspaceId, {
+    const hasNativeTabLifecycle = !!options.runtime.prepareNativeTab && !!options.runtime.completeNativeTab;
+    if (!prepared && (!options.host || !options.routines || !options.computerId || !hasNativeTabLifecycle
+      || !["jwt", "platform-verified"].includes(principal.source))) return options.runtime.createTab(workspaceId, {
       tabId: ref.tabId, name: input.name, cwd: input.cwd, accessScope: "owner", agent: { providerId: input.managedLaunch.harness },
       command: terminalNativeOrdinaryCommand(input.managedLaunch),
     });
     const launch = prepared ? TerminalHostLaunchSchema.parse(prepared.launch) : await options.launcher.build(input.managedLaunch, input.cwd);
     if (!options.host) return options.runtime.createTab(workspaceId, { tabId: ref.tabId, name: input.name, cwd: input.cwd,
       accessScope: "owner", agent: { providerId: input.managedLaunch.harness }, command: agentLaunchTerminalCommand(launch) });
-    if (!options.runtime.prepareNativeTab || !options.runtime.completeNativeTab) throw new TerminalRuntimeError("unavailable");
+    if (!hasNativeTabLifecycle) throw new TerminalRuntimeError("unavailable");
     const controller = new AbortController(); let retained: RetainedTerminalStartup | undefined;
     let source: ReturnType<typeof createTerminalRoutineSource> | undefined, canonical: TerminalTab | undefined;
     let expiry: NodeJS.Timeout | undefined;
@@ -127,7 +127,9 @@ export function createCanonicalTerminalLaunch(options: {
       if (canonical.id !== ref.tabId || canonical.workspaceId !== workspaceId || canonical.incarnation !== admittedIncarnation
         || canonical.nativeHost?.path !== result.reference.path || canonical.nativeHost.generation !== expectedHost.generation
         || !privateCurrent() || !await retained!.verifyCurrent() || !await currentRecord()) { await close(); return canonical; }
-      const policy: RoutineSourcePolicy = prepared?.policy ?? { live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "terminal-native-exact-v1" };
+      // Full Access is assigned only after the retained host and private owner record agree.
+      const policy: RoutineSourcePolicy = prepared?.policy ?? { live: true, scope: "personal", interactionMode: "default",
+        permissionMode: "full_access", originCeiling: "full", revision: "terminal-native-full-v1" };
       source = createTerminalRoutineSource({ ...options.routines!, computerId: options.computerId, homePath: options.homePath,
         admission: { principal, harness: input.managedLaunch.harness, sessionId: key, incarnationId: canonical.incarnation!, launchId: randomUUID(),
           generation: createHash("sha256").update(retained!.heldGeneration).digest("hex"), supervisor: retained!.identity.supervisor, host: retained!.identity.host, root: retained!.identity.root, policy },

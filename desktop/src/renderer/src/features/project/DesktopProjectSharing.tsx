@@ -81,7 +81,7 @@ export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName
     flow.start();
   }, [flow, startOnMount]);
   return <>
-    {flow.error ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{flow.errorMessage}</p> : null}
+    {flow.error ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger-text)" }}>{flow.errorMessage}</p> : null}
     {flow.dialogs}
   </>;
 }

@@ -1,6 +1,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import { StyleSheet as NativeStyleSheet } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
