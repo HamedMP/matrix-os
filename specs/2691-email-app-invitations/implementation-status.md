@@ -1,4 +1,4 @@
-# Implementation checkpoint — 2026-11-16
+# Implementation and automated qualification — 2026-11-17
 
 Tracking: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os).
 Native stack: [#3341](https://github.com/HamedMP/matrix-os/pull/3233), ten draft layers #3233 and #3332–#3340.
@@ -6,15 +6,59 @@ Public documentation remains the separate [site PR #358](https://github.com/Finn
 
 ## Requester direction
 
-Finish implementation and rebase onto current main. Defer spikes, automated
-checks, regression work, and runtime/visual qualification. This overrides the
-earlier test-first and spike-before-code sequence for this work only. Previous
-checkmarks and test counts describe historical revisions; none qualify the
-rewritten stack or the new implementation. Keep every PR draft.
+On 2026-11-16 the requester authorized implementation before qualification.
+On 2026-11-17 they authorized automated tests and regression fixes. The Clerk
+production-domain spike and email-delivery implementation/qualification remain
+deferred. Keep every PR draft and the production capability disabled. No
+production Clerk, DNS, provider/sender, deployment or invitation-send changes.
 
-The production email-invitation capability remains disabled. No production
-Clerk, DNS, deployment, provider, sender, or delivery changes are authorized.
-Assuming Clerk compatibility for coding is not proof of domain compatibility.
+## Automated qualification — 2026-11-17
+
+Tested combined source head: b9e2cd2e4823e6563ec7156ba6c8cdb5d778587e,
+on main b37f50a0811d82a41fa65256e7b70fe24946fe9a. The later checkpoint
+commit changes documentation only. These results qualify the combined stack;
+individual prefixes and the full repository suite are separate lanes.
+
+| Check | Observed result |
+| --- | --- |
+| Focused Sites, Share, account lifecycle and affected caller tests | 533 passed across 61 files; zero failures/skips |
+| Six independent PostgreSQL suites, disposable PostgreSQL 16 | 40 passed; zero failures/skips |
+| Repository type check | Passed |
+| Diff pattern check | Zero violations; five warnings |
+| Production shell build | Passed, including shell TypeScript and prerendering; synthetic build-only Clerk key |
+| Separate public-docs PR #358 tests at 9ce87c86c355b9744dc5bf9acdd602b5d5fa1417 | 540 passed; zero failures/skips |
+
+Runtime: Node 26.10.0, pnpm 10.33.4 and Bun 1.4.3 on the isolated development
+worktree. Dependency install used the frozen lockfile. Vitest ran the unit
+files with two workers and no file parallelism; PostgreSQL used one worker.
+Test databases were disposable and removed afterward. Logs and JSON reports
+remain outside Git under /tmp/email-regressions-20261117/.
+
+Corrections and retained protection:
+
+- Restrict the login gate's frame source to the CAPTCHA origin; allow the
+  same-origin app iframe only in the authenticated parent. The existing CSP
+  assertion failed before this correction; all 16 renderer assertions pass.
+- Update the legacy preview fixture to persist publication responses for later
+  refreshes, and target the current accessible Revoke invitation label.
+- Seven real-controller/live-adapter/client-parser cases cover first publication,
+  confirmation, revision synchronization, resend/revoke, paging, client changes
+  and partial errors. The HTTP service is a fixture, not a live provider.
+- Four owner/Gateway/Platform readiness cases protect disabled defaults, no-store,
+  owner/machine authority, strict responses and rejected query input.
+- Replay the old required deprovisioned-field fault: the new SDK-contract
+  assertion fails with that fault and passes with the restored implementation.
+  All four identity assertions pass, including terminal/unverified denial.
+- Executable parent-page tests check synchronous revocation before Clerk sign-out,
+  canonical return, nonce coverage, opaque app isolation and retry on failure.
+
+An intermediate owner-layer timeout assertion lacked the later rollout-layer
+rollback fix. The final combined-stack case passes without a timeout workaround.
+
+These automated tests use synthetic identities and controlled Clerk responses.
+They do not prove real Matrix.page session sharing, Google/GitHub OAuth return,
+production sign-in/signup or real email delivery. No visual qualification,
+hosted current-head CI or current-head Greptile result is claimed.
 
 ## Current implementation
 
@@ -74,9 +118,8 @@ Do not replace the existing privateEmailInvitations readiness gate.
   account switching, sign-out from both origins, browser/cookie restrictions.
   Use seeded test invitations and manually opened canonical links; delivery
   must stay off.
-- Type checks, focused and broad tests, regression red/green evidence, CI and
-  Greptile against the rewritten heads. Existing fixture assertions may need
-  updating for the real adapter, capability read, nonce CSP and sign-out chrome.
+- Hosted CI and Greptile against the rewritten heads, plus any broader repository
+  and runtime qualification required before merge.
 - Live visual captures for Web Desktop, Web Canvas, Electron and Matrix.page
   desktop/mobile. No captures or production-domain success are claimed here.
 - Approved provider/sender, domain verification, suppression, retry and

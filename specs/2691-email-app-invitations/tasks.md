@@ -1,6 +1,6 @@
 # Tasks: Email Invitations for Matrix.page Apps
 
-> **Current execution direction (2026-11-16):** implementation proceeds; all spikes, checks, testing and regression qualification are deferred by the requester. See [implementation-status.md](implementation-status.md) for the current shared Share UI, delivery boundary and disabled rollout. Historical checkmarks/results below do not qualify the rewritten heads.
+> **Current execution direction (2026-11-17):** automated tests and regression fixes are authorized; the Clerk production-domain spike and email delivery remain deferred. See [implementation-status.md](implementation-status.md) for the current results and disabled rollout. Historical checkmarks alone do not establish production qualification.
 
 
 **Input**: `specs/2691-email-app-invitations/spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/http-api.openapi.yaml`, `contracts/runtime-boundaries.md`, `quickstart.md`, and `checklists/requirements.md`.
