@@ -251,4 +251,41 @@ describe.skipIf(!realUrl)('owner database write block on a real PostgreSQL serve
       .where('clerk_user_id', '=', id).executeTakeFirstOrThrow();
     expect(row.block_disabled).toBeNull();
   });
+  it('keeps the owner reading and deleting row-secured tables while blocked, and restores their row security', async () => {
+    const { id, credentials, service } = await owner([
+      'CREATE TABLE secured (id int)',
+      'INSERT INTO secured VALUES (1), (2), (3)',
+      'ALTER TABLE secured ENABLE ROW LEVEL SECURITY',
+      'CREATE TABLE forced (id int)',
+      'INSERT INTO forced VALUES (1), (2)',
+      'ALTER TABLE forced ENABLE ROW LEVEL SECURITY',
+      'ALTER TABLE forced FORCE ROW LEVEL SECURITY',
+      'CREATE POLICY first_only ON forced USING (id = 1)',
+    ]);
+    const visible = () => inDatabase(credentials, async (client) => ({
+      secured: (await client.query('SELECT count(*)::int AS n FROM secured')).rows[0].n,
+      forced: (await client.query('SELECT count(*)::int AS n FROM forced')).rows[0].n,
+    }));
+    const security = () => inDatabase({ databaseName: credentials.databaseName }, async (client) => Object.fromEntries(
+      (await client.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
+        `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname IN ('secured', 'forced')`)).rows
+        .map((r) => [r.relname, [r.relrowsecurity, r.relforcerowsecurity]])));
+    // As the owner, the unforced table shows every row and the forced one only its policy's rows.
+    expect(await visible()).toEqual({ secured: 3, forced: 1 });
+    const before = await security();
+
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: true });
+    expect(await visible()).toEqual({ secured: 3, forced: 1 });
+    await inDatabase(credentials, async (client) => {
+      await client.query('SET default_transaction_read_only = off');
+      expect((await client.query('DELETE FROM secured WHERE id = 1')).rowCount).toBe(1);
+    });
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: true });
+    expect(await visible()).toEqual({ secured: 2, forced: 1 });
+
+    await raiseLimit(id);
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: false });
+    expect(await security()).toEqual(before);
+    expect(await visible()).toEqual({ secured: 2, forced: 1 });
+  });
 });

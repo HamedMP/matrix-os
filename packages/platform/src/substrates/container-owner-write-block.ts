@@ -25,6 +25,14 @@
  * the owner's tables is disabled; the caller records which ones first, and the
  * restore re-enables exactly those in their recorded mode, never one the owner
  * had disabled. Event triggers need a superuser to create, so an owner has none.
+ *
+ * Row security: a table owner bypasses its table's row-level security unless
+ * it is forced, so once ownership moves, an unforced row-secured table would
+ * show the owner no rows and refuse its deletes, and the owner could no
+ * longer change its policies. The block records those tables and disables row
+ * security on them, so the owner keeps the same read and delete access it had;
+ * the restore re-enables exactly those. Forced tables already applied their
+ * policies to the owner and keep them.
  */
 
 export interface WriteBlockNames {
@@ -35,17 +43,20 @@ export interface WriteBlockNames {
   holderName: string;
 }
 
-/** A trigger or rule the block disabled, with the enabled mode to restore. */
+/** A trigger, rule, or table row security the block disabled, with the enabled mode to restore ('E' for row security). */
 export interface DisabledByBlock {
-  kind: 'trigger' | 'rule';
+  kind: 'trigger' | 'rule' | 'rls';
   oid: number;
-  mode: 'O' | 'R' | 'A';
+  mode: 'O' | 'R' | 'A' | 'E';
 }
 
 const SESSION_LIMITS = ["SET lock_timeout = '5s'", "SET statement_timeout = '30s'"];
 const MAX_OID = 4_294_967_295;
 
-/** Enabled user triggers and rules on tables the owner or the holder owns; recorded before the block disables them. */
+/**
+ * Enabled user triggers and rules, and unforced row security, on tables the
+ * owner or the holder owns; recorded before the block disables them.
+ */
 export function enabledTriggersAndRules(names: WriteBlockNames): string {
   const owners = `ARRAY['${names.ownerName}'::regrole, '${names.holderName}'::regrole]`;
   return `SELECT 'trigger' AS kind, t.oid::bigint AS oid, t.tgenabled::text AS mode
@@ -53,7 +64,10 @@ export function enabledTriggersAndRules(names: WriteBlockNames): string {
   WHERE NOT t.tgisinternal AND t.tgenabled <> 'D' AND c.relkind IN ('r', 'p', 'f') AND c.relowner = ANY(${owners})
 UNION ALL SELECT 'rule', w.oid::bigint, w.ev_enabled::text
   FROM pg_rewrite w JOIN pg_class c ON c.oid = w.ev_class
-  WHERE w.rulename <> '_RETURN' AND w.ev_enabled <> 'D' AND c.relkind IN ('r', 'p', 'f') AND c.relowner = ANY(${owners})`;
+  WHERE w.rulename <> '_RETURN' AND w.ev_enabled <> 'D' AND c.relkind IN ('r', 'p', 'f') AND c.relowner = ANY(${owners})
+UNION ALL SELECT 'rls', c.oid::bigint, 'E'
+  FROM pg_class c
+  WHERE c.relkind IN ('r', 'p') AND c.relrowsecurity AND NOT c.relforcerowsecurity AND c.relowner = ANY(${owners})`;
 }
 
 function oids(disabled: readonly DisabledByBlock[], kind: DisabledByBlock['kind']): string {
@@ -66,7 +80,7 @@ function oids(disabled: readonly DisabledByBlock[], kind: DisabledByBlock['kind'
 
 function modes(disabled: readonly DisabledByBlock[], kind: DisabledByBlock['kind']): string {
   const list = disabled.filter((entry) => entry.kind === kind).map((entry) => {
-    if (!['O', 'R', 'A'].includes(entry.mode)) throw new Error('Invalid recorded trigger mode');
+    if (!(kind === 'rls' ? ['E'] : ['O', 'R', 'A']).includes(entry.mode)) throw new Error('Invalid recorded trigger mode');
     return `'${entry.mode}'`;
   });
   return `ARRAY[${list.join(', ')}]::text[]`;
@@ -84,6 +98,10 @@ BEGIN
   FOR r IN SELECT w.ev_class::regclass AS rel, w.rulename AS name FROM pg_rewrite w JOIN pg_class c ON c.oid = w.ev_class
     WHERE w.oid = ANY(${oids(disabled, 'rule')}) AND w.ev_enabled <> 'D' AND c.relowner = '${holder}'::regrole LOOP
     EXECUTE format('ALTER TABLE %s DISABLE RULE %I', r.rel, r.name);
+  END LOOP;
+  FOR r IN SELECT c.oid::regclass AS rel FROM pg_class c
+    WHERE c.oid = ANY(${oids(disabled, 'rls')}) AND c.relrowsecurity AND c.relowner = '${holder}'::regrole LOOP
+    EXECUTE format('ALTER TABLE %s DISABLE ROW LEVEL SECURITY', r.rel);
   END LOOP;
 END
 $block$`;
@@ -104,6 +122,10 @@ BEGIN
     FROM unnest(${oids(disabled, 'rule')}, ${modes(disabled, 'rule')}) AS x(oid, mode)
     JOIN pg_rewrite w ON w.oid = x.oid WHERE w.ev_enabled = 'D' LOOP
     EXECUTE format('ALTER TABLE %s ENABLE %sRULE %I', r.rel, ${mode}, r.name);
+  END LOOP;
+  FOR r IN SELECT c.oid::regclass AS rel FROM unnest(${oids(disabled, 'rls')}) AS x(oid)
+    JOIN pg_class c ON c.oid = x.oid WHERE NOT c.relrowsecurity LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', r.rel);
   END LOOP;
 END
 $block$`;
@@ -191,6 +213,10 @@ BEGIN
   FOR r IN SELECT w.ev_class::regclass AS rel, w.rulename AS name FROM matrix_block_late l
     JOIN pg_rewrite w ON l.kind = 'rule' AND w.oid = l.oid::oid LOOP
     EXECUTE format('ALTER TABLE %s DISABLE RULE %I', r.rel, r.name);
+  END LOOP;
+  FOR r IN SELECT c.oid::regclass AS rel FROM matrix_block_late l
+    JOIN pg_class c ON l.kind = 'rls' AND c.oid = l.oid::oid LOOP
+    EXECUTE format('ALTER TABLE %s DISABLE ROW LEVEL SECURITY', r.rel);
   END LOOP;
 END
 $block$`;

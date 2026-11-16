@@ -32,7 +32,7 @@ export interface ContainerOwnerDatabasesTable {
   state: 'active' | 'fenced' | 'deleting';
   password_epoch: number;
   writes_blocked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** Triggers and rules the block disabled, so the restore re-enables exactly those. */
+  /** Triggers, rules and row security the block disabled, so the restore re-enables exactly those. */
   block_disabled: ColumnType<unknown, string | null | undefined, string | null>;
   /** Set when a blocked database passed the alert threshold; cleared once it falls back below it. */
   size_alerted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
@@ -118,10 +118,10 @@ const MAX_LOCAL_OWNER_QUEUES = 10_000;
 const ALERT_RATIO = 1.5;
 const MAX_RECORDED = 10_000;
 const DisabledSchema = z.array(z.object({
-  kind: z.enum(['trigger', 'rule']),
+  kind: z.enum(['trigger', 'rule', 'rls']),
   oid: z.coerce.number().int().min(1).max(4_294_967_295),
-  mode: z.enum(['O', 'R', 'A']),
-})).max(MAX_RECORDED);
+  mode: z.enum(['O', 'R', 'A', 'E']),
+}).refine((entry) => (entry.kind === 'rls') === (entry.mode === 'E'))).max(MAX_RECORDED);
 
 function recordedDisabled(value: unknown): DisabledByBlock[] {
   if (value === null || value === undefined) return [];
