@@ -21,7 +21,7 @@ export function sharedBrowserFailureResult(
   const sameRun = run?.runId === binding.runId && run.chatId === binding.chatId && run.harness === binding.harness;
   if (unavailable) {
     if (!sameRun || automation.phase !== "unavailable") {
-      return { success: false, content: error.dispatched ? SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE : error.message };
+      return { success: false, content: SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE };
     }
     const content = error.dispatched
       ? "The Browser action's effect is uncertain. Never replay it. " + STOP_UNAVAILABLE_RUN
