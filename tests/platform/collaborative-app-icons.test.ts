@@ -123,7 +123,7 @@ describe("collaborative app icons", () => {
     expect((await upload(png)).status).toBe(204);
     await share({ name: "Team Tracker", iconSha256: pngSha });
 
-    const listing = await routes.request("/api/collaboration/shared-apps", { headers: { "x-test-actor": member } });
+    const listing = await routes.request("/api/collaboration/shared-apps?fields=display", { headers: { "x-test-actor": member } });
     expect(listing.status).toBe(200);
     const body = await listing.json() as { items: Array<Record<string, unknown>> };
     expect(body.items[0]).toMatchObject({
@@ -133,8 +133,26 @@ describe("collaborative app icons", () => {
       iconUrl: `/api/collaboration/shared-apps/${scopeId}/icon?v=${pngSha}`,
     });
 
-    const single = await routes.request(`/api/collaboration/shared-apps/${scopeId}`, { headers: { "x-test-actor": member } });
+    const single = await routes.request(`/api/collaboration/shared-apps/${scopeId}?fields=display`, { headers: { "x-test-actor": member } });
     expect(await single.json()).toMatchObject({ name: "Team Tracker", iconUrl: body.items[0]!.iconUrl });
+  });
+
+  it("keeps responses parseable by released strict clients that do not opt in to display fields", async () => {
+    // Released shells and Electron builds parse directory items with a strict schema that
+    // predates `name` and `iconUrl`; they never send `fields=display`.
+    const legacyKeys = ["appId", "authorityGeneration", "buildId", "catalogId", "organizationId", "owner",
+      "readinessId", "registrationIncarnation", "runtimeId", "scopeId", "shareRevision"];
+    await upload(png);
+    await share({ name: "Team Tracker", iconSha256: pngSha });
+    const listing = await routes.request("/api/collaboration/shared-apps?limit=10", { headers: { "x-test-actor": member } });
+    const item = (await listing.json() as { items: Array<Record<string, unknown>> }).items[0]!;
+    expect(Object.keys(item).sort()).toEqual(legacyKeys);
+    const single = await routes.request(`/api/collaboration/shared-apps/${scopeId}`, { headers: { "x-test-actor": member } });
+    expect(Object.keys(await single.json() as Record<string, unknown>).sort()).toEqual(legacyKeys);
+    expect((await routes.request("/api/collaboration/shared-apps?fields=everything", { headers: { "x-test-actor": member } })).status)
+      .toBe(422);
+    expect((await routes.request("/api/collaboration/shared-apps?fields=display&fields=display", { headers: { "x-test-actor": member } })).status)
+      .toBe(422);
   });
 
   it("serves icon bytes to a current member with inert, versioned caching headers", async () => {
@@ -182,7 +200,7 @@ describe("collaborative app icons", () => {
 
   it("returns not found for a share without an icon so the launcher keeps its letter tile", async () => {
     await share({ name: "Team Tracker" });
-    const listing = await routes.request("/api/collaboration/shared-apps", { headers: { "x-test-actor": member } });
+    const listing = await routes.request("/api/collaboration/shared-apps?fields=display", { headers: { "x-test-actor": member } });
     const item = (await listing.json() as { items: Array<Record<string, unknown>> }).items[0]!;
     expect(item.name).toBe("Team Tracker");
     expect(item).not.toHaveProperty("iconUrl");

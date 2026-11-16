@@ -164,8 +164,9 @@ export function createPlatformCollaborationRoutes(options: {
     const actorId = await resolveValidatedActor(c, options.resolveActor);
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     if (!appDiscoveryLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
-    const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
-    if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
+    const query = appDirectoryQuery(c, ["cursor", "limit"]);
+    const pageRequest = CollaborationPageRequestSchema.safeParse(query?.page ?? { invalid: "true" });
+    if (!query || !pageRequest.success) return safeJson(c, "Invalid request", 422);
     const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
     if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
     try {
@@ -189,7 +190,7 @@ export function createPlatformCollaborationRoutes(options: {
           buildId: entry.buildId,
           shareRevision: String(entry.shareRevision),
           owner,
-          ...sharedAppPresentation(entry.scopeId, entry),
+          ...(query.display ? sharedAppPresentation(entry.scopeId, entry) : {}),
         };
       }));
       c.header("Cache-Control", "private, no-store");
@@ -207,7 +208,10 @@ export function createPlatformCollaborationRoutes(options: {
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     if (!appDiscoveryLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
     const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
-    if (!scopeId.success) return safeJson(c, "Invalid request", 422);
+    const fields = c.req.queries("fields");
+    if (!scopeId.success || (fields && (fields.length !== 1 || fields[0] !== DISPLAY_FIELDS))) {
+      return safeJson(c, "Invalid request", 422);
+    }
     try {
       const route = await options.repository.getDirectoryRoute(scopeId.data);
       const currentOrganizations = await listCurrentOrganizationIds(actorId, options);
@@ -229,7 +233,7 @@ export function createPlatformCollaborationRoutes(options: {
         buildId: route.app.buildId,
         shareRevision: String(route.app.shareRevision),
         owner,
-        ...sharedAppPresentation(route.scopeId, route.app),
+        ...(fields ? sharedAppPresentation(route.scopeId, route.app) : {}),
       }));
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app lookup failed", error instanceof Error ? error.name : "UnknownError");
@@ -376,6 +380,33 @@ export function createPlatformCollaborationRoutes(options: {
   registerInvitationIdentifierResolutionRoute(app, options);
 
   return app;
+}
+
+/**
+ * Directory items are parsed strictly by released clients, so owner presentation is added only
+ * for clients that opt in with `fields=display` (ENG-490 rollout safety).
+ */
+const DISPLAY_FIELDS = "display";
+
+function appDirectoryQuery(c: RouteContext, pageKeys: readonly string[]): { page: Record<string, string>; display: boolean } | null {
+  const parameters = new URL(c.req.url).searchParams;
+  const page: Record<string, string> = {};
+  const seen = new Set<string>();
+  let display = false;
+  for (const key of parameters.keys()) {
+    if (seen.has(key)) return null;
+    seen.add(key);
+    const value = parameters.get(key)!;
+    if (key === "fields") {
+      if (value !== DISPLAY_FIELDS) return null;
+      display = true;
+    } else if (pageKeys.includes(key)) {
+      page[key] = value;
+    } else {
+      return null;
+    }
+  }
+  return { page, display };
 }
 
 /** Owner presentation captured at share time; the icon URL is the scope's own platform route. */
