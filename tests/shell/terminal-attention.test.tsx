@@ -66,6 +66,33 @@ describe("terminal attention notifier", () => {
     expect(screen.getByText("agent 0")).toBeTruthy();
   });
 
+  // Fault detected (review of #3299): a completion waiting behind three urgent alerts
+  // expired on its timer before it was ever shown, so the person never saw it.
+  it("times a completion out only after it was shown", () => {
+    vi.useFakeTimers();
+    try {
+      const keys = ["a", "b", "c", "d"].map((letter) => `${workspaceId}:tt_${letter.repeat(32)}`);
+      const tabs = (words: Array<"working" | "blocked" | "done">) => Object.fromEntries(keys.map((tabKey, i) => [tabKey, {
+        ref: { workspaceId, tabId: tabKey.split(":")[1]! }, name: `agent ${i}`, cwd: "", state: "live" as const, agentStatus: words[i]!,
+      }]));
+      render(<TerminalAttentionNotifier />);
+      act(() => { useTerminalAgentEvents.setState({ tabs: tabs(["working", "working", "working", "working"]) }); });
+      act(() => { useTerminalAgentEvents.setState({ tabs: tabs(["blocked", "blocked", "blocked", "done"]) }); });
+      expect(screen.queryByText("agent 3")).toBeNull();
+
+      act(() => { vi.advanceTimersByTime(30_000); });
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss agent 0" }));
+      expect(screen.getByText("agent 3")).toBeTruthy();
+
+      act(() => { vi.advanceTimersByTime(11_000); });
+      expect(screen.getByText("agent 3")).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(2_000); });
+      expect(screen.queryByText("agent 3")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Fault detected (fifth review of #3299): on a page load the empty store became the
   // baseline, so the first snapshot replayed every blocked agent as a new alert.
   it("takes the first received snapshot as the baseline on a page load", () => {

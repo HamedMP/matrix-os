@@ -11,6 +11,7 @@ import { openTerminalSession } from "@/lib/terminal-session-open";
 import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { ShellNotificationCard } from "../ShellNotificationCard";
 import { ShellNotificationPortal } from "../ShellNotificationPortal";
+import { scheduleCompletionExpiry } from "./terminal-attention-expiry";
 import { visibleTerminalSessions } from "./visible-terminal-sessions";
 
 const MAX_VISIBLE = 3;
@@ -18,7 +19,6 @@ const MAX_VISIBLE = 3;
 const MAX_PENDING = 32;
 // Blocked and errored agents need the person; they are shown before completions.
 const URGENT = (alert: TerminalAttention) => (alert.kind === "done" ? 1 : 0);
-const DONE_TIMEOUT_MS = 12_000;
 
 const COPY: Record<TerminalAttention["kind"], string> = {
   blocked: "needs you",
@@ -43,6 +43,8 @@ export function TerminalAttentionNotifier() {
   const retain = useTerminalAgentEvents((state) => state.retain);
   const previous = useRef<ReadonlyMap<string, TerminalTabFacts> | null>(null);
   const [alerts, setAlerts] = useState<TerminalAttention[]>([]);
+  // When each completion was first shown, for its timeout (see scheduleCompletionExpiry).
+  const shownAt = useRef(new Map<string, number>());
 
   useEffect(() => retain(), [retain]);
 
@@ -74,17 +76,18 @@ export function TerminalAttentionNotifier() {
     });
   }, [tabs, connected]);
 
-  useEffect(() => {
-    if (!alerts.some((alert) => alert.kind === "done")) return;
-    const timer = setTimeout(() => {
-      setAlerts((current) => current.filter((alert) => alert.kind !== "done"));
-    }, DONE_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [alerts]);
-
-  if (alerts.length === 0) return null;
   // Only the display is limited: hidden alerts wait and show when a slot frees up.
   const visible = alerts.toSorted((left, right) => URGENT(left) - URGENT(right)).slice(0, MAX_VISIBLE);
+  const visibleDone = visible.filter((alert) => alert.kind === "done").map((alert) => alert.key).join("\n");
+
+  useEffect(() => scheduleCompletionExpiry({
+    shownAt: shownAt.current,
+    alerts,
+    visibleDoneKeys: visibleDone ? visibleDone.split("\n") : [],
+    expire: (keep) => setAlerts((current) => current.filter(keep)),
+  }), [alerts, visibleDone]);
+
+  if (alerts.length === 0) return null;
 
   const dismiss = (key: string) => setAlerts((current) => current.filter((alert) => alert.key !== key));
   const open = (alert: TerminalAttention) => {
