@@ -1,5 +1,8 @@
 # Tasks: Email Invitations for Matrix.page Apps
 
+> **Current execution direction (2026-11-16):** implementation proceeds; all spikes, checks, testing and regression qualification are deferred by the requester. See [implementation-status.md](implementation-status.md) for the current shared Share UI, delivery boundary and disabled rollout. Historical checkmarks/results below do not qualify the rewritten heads.
+
+
 **Input**: `specs/2691-email-app-invitations/spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/http-api.openapi.yaml`, `contracts/runtime-boundaries.md`, `quickstart.md`, and `checklists/requirements.md`.
 **Tracking**: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os); specification PR [#3233](https://github.com/HamedMP/matrix-os/pull/3233); UI seam PR [#3200](https://github.com/HamedMP/matrix-os/pull/3200).
 **Execution rule**: These are future implementation tasks, not authorization to execute them now. T001 is a blocking compatibility gate. If it fails, stop and obtain a product decision and revised spec; no fallback to Matrix main auth, a primary-domain redirect, a second Clerk application, a cross-origin iframe, or a broad Clerk-domain migration is authorized. Each production slice records a named failing production-boundary assertion before its implementation and a passing assertion afterward. Required lanes fail on missing prerequisites rather than silently skip.

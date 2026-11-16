@@ -1,5 +1,8 @@
 # Quickstart and Qualification: Email Invitations for Matrix.page Apps
 
+> **Current execution direction (2026-11-16):** implementation proceeds; all spikes, checks, testing and regression qualification are deferred by the requester. See [implementation-status.md](implementation-status.md) for the current shared Share UI, delivery boundary and disabled rollout. Historical checkmarks/results below do not qualify the rewritten heads.
+
+
 This is the implementation/verification guide for the planned feature. It does
 not authorize production deployment, provider purchase, Clerk domain changes,
 or account mutations by itself.

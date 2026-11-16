@@ -1,5 +1,8 @@
 # Implementation Plan: Email Invitations for Matrix.page Apps
 
+> **Current execution direction (2026-11-16):** implementation proceeds; all spikes, checks, testing and regression qualification are deferred by the requester. See [implementation-status.md](implementation-status.md) for the current shared Share UI, delivery boundary and disabled rollout. Historical checkmarks/results below do not qualify the rewritten heads.
+
+
 **Branch**: `2691-email-app-invitations` | **Date**: 2026-11-09 | **Spec**: [spec.md](spec.md)  
 **Tracking**: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os)  
 **UI dependency**: [PR #3200](https://github.com/HamedMP/matrix-os/pull/3200)
