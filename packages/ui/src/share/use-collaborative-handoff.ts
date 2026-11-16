@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   COLLABORATIVE_HANDOFF_EVENT, collaborativeHandoffPath, parseCollaborativeHandoff,
-  type CollaborativeHandoffRecord, type CollaborativeHandoffState,
+  type CollaborativeHandoffRecord,
 } from "@matrix-os/contracts";
 
 /** Minimal owner file API (Web `shellApi`, Electron `ApiClient.forRuntime`). */
@@ -15,9 +15,9 @@ export const HANDOFF_POLL_MS = 5_000;
 export const HANDOFF_FAST_POLLS = 360;
 export const HANDOFF_SLOW_POLL_MS = 60_000;
 
-const blobPath = (appSlug: string) => `/api/files/blob?path=${encodeURIComponent(collaborativeHandoffPath(appSlug))}`;
-// The record is replaced on every transition; the blob route refuses overwrites without force.
-const blobWritePath = (appSlug: string) => `${blobPath(appSlug)}&force=true`;
+const blobPath = (path: string) => `/api/files/blob?path=${encodeURIComponent(path)}`;
+const handoffIntentPath = (resultPath: string) => resultPath.replace(/\.json$/, ".intent.json");
+const cancelStorageKey = (appSlug: string) => `matrix:org-share:cancelled:${appSlug}`;
 
 function isNotFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -31,18 +31,48 @@ function isNotFound(error: unknown): boolean {
  * `completed`/`failed` is the completion event (see contracts/collaborative-app-handoff).
  */
 export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api: HandoffFileApi | null }) {
-  const [record, setRecord] = useState<CollaborativeHandoffRecord | null>(null);
+  const [loadedRecord, setRecord] = useState<CollaborativeHandoffRecord | null>(null);
   const [writeFailed, setWriteFailed] = useState(false);
   const generation = useRef(0);
+  const pendingWrites = useRef(0);
+  const cancelledRequest = useRef<string | null>(null);
+  const record = api && loadedRecord?.appSlug === appSlug ? loadedRecord : null;
+  const storageKey = cancelStorageKey(appSlug);
+
+  const isCancelled = useCallback((requestId: string): boolean => {
+    if (cancelledRequest.current === requestId) return true;
+    try {
+      return window.localStorage.getItem(storageKey) === requestId;
+    } catch (error: unknown) {
+      console.warn("[share] local handoff cancellation unavailable", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  }, [storageKey]);
 
   const read = useCallback(async (signal?: AbortSignal): Promise<CollaborativeHandoffRecord | null> => {
     if (!api) return null;
-    try {
-      return parseCollaborativeHandoff(await api.get(blobPath(appSlug), { signal }), appSlug);
-    } catch (error: unknown) {
-      if (isNotFound(error)) return null;
-      throw error;
-    }
+    const resultPath = collaborativeHandoffPath(appSlug);
+    const load = async (path: string, isIntent: boolean) => {
+      try {
+        const next = parseCollaborativeHandoff(await api.get(blobPath(path), { signal }), appSlug);
+        if (isIntent && (!next || next.state === "completed" || next.state === "failed")) {
+          throw new Error("Invalid handoff intent");
+        }
+        return next;
+      } catch (error: unknown) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    };
+    const result = await load(resultPath, false);
+    // Read intent after the builder result to observe a Cancel saved while that read was in flight.
+    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await -- the intent snapshot must come after the builder result.
+    const intent = await load(handoffIntentPath(resultPath), true);
+    if (!intent) return result; // Legacy handoffs predate the separate intent file.
+    if (intent.state !== "running") return intent;
+    if (result?.requestId === intent.requestId && result.organizationId === intent.organizationId
+      && (result.state === "completed" || result.state === "failed")) return result;
+    return intent;
   }, [api, appSlug]);
 
   useEffect(() => {
@@ -50,68 +80,87 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
     const controller = new AbortController();
     const current = ++generation.current;
     void read(controller.signal).then((next) => {
-      if (generation.current === current) setRecord(next);
+      if (controller.signal.aborted || generation.current !== current) return;
+      setRecord(next && isCancelled(next.requestId) ? { ...next, state: "cancelled" } : next);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) console.warn("[share] handoff read failed", error instanceof Error ? error.name : "UnknownError");
     });
     return () => controller.abort();
-  }, [api, read]);
+  }, [api, isCancelled, read]);
 
   const running = record?.state === "running";
   const requestId = record?.requestId;
   useEffect(() => {
     if (!api || !running) return;
+    const current = generation.current;
     let polls = 0;
-    let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
+    const active = () => !controller.signal.aborted && generation.current === current
+      && requestId !== undefined && !isCancelled(requestId);
     const poll = async () => {
-      if (cancelled) return;
+      if (!active()) return;
       polls += 1;
       try {
         const next = await read(controller.signal);
-        if (cancelled) return;
+        if (!active()) return;
         // Only the active request's completion counts; a stray record is ignored.
         if (next && next.requestId === requestId && next.state !== "running") { setRecord(next); return; }
       } catch (error: unknown) {
-        if (cancelled) return;
+        if (!active()) return;
         console.warn("[share] handoff poll failed", error instanceof Error ? error.name : "UnknownError");
       }
       timer = setTimeout(() => { void poll(); }, polls < HANDOFF_FAST_POLLS ? HANDOFF_POLL_MS : HANDOFF_SLOW_POLL_MS);
     };
     timer = setTimeout(() => { void poll(); }, HANDOFF_POLL_MS);
-    return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); };
-  }, [api, read, running, requestId]);
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
+  }, [api, isCancelled, read, running, requestId]);
 
   const write = useCallback(async (next: CollaborativeHandoffRecord): Promise<CollaborativeHandoffRecord | null> => {
     if (!api) return null;
-    generation.current += 1;
+    const current = ++generation.current;
+    pendingWrites.current += 1;
     try {
-      await api.put(blobWritePath(appSlug), next);
-      setRecord(next); setWriteFailed(false);
+      await api.put(`${blobPath(handoffIntentPath(collaborativeHandoffPath(appSlug)))}&force=true`, next);
+      if (generation.current !== current) return null;
+      setRecord(next);
+      setWriteFailed(false);
       return next;
     } catch (error: unknown) {
       console.warn("[share] handoff write failed", error instanceof Error ? error.name : "UnknownError");
-      setWriteFailed(true);
+      if (generation.current === current) setWriteFailed(true);
       return null;
+    } finally {
+      pendingWrites.current -= 1;
     }
   }, [api, appSlug]);
 
-  const transition = useCallback((state: CollaborativeHandoffState) => {
-    if (!record) return Promise.resolve(null);
-    return write({ ...record, state, updatedAt: new Date().toISOString() });
-  }, [record, write]);
+  const cancel = (target = record) => {
+    if (!target) return Promise.resolve(null);
+    const next: CollaborativeHandoffRecord = { ...target, state: "cancelled", updatedAt: new Date().toISOString() };
+    cancelledRequest.current = next.requestId;
+    // A reload during the PUT can still see the old owner file.
+    try { window.localStorage.setItem(storageKey, next.requestId); }
+    catch (error: unknown) {
+      console.warn("[share] could not store local handoff cancellation", error instanceof Error ? error.name : "UnknownError");
+    }
+    setRecord(next);
+    return write(next);
+  };
 
   return {
     record,
     writeFailed,
+    isCancelled,
     /** Owner chose "Start in Chats" for this organization. */
-    start: (organizationId: string) => write({
+    start: (organizationId: string) => pendingWrites.current > 0 ? Promise.resolve(null) : write({
       version: 1, event: COLLABORATIVE_HANDOFF_EVENT, requestId: crypto.randomUUID(), appSlug, organizationId,
       state: "running", updatedAt: new Date().toISOString(),
     }),
-    cancel: () => transition("cancelled"),
-    markApplied: () => transition("applied"),
+    cancel,
+    markApplied: () => record && !isCancelled(record.requestId)
+      ? write({ ...record, state: "applied", updatedAt: new Date().toISOString() })
+      : Promise.resolve(null),
   };
 }
 
