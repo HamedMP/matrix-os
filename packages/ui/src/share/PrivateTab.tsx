@@ -2,7 +2,7 @@
 import { useId } from "react";
 import { ChevronRight, Link2, Plus, X } from "lucide-react";
 import type { SiteAccessLinkSummary } from "@matrix-os/contracts";
-import type { EmailInvitationSummary } from "./email-invitations";
+import { canResendEmailInvitation, type EmailInvitationSummary } from "./email-invitations";
 import { isInviteEmail, oneTimeLinkLabel } from "./share-model";
 import { InlineError, ShareButton, ShareCollapsible, ShareCollapsibleContent, ShareCollapsibleTrigger, ShareInput, Spinner } from "./share-controls";
 import { cn } from "./share-cn";
@@ -10,6 +10,7 @@ import type { ShareController } from "./use-share-controller";
 import { useCopy } from "./use-copy";
 
 const STATUS: Record<SiteAccessLinkSummary["status"], string> = { unclaimed: "Unclaimed", claimed: "Claimed", expired: "Expired" };
+const DELIVERY_STATUS: Record<NonNullable<EmailInvitationSummary["deliveryState"]>, string> = { queued: "Email queued", sending: "Email processing", sent: "Email sent", failed: "Email failed", ambiguous: "Email status unknown", suppressed: "Email stopped" };
 const INVITE_STATUS: Record<EmailInvitationSummary["state"], string> = { pending: "Pending", accepted: "Accepted", expired: "Expired", revoked: "Revoked" };
 
 export interface PrivateTabState {
@@ -50,7 +51,7 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
   return <>
     <div className="flex gap-2">
       <label htmlFor={inputId} className="sr-only">Email address</label>
-      <ShareInput id={inputId} type="email" autoComplete="off" placeholder="Invite by email" value={draft}
+      <ShareInput id={inputId} type="email" autoComplete="off" maxLength={254} className="ph-no-capture" data-ph-mask="true" placeholder="Invite by email" value={draft}
         disabled={!available || share.loading || share.loadFailed}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
@@ -60,21 +61,25 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
     </div>
     {!available ? <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">Email invitations aren’t available yet. Use one-time links for now.</p> : null}
     {share.error?.operation === "invite" || share.error?.operation === "invite_change" ? <InlineError>{share.error.message}</InlineError> : null}
-    <ul aria-label="People with access" className="m-0 flex list-none flex-col p-0">
+    {share.inviteOutcome ? <p role="status" className="m-0 text-xs text-[var(--share-muted-fg)]">{share.inviteOutcome === "queued" ? "Invitation queued." : "This address already has an invitation."}</p> : null}
+    <ul aria-label="People with access" className="ph-no-capture m-0 flex list-none flex-col p-0" data-ph-mask="true">
       <li className="flex h-10 items-center gap-2.5">
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--share-primary)] text-xs font-semibold text-[var(--share-primary-fg)]">{ownerInitial}</span>
         <span className="min-w-0 flex-1 text-[13px] font-medium">You</span>
         <span className="text-[13px] text-[var(--share-muted-fg)]">Owner</span>
       </li>
-      {people.map((person) => <li key={person.id} className="flex h-10 items-center gap-2.5">
+      {people.map((person) => <li key={person.id} className="flex min-h-10 items-center gap-2.5 py-1">
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--share-muted)] text-xs font-semibold">{person.emailAddress.charAt(0).toUpperCase()}</span>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{person.emailAddress}</span>
-        {person.state === "expired"
-          ? <ShareButton variant="link" disabled={busy} onClick={() => void share.resendInvite(person)}>Resend</ShareButton>
-          : <span className="text-xs text-[var(--share-subtle-fg)]">{INVITE_STATUS[person.state]}</span>}
-        <ShareButton variant="ghost" size="icon" aria-label={`Remove ${person.emailAddress}`} disabled={busy} onClick={() => void share.revokeInvite(person)}><X className="size-3.5" /></ShareButton>
+        <span className="flex min-w-0 flex-1 flex-col gap-px">
+          <span className="truncate text-[13px]">{person.emailAddress}</span>
+          <span className="text-xs text-[var(--share-muted-fg)]">{INVITE_STATUS[person.state]}{person.state === "pending" && person.deliveryState ? ` · ${DELIVERY_STATUS[person.deliveryState]}` : ""}</span>
+        </span>
+        {canResendEmailInvitation(person) ? <ShareButton variant="link" size="sm" disabled={busy || !available} aria-label={`Resend invitation to ${person.emailAddress}`} onClick={() => void share.resendInvite(person)}>Resend</ShareButton> : null}
+        {person.state === "pending" || person.state === "accepted" ? <ShareButton variant="ghost" size="icon" className="size-7" disabled={busy || !available} aria-label={`Revoke invitation for ${person.emailAddress}`} onClick={() => void share.revokeInvite(person)}><X className="size-3.5" /></ShareButton> : null}
       </li>)}
     </ul>
+    {share.invitationsNextCursor ? <ShareButton size="sm" disabled={busy || !available} onClick={() => void share.loadMoreInvitations()}>Load more invitations</ShareButton> : null}
+    {share.invitationsPaged ? <ShareButton variant="link" size="sm" disabled={busy} onClick={share.showNewestInvitations}>Show newest invitations</ShareButton> : null}
     {share.pageMode === "private_email" && people.length > 0 && appUrl ? <div className="flex items-center gap-2.5 border-t border-[var(--share-border)] pt-3">
       <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--share-muted)]"><Link2 className="size-3.5" /></span>
       <span className="flex min-w-0 flex-1 flex-col gap-px">

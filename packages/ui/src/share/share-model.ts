@@ -41,9 +41,9 @@ const MODE_CTA: Record<PageModeTarget, string> = {
 
 export interface ModeSwitchCopy { title: string; body: string; cta: string }
 
-export function modeSwitchCopy(current: PageModeTarget, target: PageModeTarget, invitedCount: number): ModeSwitchCopy {
+export function modeSwitchCopy(current: PageModeTarget, target: PageModeTarget, invitedCount: number | null): ModeSwitchCopy {
   const loss = current === "private_email"
-    ? `${invitedCount} invited ${invitedCount === 1 ? "person loses" : "people lose"} access, and their invites can’t be restored.`
+    ? invitedCount === null ? "Invited people lose access, and their invites can’t be restored." : `${invitedCount} invited ${invitedCount === 1 ? "person loses" : "people lose"} access, and their invites can’t be restored.`
     : current === "private_link"
       ? "Existing one-time links stop working."
       : "The public link stops working for visitors.";
