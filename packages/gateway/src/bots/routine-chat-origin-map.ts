@@ -2,7 +2,7 @@ import { acceptedRoutineOriginTarget } from "./routine-chat-origin-target.js";
 import type { BotInteractionRecord } from "./repositories/interactions.js";
 import type { BotExecutor } from "./repositories/shared.js";
 import { RoutineCliSourceContextSchema } from "./routine-cli-source-context.js";
-import { RoutineCliOperationSchema } from "@matrix-os/contracts";
+import { ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, RoutineCliOperationSchema, type BotInteraction } from "@matrix-os/contracts";
 import { parseJson } from "../chat/records.js";
 
 export interface RoutineChatOrigin {
@@ -11,6 +11,12 @@ export interface RoutineChatOrigin {
   canonicalChatId: string; botId: string; bindingCreatedAt: string; directChat: boolean;
 }
 type OriginCoordinates = { ownerId: string; botId: string; chatId: string };
+
+export function projectRoutineOriginInteraction(interaction: BotInteraction, origin: RoutineChatOrigin): BotInteraction {
+  return origin.directChat
+    ? { ...interaction, chatId: origin.sourceChatId, agentId: ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID }
+    : interaction;
+}
 
 function originFromReceipt(row: { owner_id: string; computer_id: string; client_request_id: string;
   source_context: unknown; operation: unknown; target_snapshot: unknown; admission: { disposition: string } }, target: OriginCoordinates): RoutineChatOrigin | undefined {

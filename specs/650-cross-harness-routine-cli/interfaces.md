@@ -149,6 +149,12 @@ Qualification is source/component/client/owner HTTP + native PostgreSQL, includi
 
 **Example.** A Bot-backed approval displays `Bot: Research Bot`. A direct approval displays `Runs on: Matrix Schedules` on the shared card.
 
+## Conversational schedules
+
+Claude Code Chat uses native scheduling. A supported private Chat without native scheduling can propose a Matrix routine directly from the conversation. The approval stays with the proposing turn, and committed results appear in timeline order. Schedules opens the task details and links back to the source Chat.
+
+The host uses a current verified Full Access binding when it can prove the exact destination. A qualified Chat without a saved destination uses the owner-scoped execution identity for that Chat and an exact operation confirmation. Schedule activation remains a separate owner decision. The private execution identity never becomes a user-visible Bot.
+
 ## Retained direct-routine preview schema
 
 `bootstrapBotDatabase` recognizes the exact retained `routine_chat_origin` (16), `routine_direct_chat` (17), and `bot_chat_binding_history_index` (18) ledger only when the v15 runtime is reading the complete matching migration history and the deployed additive catalog matches. The check runs under the existing Bot schema advisory lock, uses read-only checks for the retained preview, and neither rewrites the ledger nor removes owner data. The v15 path permits this known shape only when no retained source routine or direct-coordinator work is live. Historical uncertain results retain their original status. A v15 routine cannot use a reserved direct coordinator Bot or Chat as its target. Any unknown schema or live work requiring the preview runtime still stops Bot startup.

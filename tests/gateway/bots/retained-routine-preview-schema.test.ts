@@ -46,7 +46,7 @@ async function createHistoricalRoutine(db: Kysely<OwnerBotDatabase>, status: "ar
 }
 
 it("restores Bot startup and its owner routine-action route with dormant retained preview history", async () => {
-  const { db, destroy } = await createBotStateDatabase({ migrate: false });
+  const { db, destroy } = await createBotStateDatabase({ migrate: false, routineAuthority: true });
   const home = await mkdtemp(join(tmpdir(), "matrix-retained-routine-preview-"));
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
@@ -80,8 +80,8 @@ it("restores Bot startup and its owner routine-action route with dormant retaine
   }
 });
 
-it.each(["future version", "wrong shape", "partial ledger", "wrong index", "paused routine", "unsettled fire", "blocked coordinator task", "pending decision"] as const)("rejects incompatible retained preview state: %s", async fault => {
-  const { db, destroy } = await createBotStateDatabase({ migrate: false });
+it.each(["future version", "wrong shape", "partial ledger", "wrong index", "paused routine", "unsettled fire", "blocked coordinator task", "pending decision"] as const)("separates current schema checks from legacy rollback restrictions: %s", async fault => {
+  const { db, destroy } = await createBotStateDatabase({ migrate: false, routineAuthority: true });
   try {
     await bootstrapBotDatabase(db, legacyMigrations);
     await retainRoutinePreviewSchema(db);
@@ -111,7 +111,14 @@ it.each(["future version", "wrong shape", "partial ledger", "wrong index", "paus
     }
     const before = await ledger(db);
     await expect(bootstrapBotDatabase(db, legacyMigrations)).rejects.toEqual(new BotSchemaError("newer_schema"));
-    await expect(bootstrapBotDatabase(db)).rejects.toEqual(new BotSchemaError(fault === "partial ledger" ? "invalid_migrations" : "newer_schema"));
+    if (fault === "paused routine" || fault === "unsettled fire" || fault === "blocked coordinator task" || fault === "pending decision") {
+      await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [] });
+      // The installed runtime can reconcile a matching active schema, but mere stored ids
+      // do not grant the hidden target authority without a live private source.
+      await expect(hasLiveRoutineChat(db, OWNER, retainedBotId, retainedChatId)).resolves.toBe(false);
+    } else {
+      await expect(bootstrapBotDatabase(db)).rejects.toEqual(new BotSchemaError(fault === "partial ledger" ? "invalid_migrations" : "newer_schema"));
+    }
     expect(await ledger(db)).toEqual(before);
   } finally {
     await destroy();

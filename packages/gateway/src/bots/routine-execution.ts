@@ -259,6 +259,11 @@ export function createBotRoutineExecution(deps: {
   }
   const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire,
     cancelUnstarted: (tx, ownerId, fireId, at) => finish({ ownerId, fireId, status: "cancelled", expectedStatus: "claimed", now: at }, undefined, tx) });
+  async function control(ownerId: string, botId: string, routineId: string, raw: unknown) {
+    const routine = await transact(ownerId, tx => controls.controlWithin(tx, ownerId, botId, routineId, raw));
+    await controls.afterControlCommit(routine);
+    return routine;
+  }
   return {
     describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
     approvalReply: (scope: Parameters<typeof routineApprovalReply>[1]) => routineApprovalReply(deps.db, scope, now()),
@@ -390,10 +395,12 @@ export function createBotRoutineExecution(deps: {
       }));
     },
     ...controls,
-    async control(ownerId: string, botId: string, routineId: string, raw: unknown) {
-      const routine = await transact(ownerId, tx => controls.controlWithin(tx, ownerId, botId, routineId, raw));
-      await controls.afterControlCommit(routine);
-      return routine;
+    control,
+    async controlOwner(ownerId: string, routineId: string, raw: unknown) {
+      // The presentation DTO intentionally never carries a direct routine's execution agent.
+      const routine = await repository.get(ownerId, routineId);
+      if (!routine) throw new BotStateError("not_found");
+      return control(ownerId, routine.botId, routineId, raw);
     }
   };
 }

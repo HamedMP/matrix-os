@@ -1,6 +1,8 @@
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
+import { createRoutineOriginStartup, type RoutineOriginStartup } from "./routine-origin.js";
 import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import { createRoutineCliDestinationService } from "../bots/routine-cli-destination-service.js";
+import { createRoutineDirectChatContexts } from "../bots/routine-direct-chat-contexts.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
@@ -131,7 +133,7 @@ export async function runConnectionReconciliationPass(
   }
 }
 
-export interface BotServices {
+export interface BotServices extends RoutineOriginStartup {
   routineCli?: RoutineCliRuntime;
   routineDestination?: ReturnType<typeof createRoutineCliDestinationService>;
   routines?: BotRoutineExecution;
@@ -169,7 +171,7 @@ export async function startBots(options: {
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission" | "appendRoutineReceipt">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -267,6 +269,8 @@ export async function startBots(options: {
     decideApproval:(tx,interaction,decision)=>(interaction.payload as {tool?:string}).tool==="routine.activate" ? routineApprovals.decide(tx,interaction,decision) : accessHandlers.decideApproval(tx,interaction,decision),
     ...(connections ? {startConnect:connections.startConnect} : {}),
   }});
+  const routineOriginRuntime = createRoutineOriginStartup({ db, transact, repository: options.repository, interactions,
+    computerId: options.computerId ?? undefined, platform: options.routineActionPlatform, now: options.now });
   const authority = createBotAuthority({ resolveProcedure, transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
   // Started connection requests are completed from the inventory; passes never overlap and stop on close.
   let connectionTimer: ReturnType<typeof setInterval> | undefined;
@@ -311,9 +315,12 @@ export async function startBots(options: {
   };
   const host = options.host;
   if (!host?.available) {
+    routineOriginRuntime.routineOrigin?.start();
     return {
+      ...routineOriginRuntime,
       recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
       async close() {
+        await routineOriginRuntime.routineOrigin?.close();
         await routines.stop();
         chatgptPlanPeers?.close();
         await stopConnections();
@@ -365,6 +372,8 @@ export async function startBots(options: {
   const routineCli = options.routineActionPlatform && options.computerId && options.configuredOwnerIds?.length
     ? createRoutineCliRuntime({ db, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds,
       agents: options.agents, repository: options.repository, transact, approvals: routineApprovals, control: routines, registry,
+      directChatContexts: createRoutineDirectChatContexts({ db, agents: options.agents, repository: options.repository,
+        ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId), now: options.now }),
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
@@ -400,6 +409,7 @@ export async function startBots(options: {
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
     routineProposals: routineCli?.proposals,
+    ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
     inputHistory,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
@@ -501,8 +511,9 @@ export async function startBots(options: {
     orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
+  routineOriginRuntime.routineOrigin?.start();
   return {
-    routineCli, routineDestination,
+    ...routineOriginRuntime, routineCli, routineDestination,
     recipes,
     routines,
     instantiation,
@@ -520,6 +531,7 @@ export async function startBots(options: {
     managedAdapter: managed.adapter,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
+      await routineOriginRuntime.routineOrigin?.close();
       await routines.stop();
       chatgptPlanPeers?.close();
       await routineCli?.close();

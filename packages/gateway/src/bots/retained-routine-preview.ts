@@ -28,9 +28,8 @@ const previewColumnTypes = {
   },
 } as const;
 
-/** The caller holds the Bot migration lock. Check the deployed additive shape
- * before reading preview-only columns, then allow only dormant preview work. */
-export async function canReadRetainedRoutinePreview(db: Transaction<OwnerBotDatabase>): Promise<boolean> {
+/** Validate the deployed additive shape under the Bot migration lock. */
+export async function hasRetainedRoutinePreviewSchema(db: Transaction<OwnerBotDatabase>): Promise<boolean> {
   const columns = await sql<{ table_name: string; column_name: string; kind: string; column_default: string | null }>`
     SELECT table_name, column_name, udt_name || ':' || is_nullable AS kind, column_default FROM information_schema.columns
     WHERE table_schema = current_schema() AND (
@@ -69,8 +68,12 @@ export async function canReadRetainedRoutinePreview(db: Transaction<OwnerBotData
           AND pg_get_indexdef(indexrelid, 1, true) = 'chat_id' AND pg_get_indexdef(indexrelid, 2, true) = 'owner_id'
           AND pg_get_indexdef(indexrelid, 3, true) = 'bot_id')
       )) = 4 AS ready`.execute(db);
-  if (markers.rows[0]?.ready !== true) return false;
+  return markers.rows[0]?.ready === true;
+}
 
+/** A runtime without origin support can read the retained schema only while preview work is dormant. */
+export async function canReadRetainedRoutinePreview(db: Transaction<OwnerBotDatabase>): Promise<boolean> {
+  if (!await hasRetainedRoutinePreviewSchema(db)) return false;
   const pending = await sql<{ live: boolean }>`SELECT
     EXISTS (SELECT 1 FROM routine_direct_chat_contexts
       WHERE bot_id !~ ${coordinatorBot.source} OR chat_id !~ ${coordinatorChat.source}) OR
