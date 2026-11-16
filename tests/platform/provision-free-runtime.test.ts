@@ -11,6 +11,8 @@ import {
 } from '../../packages/platform/src/db.js';
 import type { FreeTierConfig } from '../../packages/platform/src/free-tier/config.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
+import { getRuntimeAccessDecision } from '../../packages/platform/src/billing.js';
 import { addFreeTierInvite, getFreeTierInvite } from '../../packages/platform/src/free-tier/invites.js';
 import {
   createFreeRuntimeProvisioner,
@@ -253,6 +255,24 @@ describe('POST /api/auth/provision-runtime for the free plan', () => {
     expect((await request(routesFor(db).routes, FREE)).status).toBe(409);
     expect(await containerRows(db, OWNER)).toHaveLength(0);
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe' });
+  });
+
+  it('gives a former paid owner runtime access after free signup although their canceled subscription is retained', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await db.executor.insertInto('billing_subscriptions').values({
+      stripe_subscription_id: 'sub_old', stripe_customer_id: 'cus_1', clerk_user_id: OWNER, runtime_slot: 'primary',
+      plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly', price_unit_amount_minor: null,
+      price_currency: null, price_interval_count: null, price_quantity: null, status: 'canceled', current_period_end: null,
+      grace_period_ends_at: null, trial_started_at: null, trial_ends_at: null, trial_converted_at: null,
+      first_trial_payment_failed_at: null, latest_event_created_at: EARLIER, latest_event_id: 'evt_1',
+      latest_invoice_event_created_at: null, latest_invoice_event_id: null, updated_at: EARLIER,
+    }).execute();
+    expect((await request(routesFor(db).routes, FREE)).status).toBe(202);
+    const entitlement = await resolveEffectiveBillingEntitlementForSlot(db, OWNER, NOW, 'primary',
+      { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' });
+    expect(entitlement).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+    expect(getRuntimeAccessDecision(entitlement, NOW, 'container')).toMatchObject({ runtimeProxyAllowed: true });
   });
 
   it('refuses a former paid owner who still has a live VPS in any slot', async () => {

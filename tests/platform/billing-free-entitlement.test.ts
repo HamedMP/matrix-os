@@ -34,6 +34,23 @@ function paidEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEn
   };
 }
 
+const PRICE_ENV = { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' };
+
+async function insertSubscription(db: PlatformDB, clerkUserId: string, changes: {
+  status: string; gracePeriodEndsAt?: string | null; currentPeriodEnd?: string | null; id?: string;
+}) {
+  await db.executor.insertInto('billing_subscriptions').values({
+    stripe_subscription_id: changes.id ?? 'sub_old', stripe_customer_id: 'cus_1', clerk_user_id: clerkUserId,
+    runtime_slot: 'primary', plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly',
+    price_unit_amount_minor: null, price_currency: null, price_interval_count: null, price_quantity: null,
+    status: changes.status, current_period_end: changes.currentPeriodEnd ?? null,
+    grace_period_ends_at: changes.gracePeriodEndsAt ?? null, trial_started_at: null, trial_ends_at: null,
+    trial_converted_at: null, first_trial_payment_failed_at: null, latest_event_created_at: '2026-10-01T00:00:00.000Z',
+    latest_event_id: `evt_${changes.id ?? 'old'}`, latest_invoice_event_created_at: null, latest_invoice_event_id: null,
+    updated_at: '2026-10-01T00:00:00.000Z',
+  } as never).execute();
+}
+
 describe('free plan catalog', () => {
   it('defines a zero-cost plan for one container runtime that checkout cannot sell', () => {
     expect(MATRIX_FREE_PLAN).toMatchObject({ slug: 'matrix_free', monthlyUsd: 0, maxRuntimeSlots: 1, substrate: 'container' });
@@ -131,6 +148,28 @@ describe('slot-scoped entitlement resolution', () => {
     expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'secondary', {})).toBeNull();
   });
 
+  it('resolves the free entitlement for a former paid owner whose ended primary subscription is retained', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertSubscription(db, 'user_free', { status: 'canceled' });
+    const primary = await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'primary', PRICE_ENV);
+    expect(primary).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+    expect(getRuntimeAccessDecision(primary, NOW, 'container')).toMatchObject({ runtimeProxyAllowed: true });
+  });
+
+  it('resolves a resubscribed former free owner to the live paid subscription', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertSubscription(db, 'user_free', { status: 'active', id: 'sub_new' });
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'primary', PRICE_ENV))
+      .toMatchObject({ source: 'stripe', status: 'active', stripeSubscriptionId: 'sub_new' });
+  });
+
+  it.each(['active', 'canceled', 'past_due'])('leaves a paid owner with a %s subscription on the subscription', async (status) => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    await insertSubscription(db, 'user_paid', { status });
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_paid', NOW, 'primary', PRICE_ENV))
+      .toMatchObject({ source: 'stripe', status, stripeSubscriptionId: 'sub_old' });
+  });
+
   it('still ignores a stored paid entitlement for a slot without a subscription', async () => {
     await upsertBillingEntitlement(db, paidEntitlement());
     expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_paid', NOW, 'primary', {})).toBeNull();
@@ -154,13 +193,27 @@ describe('billing status for a free owner', () => {
   function status(path: string) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
-      db, stripe: unusedStripe, env: {}, resolveClerkUserId: async () => 'user_free', now: () => NOW,
+      db, stripe: unusedStripe, env: PRICE_ENV, resolveClerkUserId: async () => 'user_free', now: () => NOW,
     }));
     return app.request(path);
   }
 
   it('lets an active free owner through to their container runtime instead of the payment gate', async () => {
     await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertUserMachine(db, {
+      machineId: 'ctr-free', clerkUserId: 'user_free', handle: 'freeowner', status: 'stopped',
+      provisionedAt: NOW.toISOString(), substrate: 'container',
+    });
+    for (const path of ['/billing/status', '/billing/status?runtimeSlot=primary']) {
+      const response = await status(path);
+      expect(response.status).toBe(200);
+      expect((await response.json()).access).toMatchObject({ runtimeProxyAllowed: true, reason: 'active' });
+    }
+  });
+
+  it('lets a former paid free owner through although their ended primary subscription is retained', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertSubscription(db, 'user_free', { status: 'canceled' });
     await insertUserMachine(db, {
       machineId: 'ctr-free', clerkUserId: 'user_free', handle: 'freeowner', status: 'stopped',
       provisionedAt: NOW.toISOString(), substrate: 'container',

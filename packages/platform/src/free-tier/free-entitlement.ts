@@ -41,3 +41,31 @@ export function freeEntitlementForSlot(
 ): BillingEntitlement | null {
   return stored?.source === 'free' && runtimeSlot === FREE_RUNTIME_SLOT ? stored : null;
 }
+
+const ENDED_SUBSCRIPTION_STATUSES = new Set(['canceled', 'ended', 'none']);
+
+function notAhead(at: string | null | undefined, now: Date): boolean {
+  return !at || Date.parse(at) <= now.getTime();
+}
+
+/**
+ * The entitlement for one slot, given the slot's subscription projected as an
+ * entitlement (or null when the slot has none). A former paid owner keeps
+ * their ended subscription row after taking the free plan; once that
+ * subscription grants nothing (an ended status with no grace period or
+ * effective end still ahead) the stored free entitlement stands for the free
+ * runtime's slot. A live subscription still wins, and owners without a stored
+ * free entitlement resolve exactly as before.
+ */
+export function entitlementForSlot(
+  stored: BillingEntitlement | null,
+  runtimeSlot: string,
+  subscription: BillingEntitlement | null,
+  now: Date,
+): BillingEntitlement | null {
+  const free = freeEntitlementForSlot(stored, runtimeSlot);
+  if (!subscription) return free;
+  const ended = ENDED_SUBSCRIPTION_STATUSES.has(subscription.status)
+    && notAhead(subscription.gracePeriodEndsAt, now) && notAhead(subscription.effectiveUntil, now);
+  return free && ended ? free : subscription;
+}
