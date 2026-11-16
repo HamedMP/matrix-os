@@ -46,6 +46,13 @@ function workersAiStream(): string {
     + `data: ${JSON.stringify({ response: "", usage })}\n\n` + "data: [DONE]\n\n";
 }
 
+/** A complete stream whose final usage never arrives. */
+function streamWithoutUsage(): string {
+  const chunk = (value: object) => `data: ${JSON.stringify({ id: "response_1", model: MODEL, ...value })}\n\n`;
+  return chunk({ choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: null }] })
+    + chunk({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "data: [DONE]\n\n";
+}
+
 function chat(app: Hono, credential: string) {
   return app.request("/v1/chat/completions", {
     method: "POST",
@@ -143,9 +150,10 @@ describe("free Matrix AI end to end through the relay and the platform", () => {
     const credential = (await repo.issueRuntimeCredential(identity)).credential;
     const platformApp = new Hono().route("/internal/ai/funded", createAiFundedRelayRoutes({ relayControlToken: RELAY_TOKEN, repository: repo }));
     let gate: Promise<void> | null = null;
+    let withoutUsage = false;
     const generations = vi.fn(async () => {
       if (gate) await gate;
-      return new Response(workersAiStream(), { headers: { "content-type": "text/event-stream" } });
+      return new Response(withoutUsage ? streamWithoutUsage() : workersAiStream(), { headers: { "content-type": "text/event-stream" } });
     });
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const target = String(url);
@@ -160,6 +168,7 @@ describe("free Matrix AI end to end through the relay and the platform", () => {
     return {
       repo, identity, credential, app, generations,
       hold(until: Promise<void>) { gate = until; },
+      loseUsage() { withoutUsage = true; },
     };
   }
 
@@ -196,6 +205,26 @@ describe("free Matrix AI end to end through the relay and the platform", () => {
     expect(await owner.repo.getFundingSummary(owner.identity)).toMatchObject({ settledThisMonthMicrousd: 10, remainingBudgetMicrousd: 0 });
     const next = await chat(owner.app, owner.credential.token);
     expect(next.status).not.toBe(200);
+    expect(owner.generations).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the hold reserved and the owner blocked when the relay never sees final usage", async () => {
+    const owner = await freeOwner({ dailyFundedSpendMicrousd: 100_000_000 });
+    owner.loseUsage();
+    const response = await chat(owner.app, owner.credential.token);
+    expect(response.status).toBe(200); await response.text();
+    // The relay reports the unknown outcome to the platform's terminal handler.
+    await vi.waitFor(async () => {
+      const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+        .where("machine_id", "=", owner.identity.machineId).executeTakeFirstOrThrow();
+      expect(row.terminal_outcome).not.toBeNull();
+    });
+    const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("machine_id", "=", owner.identity.machineId).executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ status: "in_flight", actual_microusd: null, customer_charge_release: null,
+      execution_admission_release: null });
+    expect(await owner.repo.getFundingSummary(owner.identity)).toMatchObject({ reservedMicrousd: Number(row.reserved_microusd) });
+    expect((await chat(owner.app, owner.credential.token)).status).toBe(429);
     expect(owner.generations).toHaveBeenCalledTimes(1);
   });
 

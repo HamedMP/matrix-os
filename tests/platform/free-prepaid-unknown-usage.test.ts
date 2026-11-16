@@ -106,6 +106,20 @@ describe('free prepaid requests with unknown usage', () => {
     await expect(assertFundedConservativeFence(db.executor)).resolves.toBeUndefined();
   });
 
+  it('keeps the hold reserved and blocking when a legacy relay finalizes conservatively', async () => {
+    const owner = await runtime({ free: true });
+    const { key, hold, expiresAt } = await owner.lostUsage();
+    await expect(owner.repo.finalizeReservation({ ...key, mode: 'conservative' })).rejects.toMatchObject({ code: 'unavailable' });
+    expect(await owner.row(key.reservationId)).toMatchObject({ status: 'in_flight', customer_charge_release: null });
+    expect(await owner.repo.getFundingSummary(owner.identity)).toMatchObject({ reservedMicrousd: hold });
+    await expect(owner.next()).rejects.toMatchObject({ code: 'rate_limited' });
+    // A retry answers the same and still leaves it for the sweep.
+    await expect(owner.repo.finalizeReservation({ ...key, mode: 'conservative' })).rejects.toMatchObject({ code: 'unavailable' });
+    pastGrace(expiresAt);
+    expect(await owner.repo.cleanupExpiredReservations({ limit: 100 })).toBe(1);
+    await expect(owner.next()).resolves.toMatchObject({ authorized: true });
+  });
+
   it('settles at the exact cost when exact usage arrives before the sweep', async () => {
     const owner = await runtime({ free: true });
     const { key, expiresAt } = await owner.lostUsage();

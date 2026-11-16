@@ -26,6 +26,7 @@ import {
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
 import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, type FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
@@ -700,7 +701,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         else if (reservation.charge_waiver !== null) readUsageWaiverAudit(reservation);
         else {
           if (reservation.status !== "in_flight" || reservation.actual_microusd !== null) throw new AiFundedPolicyError("reservation_closed");
-          await releaseCustomerCharge(trx.executor, reservation, "usage_unknown", checkedAt);
+          // A free prepaid hold stays reserved and blocking; only its sweep releases it.
+          if (!await isFreePrepaidHold(trx.executor, reservation)) {
+            await releaseCustomerCharge(trx.executor, reservation, "usage_unknown", checkedAt);
+          }
         }
         // Commit the customer release while explicitly retaining unknown provider cost.
         // The legacy finalization wire cannot truthfully return an exact amount here.
