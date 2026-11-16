@@ -38,6 +38,7 @@ import type { DatabaseSessionQuery, OwnerDatabaseSessions } from './container-ow
  * interval; data it writes as the holder counts against the size limit.
  */
 
+/** `would_not_fit`: the window had too little reclaimable space to be worth a rewrite. */
 export type CompactionOutcome = 'would_not_fit' | 'compacted' | 'still_blocked' | 'unsafe_to_compact';
 
 export interface OwnerDatabaseCompactorDeps {
@@ -53,6 +54,8 @@ export interface OwnerDatabaseCompactorDeps {
 
 const SESSION_LIMITS = ["SET lock_timeout = '5s'", "SET statement_timeout = '120s'"];
 const MAX_TABLES = 500;
+/** A window that would give back less than this is not worth a rewrite. */
+const MIN_RECLAIM_BYTES = 1024 * 1024;
 const COOLDOWN_MS = 30 * 60_000;
 const COOLDOWN_CAP = 1_000;
 const REVOKE_TIMEOUT_MS = 10_000;
@@ -109,8 +112,6 @@ const OWNER_CODE_IN_EXPRESSIONS = `WITH trees AS (
     OR o.oprnamespace <> 'pg_catalog'::regnamespace OR op.pronamespace <> 'pg_catalog'::regnamespace
     OR t.typnamespace <> 'pg_catalog'::regnamespace
   LIMIT 1`;
-
-const DATABASE_SIZE = 'SELECT pg_database_size(current_database())::bigint AS size_bytes';
 
 function bytes(rows: Record<string, unknown>[], column: string): number {
   const value = Number(rows[0]?.[column]);
@@ -184,9 +185,10 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
     // Only the tables this attempt rewrites can give space back, so only they are estimated.
     const estimate = await query(LIVE_ESTIMATE, [target.holderName, oids]);
     await query('RESET ROLE');
-    const predicted = bytes(await query(DATABASE_SIZE), 'size_bytes')
-      - bytes(estimate, 'allocated_bytes') + bytes(estimate, 'live_bytes');
-    if (predicted >= target.restoreBelowBytes) return 'would_not_fit';
+    // Owner decision 2026-11-16: any window with space to reclaim is rewritten, even when it alone
+    // cannot lift the block, so successive windows make progress until the database fits.
+    const reclaimable = bytes(estimate, 'allocated_bytes') - bytes(estimate, 'live_bytes');
+    if (reclaimable < MIN_RECLAIM_BYTES) return 'would_not_fit';
     await query(`SET ROLE ${target.holderSql}`);
     for (const name of names) await query(`VACUUM (FULL) ${name}`);
     await query('RESET ROLE');

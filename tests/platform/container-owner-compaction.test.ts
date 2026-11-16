@@ -163,6 +163,35 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
     expect(await blockedAt(owner)).toBeNull();
   });
 
+  it('makes progress window by window when no single window frees enough space', async () => {
+    const owner = `user_compact_${randomUUID().slice(0, 8)}`;
+    const probe = createContainerOwnerDatabases({ db, admin, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
+    const credentials = await probe.ensure(owner, 1, signal());
+    const setup = connect(credentials);
+    await setup.connect();
+    for (const table of ['first_half', 'second_half']) {
+      await setup.query(`CREATE TABLE ${table} (id int PRIMARY KEY, body text)`);
+      await setup.query(`INSERT INTO ${table} SELECT g, string_agg(md5(random()::text || g::text || s::text), '')
+        FROM generate_series(1, 6000) g, generate_series(1, 20) s GROUP BY g`);
+      await setup.query(`DELETE FROM ${table} WHERE id % 10 <> 0`);
+    }
+    await setup.end();
+    const size = Number((await superuser.query('SELECT pg_database_size($1)::bigint AS n', [credentials.databaseName])).rows[0].n);
+    // Each table frees about 4 MiB; only both together bring the database under the restore threshold.
+    const sizeLimitBytes = size - 6 * MIB;
+    await db.executor.updateTable('container_owner_databases').set({ size_limit_bytes: sizeLimitBytes })
+      .where('clerk_user_id', '=', owner).execute();
+    const service = createContainerOwnerDatabases({ db, admin, passwordSecret: SECRET, sizeLimitBytes, sizeRestoreMarginBytes: MIB });
+    cleanups.push(() => service.remove(owner, signal()));
+    expect(await service.enforceSizeLimit(owner, signal())).toMatchObject({ writesBlocked: true });
+
+    const compactor = createOwnerDatabaseCompactor({ admin, ownerDatabases: service, cooldownMs: 0, maxTablesPerAttempt: 1 });
+    const outcomes = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) outcomes.push((await compactor.compactFirst([owner], signal()))?.outcome);
+    expect(outcomes).toEqual(['still_blocked', 'compacted']);
+    expect(await blockedAt(owner)).toBeNull();
+  });
+
   it('does not rewrite tables when the live data would not fit below the restore threshold', async () => {
     const statements: string[] = [];
     const { owner, service } = await blockedOwner();
