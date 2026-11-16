@@ -3,6 +3,7 @@ import {
   CollaborationIdSchema,
   CollaborationRevisionSchema,
   CollaborationTerminalActionSchema,
+  CollaborationTerminalFrameSchema,
 } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import type { Context, Hono } from "hono";
@@ -12,13 +13,15 @@ import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { CollaborationAuthority } from "./authority.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 import type { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
-import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
+import { terminalUnavailableFrame, type CollaborationTerminalEventRegistry } from "./terminal-events.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
 const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_PENDING_FRAMES = 8;
 /** Frames accepted but not yet settled by the dispatcher; beyond this the socket is closed. */
 const MAX_INFLIGHT_FRAMES = 16;
+/** "Try Again Later": a missing server dependency is retryable, never a denial or a not-found. */
+const UNAVAILABLE_CLOSE_CODE = 1013;
 const TerminalQuerySchema = z.object({ after: CollaborationRevisionSchema.default("0") }).strict();
 
 type TerminalSession = Awaited<ReturnType<CollaborationTerminalEventRegistry["open"]>>;
@@ -28,14 +31,21 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
   upgradeWebSocket: UpgradeWebSocket;
   verifier: CollaborationActorProofVerifier;
   authority: CollaborationAuthority;
-  dispatcher: CollaborationTerminalDispatcher;
-  registry: CollaborationTerminalEventRegistry;
-  control: TerminalControlCoordinator;
+  /**
+   * Absent only when the shared terminal did not initialize. The route is still mounted
+   * and answers a retryable unavailable after authorization (spec 535 FR-027).
+   */
+  terminal?: {
+    dispatcher: CollaborationTerminalDispatcher;
+    registry: CollaborationTerminalEventRegistry;
+    control: TerminalControlCoordinator;
+  };
   createConnectionId?: () => string;
   now?: () => Date;
 }): void {
   const createConnectionId = options.createConnectionId
     ?? (() => `connection_${randomUUID().replaceAll("-", "")}`);
+  const terminal = options.terminal;
   options.app.get(
     "/ws/collaboration/scopes/:scopeId/terminal",
     options.upgradeWebSocket((context) => {
@@ -60,7 +70,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
         }
         inFlightFrames += 1;
         processing = processing.then(async () => {
-          if (!session || !actorId || !connectionId) return;
+          if (!session || !actorId || !connectionId || !terminal) return;
           const parsed = JSON.parse(raw) as unknown;
           const lifecycle = CollaborationClientFrameSchema.safeParse(parsed);
           if (lifecycle.success && lifecycle.data.type === "heartbeat") {
@@ -68,8 +78,8 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
             return;
           }
           const action = CollaborationTerminalActionSchema.parse(parsed);
-          await options.dispatcher.dispatch({ scopeId, actorId, connectionId, action });
-          await options.registry.publishState(scopeId);
+          await terminal.dispatcher.dispatch({ scopeId, actorId, connectionId, action });
+          await terminal.registry.publishState(scopeId);
           session.touch();
         }).catch((error: unknown) => {
           console.warn("[collaboration-terminal-ws] client frame rejected", error instanceof Error ? error.name : "UnknownError");
@@ -95,8 +105,16 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
             });
             if (authorized.ownerId !== proof.ownerId || authorized.authorityRuntimeId !== proof.runtimeId
               || authorized.resourceKind !== "terminal") throw new Error("authority mismatch");
+            if (!terminal) {
+              console.warn("[collaboration-terminal-ws] shared terminal dependency missing");
+              pendingFrames.splice(0);
+              if (socketClosed) return;
+              sendUnavailable(ws, scopeId, authorized.authorityGeneration);
+              ws.close(UNAVAILABLE_CLOSE_CODE, "Unavailable");
+              return;
+            }
             const nextConnectionId = createConnectionId();
-            const opened = await options.registry.open({
+            const opened = await terminal.registry.open({
               connectionId: nextConnectionId,
               scopeId,
               actorId: proof.actorId,
@@ -155,7 +173,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
           socketClosed = true;
           pendingFrames.splice(0);
           if (proofExpiry) clearTimeout(proofExpiry);
-          if (connectionId) options.control.markDisconnected(scopeId, connectionId);
+          if (connectionId) terminal?.control.markDisconnected(scopeId, connectionId);
           session?.close();
           session = null;
         },
@@ -201,6 +219,15 @@ function sendError(ws: { send(value: string): void }): void {
     ws.send(JSON.stringify({ version: 1, type: "collaboration.error", code: "unavailable" }));
   } catch (error: unknown) {
     console.warn("[collaboration-terminal-ws] socket error send failed", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
+function sendUnavailable(ws: { send(value: string): void }, scopeId: string, authorityGeneration: number): void {
+  try {
+    const frame = terminalUnavailableFrame({ scopeId, authorityGeneration, code: "unavailable" });
+    ws.send(JSON.stringify(CollaborationTerminalFrameSchema.parse(frame)));
+  } catch (error: unknown) {
+    console.warn("[collaboration-terminal-ws] socket unavailable send failed", error instanceof Error ? error.name : "UnknownError");
   }
 }
 
