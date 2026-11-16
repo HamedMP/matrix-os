@@ -66,6 +66,39 @@ describe("owner viewer and run-bound shared Chrome routes",()=>{
       automation: { phase: "agent" },
     });
   });
+  it("recommends Stop for a follow-up observation after an uncertain click leaves the run unavailable", async () => {
+    const s = setup();
+    expect((await s.agent({ action: "snapshot" })).status).toBe(200);
+    s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_unavailable", true));
+    const click = await s.agent({ action: "click", observationId: "obs", ref: "submit" });
+    expect(click.status).toBe(409);
+
+    const followUp = await s.agent({ action: "snapshot" });
+    expect(followUp.status).toBe(200);
+    const result = await followUp.json();
+    expect(result).toMatchObject({
+      success: false,
+      content: expect.stringMatching(/unavailable.*Stop agent.*new run.*verify/i),
+      automation: { phase: "unavailable", run: { runId: s.binding.runId } },
+    });
+    expect(result.content).not.toMatch(/resume|took over/i);
+    expect(s.driver.execute).toHaveBeenCalledTimes(2);
+    expect((await s.owner("resume")).status).toBe(409);
+    expect(await (await s.owner("stop")).json()).toMatchObject({ automation: { phase: "idle", run: null } });
+  });
+  it("reports a control change without implying Resume when the agent still owns Chrome", async () => {
+    const s = setup();
+    s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_changed"));
+    const response = await s.agent({ action: "snapshot" });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      success: false,
+      content: expect.stringMatching(/control changed.*check the current browser state/i),
+      automation: { phase: "agent", run: { runId: s.binding.runId } },
+    });
+    expect(result.content).not.toMatch(/resume|took over/i);
+  });
   it("owner takeover and resume keep Chrome and its current presentation",async()=>{
     const s=setup();await s.agent({action:"snapshot"});
     expect(await (await s.owner("takeover")).json()).toMatchObject({humanControlAvailable:true,automation:{phase:"human"}});

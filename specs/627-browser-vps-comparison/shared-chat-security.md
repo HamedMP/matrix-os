@@ -20,7 +20,7 @@ Follow-up to [MAT-6](https://linear.app/matrix-os/issue/MAT-6/add-browser-use-su
 
 Browser input is enabled only after the driver drains/detaches and the real display gate acknowledges. A failed gate, drain or detach leaves the UI unavailable. Pause keeps the run alive for a bounded owner wait, invalidates queued actions immediately and requires a fresh snapshot after resume. Unknown action effects are never labeled as safe retries. Already-issued website actions can still finish after controller revocation.
 
-When the native MCP tool cannot read a valid action result, it reports that the effect is uncertain and tells the agent to check the current Browser state and verify the outcome. Owner Resume applies only to a live paused or handed-off run. If the broker remains unavailable, the owner can use Stop to acknowledge cleanup before starting a new run with a fresh observation. Recovery does not replay the uncertain action.
+When the native MCP tool cannot read a valid action result, it reports that the effect is uncertain and tells the agent to check the current Browser state and verify the outcome. When a native tool response includes the broker state, a generic control change asks the agent to check it. Resume guidance applies only to the same live run in the paused or human control phase. If that run is unavailable, use Stop agent when offered. After Stop succeeds, start a new run, obtain a fresh observation, and verify the outcome before retrying. Recovery does not replay the uncertain action.
 
 ## Network and credential limits
 

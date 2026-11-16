@@ -214,7 +214,16 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
         return c.json({ success: false, content: error.message }, 200, { "Cache-Control": "no-store" });
       }
       if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy", "tab_limit"].includes(error.code)) {
-        return c.json({ success: false, content: error.message, automation: options.sharedBrowser.broker.status() }, 200, { "Cache-Control": "no-store" });
+        const automation = options.sharedBrowser.broker.status();
+        let content = error.message;
+        if (error.code === "browser_changed" && automation.run?.runId === grant.binding.runId) {
+          if (automation.phase === "unavailable") {
+            content = "Browser control is unavailable. Ask the owner to select Stop agent in Browser if available. After Stop succeeds, start a new run to verify the previous action's outcome. Never repeat it while the outcome is uncertain.";
+          } else if (automation.phase === "human" || automation.phase === "paused") {
+            content = "Browser control changed. Wait for the owner to select Resume agent, then take a fresh snapshot.";
+          }
+        }
+        return c.json({ success: false, content, automation }, 200, { "Cache-Control": "no-store" });
       }
       console.warn("[shared-browser] Agent action unavailable", error instanceof SharedBrowserError ? error.code : "operation_failed");
       return c.json({ error: "The browser action is unavailable. Its effect must be checked before retrying." }, 409);
