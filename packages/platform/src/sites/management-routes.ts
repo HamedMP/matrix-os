@@ -7,6 +7,8 @@ import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
 import type { SitesService } from './service.js';
 import { SiteError } from './types.js';
+/** Generic, provider-free copy for the retired one-time link capability (ENG-490). */
+export const SITE_ONE_TIME_LINKS_RETIRED_ERROR = 'One-time links are no longer available';
 export function createSiteManagementRoutes(options: {
     db: PlatformDB;
     platformSecret: string;
@@ -36,8 +38,11 @@ export function createSiteManagementRoutes(options: {
             authenticatedRuntime: { handle: machine.handle, runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: machine.runtimeTokenEpoch } };
     }
     app.onError((error, c) => {
-        if (error instanceof SiteError)
+        if (error instanceof SiteError) {
+            if (error.code === 'gone')
+                return c.json({ error: SITE_ONE_TIME_LINKS_RETIRED_ERROR }, 410);
             return c.json({ error: error.code === 'conflict' ? 'Site changed; reload and try again' : 'Site unavailable' }, error.code === 'conflict' ? 409 : error.code === 'not_found' ? 404 : error.code === 'invalid_request' ? 400 : 503);
+        }
         console.warn('[sites] management failed', error instanceof Error ? error.name : 'UnknownError');
         return c.json({ error: 'Site unavailable' }, 503);
     });
@@ -104,6 +109,7 @@ export function createSiteManagementRoutes(options: {
         const identity = await owner(c, 'slug'); if (!identity) return denied(c);
         return c.json(await options.service.slugAvailability(identity, { slug: c.req.query('slug') }));
     });
+    // Retired (ENG-490): kept so older gateways get a clean 410 from the service, not a 404.
     app.post('/:appSlug/access-links', smallBody, async c => {
         const identity = await owner(c); if (!identity) return denied(c);
         const input = SiteAccessLinkCreateRequestSchema.safeParse(await c.req.json().catch((error: unknown) => {

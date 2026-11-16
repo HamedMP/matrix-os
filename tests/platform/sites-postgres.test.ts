@@ -6,6 +6,7 @@ import { AccountDeletionRepository } from '../../packages/platform/src/account-d
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { withSiteOwnerAdmission, eraseOwnerSites, eraseOwnerSiteRegistry } from '../../packages/platform/src/sites/account-lifecycle.js';
 import { SiteError } from '../../packages/platform/src/sites/types.js';
+import { markSiteLegacyPrivate, seedLegacyAccessLink } from './site-legacy-access-links.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
 postgres('public sites independent PostgreSQL sessions', () => {
@@ -38,12 +39,12 @@ postgres('public sites independent PostgreSQL sessions', () => {
         const storage = { async putObject() { return {}; }, async getObject() { return { body: null }; } };
         const serviceA = createSitesService({ db: dbA, storage });
         const serviceB = createSitesService({ db: dbB, storage });
-        const site = await serviceA.deploy(claimant, { title: 'Private race', accessMode: 'private_link', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('private').toString('base64') }] });
-        const link = await serviceA.createAccessLink(claimant, { baseRevision: site.revision });
-        const token = link.url.split('.').at(-1)!;
+        const site = await serviceA.deploy(claimant, { title: 'Private race', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('private').toString('base64') }] });
+        await markSiteLegacyPrivate(dbA, site.id);
+        const { linkId, secret: token } = await seedLegacyAccessLink(dbA, site.id);
         const outcomes = await Promise.allSettled([
-            serviceA.claimAccessLink(site.id, { linkId: link.link.id, token }),
-            serviceB.claimAccessLink(site.id, { linkId: link.link.id, token }),
+            serviceA.claimAccessLink(site.id, { linkId, token }),
+            serviceB.claimAccessLink(site.id, { linkId, token }),
         ]);
         expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
         expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1);
