@@ -18,6 +18,7 @@ import { RoutineCliError } from "./routine-cli-errors.js";
 import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { ROUTINE_CLI_REQUEST_PREFIX, newRoutineCliCanonicalRequestId, routineCliProposalInput, routineCliCanonicalRun, routineCliCanonicalHashMatches } from "./routine-cli-proposal-identity.js";
 import { assertRoutineCliProposalBinding } from "./routine-cli-proposal-runtime.js";
+import { routineOutcomeDiagnostic } from "./routine-outcome-diagnostic.js";
 
 export interface RoutineCliProposalTaskInput { ownerId: string; botId: string; chatId: string; runId: string; text: string; now: string }
 export interface RoutineCliProposalRuntime {
@@ -112,7 +113,11 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     const { receipt, dispatch } = selected, owner = { type: "personal" as const, ownerId: scope.ownerId };
     try { await admit({ userId: scope.ownerId, source: "configured-container" }, { chatId: receipt.target.chatId,
       clientRequestId: dispatch.canonical_request_id, text: routineCliProposalInput(receipt).text }); }
-    catch (error: unknown) { console.warn("[routine-cli-proposals] Canonical admission unconfirmed", error instanceof Error ? error.name : "UnknownError"); }
+    catch (error: unknown) {
+      console.warn("[routine-cli-proposals] Canonical admission unconfirmed", JSON.stringify({
+        ...routineOutcomeDiagnostic(error), canonicalRequestId: dispatch.canonical_request_id, requestId: operation.requestId,
+      }));
+    }
     // Reconcile exact original request/hash, never guess acceptance from a generic run status or retry.
     let stage: "canonical_queued" | "canonical_accepted" | "unknown" = "unknown";
     const queued = await deps.canonical.repository.findQueuedAdmission(owner, receipt.target.chatId, dispatch.canonical_request_id, dispatch.request_hash);
