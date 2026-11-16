@@ -426,6 +426,15 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
   });
 
+  it("archives the selected idle chat with Shift Command A and offers the archived page", async () => {
+    const updateLifecycle = vi.fn(async () => ({ ...recent, chat: { ...recent.chat, lifecycle: "archived", revision: 2 } }));
+    const client = { list: vi.fn(async () => ({ items: [recent] })), updateLifecycle } as unknown as CanonicalChatClient;
+    render(<WorkRail client={client} projects={[]} active activeChatId={recent.chat.id} onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
+    await screen.findByRole("button", { name: "Recent global" });
+    fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(updateLifecycle).toHaveBeenCalledWith(recent.chat.id, { baseRevision: 1, lifecycle: "archived" }));
+    expect(screen.getByRole("button", { name: "View archived" })).toBeTruthy();
+  });
   it("uses the Chat rail typography and contained section headings", async () => {
     const css = await readFile(resolve(__dirname, "../../desktop/src/renderer/src/features/work/work-rail/work-rail.css"), "utf8");
     render(<style>{css}</style>);
@@ -442,7 +451,7 @@ describe("WorkRail", () => {
     expect(rail.className).toContain("pb-2");
     expect(rail.className).not.toContain("px-2");
     expect(screen.getByTestId("work-rail-scroll").className).toContain("pl-2.5");
-    expect(rail.getAttribute("style")).toContain("background: var(--sidebar)");
+    expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
     expect(newChat.className).toContain("h-8");
@@ -468,9 +477,9 @@ describe("WorkRail", () => {
       expect(item.className).toContain("text-sm");
       expect(item.className).toContain("font-normal");
     }
-    expect(getComputedStyle(projectsHeading).textTransform).toBe("uppercase");
-    expect(projectsHeading.closest(".work-rail-group-heading")).toBeNull();
-    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeNull();
+    expect(getComputedStyle(projectsHeading).textTransform).toBe("none");
+    expect(projectsHeading.closest(".work-rail-group-heading")).toBeTruthy();
+    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Alpha", exact: true }).querySelector("svg.lucide-folder-open")).toBeTruthy();
     for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
       expect(heading.className).toContain("work-rail-section-toggle");

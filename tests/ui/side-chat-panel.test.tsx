@@ -19,9 +19,14 @@ it("keeps side answers in the side transcript and copies an editable draft to ma
   await screen.findByText(/Ask about this chat/);
   fireEvent.change(screen.getByRole("textbox", { name: "Ask side chat" }), { target: { value: "Question" } });
   const send = screen.getByRole("button", { name: "Send side question" });
-  expect(send.className).toContain("matrix-btn-secondary");
   fireEvent.click(send);
   await waitFor(() => expect(client.askSideChat).toHaveBeenCalledWith("chat_main", expect.objectContaining({ text: "Question" })));
   fireEvent.click(await screen.findByRole("button", { name: "Send to main chat" }));
   expect(sendToMain).toHaveBeenCalledWith("Draft answer");
+  expect(screen.getByRole("note").textContent).toContain("Nothing here changes it");
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  fireEvent.click(screen.getByRole("button", { name: "Copy answer" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("Draft answer"));
+  expect(screen.getByPlaceholderText("Ask on the side…")).toBeTruthy();
 });
