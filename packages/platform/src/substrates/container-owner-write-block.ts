@@ -169,6 +169,15 @@ export function writeBlockStatements(names: WriteBlockNames, recorded: readonly 
   ]);
 }
 
+/**
+ * Disables recorded triggers and rules still enabled. Run after the block has
+ * moved ownership, for any the owner created between the trigger read and
+ * the move: once the holder owns the tables, the owner can create no more.
+ */
+export function writeBlockDisableStatements(names: WriteBlockNames, recorded: readonly DisabledByBlock[]): string[] {
+  return withMemberships(names, [disableRecorded(names.holderName, recorded)]);
+}
+
 export function writeRestoreStatements(names: WriteBlockNames, recorded: readonly DisabledByBlock[]): string[] {
   return withMemberships(names, [
     enableRecorded(recorded),

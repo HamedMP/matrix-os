@@ -171,6 +171,47 @@ describe.skipIf(!realUrl)('owner database write block on a real PostgreSQL serve
       .map((row: { name: string; state: string }) => [row.name, row.state])));
   }
 
+  it('disables a trigger the owner creates after the block read the enabled triggers', async () => {
+    const id = `user_block_${randomUUID().slice(0, 8)}`;
+    let credentials!: OwnerDatabaseCredentials;
+    let raced = false;
+    const racing = {
+      ...admin,
+      query: admin.query.bind(admin),
+      withDatabaseSession: admin.withDatabaseSession.bind(admin),
+      async executeInDatabase(database: string, statements: readonly string[], s: AbortSignal) {
+        if (!raced && statements.some(statement => statement.startsWith('REASSIGN OWNED BY'))) {
+          raced = true;
+          // The owner reconnects between the trigger read and the ownership move.
+          await inDatabase({ ...credentials }, async (client) => {
+            await client.query('SET default_transaction_read_only = off');
+            await client.query('CREATE TRIGGER late AFTER DELETE ON notes FOR EACH ROW EXECUTE FUNCTION grow()');
+          });
+        }
+        return admin.executeInDatabase(database, statements, s);
+      },
+    };
+    const service = createContainerOwnerDatabases({ db, admin: racing, passwordSecret: SECRET, sizeLimitBytes: 1 });
+    cleanups.push(() => service.remove(id, signal()));
+    credentials = await service.ensure(id, 1, signal());
+    await inDatabase(credentials, async (client) => {
+      for (const statement of [
+        'CREATE TABLE notes (id int, body text)',
+        'CREATE TABLE audit (body text)',
+        `CREATE FUNCTION grow() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+          BEGIN INSERT INTO audit VALUES (repeat('x', 1000)); RETURN OLD; END $$`,
+        `INSERT INTO notes VALUES (1, 'a')`,
+      ]) await client.query(statement);
+    });
+
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: true });
+    expect(raced).toBe(true);
+    expect(await states(credentials.databaseName)).toEqual({ late: 'D' });
+    await raiseLimit(id);
+    expect(await service.enforceSizeLimit(id, signal())).toMatchObject({ writesBlocked: false });
+    expect(await states(credentials.databaseName)).toEqual({ late: 'O' });
+  });
+
   it('disables user triggers and rules while blocked and restores only the ones the block disabled', async () => {
     const { id, credentials, service } = await owner([
       'CREATE TABLE notes (id int, body text)',

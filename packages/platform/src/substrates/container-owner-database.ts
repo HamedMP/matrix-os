@@ -5,6 +5,7 @@ import { z } from 'zod/v4';
 import type { PlatformDB } from '../db.js';
 import {
   enabledTriggersAndRules,
+  writeBlockDisableStatements,
   writeBlockStatements,
   writeRestoreStatements,
   type DisabledByBlock,
@@ -307,6 +308,10 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     await ensureHolder(names, signal);
     const recorded = await recordEnabled(row, names, signal);
     await admin.executeInDatabase(row.database_name, writeBlockStatements(names, recorded), signal);
+    // The owner could reconnect and add a trigger between the read above and the ownership move.
+    // Now the holder owns every table, so one more read catches all of them.
+    const late = await recordEnabled(row, names, signal);
+    await admin.executeInDatabase(row.database_name, writeBlockDisableStatements(names, late), signal);
   }
 
   /** The record is cleared with the block flag, after the triggers are back on. */
@@ -500,6 +505,18 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     await admin.query(`ALTER ROLE ${quoteIdentifier(row.role_name, 'mxr_')} LOGIN`, [], signal);
   }
 
+  async function measureSizeOf(clerkUserId: string, signal: AbortSignal): Promise<{ sizeBytes: number; overLimit: boolean }> {
+    const row = await load(clerkUserId);
+    const result = await admin.query('SELECT pg_database_size($1)::bigint AS size_bytes',
+      [assertOwnerIdentifier(row.database_name, 'mxo_')], signal);
+    const sizeBytes = Number(result[0]?.size_bytes);
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error('Owner database size measurement was invalid');
+    await db.executor.updateTable('container_owner_databases')
+      .set({ size_bytes: sizeBytes, size_measured_at: sql<Date>`now()` })
+      .where('clerk_user_id', '=', clerkUserId).execute();
+    return { sizeBytes, overLimit: sizeBytes > Number(row.size_limit_bytes) };
+  }
+
   return {
     passwordFor,
 
@@ -523,33 +540,26 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
 
 
 
-    async measureSize(clerkUserId: string, signal: AbortSignal): Promise<{ sizeBytes: number; overLimit: boolean }> {
-      const row = await load(clerkUserId);
-      const result = await admin.query('SELECT pg_database_size($1)::bigint AS size_bytes',
-        [assertOwnerIdentifier(row.database_name, 'mxo_')], signal);
-      const sizeBytes = Number(result[0]?.size_bytes);
-      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error('Owner database size measurement was invalid');
-      await db.executor.updateTable('container_owner_databases')
-        .set({ size_bytes: sizeBytes, size_measured_at: sql<Date>`now()` })
-        .where('clerk_user_id', '=', clerkUserId).execute();
-      return { sizeBytes, overLimit: sizeBytes > Number(row.size_limit_bytes) };
-    },
+    measureSize: measureSizeOf,
 
     /**
      * Measures, then blocks writes over the limit or lifts the block once the
      * size is below the limit minus the restore margin; in between, the
      * recorded state holds. A block is re-applied on every sweep.
      */
-    async enforceSizeLimit(clerkUserId: string, signal: AbortSignal) {
-      const row = await load(clerkUserId);
-      if (row.state !== 'active') throw new ContainerOwnerDatabaseError('fenced');
-      const { sizeBytes, overLimit } = await this.measureSize(clerkUserId, signal);
-      const wasBlocked = row.writes_blocked_at !== null;
-      const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow(row));
-      if (writesBlocked) await blockWrites(row, signal);
-      else if (wasBlocked) await restoreWrites(row, signal);
-      await alertIfFarOver(row, sizeBytes, writesBlocked);
-      return { sizeBytes, overLimit, writesBlocked };
+    /** Serialized with provisioning, which grants CREATE according to the recorded block. */
+    enforceSizeLimit(clerkUserId: string, signal: AbortSignal) {
+      return serialized(clerkUserId, signal, async () => {
+        const row = await load(clerkUserId);
+        if (row.state !== 'active') throw new ContainerOwnerDatabaseError('fenced');
+        const { sizeBytes, overLimit } = await measureSizeOf(clerkUserId, signal);
+        const wasBlocked = row.writes_blocked_at !== null;
+        const writesBlocked = overLimit || (wasBlocked && sizeBytes >= restoreBelow(row));
+        if (writesBlocked) await blockWrites(row, signal);
+        else if (wasBlocked) await restoreWrites(row, signal);
+        await alertIfFarOver(row, sizeBytes, writesBlocked);
+        return { sizeBytes, overLimit, writesBlocked };
+      });
     },
 
     /** What compaction needs for an active size-blocked owner; null when there is nothing to compact. */
