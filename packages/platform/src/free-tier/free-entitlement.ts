@@ -48,6 +48,15 @@ function notAhead(at: string | null | undefined, now: Date): boolean {
   return !at || Date.parse(at) <= now.getTime();
 }
 
+/** A paid (Stripe) entitlement that grants nothing: an ended status with no grace period or effective end still ahead. */
+export function grantsNoPaidRights(
+  entitlement: Pick<BillingEntitlement, 'status' | 'gracePeriodEndsAt' | 'effectiveUntil'>,
+  now: Date,
+): boolean {
+  return ENDED_SUBSCRIPTION_STATUSES.has(entitlement.status)
+    && notAhead(entitlement.gracePeriodEndsAt, now) && notAhead(entitlement.effectiveUntil, now);
+}
+
 /**
  * The entitlement for one slot, given the slot's subscription projected as an
  * entitlement (or null when the slot has none). A former paid owner keeps
@@ -65,7 +74,5 @@ export function entitlementForSlot(
 ): BillingEntitlement | null {
   const free = freeEntitlementForSlot(stored, runtimeSlot);
   if (!subscription) return free;
-  const ended = ENDED_SUBSCRIPTION_STATUSES.has(subscription.status)
-    && notAhead(subscription.gracePeriodEndsAt, now) && notAhead(subscription.effectiveUntil, now);
-  return free && ended ? free : subscription;
+  return free && grantsNoPaidRights(subscription, now) ? free : subscription;
 }
