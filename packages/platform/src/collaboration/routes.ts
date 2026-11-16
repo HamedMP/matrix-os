@@ -13,11 +13,14 @@ import {
   CollaborationAppAssetPathSchema,
   CollaborativeAppDirectoryItemSchema,
   CollaborativeAppDirectoryResponseSchema,
+  collaborativeAppIconPath,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
+import { CollaborativeAppIconRepository } from "./app-icon-repository.js";
+import { registerCollaborativeAppIconRoutes } from "./app-icon-routes.js";
 import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
 import {
   CollaborativeAppLaunchError,
@@ -82,6 +85,8 @@ export function createPlatformCollaborationRoutes(options: {
    * discovery fails closed even if saved membership rows still list an organization.
    */
   isCurrentOrganizationMember?(input: { organizationId: string; actorId: string }): Promise<boolean>;
+  /** ENG-490 shared app icon storage; defaults to the repository's database. */
+  appIcons?: CollaborativeAppIconRepository;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -144,6 +149,15 @@ export function createPlatformCollaborationRoutes(options: {
     },
   );
 
+  registerCollaborativeAppIconRoutes(app, {
+    repository: options.repository,
+    icons: options.appIcons ?? new CollaborativeAppIconRepository(options.repository.db, options.now ? { now: options.now } : {}),
+    authenticateRuntime: (c) => requireRuntime(c, options.authenticateRuntime),
+    resolveActor: (c) => resolveValidatedActor(c, options.resolveActor),
+    ...(options.isCurrentOrganizationMember ? { isCurrentOrganizationMember: options.isCurrentOrganizationMember } : {}),
+    now: routeNow,
+  });
+
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));
   app.get("/api/collaboration/shared", async (c) => listDiscovery(c, "accepted", options));
   app.get("/api/collaboration/shared-apps", async (c) => {
@@ -175,6 +189,7 @@ export function createPlatformCollaborationRoutes(options: {
           buildId: entry.buildId,
           shareRevision: String(entry.shareRevision),
           owner,
+          ...sharedAppPresentation(entry.scopeId, entry),
         };
       }));
       c.header("Cache-Control", "private, no-store");
@@ -214,6 +229,7 @@ export function createPlatformCollaborationRoutes(options: {
         buildId: route.app.buildId,
         shareRevision: String(route.app.shareRevision),
         owner,
+        ...sharedAppPresentation(route.scopeId, route.app),
       }));
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app lookup failed", error instanceof Error ? error.name : "UnknownError");
@@ -254,7 +270,8 @@ export function createPlatformCollaborationRoutes(options: {
           appId: admitted.app.appId,
           catalogId: admitted.app.catalogId,
           buildId: admitted.app.buildId,
-          name: admitted.app.appId,
+          name: admitted.app.name ?? admitted.app.appId,
+          ...(admitted.app.iconSha256 ? { iconUrl: collaborativeAppIconPath(admitted.scopeId, admitted.app.iconSha256) } : {}),
           owner,
           shareRevision: String(admitted.app.shareRevision),
         },
@@ -359,6 +376,14 @@ export function createPlatformCollaborationRoutes(options: {
   registerInvitationIdentifierResolutionRoute(app, options);
 
   return app;
+}
+
+/** Owner presentation captured at share time; the icon URL is the scope's own platform route. */
+function sharedAppPresentation(scopeId: string, app: { name?: string; iconSha256?: string }) {
+  return {
+    ...(app.name ? { name: app.name } : {}),
+    ...(app.iconSha256 ? { iconUrl: collaborativeAppIconPath(scopeId, app.iconSha256) } : {}),
+  };
 }
 
 function exposeOpaqueAsset(response: Response): Response {

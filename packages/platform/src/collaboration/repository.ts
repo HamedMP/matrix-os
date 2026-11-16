@@ -40,6 +40,8 @@ export interface DirectoryEventInput {
     buildId: string;
     shareRevision: number;
     state: "active" | "needs_recheck" | "stopped";
+    name?: string;
+    iconSha256?: string;
   };
   /** A shared project's Chat route: same home, owner and organization as the project, no recipients of its own. */
   parentScopeId?: string;
@@ -90,6 +92,8 @@ export interface CollaborationCurrentMembershipAppEntry {
   registrationIncarnation: string;
   buildId: string;
   shareRevision: number;
+  name?: string;
+  iconSha256?: string;
 }
 
 /**
@@ -161,6 +165,15 @@ export class PlatformCollaborationRepository {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory parent changed without transition");
       }
       if (input.parentScopeId) await requireProjectChatParent(trx, input);
+      // ENG-490: only an icon this same runtime uploaded may be named; anything else is dropped and
+      // the launcher keeps its letter tile. Read in the write transaction beside the directory lock.
+      const appIconSha256 = input.app?.iconSha256 && input.app.state !== "stopped"
+        ? (await trx.selectFrom("collaboration_app_icons").select("sha256")
+          .where("runtime_id", "=", input.runtimeId)
+          .where("sha256", "=", input.app.iconSha256)
+          .executeTakeFirst())?.sha256 ?? null
+        : null;
+      const appName = input.app?.name ?? null;
 
       // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
       // still absent, so two first-writers both pass the guard above and the loser's unconditional
@@ -181,6 +194,8 @@ export class PlatformCollaborationRepository {
         app_build_id: input.app?.buildId ?? null,
         app_share_revision: input.app?.shareRevision ?? null,
         app_state: input.app?.state ?? null,
+        app_name: appName,
+        app_icon_sha256: appIconSha256,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -198,6 +213,8 @@ export class PlatformCollaborationRepository {
         app_build_id: input.app?.buildId ?? null,
         app_share_revision: input.app?.shareRevision ?? null,
         app_state: input.app?.state ?? null,
+        app_name: appName,
+        app_icon_sha256: appIconSha256,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -255,6 +272,8 @@ export class PlatformCollaborationRepository {
       buildId: string;
       shareRevision: number;
       state: "active" | "needs_recheck" | "stopped";
+      name?: string;
+      iconSha256?: string;
     } | null;
     /** Set for a shared project's Chat; its tickets follow the parent project's membership. */
     parentScopeId: string | null;
@@ -263,7 +282,7 @@ export class PlatformCollaborationRepository {
     const row = await this.db.selectFrom("collaboration_directory")
       .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id",
         "app_id", "app_catalog_id", "app_readiness_id", "app_registration_incarnation", "app_build_id",
-        "app_share_revision", "app_state", "parent_scope_id", "authority_generation"])
+        "app_share_revision", "app_state", "app_name", "app_icon_sha256", "parent_scope_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -283,6 +302,8 @@ export class PlatformCollaborationRepository {
           buildId: row.app_build_id,
           shareRevision: Number(row.app_share_revision),
           state: row.app_state,
+          ...(row.app_name ? { name: row.app_name } : {}),
+          ...(row.app_icon_sha256 ? { iconSha256: row.app_icon_sha256 } : {}),
         } : null,
       parentScopeId: row.parent_scope_id ?? null,
       authorityGeneration: Number(row.authority_generation),
@@ -565,7 +586,7 @@ export class PlatformCollaborationRepository {
         "directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.organization_id",
         "directory.authority_generation", "directory.app_id", "directory.app_catalog_id",
         "directory.app_readiness_id", "directory.app_registration_incarnation", "directory.app_build_id",
-        "directory.app_share_revision", "directory.updated_at",
+        "directory.app_share_revision", "directory.app_name", "directory.app_icon_sha256", "directory.updated_at",
       ])
       .where("directory.kind", "=", "app")
       .where("directory.audience", "=", "current_membership")
@@ -604,6 +625,8 @@ export class PlatformCollaborationRepository {
         registrationIncarnation: row.app_registration_incarnation!,
         buildId: row.app_build_id!,
         shareRevision: Number(row.app_share_revision),
+        ...(row.app_name ? { name: row.app_name } : {}),
+        ...(row.app_icon_sha256 ? { iconSha256: row.app_icon_sha256 } : {}),
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };
