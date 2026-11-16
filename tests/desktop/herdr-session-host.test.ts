@@ -182,6 +182,32 @@ describe("herdr session host against a scripted core", () => {
     expect(host.status()).toBe("unavailable");
   });
 
+  it("does not keep a connection that broke in the same read as its handshake", async () => {
+    let time = 0;
+    const working = start(script());
+    let broken = true;
+    const open = vi.fn(async (): Promise<HcSocket> => {
+      if (!broken) return working.open();
+      const socket = new EventEmitter() as EventEmitter & HcSocket;
+      const oversized = Buffer.alloc(9);
+      oversized.writeUInt8(HC_FRAME.DATA, 4);
+      oversized.writeUInt32LE(0xffffffff, 5);
+      socket.write = () => { queueMicrotask(() => socket.emit("data", Buffer.concat([
+        Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: REMOTE_HELLO })}\n`), oversized,
+      ]))); };
+      socket.destroy = () => undefined;
+      return socket;
+    });
+    const { host } = start(script(), { open, now: () => time, random: () => 1 });
+    await expect(host.list()).rejects.toThrow();
+    expect(host.status()).toBe("unavailable");
+    // The dead connection is not kept: after the wait the next use dials again.
+    broken = false;
+    time += 1_001;
+    expect(await host.list()).toEqual([]);
+    expect(host.status()).toBe("ready");
+  });
+
   it("backs off after a failed connection instead of dialing on every poll", async () => {
     let time = 0;
     let fail = true;

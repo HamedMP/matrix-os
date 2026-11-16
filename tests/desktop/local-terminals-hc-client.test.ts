@@ -170,6 +170,14 @@ describe("herdr-core client", () => {
     await expect(connection.call("terminal.list", {})).rejects.toThrow("disconnected");
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("tells a listener added after the connection already ended", async () => {
+    const { core, connection } = await connected();
+    core.socket.emit("close");
+    const disconnected = vi.fn();
+    connection.onDisconnect(disconnected);
+    expect(disconnected).toHaveBeenCalledTimes(1);
+  });
 });
 
 // A core the app does not own (Herdr sessions on a Matrix computer, spec 651 J6)

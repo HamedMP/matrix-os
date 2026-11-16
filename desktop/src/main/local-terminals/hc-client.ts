@@ -171,7 +171,9 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
           },
         };
       },
-      onDisconnect: (listener) => { disconnectListeners.push(listener); },
+      // A connection can end in the same read as its handshake, before anyone
+      // listens: a late listener is told at once, so no caller keeps a dead one.
+      onDisconnect: (listener) => { if (closed) listener(); else disconnectListeners.push(listener); },
       close: () => teardown(new Error("local terminal runtime closed")),
     };
 
