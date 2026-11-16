@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { PostgresDialect } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
 import {
@@ -373,36 +374,55 @@ describe.skipIf(!realUrl)('container owner database operations across platform i
     await cluster.client.close();
   });
 
+  it('never exhausts a small platform pool when many owners are provisioned at once', async () => {
+    const url = new URL(realUrl!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const small = createPlatformDb({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: url.toString(), max: 2 }) }) });
+    try {
+      await small.ready;
+      const owners = createContainerOwnerDatabases({ db: small, admin: pgliteAdmin(cluster, log), passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
+      const all = Promise.all(Array.from({ length: 6 }, (_, i) => owners.ensure(`user_pool_${i}`, 1, signal())));
+      const outcome = await Promise.race([all.then(() => 'done'), new Promise(resolve => setTimeout(() => resolve('stuck'), 8_000))]);
+      expect(outcome).toBe('done');
+    } finally {
+      await small.destroy();
+    }
+  });
+
   it('keeps the role login in step with the record when fence and unfence race a provisioning', async () => {
     const [a, b] = pools as [PlatformDB, PlatformDB];
-    const other = createContainerOwnerDatabases({ db: b, admin: pgliteAdmin(cluster, log), passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
-    const credentials = await other.ensure('user_owner_a', 1, signal());
     const started: Promise<unknown>[] = [];
-    const hooks: Array<[RegExp, () => Promise<unknown>]> = [
-      [/WITH LOGIN/, () => other.fence('user_owner_a', signal())],
-      [/" NOLOGIN$/, () => other.unfence('user_owner_a', signal())],
-    ];
-    const base = pgliteAdmin(cluster, log);
-    const owners = createContainerOwnerDatabases({
-      db: a, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3,
-      admin: {
+    /** Starts `run` once, just before the first statement matching `pattern`, and gives it a moment. */
+    function hooked(pattern: RegExp, run: () => Promise<unknown>): OwnerClusterAdmin {
+      const base = pgliteAdmin(cluster, log);
+      let fired = false;
+      return {
         ...base,
         async query(statement, params, s) {
-          const hook = hooks.find(([pattern]) => pattern.test(statement));
-          if (hook) {
-            hooks.splice(hooks.indexOf(hook), 1);
-            const op = hook[1]();
-            started.push(op.catch((error: unknown) => error));
+          if (!fired && pattern.test(statement)) {
+            fired = true;
+            const op = run();
+            started.push(op.then(() => 'ok', (error: unknown) => error));
             await Promise.race([op.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 300))]);
           }
           return base.query(statement, params, s);
         },
-      },
-    });
+      };
+    }
+    const make = (db: PlatformDB, admin: OwnerClusterAdmin) =>
+      createContainerOwnerDatabases({ db, admin, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
+    const plain = make(b, pgliteAdmin(cluster, log));
+    const credentials = await plain.ensure('user_owner_a', 1, signal());
+    // The fence's NOLOGIN starts an unfence; the provisioning's LOGIN starts the fence.
+    const fencer = make(b, hooked(/" NOLOGIN$/, () => plain.unfence('user_owner_a', signal())));
+    const owners = make(a, hooked(/WITH LOGIN/, () => fencer.fence('user_owner_a', signal())));
 
-    await owners.ensure('user_owner_a', 1, signal()).catch((error: unknown) => error);
-    await Promise.all(started);
+    await owners.ensure('user_owner_a', 1, signal());
+    // The fence and then the unfence ran; awaiting all three proves the unfence completed.
+    while (started.length < 2) await new Promise(resolve => setTimeout(resolve, 50));
+    expect(await Promise.all(started)).toEqual(['ok', 'ok']);
     const row = await a.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
-    expect((await role(cluster, credentials.roleName))?.rolcanlogin).toBe(row.state === 'active');
+    expect(row.state).toBe('active');
+    expect((await role(cluster, credentials.roleName))?.rolcanlogin).toBe(true);
   });
 });
