@@ -213,7 +213,7 @@ export class CollaborationDirectoryOutbox {
         "content-type": presentation.icon.contentType,
         "x-matrix-runtime-id": this.options.runtimeId,
       },
-      body: presentation.icon.bytes,
+      body: new Uint8Array(presentation.icon.bytes),
     });
     await response.body?.cancel();
     if (response.ok) return { ...name, iconSha256: presentation.icon.sha256 };
