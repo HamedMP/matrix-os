@@ -489,6 +489,8 @@ describe("platform proxy routing", () => {
     const assetHeaders = assetInit?.headers as Headers;
     expect(assetHeaders.get("cookie")).toBe("matrix_app_session__calculator=session-cookie");
     expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    // The VPS pool keeps warm connections; `connection: close` would force a new TLS handshake per request.
+    expect(assetHeaders.get("connection")).toBeNull();
     expect(assetHeaders.get("x-platform-user-id")).toBeNull();
     expect(assetRes.headers.get("content-encoding")).toBeNull();
     expect(assetRes.headers.get("content-length")).toBeNull();

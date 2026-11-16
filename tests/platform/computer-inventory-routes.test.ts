@@ -368,6 +368,8 @@ describe("canonical computer inventory route", () => {
 
     expect(response.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.22:443/projects");
+    // The VPS pool keeps warm connections; `connection: close` would force a new TLS handshake per request.
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get("connection")).toBeNull();
   });
 
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {

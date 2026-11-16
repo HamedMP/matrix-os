@@ -805,7 +805,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
-      headers.set('connection', 'close');
+      // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
@@ -982,7 +982,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
         headers.set('accept-encoding', 'identity');
-        headers.set('connection', 'close');
+        // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
