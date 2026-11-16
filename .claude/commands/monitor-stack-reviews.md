@@ -29,6 +29,11 @@ final human review.
   or unauthenticated, stop and report the blocker instead of treating GitHub
   command failures as PR state.
 - Never merge PRs unless the requester explicitly asks.
+- Approval is risk-tiered (`docs/dev/review-pipeline.md#risk-tiered-merge-approval`).
+  Record per PR whether Greptile approved it (`gh pr view <n> --json reviews,reviewDecision`).
+  A `5/5` without Greptile's approval is High/Critical risk: report it as
+  "needs human approval" and never self-approve or use admin bypass, even
+  when asked to merge.
 - Do not create worktrees, create implementation branches, or open new feature
   PRs. This command is for monitoring and fixing an existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
 - Full PR CI runs on every non-draft head. Do not mark a PR ready for review
@@ -209,7 +214,8 @@ final human review.
      the new commit has a current-head `5/5`, either carried over by the check
      or from a fresh Greptile review.
    - Completion requires every monitored PR to be either:
-     - latest trusted Greptile `5/5` with no unresolved human review threads,
+     - latest trusted Greptile `5/5`, approval state reported (Greptile-approved
+       or needs human approval), with no unresolved human review threads,
        unresolved Codex review comments, or unresolved actionable issue
        comments, or
      - explicitly deferred with the reason and follow-up.
