@@ -91,10 +91,24 @@ export const defaultNotificationHandler: Notifications.NotificationHandler = {
 Notifications.setNotificationHandler(defaultNotificationHandler);
 
 /**
+ * Expo drops a notification it gets no answer about within three seconds, so
+ * the check gives up well before that, token refresh and lookup included.
+ */
+const FOREGROUND_DECISION_MS = 2_000;
+
+/** `promise`'s value, or `fallback` once `ms` have passed without one. */
+function within<T>(ms: number, promise: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Shows a notification that arrives while the app is open, unless it is about
  * the chat or thread already on screen. `threadTerminal` finds the terminal a
- * coding-agent thread runs in; the answer must come within three seconds or
- * the notification shows anyway.
+ * coding-agent thread runs in; a notification it cannot place in time shows.
  */
 export function createNotificationHandler(input: {
   screen: () => NotificationScreen | null;
@@ -103,7 +117,7 @@ export function createNotificationHandler(input: {
   return {
     handleNotification: async (notification) => {
       const destination = parseNotificationDestination(notification.request.content.data);
-      return (await isOnScreen(destination, input)) ? QUIET : SHOWN;
+      return (await within(FOREGROUND_DECISION_MS, isOnScreen(destination, input), false)) ? QUIET : SHOWN;
     },
   };
 }

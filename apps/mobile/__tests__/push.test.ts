@@ -158,6 +158,26 @@ describe("createNotificationHandler", () => {
     warn.mockRestore();
   });
 
+  it("shows a thread push when its terminal is not known before Expo's three-second limit", async () => {
+    // A slow token refresh or lookup must not hold the answer past the point
+    // where Expo drops the notification without showing it.
+    jest.useFakeTimers();
+    try {
+      const threadTerminal = jest.fn(() => new Promise<string | null>(() => {}));
+      let behavior: unknown;
+      void present(threadPush, { kind: "terminal", handle: "alice", session: TERMINAL }, threadTerminal)
+        .then((answer) => {
+          behavior = answer;
+        });
+
+      await jest.advanceTimersByTimeAsync(2_500);
+
+      expect(behavior).toEqual(SHOWN);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("does not look up a thread unless a terminal is on screen", async () => {
     const threadTerminal = jest.fn(async () => TERMINAL);
 
