@@ -62,7 +62,9 @@ describe("SidePanel chats", () => {
       renderPanel();
 
       const row = screen.getByTestId("side-panel-chat-chat-weekly");
-      const dot = within(screen.getByTestId("side-panel-chat-chat-weekly-title-line")).getByTestId("side-panel-status-dot");
+      // As on Desktop, the dot sits right of the time, not after the title.
+      const dot = within(screen.getByTestId("side-panel-chat-chat-weekly-meta")).getByTestId("side-panel-status-dot");
+      expect(within(screen.getByTestId("side-panel-chat-chat-weekly-title-line")).queryByTestId("side-panel-status-dot")).toBeNull();
       expect(flat(dot)).toMatchObject({ width: 8, height: 8, backgroundColor: "#E0AA52" });
       expect(screen.getAllByTestId("side-panel-status-dot")).toHaveLength(1);
       expect(within(row).getAllByText(/./).map((node) => node.props.children)).toEqual([

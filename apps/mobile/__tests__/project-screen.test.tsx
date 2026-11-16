@@ -179,7 +179,7 @@ describe("project screen", () => {
     expect(flat(within(row).getByText("2h"))).toMatchObject({ fontSize: 12, lineHeight: 17, color: "#8A8686" });
   });
 
-  it("shows a chat's status in place of its last message, with its dot after the title, as on Desktop", () => {
+  it("shows a chat's status in place of its last message, with its dot right of the time, as on Desktop", () => {
     renderScreen({ chats: { rows: [
       { id: "chat_ask", title: "Release notes", preview: "Run echo hello?", time: "2m",
         status: { state: "approval_required", label: "Approval required", tone: "waiting" } },
@@ -192,8 +192,12 @@ describe("project screen", () => {
     expect(within(asking).getAllByText(/./).map((node) => node.props.children)).toEqual([
       "Release notes", "Approval required", "2m",
     ]);
-    const askingDot = within(screen.getByTestId("project-chat-chat_ask-title-line")).getByTestId("project-chat-status-dot");
+    // As on Desktop, the dot sits right of the time, not after the title.
+    const askingMeta = screen.getByTestId("project-chat-chat_ask-meta");
+    expect(within(askingMeta).getAllByText(/./).map((node) => node.props.children)).toEqual(["2m"]);
+    const askingDot = within(askingMeta).getByTestId("project-chat-status-dot");
     expect(flat(askingDot)).toMatchObject({ width: 8, height: 8, backgroundColor: "#E0AA52" });
+    expect(within(screen.getByTestId("project-chat-chat_ask-title-line")).queryByTestId("project-chat-status-dot")).toBeNull();
     expect(asking.props.accessibilityLabel).toBe("Release notes, Approval required, Run echo hello?, 2m");
 
     const working = screen.getByTestId("project-chat-chat_run");

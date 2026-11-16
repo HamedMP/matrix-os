@@ -48,7 +48,7 @@ export function SidePanelChatRow({ record, now, onSelect }: SidePanelChatRowProp
         density="compact"
         leading={<IconTile icon={ChatIcon} size={CHAT_TILE_SIZE} shape="circle" tone="subtle" />}
         title={title}
-        titleAccessory={status ? <StatusDot testID="side-panel-status-dot" tone={status.tone} /> : undefined}
+        metaAccessory={status ? <StatusDot testID="side-panel-status-dot" tone={status.tone} /> : undefined}
         // As on Desktop, a chat's status takes the line under its title.
         subtitle={status?.label ?? preview}
         meta={time}

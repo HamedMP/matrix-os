@@ -90,7 +90,7 @@ export function ProjectChatList({
           density="compact"
           leading={<IconTile icon={ChatIcon} size={40} shape="circle" tone="subtle" />}
           title={row.title}
-          titleAccessory={row.status ? <StatusDot testID="project-chat-status-dot" tone={row.status.tone} /> : undefined}
+          metaAccessory={row.status ? <StatusDot testID="project-chat-status-dot" tone={row.status.tone} /> : undefined}
           // As on Desktop, a chat's status takes the line under its title.
           subtitle={row.status?.label ?? row.preview}
           meta={row.time}
