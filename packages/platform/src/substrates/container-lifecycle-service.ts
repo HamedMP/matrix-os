@@ -311,7 +311,13 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     const maxRunning = deps.maxRunning;
     return db.transaction(async (trx): Promise<boolean | 'busy'> => {
       await lockCapacity(trx.executor, 'running_runtimes');
-      if (await countRunningContainers(trx.executor, now()) >= maxRunning) return 'busy';
+      // A failed stop's unconfirmed unit already holds its slot, so its recovery needs no other.
+      const own = await trx.executor.selectFrom('user_machines').select(['status', 'compute_unconfirmed_until'])
+        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
+        .executeTakeFirst();
+      const holdsSlot = own?.status === 'needs_recovery' && own.compute_unconfirmed_until !== null
+        && own.compute_unconfirmed_until.getTime() > now().getTime();
+      if (await countRunningContainers(trx.executor, now()) - (holdsSlot ? 1 : 0) >= maxRunning) return 'busy';
       const updated = await trx.executor.updateTable('user_machines').set(set)
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .where('status', '=', from).where('generation', '=', generation)
