@@ -472,8 +472,11 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
         password_epoch: generation,
         size_bytes: null,
         size_measured_at: null,
+        // A replacement is a new, empty database: none of the old one's block state carries over.
         size_alerted_at: null,
+        writes_blocked_at: null,
         block_disabled: null,
+        compaction_offered_at: null,
         created_at: sql<Date>`now()`,
         deleted_at: null,
       }).where('container_owner_databases.deleted_at', 'is not', null))
