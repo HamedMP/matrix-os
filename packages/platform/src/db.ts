@@ -115,6 +115,8 @@ export interface UserMachinesTable {
   /** A stop could not confirm the unit suspended; it may hold compute until at most this time. */
   compute_unconfirmed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   metered_since: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** When the provider ends the unit now serving this row; bounds its metered time. */
+  unit_expires_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   compute_mode: Generated<string>;
 }
 

@@ -11,10 +11,14 @@ const CAP = DEFAULT_COMPUTE_CAP_CONFIG.capMs;
 const OWNER = 'user_cap';
 const ENDPOINT = 'mvm-1.lambda-microvm.eu-west-1.on.aws';
 
+/** Units are created at the clock's current time and expire a lifetime later, as the provider does. */
+let providerClock = (): Date => T0;
 function fakeProvider(): ContainerProvider {
-  const unit: ContainerUnit = { unitId: 'mvm-1', state: 'pending', endpointHost: ENDPOINT, createdAt: T0, expiresAt: new Date(T0.getTime() + 8 * HOUR) };
   return {
-    run: vi.fn(async () => unit),
+    run: vi.fn(async () => {
+      const createdAt = providerClock();
+      return { unitId: 'mvm-1', state: 'pending', endpointHost: ENDPOINT, createdAt, expiresAt: new Date(createdAt.getTime() + 8 * HOUR) } satisfies ContainerUnit;
+    }),
     suspend: vi.fn(async () => undefined),
     resume: vi.fn(async () => undefined),
     terminate: vi.fn(async () => undefined),
@@ -32,6 +36,7 @@ describe('monthly compute metering and cap', () => {
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
     clock = new Date(T0);
+    providerClock = () => clock;
     await insertUserMachine(db, {
       machineId: 'ctr-1', clerkUserId: OWNER, handle: 'capped', status: 'stopped',
       provisionedAt: '2026-11-01T00:00:00.000Z', substrate: 'container', generation: 1,
@@ -191,6 +196,28 @@ describe('monthly compute metering and cap', () => {
     expect(await lifecycle.markComputeLost('ctr-1', generation, 'mvm-1')).toBe(true);
     advance(HOUR);
     expect(await usage()).toMatchObject({ billedMs: 8 * HOUR });
+  });
+
+  it('never bills a resumed unit past its provider expiry when it ends while the platform is down', async () => {
+    const provider = fakeProvider();
+    const lifecycle = service(provider);
+    const { generation } = await startAndRegister(lifecycle);
+    advance(HOUR);
+    expect(await lifecycle.stop('ctr-1', generation, AbortSignal.timeout(1_000))).toBe('stopped');
+    // Six hours after it was created, the unit is resumed for a new session; it still expires at eight.
+    advance(5 * HOUR);
+    vi.mocked(provider.describe).mockResolvedValue({ unitId: 'mvm-1', state: 'suspended', endpointHost: ENDPOINT,
+      createdAt: T0, expiresAt: new Date(T0.getTime() + 8 * HOUR) });
+    expect(await lifecycle.ensureStarted('ctr-1')).toEqual({ state: 'starting' });
+    await lifecycle.drain();
+    expect((await getUserMachine(db, 'ctr-1'))?.status).toBe('running');
+    expect(provider.resume).toHaveBeenCalledTimes(1);
+    // The platform does not notice the unit ending until days later.
+    advance(3 * 24 * HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 3 * HOUR });
+    expect(await lifecycle.markComputeLost('ctr-1', generation, 'mvm-1')).toBe(true);
+    advance(HOUR);
+    expect(await usage()).toMatchObject({ billedMs: 3 * HOUR });
   });
 
   it('bills a failed start up to its failure', async () => {

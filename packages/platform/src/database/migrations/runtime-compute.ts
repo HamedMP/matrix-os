@@ -21,6 +21,8 @@ export async function migrateRuntimeCompute(db: PlatformMigrationExecutor): Prom
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS metered_since TIMESTAMPTZ`.execute(db);
+  // The provider expiry of the unit serving the row: no interval is metered past it.
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS unit_expires_at TIMESTAMPTZ`.execute(db);
   await sql`
     ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS compute_mode TEXT NOT NULL DEFAULT 'full'
       CONSTRAINT user_machines_compute_mode_check CHECK (compute_mode IN ('full', 'export_only'))

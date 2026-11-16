@@ -320,7 +320,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
     if (!await reopenGateway(row)) return false;
     await transition(row.machine_id, ['starting'], row.generation, {
-      status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
+      status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null,
+      unit_expires_at: previous.expiresAt, ...sessionWithin(previous),
     });
     return true;
   }
@@ -354,7 +355,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         }
         // Only a recovery resume can leave less than a whole session; sessionWithin bounds it.
         await transition(row.machine_id, ['starting'], generation, {
-          status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
+          status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null,
+      unit_expires_at: previous.expiresAt, ...sessionWithin(previous),
         });
         return;
       }
@@ -382,7 +384,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         throw new ContainerProviderError('unavailable');
       }
       const recorded = await transition(row.machine_id, ['starting'], next.generation, {
-        substrate_ref: created.unitId, private_address: created.endpointHost,
+        substrate_ref: created.unitId, private_address: created.endpointHost, unit_expires_at: created.expiresAt,
       });
       if (!recorded) await endUnusedUnit(row.machine_id, created.unitId, 'fenced', created.expiresAt);
       if (previous && previous.state !== 'terminated' && await terminateQuietly(previous.unitId, 'replaced')) {

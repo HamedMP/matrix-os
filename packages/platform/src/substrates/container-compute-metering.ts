@@ -43,7 +43,7 @@ export function createComputeMetering(deps: {
   ): Promise<boolean> {
     return db.transaction(async (trx) => {
       const locked = await trx.executor.selectFrom('user_machines')
-        .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
+        .select(['clerk_user_id', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at', 'unit_expires_at'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container')
         .forUpdate().executeTakeFirst();
       if (!locked) return false;
@@ -72,7 +72,7 @@ export function createComputeMetering(deps: {
     return db.transaction(async (trx): Promise<ClaimOutcome> => {
       if (deps.maxRunning !== undefined) await lockCapacity(trx.executor, 'running_runtimes');
       const row = await trx.executor.selectFrom('user_machines')
-        .select(['clerk_user_id', 'status', 'generation', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
+        .select(['clerk_user_id', 'status', 'generation', 'metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at', 'unit_expires_at'])
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .forUpdate().executeTakeFirst();
       if (!row || row.status !== from || row.generation !== generation) return false;
@@ -91,7 +91,8 @@ export function createComputeMetering(deps: {
       const updated = await trx.executor.updateTable('user_machines')
         .set({
           status: 'starting', started_at: at, failure_code: null, failure_at: null, status_changed_at: at,
-          metered_since: at, compute_mode: mode,
+          // The unit serving this claim records its expiry once it is resumed or created.
+          metered_since: at, compute_mode: mode, unit_expires_at: null,
         })
         .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
         .where('status', '=', from).where('generation', '=', generation)

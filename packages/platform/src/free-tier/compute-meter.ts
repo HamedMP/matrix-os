@@ -59,8 +59,12 @@ export function monthKey(monthStart: Date): string {
  * lifetime (from the start that opened it) or a failed stop's bound has
  * certainly ended its compute, however late the platform notices.
  */
-export function computeIntervalEnd(at: Date, row: { started_at: Date | null; compute_unconfirmed_until: Date | null }): Date {
+export function computeIntervalEnd(at: Date, row: {
+  started_at: Date | null; compute_unconfirmed_until: Date | null; unit_expires_at?: Date | null;
+}): Date {
   let end = at.getTime();
+  // A resumed unit keeps the expiry it was created with, which can come before a lifetime from its claim.
+  if (row.unit_expires_at) end = Math.min(end, row.unit_expires_at.getTime());
   if (row.started_at) end = Math.min(end, row.started_at.getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000);
   if (row.compute_unconfirmed_until) end = Math.min(end, row.compute_unconfirmed_until.getTime());
   return new Date(end);
@@ -79,7 +83,7 @@ export async function readComputeUsage(executor: Executor, clerkUserId: string, 
     exportWakes: closed?.export_wakes ?? 0,
   };
   const open = await executor.selectFrom('user_machines')
-    .select(['metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at'])
+    .select(['metered_since', 'compute_mode', 'compute_unconfirmed_until', 'started_at', 'unit_expires_at'])
     .where('clerk_user_id', '=', clerkUserId).where('substrate', '=', 'container')
     .where('deleted_at', 'is', null).where('metered_since', 'is not', null)
     .execute();
