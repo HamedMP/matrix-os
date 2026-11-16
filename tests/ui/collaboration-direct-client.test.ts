@@ -268,8 +268,8 @@ describe("collaboration direct client", () => {
   });
 
   it("keeps discovery metadata-only on the platform and hydrates content from the home", async () => {
-    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted" }];
-    world.platform.inbox = [{ scopeId: otherScopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "invited", invitationId: "20000000-0000-4000-8000-000000000001" }];
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted", organizationId: "org_direct_1" }];
+    world.platform.inbox = [{ scopeId: otherScopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "invited", invitationId: "20000000-0000-4000-8000-000000000001", organizationId: "org_direct_1" }];
     world.platform.offlineScopes.add(otherScopeId);
     const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
     const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
@@ -286,7 +286,7 @@ describe("collaboration direct client", () => {
   });
 
   it("hydrates a shared project with its name and Chats, and tolerates an owner home without an overview", async () => {
-    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "project", authorityGeneration: 3, status: "accepted" }];
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "project", authorityGeneration: 3, status: "accepted", organizationId: "org_direct_1" }];
     world.home.projectOverview = { projectId: "proj-1", scopeId, name: "Launch", status: "active", chats: [] };
     const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
     const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
@@ -301,7 +301,7 @@ describe("collaboration direct client", () => {
   });
 
   it("marks a discovered item for sign-in, not ended access, when the platform no longer recognizes the actor", async () => {
-    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted" }];
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted", organizationId: "org_direct_1" }];
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => new URL(String(input)).pathname === "/api/collaboration/connections"
       ? new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } })
       : world.fetchImpl(input, init));
