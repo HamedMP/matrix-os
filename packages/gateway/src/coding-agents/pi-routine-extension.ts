@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 /** Explicit native Pi extension asset. Builtins only, including from an owned temp directory.
  * JSON schema is rendered from the shared authoritative Zod operation schema by the host. */
 export const PI_ROUTINE_EXTENSION = String.raw`import { Socket } from "node:net";
@@ -45,7 +46,7 @@ function connect() {
 export default function (pi) {
   pi.registerTool({
     name: "matrix_routines", label: "Routines",
-    description: "Use the fixed Matrix routines CLI. Supply routine intent only. Mutations need the exact owner decision; activation, background model consent and integrations are separate. Never retry an unknown mutation; reconcile its original requestId from a fresh authorized call.",
+    description: "Use the fixed Matrix routines CLI. Supply routine intent only. Mutations need the exact owner decision. For a queued proposal, use request with its original requestId while this turn is live to observe pending approval. Reconcile an unknown mutation by its original requestId and never retry it automatically. Activation, background model consent and integrations are separate.",
     parameters: __MATRIX_ROUTINE_SCHEMA__,
     async execute(toolCallId, operation, signal, _onUpdate, ctx) {
       const context = { sessionId: ctx?.sessionManager?.getSessionId(), toolCallId };
@@ -59,7 +60,7 @@ export default function (pi) {
         let settled = false;
         const finish = text => { if (settled) return; settled = true; clearTimeout(timer); signal.removeEventListener("abort", abort); pending.delete(id); completed.add(id); resolve(text); };
         const abort = () => { send({ type: "cancel", id }); finish(unknown(operation)); };
-        const timer = setTimeout(abort, 120000); timer.unref?.();
+        const timer = setTimeout(abort, ["propose", "pause", "resume", "archive"].includes(operation.operation) ? ${ROUTINE_CLI_NATIVE_TIMEOUT_MS} : ${ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS}); timer.unref?.();
         pending.set(id, { context, operation, finish }); signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort(); else if (!send({ type: "call", id, context, operation })) finish(unknown(operation));
       }));

@@ -13,6 +13,7 @@ import { createBotRoutinesRepository } from "./repositories/routines.js";
 import { BotStateError } from "./repositories/shared.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
 import { createRoutineCliViews } from "./routine-cli-views.js";
+import { boundedOperation } from "../bounded-operation.js";
 
 export type RoutineCliMutationOperation = Extract<RoutineCliOperation, { operation: "propose" | "pause" | "resume" | "archive" }>;
 const AdmissionSchema = z.discriminatedUnion("disposition", [
@@ -51,6 +52,8 @@ export interface RoutineCliRequestDependencies {
 const ExecuteSchema = z.object({ token: z.string().max(128).optional(), operation: RoutineCliOperationSchema }).strict();
 const mutation = (operation: RoutineCliOperation): operation is RoutineCliMutationOperation => !["list", "show", "request"].includes(operation.operation);
 const actionFor = (operation: RoutineCliOperation): RoutineCliAction => operation.operation === "propose" ? "propose" : mutation(operation) ? "control" : "read";
+const MAX_POST_COMMIT_PER_OWNER = 16;
+const POST_COMMIT_SHUTDOWN_DRAIN_MS = 15_000;
 /** Only strict bounded JSON intent is traversed, never transactions/repositories or caller resources. */
 export function freezeIntent<T>(value: T): T {
   if (value !== null && typeof value === "object") {
@@ -73,6 +76,20 @@ function mapKnownAdmissionError(error: unknown): never {
  * -> atomic DB admission/outbox/receipt. Source revoke never takes these downstream locks. */
 export function createRoutineCliRequestService(deps: RoutineCliRequestDependencies) {
   const ledger = createRoutineCliRequestsRepository(deps.db);
+  // Admit only work for which this owner service can track the post-commit effect.
+  // Slots also cover the commit race, and are removed on rollback or completion.
+  const pending = new Set<Promise<void>>();
+  const afterMutationCommit = deps.afterMutationCommit;
+  let closing = false, drainExpired = false;
+  function reservePostCommit() {
+    if (closing || pending.size >= MAX_POST_COMMIT_PER_OWNER) throw new RoutineCliError("unavailable");
+    const slot = Promise.withResolvers<void>();
+    pending.add(slot.promise);
+    return () => {
+      pending.delete(slot.promise);
+      slot.resolve();
+    };
+  }
   const validateAdmission = async (result: unknown, target: RoutineCliResolvedTarget, operation: RoutineCliMutationOperation,
     trx: Transaction<OwnerBotDatabase>): Promise<RoutineCliAdmission> => {
     const parsed = AdmissionSchema.safeParse(result);
@@ -98,6 +115,7 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
   };
   return {
     async execute(raw: z.infer<typeof ExecuteSchema>): Promise<RoutineCliResult> {
+      if (closing) throw new RoutineCliError("unavailable");
       const parsed = ExecuteSchema.safeParse(raw), configured = RoutineCliScopeSchema.safeParse(deps.scope);
       if (!parsed.success) throw new RoutineCliError("invalid_input");
       const operation = freezeIntent(parsed.data.operation), mutating = mutation(operation);
@@ -107,6 +125,7 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
       const scope = configured.data;
       let admissionStarted = false;
       let committedIntent: Parameters<RoutineCliAfterMutationCommit>[0] | undefined;
+      let releasePostCommit: (() => void) | undefined;
       try {
         const result = await deps.transact(scope.ownerId, async transaction => {
           if (!transaction.db.isTransaction) throw new RoutineCliError("unavailable");
@@ -136,6 +155,7 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
             if (operation.operation === "show") return views.show(target, operation.routineId);
             if (operation.operation === "request") return { kind: "not_observed" as const, requestId: operation.requestId, mayStillArrive: true as const };
             if (operation.operation !== "propose" && !await routines.getForChat({ ...target, routineId: operation.routineId }, trx)) throw new RoutineCliError("not_found");
+            if (afterMutationCommit) releasePostCommit = reservePostCommit();
             let admitted: RoutineCliAdmission;
             admissionStarted = true;
             try { admitted = await deps.admitMutation!(Object.freeze({ transaction, source, invocation, target, operation })); }
@@ -148,11 +168,12 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
           });
         });
         const safeResult = RoutineCliResultSchema.parse(result);
-        if (committedIntent && deps.afterMutationCommit) {
-          try { await deps.afterMutationCommit(committedIntent); }
-          catch (error: unknown) {
+        if (committedIntent && releasePostCommit && afterMutationCommit && !drainExpired) {
+          const intent = committedIntent, release = releasePostCommit;
+          releasePostCommit = undefined;
+          void Promise.resolve().then(() => afterMutationCommit(intent)).catch((error: unknown) => {
             console.warn("[routine-cli-requests] Post-commit execution unconfirmed", error instanceof Error ? error.name : "UnknownError");
-          }
+          }).finally(release);
         }
         return safeResult;
       } catch (error: unknown) {
@@ -163,6 +184,18 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
         if (mutating) return { kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true };
         console.warn("[routine-cli-requests] Read unavailable", error instanceof Error ? error.name : "UnknownError");
         throw new RoutineCliError("unavailable");
+      } finally {
+        releasePostCommit?.();
+      }
+    },
+    async close() {
+      closing = true;
+      if (drainExpired || !pending.size) return;
+      try {
+        await boundedOperation(() => Promise.all(pending), POST_COMMIT_SHUTDOWN_DRAIN_MS);
+      } catch (error: unknown) {
+        drainExpired = true;
+        console.warn("[routine-cli-requests] Post-commit shutdown drain unconfirmed", error instanceof Error ? error.name : "UnknownError");
       }
     },
   };
