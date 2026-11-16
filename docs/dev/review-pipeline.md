@@ -304,6 +304,55 @@ Limits:
   cannot post as `github-actions[bot]`. Repository writers can, but they can
   already merge without Greptile, so the tool does not defend against them.
 
+## Risk-Tiered Merge Approval
+
+`main` requires one approving review. Greptile's auto-approve supplies that
+approval for routine work; people approve the rest.
+
+| Greptile risk | Score | Approval needed to merge |
+| --- | --- | --- |
+| Low or Medium | `5/5` | Greptile's own approval is enough |
+| High or Critical | `5/5` | A human approval from a repository writer |
+| Any | below `5/5` | Not mergeable; fix or defer findings first |
+
+The signal agents check is the approval itself, not a parsed risk label: a
+current-head `5/5` with an `APPROVED` review from the Greptile app
+(`gh pr view <n> --json reviews,reviewDecision`) means Greptile judged the
+risk at or below the cap. A `5/5` without that approval means the PR is above
+the cap and needs a person; report "needs human approval" and stop. Agents
+never approve their own PRs, never use admin bypass to skip this rule, and
+never treat a merge request as a human approval of a High/Critical PR.
+
+Stacks merge atomically, so one High/Critical layer holds the whole stack
+until a person approves that layer.
+
+If a push dismisses Greptile's approval but `review-carryover.mjs check`
+accepts the earlier review, request one fresh `@greptileai please review` so
+Greptile can re-approve the new head.
+
+### Risk definitions
+
+These are the definitions configured in Greptile (Auto-approve -> Risk
+definitions). Keep this table and the Greptile settings in step. When a PR
+spans tiers, the highest tier wins.
+
+| Tier | Examples |
+| --- | --- |
+| Low | Docs, comments, specs; tests only; copy, styling, or layout tweaks with no state or data change; dev-only tooling outside CI and release paths. |
+| Medium | Ordinary features and bug fixes in shell, gateway, kernel, apps, mobile, or CLI; new endpoints behind existing auth that follow the mandatory patterns; additive, non-destructive migrations; covered refactors; patch/minor dependency bumps. |
+| High | Auth, sessions, Clerk, device flow, request principal, permissions; billing, Stripe, credits, AI funding, budgets; platform provisioning, VPS lifecycle, routing; destructive or rewriting migrations and data deletion; owner-data and template-sync invariants; customer VPS host scripts (`distro/customer-vps/`); release, publish, and update pipelines; `.github/workflows/`; secrets and env handling; SSRF, CORS, CSP, sandbox, and app-bridge boundaries; desktop signing and auto-update; major dependency bumps. |
+| Critical | Cross-tenant data access; credential or secret exposure; security-severity fixes; fleet-wide deploy or rollback behavior; irreversible data changes; changes that weaken review, merge, or branch-protection gates (rulesets, this policy, `scripts/review/`). |
+
+### Settings
+
+- Greptile Auto-approve: on; Cap risk level: `Medium`; Risk definitions: the
+  table above.
+- GitHub ruleset `require approval`: 1 approving review; dismiss stale
+  approvals on push, so an approval of an early low-risk head does not survive
+  a later high-risk push.
+- Admin bypass on that ruleset is break-glass only, never a routine merge
+  path for agents running with an admin's credentials.
+
 ## For AI Agents
 
 If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Matrix OS:
