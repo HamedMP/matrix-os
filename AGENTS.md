@@ -545,6 +545,7 @@ Read these on demand, not every session:
 - `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/agent-plugins.md` -- shared developer agent plugins (pstack) for Claude Code and Codex
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
