@@ -45,6 +45,8 @@ export interface OwnerDatabaseCompactorDeps {
   ownerDatabases: Pick<ContainerOwnerDatabases, 'compactionTarget' | 'enforceSizeLimit'>;
   /** How long an owner is left alone after an attempt that did not lift its block. */
   cooldownMs?: number;
+  /** Tables one attempt rewrites; later attempts move on to the next ones. Defaults to 500. */
+  maxTablesPerAttempt?: number;
   now?: () => number;
   logError?: (message: string, detail: Record<string, string>) => void;
 }
@@ -59,10 +61,11 @@ const HOLDER_ROLE = /^mxh_[a-z2-7]{26}$/;
 const OTHER_SESSION_LOCKS = `SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
   WHERE d.datname = current_database() AND l.pid <> pg_backend_pid() LIMIT 1`;
 
-const HOLDER_TABLES = `SELECT format('%I.%I', n.nspname, c.relname) AS name
+/** One window of the holder's tables, in table order after the last window, so attempts reach them all. */
+const HOLDER_TABLES = `SELECT c.oid::bigint AS oid, format('%I.%I', n.nspname, c.relname) AS name
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE c.relowner = $1::text::regrole AND c.relkind IN ('r', 'm')
-  ORDER BY pg_total_relation_size(c.oid) DESC LIMIT ${MAX_TABLES}`;
+  WHERE c.relowner = $1::text::regrole AND c.relkind IN ('r', 'm') AND c.oid > $2::bigint::oid
+  ORDER BY c.oid LIMIT $3::int`;
 
 /** Allocated and estimated live bytes of the holder's tables, their TOAST and their indexes. */
 const LIVE_ESTIMATE = `WITH rels AS (
@@ -73,7 +76,7 @@ const LIVE_ESTIMATE = `WITH rels AS (
       COALESCE((SELECT sum(s.avg_width) FROM pg_stats s
         WHERE s.schemaname = n.nspname AND s.tablename = c.relname AND NOT s.inherited), 0) AS width
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relowner = $1::text::regrole AND c.relkind IN ('r', 'm')
+    WHERE c.relowner = $1::text::regrole AND c.relkind IN ('r', 'm') AND c.oid = ANY($2::bigint[]::oid[])
   ), live AS (
     SELECT heap_bytes + toast_bytes + index_bytes AS allocated, heap_bytes, index_bytes,
       LEAST(heap_bytes, ceil(tuples * (width + 32) / 8000.0) * 8192) AS heap_live,
@@ -117,6 +120,8 @@ function bytes(rows: Record<string, unknown>[], column: string): number {
 
 export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
   const cooldownMs = deps.cooldownMs ?? COOLDOWN_MS;
+  const maxTables = deps.maxTablesPerAttempt ?? MAX_TABLES;
+  if (!Number.isSafeInteger(maxTables) || maxTables < 1 || maxTables > MAX_TABLES) throw new Error('Compaction table window is invalid');
   const now = deps.now ?? Date.now;
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   const attempted = new Map<string, number>();
@@ -148,22 +153,36 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
     }
   }
 
-  async function tables(query: DatabaseSessionQuery, target: CompactionTarget): Promise<string[]> {
-    return (await query(HOLDER_TABLES, [target.holderName])).map((row) => String(row.name));
+  /** Where each owner's next window starts; bounded like the cooldown record. */
+  const windowAfter = new Map<string, number>();
+
+  async function tables(
+    query: DatabaseSessionQuery, target: CompactionTarget, owner: string,
+  ): Promise<{ names: string[]; oids: number[] }> {
+    const fetch = async (after: number) => (await query(HOLDER_TABLES, [target.holderName, after, maxTables]))
+      .map((row) => ({ oid: Number(row.oid), name: String(row.name) }));
+    let rows = await fetch(windowAfter.get(owner) ?? 0);
+    if (rows.length === 0) rows = await fetch(0);
+    windowAfter.delete(owner);
+    // A short window was the last one, so the next attempt starts over.
+    if (rows.length === maxTables) windowAfter.set(owner, rows[rows.length - 1]!.oid);
+    while (windowAfter.size > COOLDOWN_CAP) windowAfter.delete(windowAfter.keys().next().value!);
+    return { names: rows.map((row) => row.name), oids: rows.map((row) => row.oid) };
   }
 
   /** Runs in one session as the holder; returns null when another session holds locks. */
   async function rewrite(
-    query: DatabaseSessionQuery, target: CompactionTarget,
+    query: DatabaseSessionQuery, target: CompactionTarget, owner: string,
   ): Promise<'would_not_fit' | 'unsafe_to_compact' | 'rewritten' | null> {
     for (const statement of SESSION_LIMITS) await query(statement);
     if ((await query(OTHER_SESSION_LOCKS)).length > 0) return null;
     if ((await query(OWNER_CODE_IN_EXPRESSIONS, [target.holderName])).length > 0) return 'unsafe_to_compact';
     await query(`GRANT ${target.holderSql} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`);
     await query(`SET ROLE ${target.holderSql}`);
-    const names = await tables(query, target);
+    const { names, oids } = await tables(query, target, owner);
     for (const name of names) await query(`VACUUM (ANALYZE) ${name}`);
-    const estimate = await query(LIVE_ESTIMATE, [target.holderName]);
+    // Only the tables this attempt rewrites can give space back, so only they are estimated.
+    const estimate = await query(LIVE_ESTIMATE, [target.holderName, oids]);
     await query('RESET ROLE');
     const predicted = bytes(await query(DATABASE_SIZE), 'size_bytes')
       - bytes(estimate, 'allocated_bytes') + bytes(estimate, 'live_bytes');
@@ -177,7 +196,7 @@ export function createOwnerDatabaseCompactor(deps: OwnerDatabaseCompactorDeps) {
   async function compact(owner: string, target: CompactionTarget, signal: AbortSignal): Promise<CompactionOutcome | null> {
     let result: Awaited<ReturnType<typeof rewrite>>;
     try {
-      result = await deps.admin.withDatabaseSession(target.databaseName, signal, (query) => rewrite(query, target));
+      result = await deps.admin.withDatabaseSession(target.databaseName, signal, (query) => rewrite(query, target, owner));
     } finally {
       await revokeHolder(target.holderSql).catch((error: unknown) => {
         logError('[container-owner-db] compaction membership revoke failed', {

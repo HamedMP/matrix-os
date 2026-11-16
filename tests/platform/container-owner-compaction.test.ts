@@ -130,6 +130,39 @@ describe.skipIf(!realUrl)('owner database compaction on a real PostgreSQL server
     await session.end();
   });
 
+  it('reaches a table outside the first selection on a later attempt, judging each attempt by the tables it rewrites', async () => {
+    const owner = `user_compact_${randomUUID().slice(0, 8)}`;
+    const probe = createContainerOwnerDatabases({ db, admin, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3 });
+    const credentials = await probe.ensure(owner, 1, signal());
+    const setup = connect(credentials);
+    await setup.connect();
+    // Created first, so the first one-table selection: large, all live.
+    await setup.query('CREATE TABLE big (id int PRIMARY KEY, body text)');
+    await setup.query(`INSERT INTO big SELECT g, string_agg(md5(random()::text || g::text || s::text), '')
+      FROM generate_series(1, 9000) g, generate_series(1, 20) s GROUP BY g`);
+    // Created second: mostly deleted rows.
+    await setup.query('CREATE TABLE bulk (id int PRIMARY KEY, body text)');
+    await setup.query(`INSERT INTO bulk SELECT g, string_agg(md5(random()::text || g::text || s::text), '')
+      FROM generate_series(1, 8000) g, generate_series(1, 20) s GROUP BY g`);
+    await setup.query('DELETE FROM bulk WHERE id % 10 <> 0');
+    await setup.end();
+    const size = Number((await superuser.query('SELECT pg_database_size($1)::bigint AS n', [credentials.databaseName])).rows[0].n);
+    const sizeLimitBytes = size - 3 * MIB;
+    await db.executor.updateTable('container_owner_databases').set({ size_limit_bytes: sizeLimitBytes })
+      .where('clerk_user_id', '=', owner).execute();
+    const service = createContainerOwnerDatabases({
+      db, admin, passwordSecret: SECRET, sizeLimitBytes, sizeRestoreMarginBytes: MIB,
+    });
+    cleanups.push(() => service.remove(owner, signal()));
+    expect(await service.enforceSizeLimit(owner, signal())).toMatchObject({ writesBlocked: true });
+
+    const compactor = createOwnerDatabaseCompactor({ admin, ownerDatabases: service, cooldownMs: 0, maxTablesPerAttempt: 1 });
+    const outcomes = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) outcomes.push((await compactor.compactFirst([owner], signal()))?.outcome);
+    expect(outcomes).toEqual(['would_not_fit', 'compacted']);
+    expect(await blockedAt(owner)).toBeNull();
+  });
+
   it('does not rewrite tables when the live data would not fit below the restore threshold', async () => {
     const statements: string[] = [];
     const { owner, service } = await blockedOwner();
