@@ -36,6 +36,7 @@ import { createBotBindingsRepository } from "./repositories/bindings.js";
 import { createBotOperationsRepository, type BotOperation } from "./repositories/operations.js";
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
+import { ROUTINE_DIRECT_CHAT_RECIPE_REF } from "./routine-direct-chat-identity.js";
 import { isManagedCustomOperationRequestId, isManagedCustomRecoveryRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
 import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
@@ -238,6 +239,7 @@ export function createBotInstantiation(deps: {
       const parsed = InstantiateBotRequestSchema.safeParse(requestValue);
       if (!parsed.success) throw new BotInstantiationError("invalid_request");
       const request = parsed.data;
+    if (request.recipe.recipeId === ROUTINE_DIRECT_CHAT_RECIPE_REF.recipeId) throw new BotInstantiationError("invalid_request");
       if (!custom && isManagedCustomOperationRequestId(request.clientRequestId)) throw new BotInstantiationError("invalid_request");
       const payloadHash = custom ? createHash("sha256").update(JSON.stringify(["managed-custom-v1", custom])).digest("hex") : instantiationPayloadHash(request);
       const scope = owner(ownerId);

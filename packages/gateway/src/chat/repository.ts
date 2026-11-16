@@ -1,3 +1,4 @@
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
@@ -1561,6 +1562,7 @@ export class ChatRepository {
     const owner = validateOwner(ownerInput);
     const rows = await this.kysely.selectFrom("chat_outbox").selectAll()
       .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chat_id")))
       .where("cursor", ">", Math.max(0, Math.trunc(input.afterCursor)))
       .orderBy("cursor").limit(Math.max(1, Math.min(100, Math.trunc(input.limit)))).execute();
     return rows.map(toOutbox);
@@ -1578,6 +1580,7 @@ export class ChatRepository {
       const cursorExists = await this.kysely.selectFrom("chat_outbox").select("cursor")
         .where("owner_type", "=", owner.type)
         .where("owner_id", "=", owner.ownerId)
+        .where(publicChatIdPredicate(sql.ref("chat_id")))
         .where("cursor", "=", afterCursor)
         .executeTakeFirst();
       if (!cursorExists) return { events: [], gap: true };
@@ -1590,6 +1593,7 @@ export class ChatRepository {
     if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
       const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .where(publicChatIdPredicate(sql.ref("chat_id")))
         .orderBy("cursor", "desc").limit(1).executeTakeFirst();
       if (latest && Number(latest.cursor) > (nextCursor ?? 0)) {
         return { events: [], gap: true, nextCursor: Number(latest.cursor) };
@@ -1616,6 +1620,7 @@ export class ChatRepository {
       .selectAll("chats")
       .distinct()
       .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chats.id")))
       .where("chat_messages.state", "=", "committed")
       .where(sql<boolean>`to_tsvector('simple', chat_messages.search_text) @@ plainto_tsquery('simple', ${searchText})`);
     if (projectId !== undefined) {

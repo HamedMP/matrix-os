@@ -1,3 +1,4 @@
+import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
@@ -1253,6 +1254,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
+  registerRoutineDirectResourceFence(app);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
