@@ -7,12 +7,24 @@
  */
 
 export const CONTAINER_UNIT_MAX_LIFETIME_SECONDS = 28_800;
+/**
+ * The provider's largest idle window. Any endpoint traffic, polling included,
+ * counts as activity to the provider, so the platform's reaper decides idleness
+ * and the provider's own idle suspend is pushed past the unit lifetime.
+ */
+export const CONTAINER_UNIT_MAX_IDLE_SECONDS = 28_800;
+export const CONTAINER_SUSPENDED_DURATION_BOUNDS = { min: 60, max: 28_800, fallback: 28_800 } as const;
 const MAX_BOOT_PAYLOAD_BYTES = 16_384;
 const MAX_ENDPOINT_TOKEN_MINUTES = 60;
 const LIST_PAGE_SIZE = 100;
 const LIST_MAX_PAGES = 50;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/** A platform-reachable unit endpoint: a plain DNS name inside the provider's suffix. */
+export function isContainerEndpointHost(host: string | null | undefined, suffix: string): host is string {
+  return typeof host === 'string' && HOSTNAME.test(host) && suffix.startsWith('.') && host.endsWith(suffix);
+}
 
 export type ContainerProviderErrorCode =
   | 'not_found' | 'conflict' | 'throttled' | 'capacity' | 'quota_exceeded'
@@ -93,6 +105,7 @@ export interface LambdaMicrovmsApi {
     ingressNetworkConnectors?: string[];
     egressNetworkConnectors?: string[];
     maximumDurationInSeconds?: number;
+    idlePolicy?: { maxIdleDurationSeconds: number; suspendedDurationSeconds: number; autoResumeEnabled: boolean };
     runHookPayload?: string;
     clientToken?: string;
   }, options: CallOptions): Promise<MicrovmDescription>;
@@ -119,6 +132,8 @@ export interface LambdaMicrovmsProviderConfig {
   endpointTokenMinutes: number;
   /** Endpoints outside this DNS suffix are treated as absent. */
   endpointHostSuffix: string;
+  /** How long a suspended unit, and so its disk, is kept before the provider terminates it. */
+  suspendedDurationSeconds?: number;
 }
 
 export interface LambdaMicrovmsProviderDeps {
@@ -160,6 +175,11 @@ function assertConfig(config: LambdaMicrovmsProviderConfig): void {
     throw new Error('Container provider endpoint token lifetime must be 1 to 60 minutes');
   }
   if (!config.endpointHostSuffix.startsWith('.')) throw new Error('Container provider endpoint suffix must start with a dot');
+  const suspended = config.suspendedDurationSeconds ?? CONTAINER_SUSPENDED_DURATION_BOUNDS.fallback;
+  if (!Number.isInteger(suspended) || suspended < CONTAINER_SUSPENDED_DURATION_BOUNDS.min
+    || suspended > CONTAINER_SUSPENDED_DURATION_BOUNDS.max) {
+    throw new Error('Container provider suspended duration is out of range');
+  }
 }
 
 export function createLambdaMicrovmsProvider(deps: LambdaMicrovmsProviderDeps): ContainerProvider {
@@ -176,7 +196,7 @@ export function createLambdaMicrovmsProvider(deps: LambdaMicrovmsProviderDeps): 
   function endpointHost(raw: string | undefined): string | null {
     if (!raw) return null;
     const host = raw.replace(/^https:\/\//, '').toLowerCase();
-    return HOSTNAME.test(host) && host.endsWith(config.endpointHostSuffix) ? host : null;
+    return isContainerEndpointHost(host, config.endpointHostSuffix) ? host : null;
   }
 
   function toUnit(raw: MicrovmDescription | MicrovmItem, lifetimeSeconds?: number): ContainerUnit | null {
@@ -226,6 +246,11 @@ export function createLambdaMicrovmsProvider(deps: LambdaMicrovmsProviderDeps): 
         ingressNetworkConnectors: config.ingressNetworkConnectors,
         egressNetworkConnectors: config.egressNetworkConnectors,
         maximumDurationInSeconds: CONTAINER_UNIT_MAX_LIFETIME_SECONDS,
+        idlePolicy: {
+          maxIdleDurationSeconds: CONTAINER_UNIT_MAX_IDLE_SECONDS,
+          autoResumeEnabled: false,
+          suspendedDurationSeconds: config.suspendedDurationSeconds ?? CONTAINER_SUSPENDED_DURATION_BOUNDS.fallback,
+        },
         runHookPayload: input.bootPayload,
         clientToken: input.idempotencyKey,
       }, options));

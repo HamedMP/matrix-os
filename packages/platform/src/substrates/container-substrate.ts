@@ -33,6 +33,7 @@ export interface ContainerSubstrateDeps {
   endpointHostSuffix: string;
   credentialCacheMax?: number;
   now?: () => Date;
+  activity?: { observe(machineId: string): void };
 }
 
 const COMPUTE_STATES: Record<ContainerUnitState, SubstrateComputeRecord['state']> = {
@@ -188,6 +189,10 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
       const outcome = await lifecycle.destroyCompute(ref.machineId, ref.generation, signal);
       if (outcome === 'stale_generation') throw new ContainerSubstrateError('stale_generation');
       if (machine?.substrateRef) credentials.delete(machine.substrateRef);
+    },
+
+    recordOwnerActivity(machineId) {
+      deps.activity?.observe(machineId);
     },
 
     async listCompute(signal) {

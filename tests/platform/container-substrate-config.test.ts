@@ -69,7 +69,35 @@ describe('container substrate configuration', () => {
         egressNetworkConnectors: [ENV.MATRIX_CONTAINER_EGRESS_CONNECTORS],
       },
       ownerDatabase: { runtimeHost: 'owners.internal.example', runtimePort: 5432, sizeLimitBytes: 1024 ** 3 },
+      idle: { idleMs: 10 * 60_000, maxSessionMs: 4 * 60 * 60_000 },
     });
+    expect(result.ok && result.config.provider.suspendedDurationSeconds).toBe(28_800);
+  });
+
+  it('reads the idle stop and maximum session from minutes and bounds them', () => {
+    const result = loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_IDLE_STOP_MINUTES: '20', MATRIX_CONTAINER_MAX_SESSION_MINUTES: '120' });
+    expect(result.ok && result.config.idle).toEqual({ idleMs: 20 * 60_000, maxSessionMs: 120 * 60_000 });
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_IDLE_STOP_MINUTES: '0' }))
+      .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_IDLE_STOP_MINUTES'] });
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: '600' }))
+      .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_MAX_SESSION_MINUTES'] });
+  });
+
+  it('refuses a maximum session that, with the stop budget, reaches the provider idle maximum', () => {
+    for (const minutes of ['480', '458']) {
+      expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: minutes }))
+        .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_MAX_SESSION_MINUTES'] });
+    }
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: '457' }).ok).toBe(true);
+  });
+
+  it('reads the suspended retention from seconds and bounds it', () => {
+    const result = loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: '7200' });
+    expect(result.ok && result.config.provider.suspendedDurationSeconds).toBe(7_200);
+    for (const value of ['59', '28801', 'soon']) {
+      expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: value }))
+        .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS'] });
+    }
   });
 });
 
@@ -102,6 +130,33 @@ describe('container substrate registration', () => {
     expect(createClient).toHaveBeenCalledWith({ region: 'eu-west-1' });
     await configured!.shutdown();
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts its background sweeps only when asked and clears them on shutdown', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
+      expect(vi.getTimerCount()).toBe(0);
+      configured.startBackgroundWork();
+      expect(vi.getTimerCount()).toBe(2);
+      await configured.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes owner activity on every replica, including one that runs no background sweeps', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
+      configured.startServing();
+      expect(vi.getTimerCount()).toBe(1);
+      await configured.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not build a client when settings are incomplete', () => {

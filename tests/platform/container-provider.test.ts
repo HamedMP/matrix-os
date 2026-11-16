@@ -72,6 +72,7 @@ describe('Lambda MicroVMs container provider', () => {
       ingressNetworkConnectors: config().ingressNetworkConnectors,
       egressNetworkConnectors: config().egressNetworkConnectors,
       maximumDurationInSeconds: 28_800,
+      idlePolicy: { maxIdleDurationSeconds: 28_800, autoResumeEnabled: false, suspendedDurationSeconds: 28_800 },
       runHookPayload: '{"v":1}',
       clientToken: 'run-key-1',
     }, { abortSignal: s });
@@ -82,6 +83,16 @@ describe('Lambda MicroVMs container provider', () => {
       createdAt: NOW,
       expiresAt: new Date(NOW.getTime() + 28_800_000),
     });
+  });
+
+  it('leaves idleness to the platform: no provider auto-suspend before the lifetime, no auto-resume', async () => {
+    const api = fakeApi();
+    await provider(api, { suspendedDurationSeconds: 3_600 }).run({ idempotencyKey: 'k', bootPayload: '{}' }, signal());
+    expect(vi.mocked(api.runMicrovm).mock.calls[0]?.[0].idlePolicy).toEqual({
+      maxIdleDurationSeconds: 28_800, autoResumeEnabled: false, suspendedDurationSeconds: 3_600,
+    });
+    expect(() => provider(api, { suspendedDurationSeconds: 0 })).toThrow();
+    expect(() => provider(api, { suspendedDurationSeconds: 1.5 })).toThrow();
   });
 
   it('passes a pinned image version when configured', async () => {

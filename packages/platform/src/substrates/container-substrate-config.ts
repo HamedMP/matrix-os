@@ -3,13 +3,22 @@ import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
 import { createContainerOwnerDatabases, type ContainerOwnerDatabases, type OwnerClusterAdmin } from './container-owner-database.js';
-import { createContainerLifecycleService, type ContainerLifecycleService } from './container-lifecycle-service.js';
 import {
+  CONTAINER_QUIESCE_TIMEOUT_MS,
+  createContainerLifecycleService,
+  type ContainerLifecycleService,
+} from './container-lifecycle-service.js';
+import {
+  CONTAINER_SUSPENDED_DURATION_BOUNDS,
+  CONTAINER_UNIT_MAX_IDLE_SECONDS,
   createLambdaMicrovmsProvider,
   type LambdaMicrovmsApi,
   type LambdaMicrovmsProviderConfig,
 } from './container-provider.js';
+import { createContainerRuntimeClient } from './container-runtime-client.js';
 import { createContainerSubstrate } from './container-substrate.js';
+import { createActivityTracker, createIdleReaper } from './idle-reaper.js';
+import { createOrphanReconciler } from './orphan-reconciler.js';
 import { createLambdaMicrovmsApi, createLambdaMicrovmsClient, type LambdaMicrovmsSender } from './lambda-microvms-client.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -34,6 +43,13 @@ const FIELDS = {
   /** Platform origin the runtime calls for registration and lifecycle reports. */
   MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
   PLATFORM_SECRET: z.string().min(32),
+  MATRIX_CONTAINER_IDLE_STOP_MINUTES: z.coerce.number().int().min(1).max(240).default(10),
+  /** A session plus its stop budget must end before the provider's idle maximum and unit lifetime. */
+  MATRIX_CONTAINER_MAX_SESSION_MINUTES: z.coerce.number().int().min(10).default(240)
+    .refine(minutes => minutes * 60_000 + CONTAINER_QUIESCE_TIMEOUT_MS < CONTAINER_UNIT_MAX_IDLE_SECONDS * 1000),
+  MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS: z.coerce.number().int()
+    .min(CONTAINER_SUSPENDED_DURATION_BOUNDS.min).max(CONTAINER_SUSPENDED_DURATION_BOUNDS.max)
+    .default(CONTAINER_SUSPENDED_DURATION_BOUNDS.fallback),
 } as const;
 
 const ConfigSchema = z.object(FIELDS);
@@ -49,6 +65,7 @@ export interface ContainerSubstrateConfig {
     passwordSecret: string;
     sizeLimitBytes: number;
   };
+  idle: { idleMs: number; maxSessionMs: number };
 }
 
 export type ContainerSubstrateConfigResult =
@@ -79,6 +96,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         gatewayPort: c.MATRIX_CONTAINER_GATEWAY_PORT,
         endpointTokenMinutes: c.MATRIX_CONTAINER_ENDPOINT_TOKEN_MINUTES,
         endpointHostSuffix: c.MATRIX_CONTAINER_ENDPOINT_SUFFIX,
+        suspendedDurationSeconds: c.MATRIX_CONTAINER_SUSPENDED_DURATION_SECONDS,
       },
       ownerDatabase: {
         adminUrl: c.MATRIX_CONTAINER_OWNER_DB_ADMIN_URL,
@@ -87,6 +105,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         passwordSecret: c.MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET,
         sizeLimitBytes: c.MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES,
       },
+      idle: { idleMs: c.MATRIX_CONTAINER_IDLE_STOP_MINUTES * 60_000, maxSessionMs: c.MATRIX_CONTAINER_MAX_SESSION_MINUTES * 60_000 },
     },
   };
 }
@@ -96,6 +115,10 @@ export interface ConfiguredContainerSubstrate {
   platformSecret: string;
   lifecycle: ContainerLifecycleService;
   ownerDatabases: ContainerOwnerDatabases;
+  /** Persists owner activity this replica observes; call on every replica that serves owner traffic. */
+  startServing(): void;
+  /** Starts the idle and orphan sweeps; call once the platform database is ready. */
+  startBackgroundWork(): void;
   shutdown(): Promise<void>;
 }
 
@@ -130,9 +153,15 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
   });
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
+  const runtime = createContainerRuntimeClient({
+    provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
+  });
   const lifecycle = createContainerLifecycleService({
     db: deps.db,
     provider,
+    // A resumed unit gets a whole new session, so it must outlive that session and its stop.
+    minResumeLifetimeMs: config.idle.maxSessionMs + CONTAINER_QUIESCE_TIMEOUT_MS,
+    reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);
       return JSON.stringify({
@@ -155,12 +184,17 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
           user: database.roleName,
           password: database.password,
         },
+        ...(context.recovery ? { recovery: context.recovery } : {}),
       });
     },
   });
+  const activity = createActivityTracker({ db: deps.db });
+  const reaper = createIdleReaper({ db: deps.db, lifecycle, runtime, activity, config: config.idle });
+  const reconciler = createOrphanReconciler({ db: deps.db, provider });
   const substrate = createContainerSubstrate({
     lifecycle,
     provider,
+    activity,
     endpointHostSuffix: config.provider.endpointHostSuffix,
     loadMachine: machineId => getUserMachine(deps.db, machineId),
   });
@@ -169,7 +203,17 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     platformSecret: config.platform.secret,
     lifecycle,
     ownerDatabases,
+    startServing() {
+      activity.startPeriodicFlush();
+    },
+    startBackgroundWork() {
+      reaper.start();
+      reconciler.start();
+    },
     async shutdown() {
+      activity.stopPeriodicFlush();
+      await reconciler.shutdown();
+      await reaper.shutdown();
       await lifecycle.shutdown();
       sdkClient?.destroy();
       await pgAdmin?.close();

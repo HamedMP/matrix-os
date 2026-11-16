@@ -110,6 +110,8 @@ export interface UserMachinesTable {
   last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   status_changed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  last_flush_digest: Generated<string | null>;
+  last_flushed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {

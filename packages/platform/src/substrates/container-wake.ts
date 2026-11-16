@@ -5,6 +5,7 @@ import { getVpsBootPage } from '../vps-boot-page.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { RuntimeUpstream } from './types.js';
 import { decideContainerWake } from './container-websocket.js';
+import { isMeaningfulOwnerRequest } from './idle-reaper.js';
 
 /**
  * Only an authenticated request from a container runtime's owner starts its
@@ -51,6 +52,7 @@ const RETRY_AFTER: Record<'waking' | 'busy' | 'failed', string | null> = {
  * substrate also passes through so routing reports it as unavailable.
  */
 export async function prepareContainerUpstream(input: ContainerWakeInput): Promise<ContainerWakeOutcome> {
+  observeOwnerActivity(input);
   const decision = await decideContainerWake(input);
   if (decision.kind === 'proceed') return decision;
   if (decision.kind === 'unavailable') {
@@ -58,6 +60,19 @@ export async function prepareContainerUpstream(input: ContainerWakeInput): Promi
     return { kind: 'respond', response: input.c.json({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' }, 503) };
   }
   return { kind: 'respond', response: stateResponse(input, decision.state, RETRY_AFTER[decision.state]) };
+}
+
+/**
+ * Recorded before the wake decision, so an owner who comes back while a stop
+ * is quiescing can cancel it. Only the owner's own verified session counts.
+ */
+function observeOwnerActivity(input: ContainerWakeInput): void {
+  const { machine, identity, c } = input;
+  if (machine.substrate !== 'container' || identity.source !== 'auth' || !identity.userId
+    || identity.userId !== machine.clerkUserId) return;
+  if (!isMeaningfulOwnerRequest({ method: c.req.method, path: c.req.path, header: name => c.req.header(name) })) return;
+  const lookup = input.substrates.get('container');
+  if (lookup.ok) lookup.substrate.recordOwnerActivity?.(machine.machineId);
 }
 
 /** Platform-to-runtime credentials are set last so a client header of the same name cannot replace them. */

@@ -1139,6 +1139,8 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const freeTierConfig = loadConfiguredFreeTier(appEnv);
   const substrateRegistry = createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []);
+  containerSubstrate?.startServing();
+  if (backgroundWorkersEnabled) containerSubstrate?.startBackgroundWork();
   const app = createPlatformApp({
     accountDeletion,
     db,
