@@ -320,6 +320,27 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  // Fault detected (review of #3296): zellij still holds a finished program's pane, but
+  // capture refused finished tabs, so `read` fell back to a snapshot nobody had rendered
+  // and missed the command's final output.
+  it("captures a finished tab's screen while zellij still holds its pane", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const store = new TerminalWorkspaceStore({ homePath });
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "tests", cwd: "projects/matrix-os" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    const paneId = (await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    zellij.screenDumps.set(paneId!, { viewport: "12 passed\n", full: "bun test\n12 passed\n" });
+    await store.markTabExited(ref, 0);
+
+    await expect(runtime.captureScreen({ ...ref, lines: 10 }))
+      .resolves.toEqual({ viewport: ["12 passed"], scrollback: ["bun test"] });
+    await runtime.shutdown();
+  });
+
   it("captures nothing for an unknown tab or when zellij cannot dump the pane", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);

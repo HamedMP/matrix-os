@@ -24,7 +24,7 @@ import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
-  screenCaptureFromDumps,
+  captureTabScreen,
   TerminalScreenCaptureRequestSchema,
   type TerminalScreenCapture,
 } from "./screen-capture.js";
@@ -331,27 +331,14 @@ export class TerminalRuntime {
     return this.store.listWorkspaces();
   }
 
-  /**
-   * A tab's screen read from zellij now. Zellij only reports screen updates for
-   * panes some client renders, so the cached snapshot of a background tab can be
-   * stale; readers use this and fall back to the snapshot when it returns null.
-   * Read-only, so it does not join the workspace mutation queue.
-   */
+  /** A tab's screen from zellij now (see `captureTabScreen`); null means use the snapshot. */
   async captureScreen(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null> {
     const request = TerminalScreenCaptureRequestSchema.parse(input);
     const dump = this.zellij.dumpPaneText?.bind(this.zellij);
     if (!dump) return null;
+    // Read-only, so it does not join the workspace mutation queue.
     const workspace = await this.store.getRuntimeWorkspace(request.workspaceId);
-    const tab = workspace?.tabs[request.tabId];
-    if (!workspace || !tab?.zellijPaneId || (tab.status !== "running" && tab.status !== "idle")) return null;
-    try {
-      const viewport = await dump(workspace.zellijSessionName, tab.zellijPaneId, false);
-      const full = request.lines > 0 ? await dump(workspace.zellijSessionName, tab.zellijPaneId, true) : undefined;
-      return screenCaptureFromDumps(viewport, full, request.lines);
-    } catch (error) {
-      console.warn("[terminal-runtime] screen capture unavailable", error instanceof Error ? error.name : "unknown_error");
-      return null;
-    }
+    return captureTabScreen({ workspace, tabId: request.tabId, lines: request.lines, dump });
   }
 
   async getCommandState(refInput: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState> {

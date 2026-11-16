@@ -78,8 +78,12 @@ preview owner, project admission) and reach only owner tabs (`accessScope:
 "owner"`); Chat-bound and legacy tabs keep their own paths. The logic lives
 in `packages/gateway/src/terminal-agent/` and runs over the existing
 `TerminalRuntimeSocketClient` operations (`ListWorkspaces`, `GetSnapshot`,
-`WriteInput` with `expectedIncarnation`). The runtime protocol doesn't change, and
-nothing is added to the 1193-LOC `runtime.ts`.
+`WriteInput` with `expectedIncarnation`), plus one read-only `CaptureScreen`
+operation for live screens. The 1000+ LOC `runtime.ts` and `zellij-adapter.ts`
+only gain thin delegations: capture lives in `screen-capture.ts` and returning a
+viewer moved by tab creation in `zellij-viewer-return.ts`. New runtime behavior
+follows the same rule: a focused module first, a one-call delegation in the large
+file.
 
 | Verb | Route | Semantics |
 |---|---|---|

@@ -38,3 +38,28 @@ export function screenCaptureFromDumps(viewportDump: string, fullDump: string | 
   const split = Math.max(0, full.length - viewport.length);
   return { viewport: full.slice(split), scrollback: full.slice(0, split).slice(-lines) };
 }
+
+/**
+ * A tab's screen read from zellij now. Zellij only reports screen updates for panes
+ * some client renders, so the cached snapshot of a background tab can be stale.
+ * Any tab that still names a pane is read, finished ones too: zellij holds an exited
+ * program's pane with its final output until the tab is removed. A pane zellij already
+ * closed fails the dump, and the caller falls back to the snapshot on null.
+ */
+export async function captureTabScreen(input: {
+  workspace: { zellijSessionName: string; tabs: Record<string, { zellijPaneId?: string | null }> } | undefined;
+  tabId: string;
+  lines: number;
+  dump: (sessionName: string, paneId: string, full: boolean) => Promise<string>;
+}): Promise<TerminalScreenCapture | null> {
+  const paneId = input.workspace?.tabs[input.tabId]?.zellijPaneId;
+  if (!input.workspace || !paneId) return null;
+  try {
+    const viewport = await input.dump(input.workspace.zellijSessionName, paneId, false);
+    const full = input.lines > 0 ? await input.dump(input.workspace.zellijSessionName, paneId, true) : undefined;
+    return screenCaptureFromDumps(viewport, full, input.lines);
+  } catch (error) {
+    console.warn("[terminal-runtime] screen capture unavailable", error instanceof Error ? error.name : "unknown_error");
+    return null;
+  }
+}
