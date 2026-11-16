@@ -76,6 +76,8 @@ const RECONCILE_BATCH = 20;
 const HEAD_TIMEOUT_MS = 5_000;
 /** A refused write waits at most this long for reconciliation before its refusal stands. */
 const RECONCILE_BUDGET_MS = 15_000;
+/** How long a multipart completion and its size check may take before its noted write is reconciled. */
+const COMPLETION_CHECK_MS = 2 * 60_000;
 
 type Executor = PlatformDB['executor'];
 
@@ -235,6 +237,32 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
         })
         .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
         .where('reservation_id', '=', reservationId).execute();
+    },
+
+    /**
+     * Records that a write to `key` is about to land without the broker
+     * knowing its size yet (a multipart completion), as a pending write due
+     * for reconciliation once the completion and its size check have had
+     * time to finish. If that check fails, a later reconcile measures the
+     * stored object instead of leaving it uncounted.
+     * A new key is held at zero bytes and not yet as a file, so the size check
+     * still authorizes both limits.
+     */
+    async notePending(ownerId: string, key: string): Promise<void> {
+      if (key.length < 1 || key.length > MAX_KEY_LENGTH) throw new Error('Storage quota write is invalid');
+      // Not reconcilable during the size check itself, which would count the write uncapped.
+      const at = new Date(now().getTime() + COMPLETION_CHECK_MS).toISOString();
+      await db.transaction(async (trx) => {
+        await lockUsage(trx.executor, ownerId);
+        await sql`
+          INSERT INTO runtime_storage_objects
+            (clerk_user_id, object_key, bytes, counts_as_file, reservation_id, pending_until, updated_at)
+          VALUES (${ownerId}, ${key}, 0, false, ${randomUUID()}::uuid, ${at}::timestamptz, now())
+          ON CONFLICT (clerk_user_id, object_key) DO UPDATE SET
+            pending_until = GREATEST(${at}::timestamptz, COALESCE(runtime_storage_objects.signed_until, ${at}::timestamptz)),
+            updated_at = now()
+        `.execute(trx.executor);
+      });
     },
 
     /**

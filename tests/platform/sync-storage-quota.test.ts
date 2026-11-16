@@ -235,6 +235,23 @@ describe('sync broker storage quota for container runtimes', () => {
     expect(await usage()).toEqual({ object_bytes: 0, object_count: 0 });
   });
 
+  it('still counts a multipart upload whose size check failed after completion', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/objects/sha256/${hex(11)}`;
+    r2.completeMultipartUpload.mockImplementation(async (k: string) => { r2.sizes.set(k, 900); return { etag: 'mp' }; });
+    r2.headObject.mockRejectedValueOnce(new Error('store timeout'));
+    const failed = await target.request('/sync/quotafree/multipart/complete', {
+      method: 'POST', headers: free,
+      body: JSON.stringify({ key, uploadId: 'upload-1', parts: [{ partNumber: 1, etag: 'p1' }] }),
+    });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    clock += 3 * 60_000;
+    // A refused write runs reconciliation, which must find and count the stored object.
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 1001)).status).toBe(507);
+    expect(await usage()).toMatchObject({ object_bytes: 900 });
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 101)).status).toBe(507);
+  });
+
   it('reclaims a signed upload that never arrived once its URL has expired', async () => {
     const target = app();
     expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 900)).status).toBe(200);

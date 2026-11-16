@@ -438,6 +438,12 @@ export function createInternalSyncRoutes(opts: {
     return refusal(c, decision);
   }
 
+  /** Before a completion lands an object of unknown size, so a failed size check after it is still reconciled. */
+  async function notePendingCompletion(c: QuotaContext, key: string): Promise<void> {
+    if (!c.get("internalSyncMetered")) return;
+    await quota.notePending(c.get("internalSyncScope").ownerId, key);
+  }
+
   function presignPendingMs(expiresIn: number | undefined): number {
     return (expiresIn ?? DEFAULT_PRESIGN_TTL_SECONDS) * 1000 + PRESIGN_PENDING_MARGIN_MS;
   }
@@ -565,6 +571,7 @@ export function createInternalSyncRoutes(opts: {
       }
       try {
         const key = systemStorageKey(c, opts.r2PrefixRoot, parsed.key);
+        await notePendingCompletion(c, key);
         const result = await opts.r2.completeMultipartUpload(key, parsed.uploadId, parsed.parts);
         const refused = await meterCompleted(c, key);
         if (refused) return refused;
@@ -654,6 +661,7 @@ export function createInternalSyncRoutes(opts: {
       const allowed = requireAllowedKey(c, parsed.key);
       if (allowed instanceof Response) return allowed;
       try {
+        await notePendingCompletion(c, parsed.key);
         const result = await opts.r2.completeMultipartUpload(
           parsed.key,
           parsed.uploadId,
