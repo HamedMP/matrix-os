@@ -109,3 +109,5 @@ export function orderTerminalAgents(facts: Iterable<TerminalTabFacts>): Terminal
     .filter((tab) => tab.state === "live" && tab.agentStatus)
     .sort((left, right) => (URGENCY[right.agentStatus!] - URGENCY[left.agentStatus!]) || left.name.localeCompare(right.name));
 }
+
+export const TERMINAL_ATTENTION_COPY: Record<TerminalAttentionKind, string> = { blocked: "needs you", error: "reported an error", done: "finished" };

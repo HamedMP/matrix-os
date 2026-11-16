@@ -1,7 +1,7 @@
 /**
- * Terminal tabs the person can see right now: panes rendered on screen in a
- * visible, focused document. A minimized window, another app in front, or a Web
- * Canvas pane panned out of the viewport hides them.
+ * Terminal tabs the person can see right now: panes marked `data-terminal-session`
+ * rendered on screen in a visible, focused document. A minimized window, another
+ * app in front, or a Web Canvas pane panned out of the viewport hides them.
  */
 export function visibleTerminalSessions(root: Document | undefined = typeof document === "undefined" ? undefined : document): Set<string> {
   const seen = new Set<string>();

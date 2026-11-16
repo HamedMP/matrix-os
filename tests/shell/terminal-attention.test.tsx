@@ -4,7 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalAttentionNotifier } from "../../shell/src/components/terminal/TerminalAttentionNotifier.js";
-import { visibleTerminalSessions } from "../../shell/src/components/terminal/visible-terminal-sessions.js";
+import { visibleTerminalSessions } from "@matrix-os/ui/terminal-agents";
 import { mergeShellAgentStatus } from "../../shell/src/components/terminal/useShellsWithAgentStatus.js";
 import { useTerminalAgentEvents } from "../../shell/src/stores/terminal-agent-events.js";
 import { OPEN_TERMINAL_SESSION_EVENT } from "../../shell/src/lib/terminal-session-open.js";

@@ -2,12 +2,14 @@
 // (specs/651-desktop-terminal-window, Local Backend). The core and its holder
 // outlive the app, so terminals survive a restart. Its state, config and
 // sockets live in app-private directories; the user's own herdr is untouched.
-import { lstat, mkdir, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, realpath, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 import { z } from "zod/v4";
 import {
   LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
+  type LocalTerminalAgent,
 } from "../../shared/local-terminals";
+import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket, type HcStream } from "./hc-client";
 
@@ -36,11 +38,31 @@ const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
   state: z.string().max(32),
   // Titles and status come from the program in the terminal: anything goes in,
-  // only a bounded printable title and a known state come out.
+  // only bounded printable text and a known state come out.
   title: z.string().nullable().optional().catch(null),
   name: z.string().nullable().optional().catch(null),
-  status: z.object({ state: z.string().max(32) }).nullable().optional().catch(null),
+  status: z.object({ state: z.string().max(32), msg: z.string().optional().catch(undefined) }).nullable().optional().catch(null),
+  labels: z.record(z.string(), z.string()).nullable().optional().catch(null),
 });
+/** The label a rename sets; it wins over the program's own title. */
+export const TERMINAL_TITLE_LABEL = "matrix.title";
+const PutResultSchema = z.object({ path: z.string().min(1).max(4096) });
+// Fixed command lines for the agents the window can start. Codex runs without
+// its shared daemon, which would otherwise run later sessions as the first one.
+const AGENT_COMMANDS: Record<LocalTerminalAgent, string> = {
+  claude: "claude",
+  codex: "codex --no-daemon",
+  opencode: "opencode",
+  pi: "pi",
+};
+// Runs the agent in the user's interactive login shell, so PATH entries from
+// `.zshrc` or `.bashrc` apply as in their own terminal, then leaves that shell
+// open, as Herdr does. `$1` is the shell and `$2` the fixed agent command.
+const AGENT_LAUNCHER = '"$1" -l -i -c "$2"; exec "$1" -l';
+
+export class LocalTerminalFolderError extends Error {
+  constructor() { super("terminal folder is not a folder in your home"); this.name = "LocalTerminalFolderError"; }
+}
 const RanSchema = z.object({ address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN) });
 // Control characters and bidirectional overrides can disguise a title.
 const UNSAFE_TITLE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
@@ -51,6 +73,10 @@ export type LocalTerminalHostStatus = "ready" | "not-installed" | "unavailable" 
 
 export class LocalRuntimeMissingError extends Error {
   constructor() { super("local terminal runtime is not installed"); this.name = "LocalRuntimeMissingError"; }
+}
+
+function safeStatusMessage(value: string): string {
+  return value.replace(UNSAFE_TITLE_CHARS, "").trim().slice(0, 200);
 }
 
 export function safeTerminalTitle(...candidates: Array<string | null | undefined>): string {
@@ -151,6 +177,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     await privateDir(options.dataDir);
     await privateDir(join(options.dataDir, "state"));
     await privateDir(join(options.dataDir, "config"));
+    await privateDir(join(options.dataDir, "bin"));
+    await installLocalStatusReporter(options.dataDir);
     return binaryPath;
   }
 
@@ -211,23 +239,47 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
       terminals.push({
         id: terminal.data.address,
-        title: safeTerminalTitle(terminal.data.title, terminal.data.name),
+        title: safeTerminalTitle(terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name),
         status: state.success ? state.data : null,
+        ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
       });
     }
     return terminals;
   }
 
-  async function run(size: { cols: number; rows: number }): Promise<string | null> {
+  /** A real folder under home, resolved through symlinks; anything else is refused. */
+  async function folderUnderHome(folder: string): Promise<string> {
+    const home = await realpath(options.home);
+    let resolved: string;
+    try {
+      resolved = await realpath(join(home, folder));
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") throw new LocalTerminalFolderError();
+      throw error;
+    }
+    if (!resolved.startsWith(home + sep) || !(await stat(resolved)).isDirectory()) throw new LocalTerminalFolderError();
+    return resolved;
+  }
+
+  async function run(
+    size: { cols: number; rows: number },
+    launch: { agent?: LocalTerminalAgent; folder?: string },
+  ): Promise<string | null> {
+    const cwd = launch.folder ? await folderUnderHome(launch.folder) : options.home;
     const core = await ensure();
     const time = now();
     creates = creates.filter((started) => time - started < CREATE_WINDOW_MS);
     if (creates.length >= MAX_CREATES_PER_WINDOW) return null;
     creates.push(time);
+    const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
     const ran = RanSchema.parse(await core.call("terminal.run", {
-      argv: ["/usr/bin/env", ...CORE_ONLY_ENV.flatMap((name) => ["-u", name]), options.shell, "-l"],
-      cwd: options.home,
-      env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
+      argv: launch.agent
+        ? ["/usr/bin/env", ...unset, "/bin/sh", "-c", AGENT_LAUNCHER, "matrix-agent", options.shell, AGENT_COMMANDS[launch.agent]]
+        : ["/usr/bin/env", ...unset, options.shell, "-l"],
+      cwd,
+      ...(launch.agent ? { labels: { "matrix.agent": launch.agent } } : {}),
+      env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS",
+        PATH: `${join(options.dataDir, "bin")}:${options.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"}` },
       size,
       no_parent: true,
       no_notify: true,
@@ -252,9 +304,15 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       return live(await ensure());
     },
 
-    /** Starts the user's login shell at home. Returns null when too many were started just now. */
-    create(size: { cols: number; rows: number }): Promise<string | null> {
-      const next = creation.then(() => run(size));
+    /**
+     * Starts the user's login shell, or one of the known agents in it, at home or
+     * in a folder under home. Returns null when too many were started just now.
+     */
+    create(
+      size: { cols: number; rows: number },
+      launch: { agent?: LocalTerminalAgent; folder?: string } = {},
+    ): Promise<string | null> {
+      const next = creation.then(() => run(size, launch));
       // The chain itself never rejects; each caller still sees its own outcome.
       creation = next.catch(() => undefined);
       return next;
@@ -263,6 +321,18 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     async kill(id: string): Promise<void> {
       const core = await ensure();
       await core.call("terminal.kill", { terminal: id });
+    },
+
+    /** Names a terminal for every client of this core: a label, so the program's own title stays. */
+    async rename(id: string, name: string): Promise<void> {
+      const core = await ensure();
+      await core.call("terminal.label", { terminal: id, labels: { [TERMINAL_TITLE_LABEL]: safeTerminalTitle(name) } });
+    },
+
+    /** Writes a pasted file beside the terminal, on its machine; returns where it landed. */
+    async put(id: string, name: string, dataBase64: string): Promise<string> {
+      const core = await ensure();
+      return PutResultSchema.parse(await core.call("terminal.put", { terminal: id, name, data: dataBase64 })).path;
     },
 
     async attach(id: string, size: { cols: number; rows: number }): Promise<number> {
