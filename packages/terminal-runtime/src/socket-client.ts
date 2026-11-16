@@ -24,6 +24,11 @@ import {
   TerminalRuntimeResponseSchema,
   type TerminalRuntimeRequest,
 } from "./socket-protocol.js";
+import {
+  TerminalScreenCaptureRequestSchema,
+  TerminalScreenCaptureSchema,
+  type TerminalScreenCapture,
+} from "./screen-capture.js";
 
 export interface TerminalRuntimeSocketClientOptions {
   socketPath: string;
@@ -74,6 +79,12 @@ export class TerminalRuntimeSocketClient {
 
   async getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<unknown> {
     return this.call("GetSnapshot", ref);
+  }
+
+  /** The tab's screen read from zellij now, or null when the runtime cannot capture it. */
+  async captureScreen(ref: { workspaceId: string; tabId: string }, lines: number): Promise<TerminalScreenCapture | null> {
+    const input = TerminalScreenCaptureRequestSchema.parse({ workspaceId: ref.workspaceId, tabId: ref.tabId, lines });
+    return TerminalScreenCaptureSchema.nullable().parse(await this.call("CaptureScreen", input));
   }
 
   async getCommandState(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalCommandState> {

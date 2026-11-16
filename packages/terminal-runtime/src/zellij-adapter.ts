@@ -1,4 +1,5 @@
 import { prepareNativeScrollPlugin, queryNativeScroll } from "./native-scroll-bridge.js";
+import { readClientPanes, returnViewerMovedToNewTab } from "./zellij-viewer-return.js";
 import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
@@ -238,6 +239,10 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
 
     for (const input of missing) {
       const cwd = resolvedCwds.get(input.internalName)!;
+      const action = (args: string[]) => this.run(
+        ["--session", sessionName, "action", ...args], binaryPath, remainingCommandTimeout(operationDeadline),
+      );
+      const viewers = await readClientPanes(action);
       const output = await this.run([
         "--session", sessionName, "action", "new-tab",
         "--name", input.internalName,
@@ -248,6 +253,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       const tabId = /^\d+$/.test(outputTabId)
         ? z.coerce.number().int().min(0).parse(outputTabId)
         : await this.waitForTabId(sessionName, input.internalName, binaryPath, operationDeadline);
+      await returnViewerMovedToNewTab({ action, before: viewers, newTabId: tabId });
       tabIds.set(input.internalName, tabId);
     }
     if (bootstrap) {
@@ -505,6 +511,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         error instanceof Error ? error.name : "unknown_error",
       );
     }
+  }
+
+  async dumpPaneText(sessionNameInput: string, paneIdInput: string, full: boolean): Promise<string> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const paneId = z.string().regex(PANE_ID).parse(paneIdInput);
+    return this.run(
+      ["--session", sessionName, "action", "dump-screen", "--pane-id", paneId, ...(full ? ["--full"] : [])],
+      binaryPath,
+      TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+    );
   }
 
   async writeToPane(sessionNameInput: string, paneIdInput: string, data: Uint8Array): Promise<void> {

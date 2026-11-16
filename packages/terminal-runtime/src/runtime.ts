@@ -24,6 +24,11 @@ import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
+  captureTabScreen,
+  TerminalScreenCaptureRequestSchema,
+  type TerminalScreenCapture,
+} from "./screen-capture.js";
+import {
   TerminalWorkspaceStore,
   type TerminalRuntimeTabState,
   type TerminalRuntimeWorkspaceState,
@@ -33,6 +38,8 @@ export interface ZellijRuntimeAdapter {
   findTabByInternalNameReadOnly?(sessionName: string, internalName: string,
     expected?: { tabId: number | null; paneId: string | null }): Promise<{ tabId: number; paneId: string } | undefined>;
   getCommandState?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandState>;
+  /** Plain text of a pane's viewport, or its whole scrollback when `full`. */
+  dumpPaneText?(sessionName: string, paneId: string, full: boolean): Promise<string>;
   getCommandResult?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
@@ -322,6 +329,16 @@ export class TerminalRuntime {
 
   listWorkspaces(): Promise<TerminalWorkspace[]> {
     return this.store.listWorkspaces();
+  }
+
+  /** A tab's screen from zellij now (see `captureTabScreen`); null means use the snapshot. */
+  async captureScreen(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null> {
+    const request = TerminalScreenCaptureRequestSchema.parse(input);
+    const dump = this.zellij.dumpPaneText?.bind(this.zellij);
+    if (!dump) return null;
+    // Read-only, so it does not join the workspace mutation queue.
+    const workspace = await this.store.getRuntimeWorkspace(request.workspaceId);
+    return captureTabScreen({ workspace, tabId: request.tabId, lines: request.lines, dump });
   }
 
   async getCommandState(refInput: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState> {

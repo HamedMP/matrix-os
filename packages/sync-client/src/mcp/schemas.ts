@@ -157,3 +157,25 @@ export const GetChatInputSchema = z.object({
   limit: z.number().int().min(1).max(MCP_CHAT_MAX_ITEMS).default(MCP_CHAT_MAX_ITEMS),
   cursor: ChatCursorSchema.optional(),
 }).strict();
+
+const TerminalWorkspaceIdSchema = z.string().regex(/^tws_[0-9a-f]{32}$/);
+const TerminalTabIdSchema = z.string().regex(/^tt_[0-9a-f]{32}$/);
+
+export const TerminalTabRefInputSchema = z.object({
+  computer: RuntimeSlotSchema,
+  workspaceId: TerminalWorkspaceIdSchema,
+  tabId: TerminalTabIdSchema,
+}).strict();
+
+export const ReadTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
+  lines: z.number().int().min(0).max(10_000).optional(),
+}).strict();
+
+export const SendTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
+  text: z.string().min(1).max(8 * 1024),
+  force: z.boolean().optional(),
+}).strict();
+
+export const PressTerminalKeysInputSchema = TerminalTabRefInputSchema.extend({
+  keys: z.array(z.string().min(1).max(16)).min(1).max(64),
+}).strict();
