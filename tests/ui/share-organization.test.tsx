@@ -108,6 +108,7 @@ function files(initial: CollaborativeHandoffRecord | null = null) {
     holdNextHandoffRead: (gate: Promise<void>) => { nextHandoffRead = gate; },
     holdStartWrite: (gate: Promise<void>) => { startWrite = gate; },
     holdCancellationWrite: (gate: Promise<void>) => { cancellationWrite = gate; },
+    legacyRecord: () => stored.get(HANDOFF_PATH),
     /** Simulates the builder skill rewriting the record. */
     skillWrites: (patch: Partial<CollaborativeHandoffRecord>) => {
       const outcome = CollaborativeHandoffRecordSchema.parse({ ...current(), ...patch, updatedAt: "2026-11-15T12:00:00.000Z" });
@@ -257,6 +258,33 @@ describe("Organization tab", () => {
 
 describe("Organization tab review fixes", () => {
   const completedRecord: CollaborativeHandoffRecord = { version: 1, event: "collaborative_app.preparation", requestId: "50000000-0000-4000-8000-000000000001", appSlug: "sales-crm", organizationId: ORG, state: "completed", updatedAt: "2026-11-15T12:00:00.000Z" };
+
+  it("saves cancellation for clients that still read the legacy handoff file", async () => {
+    const api = collaboration(["ready"]);
+    const fileApi = files({ ...completedRecord, state: "running" });
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    const cancel = await screen.findByRole("button", { name: "Cancel sharing" });
+    fileApi.skillWrites({ state: "completed" });
+    await act(async () => { fireEvent.click(cancel); });
+
+    expect(fileApi.legacyRecord()).toMatchObject({ requestId: completedRecord.requestId, state: "cancelled" });
+    expect(api.post).not.toHaveBeenCalledWith(SHARE_PATH, expect.anything());
+  });
+
+  it("does not replace a different request in the legacy handoff file when cancelling", async () => {
+    const api = collaboration(["ready"]);
+    const fileApi = files({ ...completedRecord, state: "running" });
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    const cancel = await screen.findByRole("button", { name: "Cancel sharing" });
+    const newerRequestId = "50000000-0000-4000-8000-000000000002";
+    fileApi.skillWrites({ state: "running", requestId: newerRequestId });
+    await act(async () => { fireEvent.click(cancel); });
+
+    expect(fileApi.current()).toMatchObject({ requestId: completedRecord.requestId, state: "cancelled" });
+    expect(fileApi.legacyRecord()).toMatchObject({ requestId: newerRequestId, state: "running" });
+  });
 
   it("does not recheck or share when a completed poll arrives before Cancel is saved", async () => {
     vi.useFakeTimers();

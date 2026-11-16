@@ -25,6 +25,18 @@ function isNotFound(error: unknown): boolean {
   return value.category === "notFound" || value.status === 404 || value.httpStatus === 404;
 }
 
+async function readHandoff(api: HandoffFileApi, path: string, appSlug: string, signal?: AbortSignal) {
+  let value: unknown;
+  try {
+    value = await api.get(blobPath(path), { signal });
+  } catch (error: unknown) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+  const record = parseCollaborativeHandoff(value, appSlug);
+  return { record };
+}
+
 /**
  * Tracks the "Make app collaborative" handoff record for one app. While the
  * skill runs, the record is re-read on a bounded interval; the skill's write of
@@ -52,23 +64,13 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
   const read = useCallback(async (signal?: AbortSignal): Promise<CollaborativeHandoffRecord | null> => {
     if (!api) return null;
     const resultPath = collaborativeHandoffPath(appSlug);
-    const load = async (path: string, isIntent: boolean) => {
-      try {
-        const next = parseCollaborativeHandoff(await api.get(blobPath(path), { signal }), appSlug);
-        if (isIntent && (!next || next.state === "completed" || next.state === "failed")) {
-          throw new Error("Invalid handoff intent");
-        }
-        return next;
-      } catch (error: unknown) {
-        if (isNotFound(error)) return null;
-        throw error;
-      }
-    };
-    const result = await load(resultPath, false);
+    const result = (await readHandoff(api, resultPath, appSlug, signal))?.record ?? null;
     // Read intent after the builder result to observe a Cancel saved while that read was in flight.
     // react-doctor-disable-next-line react-doctor/server-sequential-independent-await -- the intent snapshot must come after the builder result.
-    const intent = await load(handoffIntentPath(resultPath), true);
-    if (!intent) return result; // Legacy handoffs predate the separate intent file.
+    const savedIntent = await readHandoff(api, handoffIntentPath(resultPath), appSlug, signal);
+    if (!savedIntent) return result; // Legacy handoffs predate the separate intent file.
+    const { record: intent } = savedIntent;
+    if (!intent || intent.state === "completed" || intent.state === "failed") throw new Error("Invalid handoff intent");
     if (intent.state !== "running") return intent;
     if (result?.requestId === intent.requestId && result.organizationId === intent.organizationId
       && (result.state === "completed" || result.state === "failed")) return result;
@@ -121,8 +123,19 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
     const current = ++generation.current;
     pendingWrites.current += 1;
     try {
-      await api.put(`${blobPath(handoffIntentPath(collaborativeHandoffPath(appSlug)))}&force=true`, next);
+      const resultPath = collaborativeHandoffPath(appSlug);
+      await api.put(`${blobPath(handoffIntentPath(resultPath))}&force=true`, next);
       if (generation.current !== current) return null;
+      // Legacy renderers only inspect the original record. Project a terminal
+      // state only when that file currently refers to the same request.
+      if (next.state === "cancelled" || next.state === "applied") {
+        const result = (await readHandoff(api, resultPath, appSlug))?.record;
+        if (generation.current !== current) return null;
+        if (result?.requestId === next.requestId && result.organizationId === next.organizationId) {
+          await api.put(`${blobPath(resultPath)}&force=true`, next);
+          if (generation.current !== current) return null;
+        }
+      }
       setRecord(next);
       setWriteFailed(false);
       return next;
