@@ -99,11 +99,11 @@ export function ConversationActivity({
             {activity.state === "running" ? (
               <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             ) : activity.state === "failed" ? (
-              <X aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--danger)" }} />
+              <X aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--danger-text)" }} />
             ) : activity.state === "stopped" ? (
               <Minus aria-hidden className="size-3.5 shrink-0" />
             ) : activity.state === "partial" ? (
-              <Minus aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--warning)" }} />
+              <Minus aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--warning-text)" }} />
             ) : (
               <Check aria-hidden className="size-3.5 shrink-0" />
             )}
