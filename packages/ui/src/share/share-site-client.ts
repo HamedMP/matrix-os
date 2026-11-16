@@ -1,6 +1,4 @@
-import type {
-  SiteAccessLinkCreateResponse, SiteAccessLinksResponse, SitePublishing, SiteRecord, SiteSlugAvailability,
-} from "@matrix-os/contracts";
+import type { SitePublishing, SiteRecord, SiteSlugAvailability } from "@matrix-os/contracts";
 
 /**
  * The part of the shell `SiteClient` (shell/src/lib/site-client.ts) the Share
@@ -13,9 +11,6 @@ export interface ShareSiteClient {
   update(app: string, metadata: { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
-  accessLinks(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteAccessLinksResponse>;
-  createAccessLink(app: string, value: { baseRevision: number }, signal: AbortSignal): Promise<SiteAccessLinkCreateResponse>;
-  revokeAccessLink(app: string, linkId: string, signal: AbortSignal): Promise<void>;
   slugAvailability(app: string, slug: string, signal: AbortSignal): Promise<SiteSlugAvailability>;
 }
 
