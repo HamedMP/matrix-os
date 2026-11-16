@@ -56,7 +56,6 @@ export class ProjectAppAdapterError extends Error {
   }
 }
 
-/** A failed comparison completes the request without changing the app resource. */
 /**
  * Parses an app's bridge action for the one app a collaboration scope authorizes.
  * Documented app code omits `app`, so an absent field binds to `expectedApp`; a
@@ -78,6 +77,7 @@ export function parseScopedAppAction(
   return parsed.data;
 }
 
+/** A failed comparison completes the request without changing the app resource. */
 export function appMutationChanged(action: BridgeQueryBody["action"], result: unknown): boolean {
   if (action !== "compareAndSwap") return true;
   const outcome = z.object({ ok: z.boolean() }).strict().safeParse(result);
