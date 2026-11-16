@@ -57,6 +57,21 @@ export const MATRIX_HOSTED_BILLING_PLANS: readonly MatrixHostedBillingPlan[] = [
   { slug: "matrix_max", featureSlug: "server_max", label: "Max", monthlyUsd: 200, rank: 30 },
 ];
 
+/**
+ * The free plan is not a hosted billing plan: checkout never sells it and it
+ * never selects a VPS. It allows exactly one container runtime.
+ */
+export const MATRIX_FREE_PLAN_SLUG = "matrix_free" as const;
+export type MatrixFreePlanSlug = typeof MATRIX_FREE_PLAN_SLUG;
+
+export const MATRIX_FREE_PLAN = {
+  slug: MATRIX_FREE_PLAN_SLUG,
+  label: "Free",
+  monthlyUsd: 0,
+  maxRuntimeSlots: 1,
+  substrate: "container",
+} as const;
+
 export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[] = [
   {
     slug: "region_fsn1",

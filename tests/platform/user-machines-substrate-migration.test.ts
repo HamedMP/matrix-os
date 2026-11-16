@@ -23,9 +23,9 @@ async function insertRaw(db: PlatformDB, values: {
 }): Promise<void> {
   const substrate = values.substrate ?? 'vps';
   await sql`
-    INSERT INTO user_machines (machine_id, clerk_user_id, handle, runtime_slot, provisioned_at, substrate, deleted_at)
+    INSERT INTO user_machines (machine_id, clerk_user_id, handle, runtime_slot, provisioned_at, substrate, deleted_at, provisioning_class)
     VALUES (${values.machineId}, ${values.clerkUserId}, ${values.handle}, ${values.runtimeSlot ?? 'primary'},
-      '2026-11-01T00:00:00.000Z', ${substrate}, ${values.deletedAt ?? null})
+      '2026-11-01T00:00:00.000Z', ${substrate}, ${values.deletedAt ?? null}, ${substrate === 'container' ? 'free' : 'customer'})
   `.execute(db.kysely);
 }
 

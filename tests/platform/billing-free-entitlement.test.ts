@@ -1,0 +1,184 @@
+import { Hono } from 'hono';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  MATRIX_FREE_PLAN,
+  MATRIX_FREE_PLAN_SLUG,
+  MATRIX_HOSTED_BILLING_PLAN_SLUGS,
+  MatrixBillingPublicEntitlementSchema,
+} from '@matrix-os/contracts';
+import {
+  computeEffectiveEntitlement,
+  getRuntimeAccessDecision,
+  loadRuntimeCatalog,
+  parseBillingEntitlementRecord,
+  parseBillingOverrideRecord,
+  projectPublicBillingEntitlement,
+  type BillingEntitlement,
+} from '../../packages/platform/src/billing.js';
+import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
+import { insertUserMachine, upsertBillingEntitlement, type PlatformDB } from '../../packages/platform/src/db.js';
+import { createBillingRoutes, type StripeBillingClient } from '../../packages/platform/src/billing-routes.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+
+const NOW = new Date('2026-11-11T10:00:00.000Z');
+
+function paidEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEntitlement {
+  return {
+    clerkUserId: 'user_paid', source: 'stripe', planSlug: 'matrix_starter', status: 'active',
+    maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+    defaultServerType: 'cpx22', allowedServerTypes: ['cpx22'],
+    stripeSubscriptionId: 'sub_1', stripePriceId: 'price_1', billingInterval: 'monthly',
+    gracePeriodEndsAt: null, effectiveFrom: NOW.toISOString(), effectiveUntil: null, updatedAt: NOW.toISOString(),
+    ...overrides,
+  };
+}
+
+describe('free plan catalog', () => {
+  it('defines a zero-cost plan for one container runtime that checkout cannot sell', () => {
+    expect(MATRIX_FREE_PLAN).toMatchObject({ slug: 'matrix_free', monthlyUsd: 0, maxRuntimeSlots: 1, substrate: 'container' });
+    expect(MATRIX_HOSTED_BILLING_PLAN_SLUGS).not.toContain(MATRIX_FREE_PLAN_SLUG);
+  });
+});
+
+describe('free entitlement access decisions', () => {
+  const free = buildFreeEntitlement('user_free', NOW);
+
+  it('grants one container runtime with no VPS server types and no Stripe linkage', () => {
+    expect(free).toMatchObject({
+      source: 'free', planSlug: 'matrix_free', status: 'active', maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1, allowedServerTypes: [], defaultServerType: '',
+      stripeSubscriptionId: null, stripePriceId: null, gracePeriodEndsAt: null,
+    });
+  });
+
+  it('allows a container runtime without checkout', () => {
+    expect(getRuntimeAccessDecision(free, NOW, 'container')).toEqual({
+      runtimeProxyAllowed: true, reason: 'active', gracePeriodEndsAt: null,
+    });
+  });
+
+  it('never allows a VPS, and fails closed when the caller names no substrate', () => {
+    expect(getRuntimeAccessDecision(free, NOW, 'vps')).toEqual({ runtimeProxyAllowed: false, reason: 'no_entitlement' });
+    expect(getRuntimeAccessDecision(free, NOW)).toEqual({ runtimeProxyAllowed: false, reason: 'no_entitlement' });
+  });
+
+  it('denies an inactive free entitlement even for a container', () => {
+    expect(getRuntimeAccessDecision({ ...free, status: 'canceled' }, NOW, 'container').runtimeProxyAllowed).toBe(false);
+  });
+
+  it('leaves paid decisions unchanged whatever substrate is named', () => {
+    const paid = paidEntitlement();
+    const expected = getRuntimeAccessDecision(paid, NOW);
+    expect(expected).toMatchObject({ runtimeProxyAllowed: true, reason: 'active' });
+    expect(getRuntimeAccessDecision(paid, NOW, 'vps')).toEqual(expected);
+    const lapsed = paidEntitlement({ status: 'canceled', gracePeriodEndsAt: '2026-11-01T00:00:00.000Z' });
+    expect(getRuntimeAccessDecision(lapsed, NOW, 'vps')).toEqual(getRuntimeAccessDecision(lapsed, NOW));
+    expect(getRuntimeAccessDecision(null, NOW, 'container')).toEqual({ runtimeProxyAllowed: false, reason: 'no_entitlement' });
+  });
+
+  it('lets an operator override still win over a stored free entitlement', () => {
+    const effective = computeEffectiveEntitlement({
+      stripeEntitlement: free,
+      override: {
+        id: 'ovr_1', clerkUserId: 'user_free', planSlug: 'internal', status: 'active', maxRuntimeSlots: 1,
+        includedRuntimeSlots: 1, addonRuntimeSlots: 0, defaultServerType: 'cpx22', allowedServerTypes: ['cpx22'],
+        reason: 'support', createdBy: 'operator', expiresAt: null, revokedAt: null, createdAt: NOW.toISOString(),
+      },
+      now: NOW,
+    });
+    expect(effective?.source).toBe('override');
+  });
+});
+
+describe('stored free entitlement records', () => {
+  const record = { ...buildFreeEntitlement('user_free', NOW) };
+
+  it('round-trips a free record', () => {
+    expect(parseBillingEntitlementRecord(record)).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+  });
+
+  it('rejects a free plan paired with a paid source or a paid plan paired with the free source', () => {
+    expect(parseBillingEntitlementRecord({ ...record, source: 'stripe' })).toBeNull();
+    expect(parseBillingEntitlementRecord({ ...record, planSlug: 'matrix_max' })).toBeNull();
+  });
+
+  it('rejects an operator override that names the free plan', () => {
+    expect(parseBillingOverrideRecord({
+      id: 'ovr_free', clerkUserId: 'user_free', planSlug: 'matrix_free', status: 'active', maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1, addonRuntimeSlots: 0, defaultServerType: '', allowedServerTypes: [],
+      reason: 'x', createdBy: 'operator', expiresAt: null, revokedAt: null, createdAt: NOW.toISOString(),
+    })).toBeNull();
+  });
+
+  it('projects publicly with no VPS selections', () => {
+    const projected = projectPublicBillingEntitlement(buildFreeEntitlement('user_free', NOW), loadRuntimeCatalog({}));
+    expect(MatrixBillingPublicEntitlementSchema.parse(projected)).toMatchObject({
+      source: 'free', planSlug: 'matrix_free', allowedPlanSlugs: [], allowedSelections: [], maxRuntimeSlots: 1,
+    });
+  });
+});
+
+describe('slot-scoped entitlement resolution', () => {
+  let db: PlatformDB;
+  beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+
+  it('resolves a stored free entitlement for the primary slot when no subscription exists', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    const primary = await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'primary', {});
+    expect(primary).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'secondary', {})).toBeNull();
+  });
+
+  it('still ignores a stored paid entitlement for a slot without a subscription', async () => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_paid', NOW, 'primary', {})).toBeNull();
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, 'user_paid', NOW, undefined, {}))
+      .toMatchObject({ source: 'stripe', planSlug: 'matrix_starter' });
+  });
+});
+
+describe('billing status for a free owner', () => {
+  let db: PlatformDB;
+  beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+
+  const unusedStripe = new Proxy({ apiTimeoutMs: 10_000 }, {
+    get(target, key) {
+      if (key in target) return target[key as keyof typeof target];
+      return () => { throw new Error('stripe must not be called'); };
+    },
+  }) as unknown as StripeBillingClient;
+
+  function status(path: string) {
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db, stripe: unusedStripe, env: {}, resolveClerkUserId: async () => 'user_free', now: () => NOW,
+    }));
+    return app.request(path);
+  }
+
+  it('lets an active free owner through to their container runtime instead of the payment gate', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertUserMachine(db, {
+      machineId: 'ctr-free', clerkUserId: 'user_free', handle: 'freeowner', status: 'stopped',
+      provisionedAt: NOW.toISOString(), substrate: 'container',
+    });
+    for (const path of ['/billing/status', '/billing/status?runtimeSlot=primary']) {
+      const response = await status(path);
+      expect(response.status).toBe(200);
+      expect((await response.json()).access).toMatchObject({ runtimeProxyAllowed: true, reason: 'active' });
+    }
+  });
+
+  it('still refuses a free owner whose runtime is a VPS', async () => {
+    await upsertBillingEntitlement(db, buildFreeEntitlement('user_free', NOW));
+    await insertUserMachine(db, {
+      machineId: 'vps-free', clerkUserId: 'user_free', handle: 'freeowner', status: 'running',
+      provisionedAt: NOW.toISOString(),
+    });
+    const response = await status('/billing/status?runtimeSlot=primary');
+    expect((await response.json()).access).toMatchObject({ runtimeProxyAllowed: false });
+  });
+});

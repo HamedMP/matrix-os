@@ -18,6 +18,8 @@ export interface AccountDeletionAdapterOptions {
   db: PlatformDB;
   clerkSecretKey: string;
   customerVpsService?: Pick<CustomerVpsService, 'delete'>;
+  /** Drops a free owner's container database and role; required once such a database exists. */
+  containerOwnerDatabases?: { remove(clerkUserId: string, signal: AbortSignal): Promise<void> };
   hetzner?: Pick<HetznerClient, 'getServer' | 'deleteServer' | 'listServersByLabel'> & Partial<Pick<HetznerClient, 'getAction'>>;
   objectStore?: AccountDeletionObjectStore;
   sitesObjectStore?: AccountDeletionObjectStore;
@@ -33,6 +35,8 @@ export interface AccountDeletionAdapterOptions {
   twilio?: { accountSid: string; authToken: string; publicBaseUrl: string };
   fetch?: typeof fetch;
 }
+/** Each owner-cluster statement is bounded on its own; the whole removal gets a minute. */
+const OWNER_DATABASE_REMOVE_TIMEOUT_MS = 60_000;
 const userSchema = z.object({ external_accounts: z.array(z.object({ provider: z.string(), id: z.string() })).max(100),
   private_metadata: z.record(z.string(), z.unknown()).default({}) });
 export function createAccountDeletionAdapters(options: AccountDeletionAdapterOptions): AccountDeletionAdapters {
@@ -90,6 +94,16 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
     return { clerkUserId: owner, appleTokens: [...(nativeCredential ? [nativeCredential] : []), ...prepared.tokens],
       ...(prepared.manualRevocationRequired ? { manualAppleRevocationRequired: true } : {}) };
   }
+
+  /** A free owner's database lives on the shared owner cluster, outside every platform row the data step erases. */
+  async function removeContainerOwnerDatabase(owner: string): Promise<void> {
+    const live = await db.executor.selectFrom('container_owner_databases').select('clerk_user_id')
+      .where('clerk_user_id', '=', owner).where('deleted_at', 'is', null).executeTakeFirst();
+    if (!live) return;
+    if (!options.containerOwnerDatabases) throw new Error('Runtime cleanup configuration unavailable');
+    await options.containerOwnerDatabases.remove(owner, AbortSignal.timeout(OWNER_DATABASE_REMOVE_TIMEOUT_MS));
+  }
+
   return {
     prepare,
     async billing(context) {
@@ -162,8 +176,16 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       const legacy = await db.executor.selectFrom('containers').select('handle').where('clerk_user_id','=',owner)
         .where('status','not in',['deleted','stopped']).limit(1).execute();
       if (legacy.length) throw new Error('Legacy runtime cleanup required');
-      const machineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
-      if (machineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      const allMachineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
+      if (allMachineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      // A container runtime has no provider server: retiring its record is enough, and the orphan
+      // sweep ends any unit a retired record no longer references. It needs no VPS service.
+      for (const machine of allMachineRows.filter((row) => row.substrate === 'container' && !row.deleted_at)) {
+        const retired = await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: new Date().toISOString() })
+          .where('machine_id', '=', machine.machine_id).where('deleted_at', 'is', null).returning('machine_id').executeTakeFirst();
+        if (!retired) throw new Error('Runtime cleanup pending');
+      }
+      const machineRows = allMachineRows.filter((row) => row.substrate !== 'container');
       // PostgreSQL returns BIGINT columns as strings. Normalize before calling
       // the provider or comparing the same ID from inventory and queued rows.
       const machines = machineRows.map(machine => ({ ...machine,
@@ -174,6 +196,7 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if (!machines.length) {
         await db.executor.updateTable('prebilling_provisioning_intents').set({state:'cleaned',cleaned_at:new Date().toISOString(),
           lease_expires_at:null,revision:sql`revision + 1`}).where('clerk_user_id','=',owner).execute();
+        await removeContainerOwnerDatabase(owner);
         return;
       }
       if (!options.customerVpsService || !options.hetzner?.listServersByLabel) throw new Error('Runtime cleanup configuration unavailable');
@@ -230,6 +253,7 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
         await db.executor.updateTable('provider_deletion_queue').set({ completed_at: new Date().toISOString(), last_error: null })
           .where('machine_id','=',machine.machine_id).where('completed_at','is',null).execute();
       }
+      await removeContainerOwnerDatabase(owner);
     },
     async integrations(context) {
       const owner = context.clerkUserId;
@@ -319,7 +343,11 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if (!options.objectStore) throw new Error('Storage cleanup configuration unavailable');
       await eraseOwnerStorage(options.objectStore, context.clerkUserId, options.r2PrefixRoot);
     },
-    async data(context) { await eraseOwnerPlatformData(db, context.clerkUserId, options.ownerHash); },
+    async data(context) {
+      // A signup racing deletion can recreate the owner database after runtime cleanup; drop it again first.
+      await removeContainerOwnerDatabase(context.clerkUserId);
+      await eraseOwnerPlatformData(db, context.clerkUserId, options.ownerHash);
+    },
     async clerk(context) {
       await assertClerkOwnershipSafe(context.clerkUserId,true);
       await clerk(`/users/${encodeURIComponent(context.clerkUserId)}`, 'DELETE', true);

@@ -83,6 +83,10 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     const liveRuntime=await trx.executor.selectFrom('user_machines').select('machine_id')
       .where('clerk_user_id','=',owner).where((eb)=>eb.or([eb('deleted_at','is',null),eb('status','!=','deleted')])).limit(1).execute();
     if(liveRuntime.length) throw new Error('runtime_cleanup_pending');
+    // A free owner's database must already be dropped on the owner cluster; only its tombstone remains to erase.
+    const liveOwnerDatabase = await trx.executor.selectFrom('container_owner_databases').select('clerk_user_id')
+      .where('clerk_user_id','=',owner).where('deleted_at','is',null).limit(1).execute();
+    if(liveOwnerDatabase.length) throw new Error('runtime_cleanup_pending');
     // Keep owner inventories in PostgreSQL. Only bounded existence probes return
     // rows to the worker, including owners with many historical runtime slots.
     const ids = sql<string>`SELECT ${owner}::text AS id UNION
@@ -178,7 +182,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     }
     for (const table of ['billing_google_checkout_attribution','billing_google_purchases','billing_customers','billing_subscriptions','billing_entitlements','billing_entitlement_overrides',
       'prebilling_provisioning_intents','billing_checkout_attempts','billing_trial_accounts','onboarding_first_run',
-      'onboarding_journey_events','device_codes'] as const) {
+      'onboarding_journey_events','device_codes','free_tier_invites','container_owner_databases'] as const) {
       await trx.executor.deleteFrom(table).where('clerk_user_id','=',owner).execute();
     }
     await sql`UPDATE user_machines SET access_clerk_user_ids = array_remove(access_clerk_user_ids, ${owner})
