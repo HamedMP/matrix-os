@@ -95,9 +95,12 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
 
   const screenRef = useRef(screen);
   const gatewaySessionRef = useRef(gatewaySession);
+  // Read after a lookup, by when another chat may have been chosen.
+  const activeChatIdRef = useRef(activeChatId);
   useEffect(() => {
     screenRef.current = screen;
     gatewaySessionRef.current = gatewaySession;
+    activeChatIdRef.current = activeChatId;
   });
 
   useEffect(() => {
@@ -167,7 +170,7 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
           return;
         }
         // Choosing the open chat again would drop the model picked for it.
-        if (target.chatId !== activeChatId) selectChat(target.chatId);
+        if (target.chatId !== activeChatIdRef.current) selectChat(target.chatId);
         showChatScreenFromRoot(navigation, router);
         return;
       }
@@ -184,7 +187,7 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
       warn("Notification could not be opened", err);
       showChatList();
     }
-  }, [gatewayFor, navigation, router, activeChatId, selectChat]);
+  }, [gatewayFor, navigation, router, selectChat]);
 
   // The latest tap not yet opened. The same tap can arrive twice on a launch:
   // from the listener and as the launch's last response.

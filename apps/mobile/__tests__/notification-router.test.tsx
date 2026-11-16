@@ -200,6 +200,22 @@ describe("tapping a notification while the app runs", () => {
     expect(mockSelectChat).not.toHaveBeenCalled();
   });
 
+  it("opens the notification's chat when another chat is chosen while it is looked up", async () => {
+    mockActiveChatId = CHAT_ID;
+    const lookup = deferred<boolean>();
+    mockChatExists.mockReturnValue(lookup.promise);
+    const view = renderRouter();
+
+    tapWhileRunning(chatTap());
+    await waitFor(() => expect(mockChatExists).toHaveBeenCalled());
+    mockActiveChatId = "chat_other";
+    view.rerender(router());
+    await act(async () => lookup.settle(true));
+
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalled());
+    expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
+  });
+
   it("opens the chat list when the notification names nothing", async () => {
     renderRouter();
 
