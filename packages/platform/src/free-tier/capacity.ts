@@ -38,7 +38,8 @@ export async function countRunningContainers(executor: Executor, at: Date = new 
     .where('substrate', '=', 'container').where('deleted_at', 'is', null)
     .where(eb => eb.or([
       eb('status', 'in', [...COMPUTE_HOLDING_STATUSES]),
-      eb.and([eb('status', '=', 'needs_recovery'), eb('compute_unconfirmed_until', '>', at)]),
+      // A failed stop's unconfirmed unit, through any failed recovery attempts after it.
+      eb('compute_unconfirmed_until', '>', at),
     ]))
     .executeTakeFirstOrThrow();
   return Number(row.n);

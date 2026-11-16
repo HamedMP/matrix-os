@@ -125,6 +125,28 @@ describe('running container ceiling', () => {
     expect(result).toEqual({ state: 'busy' });
   });
 
+  it('keeps counting an unconfirmed unit when its recovery start fails before learning its fate', async () => {
+    const failing = await addContainer(db, 1, 'running');
+    await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', started_at: NOW, status_changed_at: NOW })
+      .where('machine_id', '=', failing).execute();
+    const service = createContainerLifecycleService({
+      db, buildBootPayload: async () => '{}', now: () => NOW, maxRunning: 1, logError: () => undefined,
+      provider: {
+        ...idleProvider(), run: async () => { throw new Error('unused'); },
+        suspend: async () => { throw new Error('provider down'); },
+        describe: async () => { throw new Error('describe timed out'); },
+      },
+    });
+    expect(await service.stop(failing, 1, AbortSignal.timeout(5_000))).toBe('needs_recovery');
+    await service.ensureStarted(failing);
+    await service.drain();
+    expect(await statusOf(db, failing)).toBe('failed_start');
+    const other = await addContainer(db, 2, 'stopped');
+    const result = await service.ensureStarted(other);
+    await service.drain();
+    expect(result).toEqual({ state: 'busy' });
+  });
+
   it('frees the slot of a failed stop whose unit was confirmed suspended', async () => {
     const recovered = await addContainer(db, 1, 'quiescing');
     await db.executor.updateTable('user_machines').set({ substrate_ref: 'mvm-cap-1', started_at: NOW, status_changed_at: NOW })
