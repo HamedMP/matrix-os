@@ -147,6 +147,12 @@ export function createSiteManagementRoutes(options: {
     const jsonBody = async (c: Context) => c.req.json().catch((error: unknown) => {
         if (error instanceof SyntaxError) return null; throw error;
     });
+    // Readiness is available before the first publication; it never creates a
+    // site or relaxes the gate on invitation mutations.
+    app.get('/:appSlug/email-invitation-capabilities', async c => {
+        const identity = await owner(c); if (!identity) return denied(c);
+        return c.json({ privateEmailInvitations: options.emailEnabled ? await options.emailEnabled() : false });
+    });
     app.get('/:appSlug/invitations', async c => {
         const identity = await emailOwner(c, true); if (!identity) return denied(c);
         const input = SiteEmailInvitationListQuerySchema.safeParse({

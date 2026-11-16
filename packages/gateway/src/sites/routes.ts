@@ -65,6 +65,13 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  }
  async function body<T>(c:Context,schema:z.ZodType<T>){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
  app.get(base,c=>call(c,'GET'));
+ app.get(base+'/email-invitation-capabilities',async c=>{
+  if(Object.keys(c.req.query()).length)return c.json({error:'Invalid request'},400);
+  const capability=options.platform?.emailInvitationCapabilities;
+  if(!capability)return c.json({privateEmailInvitations:false});
+  try{return c.json(await capability(c.req.param('slug')!,c.req.raw.signal));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:'Site unavailable'},503);throw error;}
+ });
  app.post(base,bodyLimit({maxSize:80*1024,onError:c=>c.json({error:'Too many requests'},413)}),async c=>{
   const parsed=await body(c,SitePublishRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
   if(activeBuilds>=4)return c.json({error:'Too many requests'},429);
