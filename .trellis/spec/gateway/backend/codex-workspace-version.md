@@ -26,6 +26,8 @@ The Chat provider catalog uses the Gateway workspace credential probe. An instal
 
 Cover both exact releases, unknown and unselected releases, native launch environment, and the runner's binary replacement guard. Local loopback inference exercises the real CLI lifecycle. Account-backed Chat requires its own live acceptance.
 
+Session-manager fixtures with a stub Terminal pass an explicit temporary executable that answers the real version probe. The native launch, cold resume, and startup diagnostic suites use this fixture so they behave the same on CI and on a developer machine with Codex installed.
+
 ## 7. Version sources
 
 Use the verified version observed for the chosen executable as the runner's expected version. Passing the install default for every executable can expose a model in the catalog and then reject its first turn.
