@@ -9,6 +9,7 @@ import { computeModeOf, decideContainerWake } from './container-websocket.js';
 import { isMeaningfulOwnerRequest } from './idle-reaper.js';
 import { EXPORT_ROUTE, type ExportRequestLike } from './container-export-only.js';
 import { computeCapPageCsp, renderComputeCapPage } from './compute-cap-page.js';
+import { readExplicitVmRoute } from '../session-routing-identity.js';
 
 export { isExportOnlyRequest } from './container-export-only.js';
 
@@ -82,11 +83,14 @@ function explicitPrefix(input: ContainerWakeInput): string | null {
   return path === prefix || path.startsWith(`${prefix}/`) ? prefix : null;
 }
 
-/** The path the runtime would see. */
+/**
+ * The path the runtime would see: an explicit `/vm/<handle>` route, with or
+ * without `~runtime/<slot>`, is judged by its parsed upstream path.
+ */
 function upstreamRequest(input: ContainerWakeInput): ExportRequestLike {
   const { c } = input;
-  const prefix = explicitPrefix(input);
-  const path = prefix === null ? c.req.path : c.req.path.slice(prefix.length) || '/';
+  const explicit = explicitPrefix(input) === null ? null : readExplicitVmRoute(c.req.path);
+  const path = explicit && explicit.handle === input.machine.handle ? explicit.upstreamPath : c.req.path;
   return { method: c.req.method, path, header: name => c.req.header(name) };
 }
 

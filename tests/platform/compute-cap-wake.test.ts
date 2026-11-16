@@ -105,6 +105,22 @@ describe('waking a runtime at the compute cap', () => {
     await expectLimit(await platform.request('/api/projects', { headers: OWNER_SESSION }));
     expect(provider.run).toHaveBeenCalledTimes(1);
   });
+  it('treats the explicit ~runtime/<slot> route like the plain one at the cap', async () => {
+    const base = '/vm/capwake/~runtime/primary';
+    // Explicit /vm routes answer with the HTML pages, so the statuses carry the decision here.
+    expect((await platform.request(`${base}/api/projects`, { headers: OWNER_SESSION })).status).toBe(429);
+    expect(provider.run).not.toHaveBeenCalled();
+    expect((await platform.request(`${base}/api/system/export`, { headers: EXPORT })).status).toBe(503);
+    await lifecycle.drain();
+    const machine = (await getUserMachine(db, 'ctr-1'))!;
+    expect(machine.computeMode).toBe('export_only');
+    expect(await lifecycle.markRegistered('ctr-1', machine.generation)).toBe('ok');
+
+    expect((await platform.request(`${base}/api/system/export`, { headers: EXPORT })).status).toBe(200);
+    expect((await platform.request(`${base}/api/chats?limit=20`, { headers: OWNER_SESSION })).status).toBe(200);
+    expect((await platform.request(`${base}/api/projects`, { headers: OWNER_SESSION })).status).toBe(429);
+    expect(provider.run).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('export-only request allowlist', () => {
