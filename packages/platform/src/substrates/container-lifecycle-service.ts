@@ -164,9 +164,21 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
    * behind a stopped or failed row never proved a healthy gateway, so it is
    * replaced.
    */
-  function resumable(unit: ContainerUnit | null): boolean {
+  function resumable(unit: ContainerUnit | null, recovering: boolean): boolean {
     if (!unit || unit.state !== 'suspended' || !unit.expiresAt) return false;
-    return unit.expiresAt.getTime() - now().getTime() > Math.max(UNIT_EXPIRY_MARGIN_MS, deps.minResumeLifetimeMs ?? 0);
+    // A failed stop's unit may hold the only copy of unflushed changes, so it is resumed to flush
+    // them while it can still finish a stop, however short a session that leaves.
+    const minimum = recovering ? UNIT_EXPIRY_MARGIN_MS : Math.max(UNIT_EXPIRY_MARGIN_MS, deps.minResumeLifetimeMs ?? 0);
+    return unit.expiresAt.getTime() - now().getTime() > minimum;
+  }
+
+  /** Lifts the gateway quiesce an idle stop left; a resumed unit serves only once it answers. */
+  async function reopenGateway(row: MachineRow): Promise<boolean> {
+    if (!deps.reviveInPlace || !row.substrate_ref || !row.private_address) return true;
+    return deps.reviveInPlace({
+      machineId: row.machine_id, clerkUserId: row.clerk_user_id, handle: row.handle,
+      unitId: row.substrate_ref, endpointHost: row.private_address,
+    }, callSignal());
   }
 
   async function terminateQuietly(unitId: string, reason: string): Promise<void> {
@@ -200,11 +212,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   /** A failed stop leaves its unit alive and quiesced; reopening it keeps the unflushed disk. */
   async function revived(row: MachineRow, previous: ContainerUnit | null): Promise<boolean> {
     if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
-    const ok = await deps.reviveInPlace({
-      machineId: row.machine_id, clerkUserId: row.clerk_user_id, handle: row.handle,
-      unitId: row.substrate_ref, endpointHost: row.private_address,
-    }, callSignal());
-    if (!ok) return false;
+    if (!await reopenGateway(row)) return false;
     await transition(row.machine_id, ['starting'], row.generation, { status: 'running', failure_code: null, failure_at: null });
     return true;
   }
@@ -213,9 +221,24 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     let generation = row.generation;
     try {
       const previous = row.substrate_ref ? await provider.describe(row.substrate_ref, callSignal()) : null;
-      if (previous && resumable(previous)) {
+      if (previous && resumable(previous, recovering)) {
         await provider.resume(previous.unitId, callSignal());
-        await transition(row.machine_id, ['starting'], generation, { status: 'running', failure_code: null, failure_at: null });
+        if (!await reopenGateway(row)) {
+          // The unit is awake but still refuses runs. It may hold unflushed changes, so it is kept for recovery.
+          await transition(row.machine_id, ['starting'], generation, {
+            status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
+          });
+          return;
+        }
+        // A recovery resume can leave less than a whole session: its session clock starts early, so the
+        // maximum-session stop and its flush finish before the provider ends the unit.
+        const minimum = deps.minResumeLifetimeMs ?? 0;
+        const shortened = recovering && previous.expiresAt
+          && previous.expiresAt.getTime() - now().getTime() < minimum
+          ? { started_at: new Date(previous.expiresAt.getTime() - minimum) } : {};
+        await transition(row.machine_id, ['starting'], generation, {
+          status: 'running', failure_code: null, failure_at: null, ...shortened,
+        });
         return;
       }
       if (recovering && await revived(row, previous)) return;

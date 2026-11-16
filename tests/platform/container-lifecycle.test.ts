@@ -162,6 +162,49 @@ describe('container lifecycle service', () => {
     expect(provider.resume).toHaveBeenCalledWith('mvm-old', expect.any(AbortSignal));
   });
 
+  it('reopens the gateway of a resumed unit before marking it running, and keeps the unit when it does not reopen', async () => {
+    await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-old', privateAddress: 'mvm-old.lambda-microvm.eu-west-1.on.aws' });
+    const provider = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: 'suspended' })) });
+    const reviveInPlace = vi.fn(async () => false);
+    const s = createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, reviveInPlace, buildBootPayload: async () => '{}',
+    });
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(provider.resume).toHaveBeenCalledWith('mvm-old', expect.any(AbortSignal));
+    expect(reviveInPlace).toHaveBeenCalledWith(expect.objectContaining({ unitId: 'mvm-old' }), expect.any(AbortSignal));
+    expect(provider.run).not.toHaveBeenCalled();
+    expect(provider.terminate).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({ status: 'needs_recovery', substrateRef: 'mvm-old' });
+
+    reviveInPlace.mockResolvedValue(true);
+    vi.mocked(provider.describe).mockResolvedValue(unit({ unitId: 'mvm-old', state: 'running' }));
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(await row()).toMatchObject({ status: 'running', substrateRef: 'mvm-old' });
+  });
+
+  it('resumes a failed stop\'s surviving unit to flush it, ending its session before the unit expires', async () => {
+    await updateUserMachine(db, 'ctr-1', { status: 'needs_recovery', substrateRef: 'mvm-old', privateAddress: 'mvm-old.lambda-microvm.eu-west-1.on.aws' });
+    const sessionAndStop = 4 * 3_600_000 + 22 * 60_000;
+    // Five hours in: three hours left, less than a whole session and its stop.
+    clock = new Date(T0.getTime() + 5 * 3_600_000);
+    const expiresAt = new Date(T0.getTime() + 8 * 3_600_000);
+    const provider = fakeProvider({ describe: vi.fn(async () => unit({ unitId: 'mvm-old', state: 'suspended', expiresAt })) });
+    const s = createContainerLifecycleService({
+      db, provider, now: () => new Date(clock), logError: () => undefined, minResumeLifetimeMs: sessionAndStop,
+      reviveInPlace: async () => true, buildBootPayload: async () => '{}',
+    });
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(provider.resume).toHaveBeenCalledWith('mvm-old', expect.any(AbortSignal));
+    expect(provider.run).not.toHaveBeenCalled();
+    expect(provider.terminate).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({
+      status: 'running', substrateRef: 'mvm-old', startedAt: new Date(expiresAt.getTime() - sessionAndStop).toISOString(),
+    });
+  });
+
   it('treats a unit the provider no longer knows as run fresh, not as a failure', async () => {
     await updateUserMachine(db, 'ctr-1', { substrateRef: 'mvm-expired' });
     const provider = fakeProvider();
