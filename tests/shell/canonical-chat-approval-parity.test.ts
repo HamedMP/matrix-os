@@ -52,6 +52,7 @@ it("keeps a resolved routine operation in its turn ahead of the proposal reply a
   expect(mobile.map(message => message.id)).toEqual(expected);
   expect(canonicalChatApprovals(detail)[0]).toMatchObject({ pending: false, decision: "approve" });
   expect(web.at(-1)?.routineReceipt).toMatchObject({ status: "completed" });
+  expect(mobile.at(-1)?.routineReceipt).toMatchObject({ status: "completed" });
   expect(electron[0]?.work).toContainEqual(expect.objectContaining({ requestId: `rcact_${"a".repeat(32)}`, state: "resolved" }));
   expect(electron[1]?.routineReceipt?.receipt).toMatchObject({ status: "completed" });
 });
