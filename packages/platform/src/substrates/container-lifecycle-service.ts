@@ -160,10 +160,27 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return Boolean(updated);
   }
 
-  async function failStart(machineId: string, generation: number, code: ContainerFailureCode): Promise<void> {
-    await transition(machineId, ['starting'], generation, {
+  /**
+   * A unit this runtime created but could not use is terminated. Until the
+   * provider confirms that, it may still run, so the row keeps counting it
+   * against the running ceiling, at most for a unit's lifetime from now.
+   */
+  async function endUnusedUnit(machineId: string, unitId: string, reason: string): Promise<void> {
+    if (await terminateQuietly(unitId, reason)) return;
+    const until = new Date(now().getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000).toISOString();
+    await db.executor.updateTable('user_machines')
+      .set({ compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)` })
+      .where('machine_id', '=', machineId).where('substrate', '=', 'container').execute();
+  }
+
+  /** A failed start ends the unit it created, if any, so the slot it frees holds no compute. */
+  async function failStart(
+    machineId: string, generation: number, code: ContainerFailureCode, unitId: string | null = null,
+  ): Promise<void> {
+    const failed = await transition(machineId, ['starting'], generation, {
       status: 'failed_start', failure_code: code, failure_at: now().toISOString(),
     });
+    if (failed && unitId) await endUnusedUnit(machineId, unitId, code);
   }
 
   /**
@@ -293,13 +310,13 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         bootPayload,
       }, callSignal());
       if (!created.endpointHost) {
-        await terminateQuietly(created.unitId, 'no_endpoint');
+        await endUnusedUnit(row.machine_id, created.unitId, 'no_endpoint');
         throw new ContainerProviderError('unavailable');
       }
       const recorded = await transition(row.machine_id, ['starting'], next.generation, {
         substrate_ref: created.unitId, private_address: created.endpointHost,
       });
-      if (!recorded) await terminateQuietly(created.unitId, 'fenced');
+      if (!recorded) await endUnusedUnit(row.machine_id, created.unitId, 'fenced');
       if (previous && previous.state !== 'terminated' && await terminateQuietly(previous.unitId, 'replaced')) {
         await confirmComputeEnded(row.machine_id, next.generation);
       }
@@ -355,7 +372,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       case 'starting': {
         const startedAt = row.started_at?.getTime() ?? 0;
         if (now().getTime() - startedAt <= CONTAINER_START_TIMEOUT_MS) return { state: 'starting' };
-        await failStart(machineId, row.generation, 'start_timeout');
+        // The unit never registered, so it never served and holds nothing worth keeping.
+        await failStart(machineId, row.generation, 'start_timeout', row.substrate_ref);
         return { state: 'failed', code: 'start_timeout' };
       }
       case 'provisioning':

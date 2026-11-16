@@ -10,6 +10,7 @@ import {
   type ContainerUnit,
 } from '../../packages/platform/src/substrates/container-provider.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+import { countRunningContainers } from '../../packages/platform/src/free-tier/capacity.js';
 
 const T0 = new Date('2026-11-10T12:00:00.000Z');
 const ENDPOINT = 'mvm-new.lambda-microvm.eu-west-1.on.aws';
@@ -357,6 +358,45 @@ describe('container lifecycle service', () => {
     expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
     expect(await row()).toMatchObject({ status: 'failed_start', failureCode: 'start_timeout' });
     expect(await s.markRegistered('ctr-1', 2)).toBe('not_starting');
+  });
+
+  const unconfirmed = async () => (await db.executor.selectFrom('user_machines').select('compute_unconfirmed_until')
+    .where('machine_id', '=', 'ctr-1').executeTakeFirstOrThrow()).compute_unconfirmed_until;
+
+  it('ends the unit of a start that never registered, so the failed start frees its slot', async () => {
+    const provider = fakeProvider();
+    const s = service(provider);
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    clock = new Date(clock.getTime() + 91_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    expect(provider.terminate).toHaveBeenCalledWith('mvm-new', expect.any(AbortSignal));
+    expect(await unconfirmed()).toBeNull();
+    expect(await countRunningContainers(db.executor, clock)).toBe(0);
+  });
+
+  it('keeps the slot of a start that never registered while its unit cannot be confirmed ended', async () => {
+    const provider = fakeProvider({ terminate: vi.fn(async () => { throw new ContainerProviderError('unavailable'); }) });
+    const s = service(provider);
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    clock = new Date(clock.getTime() + 91_000);
+    expect(await s.ensureStarted('ctr-1')).toEqual({ state: 'failed', code: 'start_timeout' });
+    expect(await row()).toMatchObject({ status: 'failed_start' });
+    expect((await unconfirmed())?.getTime()).toBeGreaterThanOrEqual(T0.getTime() + 8 * 3_600_000);
+    expect(await countRunningContainers(db.executor, clock)).toBe(1);
+  });
+
+  it('keeps the slot of a unit created without an endpoint while its termination is unconfirmed', async () => {
+    const provider = fakeProvider({
+      run: vi.fn(async () => unit({ endpointHost: null })),
+      terminate: vi.fn(async () => { throw new ContainerProviderError('unavailable'); }),
+    });
+    const s = service(provider);
+    await s.ensureStarted('ctr-1');
+    await s.drain();
+    expect(await row()).toMatchObject({ status: 'failed_start' });
+    expect(await countRunningContainers(db.executor, clock)).toBe(1);
   });
 
   it('suspends a running unit on stop and rejects a stale generation', async () => {
