@@ -760,13 +760,14 @@ export function createInternalSyncRoutes(opts: {
     const streamed = contentLength !== undefined && c.req.raw.body !== null
       && contentLength <= INTERNAL_SYNC_OBJECT_BODY_LIMIT;
     const buffered = streamed ? null : new Uint8Array(await c.req.arrayBuffer());
-    const decision = await meter(c, key, streamed ? contentLength! : buffered!.byteLength, PROXY_PUT_PENDING_MS);
+    const bytes = streamed ? contentLength! : buffered!.byteLength;
+    const decision = await meter(c, key, bytes, PROXY_PUT_PENDING_MS);
     const refused = decision && refusal(c, decision);
     if (refused) return refused;
     const result = streamed
       ? await opts.r2.putObject(key, c.req.raw.body!, { contentLength })
       : await opts.r2.putObject(key, buffered!);
-    if (decision?.ok) await quota.confirm(c.get("internalSyncScope").ownerId, key, decision.reservationId);
+    if (decision?.ok) await quota.confirm(c.get("internalSyncScope").ownerId, key, decision.reservationId, bytes);
     return c.json({ etag: result.etag ?? null });
   });
 

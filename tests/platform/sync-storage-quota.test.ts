@@ -176,6 +176,57 @@ describe('sync broker storage quota for container runtimes', () => {
       .where('object_key', '=', key).executeTakeFirstOrThrow()).toEqual({ bytes: 800, pending_until: null });
   });
 
+  it('keeps a stored object counted at its size while a smaller signed overwrite of it is unused', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const put = (bytes: number, at = key) => target.request(`/sync/quotafree/object?key=${encodeURIComponent(at)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(bytes),
+    });
+    expect((await put(800)).status).toBe(200);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+    // The URL may never be used, and the 800-byte object stays in the store meanwhile.
+    expect((await presignPut(target, free, key, 100)).status).toBe(200);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+    expect((await put(300, `${FREE_PREFIX}/staging/${randomUUID()}`)).status).toBe(507);
+    // Once the URL expires unused, reconciliation keeps the stored object's real size.
+    clock += 17 * 60_000;
+    expect((await put(300, `${FREE_PREFIX}/staging/${randomUUID()}`)).status).toBe(507);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+  });
+
+  it('counts a smaller proxied overwrite at its new size once it lands, and the old size until then', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const put = (bytes: number, at = key) => target.request(`/sync/quotafree/object?key=${encodeURIComponent(at)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(bytes),
+    });
+    expect((await put(800)).status).toBe(200);
+    let duringWrite: unknown;
+    r2.putObject.mockImplementationOnce(async (at: string, body: unknown) => {
+      duringWrite = await usage();
+      r2.sizes.set(at, (body as Uint8Array).byteLength);
+      return { etag: 'etag-put' };
+    });
+    expect((await put(100)).status).toBe(200);
+    expect(duringWrite).toEqual({ object_bytes: 800, object_count: 0 });
+    expect(await usage()).toEqual({ object_bytes: 100, object_count: 0 });
+    expect((await put(300, `${FREE_PREFIX}/staging/${randomUUID()}`)).status).toBe(200);
+  });
+
+  it('keeps the old size counted when a smaller proxied overwrite fails to land', async () => {
+    const target = app();
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const put = (bytes: number, at = key) => target.request(`/sync/quotafree/object?key=${encodeURIComponent(at)}`, {
+      method: 'PUT', headers: { ...free, 'content-type': 'application/octet-stream' }, body: new Uint8Array(bytes),
+    });
+    expect((await put(800)).status).toBe(200);
+    r2.putObject.mockRejectedValueOnce(new Error('store unavailable'));
+    expect((await put(100)).status).toBe(500);
+    clock += 17 * 60_000;
+    expect((await put(300, `${FREE_PREFIX}/staging/${randomUUID()}`)).status).toBe(507);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+  });
+
   it('removes an oversized multipart overwrite of a counted key and stops counting it', async () => {
     const target = app();
     const key = `${FREE_PREFIX}/objects/sha256/${hex(10)}`;
@@ -287,11 +338,11 @@ describe('sync broker storage quota for container runtimes', () => {
     const large = await proxied(800);
     const small = await proxied(100);
     if (!large.ok || !small.ok) throw new Error('expected both writes to be authorized');
-    await quota.confirm(FREE_OWNER, key, small.reservationId);
+    await quota.confirm(FREE_OWNER, key, small.reservationId, 100);
     expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
     // The larger upload lands last.
     r2.sizes.set(key, 800);
-    await quota.confirm(FREE_OWNER, key, large.reservationId);
+    await quota.confirm(FREE_OWNER, key, large.reservationId, 800);
     expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
 
     const other = `${FREE_PREFIX}/staging/${randomUUID()}`;

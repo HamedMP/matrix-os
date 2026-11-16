@@ -21,6 +21,10 @@ import type { PlatformDB } from '../db.js';
  * proxied write still in flight (unconfirmed, inside its pending window) is
  * held the same way, since it can still land after a later write or delete;
  * `signed_until` then carries the latest such window.
+ *
+ * An unconfirmed overwrite also keeps the stored object's bytes: until the
+ * replacement is confirmed (or reconciled), the old object may still be the
+ * one in the store, so a smaller overwrite never frees space up front.
  */
 
 export interface RuntimeStorageUsageTable {
@@ -118,6 +122,7 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
     const at = now();
     const pendingUntil = write.pendingMs === null ? null : new Date(at.getTime() + write.pendingMs).toISOString();
     const signedUntil = write.signed && pendingUntil !== null ? pendingUntil : null;
+    const unconfirmed = write.pendingMs !== null;
     return db.transaction(async (trx): Promise<StorageQuotaDecision> => {
       const usage = await lockUsage(trx.executor, ownerId);
       const authorized = await sql<{ prior_existed: boolean }>`
@@ -130,7 +135,8 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
           WHERE clerk_user_id = ${ownerId} AND object_key = ${write.key}
         ), held AS (
           SELECT GREATEST(${write.bytes}::bigint,
-              COALESCE((SELECT bytes FROM prior WHERE outstanding_until IS NOT NULL), 0)) AS bytes,
+              -- An unconfirmed overwrite keeps the stored object's bytes until it lands.
+              COALESCE((SELECT bytes FROM prior WHERE outstanding_until IS NOT NULL OR ${unconfirmed}::boolean), 0)) AS bytes,
             (SELECT outstanding_until FROM prior) AS outstanding_until
         ), delta AS (
           SELECT h.bytes - COALESCE((SELECT bytes FROM prior), 0) AS bytes,
@@ -230,18 +236,36 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
     },
 
     /**
-     * Marks a pending write as landed. A newer authorization of the same key
-     * keeps its own state, and an outstanding signed URL keeps the key pending.
+     * Marks a pending write of `bytes` as landed. A newer authorization of the
+     * same key keeps its own state, and an outstanding signed URL keeps the key
+     * pending at its hold. Otherwise the key is now counted at what landed,
+     * releasing the old object's bytes the overwrite was holding.
      */
-    async confirm(ownerId: string, key: string, reservationId: string): Promise<void> {
-      const at = now().toISOString();
-      await db.executor.updateTable('runtime_storage_objects')
-        .set({
-          pending_until: sql<Date | null>`CASE WHEN signed_until > ${at}::timestamptz THEN signed_until END`,
-          updated_at: now(),
-        })
-        .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
-        .where('reservation_id', '=', reservationId).execute();
+    async confirm(ownerId: string, key: string, reservationId: string, bytes: number): Promise<void> {
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('Storage quota write is invalid');
+      const at = now();
+      await db.transaction(async (trx) => {
+        await lockUsage(trx.executor, ownerId);
+        const row = await trx.executor.selectFrom('runtime_storage_objects').select(['bytes', 'signed_until'])
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
+          .where('reservation_id', '=', reservationId).forUpdate().executeTakeFirst();
+        if (!row) return;
+        if (row.signed_until !== null && new Date(row.signed_until).getTime() > at.getTime()) {
+          await trx.executor.updateTable('runtime_storage_objects')
+            .set({ pending_until: row.signed_until, updated_at: at })
+            .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+          return;
+        }
+        const held = Number(row.bytes);
+        await trx.executor.updateTable('runtime_storage_objects')
+          .set({ bytes, pending_until: null, signed_until: null, updated_at: at })
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+        if (bytes !== held) {
+          await trx.executor.updateTable('runtime_storage_usage')
+            .set({ object_bytes: sql<number>`object_bytes + ${bytes - held}`, updated_at: at })
+            .where('clerk_user_id', '=', ownerId).execute();
+        }
+      });
     },
 
     /**
