@@ -344,6 +344,47 @@ describe('container idle stop', () => {
     expect(await row()).toMatchObject({ status: 'needs_recovery', failureCode: 'quiesce_timeout', substrateRef: 'mvm-1', generation: 3 });
   });
 
+  it('cancels an idle stop when the owner comes back during the first quiesce, even with no runs left', async () => {
+    const runtime = fakeRuntime();
+    let tracker: ReturnType<typeof createActivityTracker> | undefined;
+    vi.mocked(runtime.client.quiesce).mockImplementation(async () => {
+      runtime.calls.push('quiesce');
+      advance(1_000);
+      tracker?.observe('ctr-1');
+      return { ok: true, unsettledRuns: 0 };
+    });
+    const { reaper, activity, provider } = setup({ runtime });
+    tracker = activity;
+    advance(11 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect(runtime.calls).toEqual(['quiesce', 'resume']);
+    expect(provider.suspend).not.toHaveBeenCalled();
+    expect((await row()).status).toBe('running');
+  });
+
+  it('cancels an idle stop for owner activity recorded after the runtime was selected', async () => {
+    const runtime = fakeRuntime();
+    const { reaper, provider } = setup({ runtime });
+    advance(11 * MINUTE);
+    // Another instance records the owner's request between selection and the quiesce.
+    let recorded = false;
+    vi.mocked(runtime.client.quiesce).mockImplementation(async () => {
+      runtime.calls.push('quiesce');
+      if (!recorded) {
+        recorded = true;
+        await db.executor.updateTable('user_machines').set({ last_activity_at: new Date(clock.getTime() + 1) })
+          .where('machine_id', '=', 'ctr-1').execute();
+      }
+      advance(1_000);
+      return { ok: true, unsettledRuns: 0 };
+    });
+    await reaper.sweep();
+    await reaper.drain();
+    expect(provider.suspend).not.toHaveBeenCalled();
+    expect((await row()).status).toBe('running');
+  });
+
   it('runs one stop when two platform instances sweep the same runtime', async () => {
     const runtime = fakeRuntime();
     const a = setup({ runtime });

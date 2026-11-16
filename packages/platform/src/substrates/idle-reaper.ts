@@ -169,6 +169,8 @@ interface Candidate {
   substrate_ref: string;
   private_address: string;
   reason: StopReason;
+  /** When the sweep chose this runtime; owner activity after it cancels an idle stop. */
+  selected_at: Date;
 }
 
 export interface IdleReaperDeps {
@@ -250,6 +252,7 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       substrate_ref: row.substrate_ref,
       private_address: row.private_address,
       reason: row.started_at && row.started_at.getTime() <= sessionBefore.getTime() ? 'max_session' as const : 'idle' as const,
+      selected_at: at,
     }] : []);
   }
 
@@ -300,25 +303,28 @@ export function createIdleReaper(deps: IdleReaperDeps) {
 
   /** Quiesce until runs settle or reach the deadline, unless the owner comes back during an idle stop. */
   async function quiesce(candidate: Candidate, target: RuntimeTarget, signal: AbortSignal): Promise<'flush' | 'cancelled' | 'unreachable'> {
-    const started = now();
-    const deadline = started.getTime() + config.quiesceDeadlineMs;
+    const deadline = now().getTime() + config.quiesceDeadlineMs;
     let quiesced = false;
+    /** Owner activity since the runtime was selected cancels an idle stop. */
+    const cancelledByOwner = async (): Promise<'flush' | 'cancelled' | null> => {
+      if (candidate.reason !== 'idle' || !await ownerReturned(candidate.machine_id, candidate.selected_at)) return null;
+      // A gateway that will not reopen keeps refusing runs, so the stop goes on and the owner wakes it after.
+      if (quiesced && !await resumeQuietly(target)) return 'flush';
+      await lifecycle.cancelQuiesce(candidate.machine_id, candidate.generation);
+      return 'cancelled';
+    };
     for (;;) {
       const result = await runtime.quiesce(target, signal);
-      if (result.ok) {
-        quiesced = true;
-        if (result.unsettledRuns === 0) return 'flush';
-      } else {
-        logError('[idle-reaper] quiesce refused', { error: result.error });
-      }
+      if (result.ok) quiesced = true;
+      else logError('[idle-reaper] quiesce refused', { error: result.error });
+      // The first reply is checked too: an owner who came back must not be flushed and suspended.
+      const returned = await cancelledByOwner();
+      if (returned) return returned;
+      if (result.ok && result.unsettledRuns === 0) return 'flush';
       if (now().getTime() >= deadline) return quiesced ? 'flush' : 'unreachable';
       await sleep(config.pollIntervalMs, signal);
-      if (candidate.reason === 'idle' && await ownerReturned(candidate.machine_id, started)) {
-        // A gateway that will not reopen keeps refusing runs, so the stop goes on and the owner wakes it after.
-        if (quiesced && !await resumeQuietly(target)) return 'flush';
-        await lifecycle.cancelQuiesce(candidate.machine_id, candidate.generation);
-        return 'cancelled';
-      }
+      const returnedWhileWaiting = await cancelledByOwner();
+      if (returnedWhileWaiting) return returnedWhileWaiting;
     }
   }
 
