@@ -1,8 +1,13 @@
 import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
-import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
+import { buildContainerBootPayload } from './container-boot-payload.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
-import { createContainerOwnerDatabases, type ContainerOwnerDatabases, type OwnerClusterAdmin } from './container-owner-database.js';
+import {
+  createContainerOwnerDatabases,
+  createOwnerDatabaseSizeSweeper,
+  type ContainerOwnerDatabases,
+  type OwnerClusterAdmin,
+} from './container-owner-database.js';
 import {
   CONTAINER_QUIESCE_TIMEOUT_MS,
   createContainerLifecycleService,
@@ -39,7 +44,12 @@ const FIELDS = {
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_HOST: z.string().regex(/^[A-Za-z0-9.-]{1,253}$/),
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_PORT: port(5432),
   MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET: z.string().min(32),
-  MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES: z.coerce.number().int().positive().default(1024 ** 3),
+  MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES: z.coerce.number().int().positive().default(500 * 1000 ** 2),
+  MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(20).default(5),
+  /** Connections the owner cluster can give container runtimes, below its own maximum with headroom. */
+  MATRIX_CONTAINER_OWNER_DB_CONNECTION_BUDGET: z.coerce.number().int().min(1).max(100_000).default(400),
+  /** Defaults to the connection budget divided by the per-owner connection limit. */
+  MATRIX_CONTAINER_MAX_RUNNING: z.coerce.number().int().min(1).max(100_000).optional(),
   /** Platform origin the runtime calls for registration and lifecycle reports. */
   MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
   PLATFORM_SECRET: z.string().min(32),
@@ -52,7 +62,15 @@ const FIELDS = {
     .default(CONTAINER_SUSPENDED_DURATION_BOUNDS.fallback),
 } as const;
 
-const ConfigSchema = z.object(FIELDS);
+const ConfigSchema = z.object(FIELDS).superRefine((c, ctx) => {
+  const running = c.MATRIX_CONTAINER_MAX_RUNNING;
+  if (running !== undefined && running * c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT > c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_BUDGET) {
+    ctx.addIssue({ code: 'custom', path: ['MATRIX_CONTAINER_MAX_RUNNING'], message: 'exceeds connection budget' });
+  }
+  if (c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_BUDGET < c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT) {
+    ctx.addIssue({ code: 'custom', path: ['MATRIX_CONTAINER_OWNER_DB_CONNECTION_BUDGET'], message: 'below one runtime' });
+  }
+});
 
 export interface ContainerSubstrateConfig {
   region: string;
@@ -64,8 +82,11 @@ export interface ContainerSubstrateConfig {
     runtimePort: number;
     passwordSecret: string;
     sizeLimitBytes: number;
+    connectionLimit: number;
   };
   idle: { idleMs: number; maxSessionMs: number };
+  /** Global ceiling on container runtimes holding compute. */
+  maxRunning: number;
 }
 
 export type ContainerSubstrateConfigResult =
@@ -104,8 +125,11 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         runtimePort: c.MATRIX_CONTAINER_OWNER_DB_RUNTIME_PORT,
         passwordSecret: c.MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET,
         sizeLimitBytes: c.MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES,
+        connectionLimit: c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT,
       },
       idle: { idleMs: c.MATRIX_CONTAINER_IDLE_STOP_MINUTES * 60_000, maxSessionMs: c.MATRIX_CONTAINER_MAX_SESSION_MINUTES * 60_000 },
+      maxRunning: c.MATRIX_CONTAINER_MAX_RUNNING
+        ?? Math.floor(c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_BUDGET / c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT),
     },
   };
 }
@@ -151,7 +175,9 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     admin: deps.ownerClusterAdmin ?? pgAdmin!,
     passwordSecret: config.ownerDatabase.passwordSecret,
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
+    connectionLimit: config.ownerDatabase.connectionLimit,
   });
+  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases });
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
   const runtime = createContainerRuntimeClient({
     provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
@@ -161,22 +187,13 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     provider,
     // A resumed unit gets a whole new session, so it must outlive that session and its stop.
     minResumeLifetimeMs: config.idle.maxSessionMs + CONTAINER_QUIESCE_TIMEOUT_MS,
+    maxRunning: config.maxRunning,
     reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);
-      return JSON.stringify({
-        version: 1,
-        machineId: context.machineId,
-        handle: context.handle,
-        runtimeSlot: context.runtimeSlot,
-        generation: context.generation,
-        runtimeTokenEpoch: context.runtimeTokenEpoch,
-        platform: {
-          url: config.platform.url,
-          runtimeToken: buildPlatformContainerRuntimeToken(
-            { handle: context.handle, machineId: context.machineId, runtimeSlot: context.runtimeSlot },
-            config.platform.secret, context.runtimeTokenEpoch),
-        },
+      return buildContainerBootPayload({
+        context,
+        platform: config.platform,
         database: {
           host: config.ownerDatabase.runtimeHost,
           port: config.ownerDatabase.runtimePort,
@@ -184,7 +201,6 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
           user: database.roleName,
           password: database.password,
         },
-        ...(context.recovery ? { recovery: context.recovery } : {}),
       });
     },
   });
@@ -209,9 +225,11 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     startBackgroundWork() {
       reaper.start();
       reconciler.start();
+      sizeSweeper.start();
     },
     async shutdown() {
       activity.stopPeriodicFlush();
+      await sizeSweeper.shutdown();
       await reconciler.shutdown();
       await reaper.shutdown();
       await lifecycle.shutdown();

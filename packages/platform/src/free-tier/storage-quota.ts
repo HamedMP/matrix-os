@@ -1,0 +1,347 @@
+import { randomUUID } from 'node:crypto';
+import { sql, type ColumnType } from 'kysely';
+import type { PlatformDB } from '../db.js';
+
+/**
+ * Per-owner object-store quota for container runtimes (spec 2691 US4, FR-022).
+ *
+ * Every mutation first locks the owner's usage row, so the per-key ledger it
+ * reads next is current; the conditional UPDATE that moves the counter is the
+ * statement that authorizes the write, and it refuses when either limit would
+ * be passed. A write the broker cannot see land (a signed upload, a proxied
+ * body still streaming) stays pending until it is confirmed or, after it
+ * expires, reconciled against the store: present objects keep their real
+ * size, absent ones release their bytes.
+ *
+ * A signed upload URL can write its key until it expires, whatever the
+ * broker does to the key meanwhile. So while one is outstanding
+ * (`signed_until`), the key keeps at least the bytes it was signed for: a
+ * smaller overwrite does not shrink the hold, a delete does not drop it, and
+ * the key is reconciled against the store once the last URL expires. A
+ * proxied write still in flight (unconfirmed, inside its pending window) is
+ * held the same way, since it can still land after a later write or delete;
+ * `signed_until` then carries the latest such window.
+ *
+ * An unconfirmed overwrite also keeps the stored object's bytes: until the
+ * replacement is confirmed (or reconciled), the old object may still be the
+ * one in the store, so a smaller overwrite never frees space up front.
+ */
+
+export interface RuntimeStorageUsageTable {
+  clerk_user_id: string;
+  object_bytes: ColumnType<number | string, number | undefined, number>;
+  object_count: ColumnType<number, number | undefined, number>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface RuntimeStorageObjectsTable {
+  clerk_user_id: string;
+  object_key: string;
+  bytes: ColumnType<number | string, number, number>;
+  counts_as_file: boolean;
+  reservation_id: string;
+  pending_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  /** When the last signed upload URL issued for this key expires. */
+  signed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface StorageQuotaLimits {
+  maxBytes: number;
+  maxFiles: number;
+}
+
+/** Provisional per-owner defaults from spec.md (home size 2 GiB, 50,000 files). */
+export const DEFAULT_STORAGE_QUOTA_LIMITS: StorageQuotaLimits = { maxBytes: 2 * 1024 ** 3, maxFiles: 50_000 };
+
+export type StorageQuotaRefusal = 'storage_full' | 'file_limit_reached';
+
+export type StorageQuotaDecision =
+  | { ok: true; reservationId: string }
+  | { ok: false; code: StorageQuotaRefusal; priorExisted: boolean };
+
+export interface StorageWrite {
+  key: string;
+  bytes: number;
+  countsAsFile: boolean;
+  /** How long the write may take to land; null when it already has. */
+  pendingMs: number | null;
+  /** The write goes through a signed URL the broker cannot revoke, valid for `pendingMs`. */
+  signed?: boolean;
+}
+
+export interface StorageQuotaDeps {
+  db: PlatformDB;
+  limits: StorageQuotaLimits;
+  headObject(key: string, options: { signal: AbortSignal }): Promise<{ exists: boolean; contentLength?: number }>;
+  now?: () => Date;
+  logError?: (message: string, detail: Record<string, string>) => void;
+}
+
+const MAX_KEY_LENGTH = 1024;
+const RECONCILE_BATCH = 20;
+const HEAD_TIMEOUT_MS = 5_000;
+/** A refused write waits at most this long for reconciliation before its refusal stands. */
+const RECONCILE_BUDGET_MS = 15_000;
+/** How long a multipart completion and its size check may take before its noted write is reconciled. */
+const COMPLETION_CHECK_MS = 2 * 60_000;
+
+type Executor = PlatformDB['executor'];
+
+export function assertStorageQuotaLimits(limits: StorageQuotaLimits): StorageQuotaLimits {
+  if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1
+    || !Number.isSafeInteger(limits.maxFiles) || limits.maxFiles < 1) {
+    throw new Error('Storage quota limits are invalid');
+  }
+  return limits;
+}
+
+async function lockUsage(executor: Executor, ownerId: string): Promise<{ bytes: number; count: number }> {
+  await sql`INSERT INTO runtime_storage_usage (clerk_user_id) VALUES (${ownerId})
+    ON CONFLICT (clerk_user_id) DO NOTHING`.execute(executor);
+  const row = await executor.selectFrom('runtime_storage_usage').select(['object_bytes', 'object_count'])
+    .where('clerk_user_id', '=', ownerId).forUpdate().executeTakeFirstOrThrow();
+  return { bytes: Number(row.object_bytes), count: row.object_count };
+}
+
+export function createStorageQuota(deps: StorageQuotaDeps) {
+  const { db } = deps;
+  const limits = assertStorageQuotaLimits(deps.limits);
+  const now = deps.now ?? (() => new Date());
+  const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
+
+  function assertWrite(write: StorageWrite): void {
+    if (write.key.length < 1 || write.key.length > MAX_KEY_LENGTH
+      || !Number.isSafeInteger(write.bytes) || write.bytes < 0) {
+      throw new Error('Storage quota write is invalid');
+    }
+  }
+
+  async function tryAuthorize(ownerId: string, write: StorageWrite): Promise<StorageQuotaDecision> {
+    const reservationId = randomUUID();
+    const at = now();
+    const pendingUntil = write.pendingMs === null ? null : new Date(at.getTime() + write.pendingMs).toISOString();
+    const signedUntil = write.signed && pendingUntil !== null ? pendingUntil : null;
+    const unconfirmed = write.pendingMs !== null;
+    return db.transaction(async (trx): Promise<StorageQuotaDecision> => {
+      const usage = await lockUsage(trx.executor, ownerId);
+      const authorized = await sql<{ prior_existed: boolean }>`
+        WITH prior AS (
+          SELECT bytes, counts_as_file,
+            -- A signed URL that has not expired, or a write still in flight, can still land at its size.
+            GREATEST(CASE WHEN signed_until > ${at.toISOString()}::timestamptz THEN signed_until END,
+              CASE WHEN pending_until > ${at.toISOString()}::timestamptz THEN pending_until END) AS outstanding_until
+          FROM runtime_storage_objects
+          WHERE clerk_user_id = ${ownerId} AND object_key = ${write.key}
+        ), held AS (
+          SELECT GREATEST(${write.bytes}::bigint,
+              -- An unconfirmed overwrite keeps the stored object's bytes until it lands.
+              COALESCE((SELECT bytes FROM prior WHERE outstanding_until IS NOT NULL OR ${unconfirmed}::boolean), 0)) AS bytes,
+            (SELECT outstanding_until FROM prior) AS outstanding_until
+        ), delta AS (
+          SELECT h.bytes - COALESCE((SELECT bytes FROM prior), 0) AS bytes,
+            (CASE WHEN ${write.countsAsFile}::boolean THEN 1 ELSE 0 END)
+              - COALESCE((SELECT CASE WHEN counts_as_file THEN 1 ELSE 0 END FROM prior), 0) AS files,
+            EXISTS (SELECT 1 FROM prior) AS prior_existed
+          FROM held h
+        ), counted AS (
+          UPDATE runtime_storage_usage u
+          SET object_bytes = u.object_bytes + d.bytes, object_count = u.object_count + d.files, updated_at = now()
+          FROM delta d
+          WHERE u.clerk_user_id = ${ownerId}
+            AND (d.bytes <= 0 OR u.object_bytes + d.bytes <= ${limits.maxBytes})
+            AND (d.files <= 0 OR u.object_count + d.files <= ${limits.maxFiles})
+          RETURNING d.prior_existed
+        ), recorded AS (
+          INSERT INTO runtime_storage_objects
+            (clerk_user_id, object_key, bytes, counts_as_file, reservation_id, pending_until, signed_until, updated_at)
+          SELECT ${ownerId}, ${write.key}, h.bytes, ${write.countsAsFile}, ${reservationId}::uuid,
+            GREATEST(${pendingUntil}::timestamptz, h.outstanding_until),
+            GREATEST(${signedUntil}::timestamptz, h.outstanding_until), now()
+          FROM counted, held h
+          ON CONFLICT (clerk_user_id, object_key) DO UPDATE SET
+            bytes = EXCLUDED.bytes, counts_as_file = EXCLUDED.counts_as_file,
+            reservation_id = EXCLUDED.reservation_id, pending_until = EXCLUDED.pending_until,
+            signed_until = EXCLUDED.signed_until, updated_at = now()
+          RETURNING 1
+        )
+        SELECT prior_existed FROM counted
+      `.execute(trx.executor);
+      if (authorized.rows.length > 0) return { ok: true, reservationId };
+      const prior = await trx.executor.selectFrom('runtime_storage_objects').select(['bytes', 'counts_as_file'])
+        .where('clerk_user_id', '=', ownerId).where('object_key', '=', write.key).executeTakeFirst();
+      const byteDelta = write.bytes - Number(prior?.bytes ?? 0);
+      const code: StorageQuotaRefusal = byteDelta > 0 && usage.bytes + byteDelta > limits.maxBytes
+        ? 'storage_full' : 'file_limit_reached';
+      return { ok: false, code, priorExisted: Boolean(prior) };
+    });
+  }
+
+  async function settle(ownerId: string, key: string, reservationId: string, landed: number | null): Promise<void> {
+    await db.transaction(async (trx) => {
+      await lockUsage(trx.executor, ownerId);
+      const row = await trx.executor.selectFrom('runtime_storage_objects').select(['bytes', 'counts_as_file'])
+        .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
+        .where('reservation_id', '=', reservationId).executeTakeFirst();
+      if (!row) return;
+      const held = Number(row.bytes);
+      if (landed === null) {
+        await trx.executor.deleteFrom('runtime_storage_objects')
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+      } else {
+        await trx.executor.updateTable('runtime_storage_objects')
+          .set({ bytes: landed, pending_until: null, signed_until: null, updated_at: now() })
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+      }
+      await trx.executor.updateTable('runtime_storage_usage').set({
+        object_bytes: sql<number>`object_bytes + ${(landed ?? 0) - held}`,
+        object_count: sql<number>`object_count - ${landed === null && row.counts_as_file ? 1 : 0}`,
+        updated_at: now(),
+      }).where('clerk_user_id', '=', ownerId).execute();
+    });
+  }
+
+  /** Settles a bounded batch of expired pending writes against the store; returns how many it settled. */
+  async function reconcile(ownerId: string): Promise<number> {
+    const expired = await db.executor.selectFrom('runtime_storage_objects').select(['object_key', 'reservation_id'])
+      .where('clerk_user_id', '=', ownerId).where('pending_until', 'is not', null)
+      .where('pending_until', '<', now()).orderBy('pending_until').limit(RECONCILE_BATCH).execute();
+    let settled = 0;
+    const budget = AbortSignal.timeout(RECONCILE_BUDGET_MS);
+    for (const row of expired) {
+      if (budget.aborted) break;
+      try {
+        const head = await deps.headObject(row.object_key, {
+          signal: AbortSignal.any([budget, AbortSignal.timeout(HEAD_TIMEOUT_MS)]),
+        });
+        if (head.exists && (head.contentLength === undefined || !Number.isSafeInteger(head.contentLength))) continue;
+        await settle(ownerId, row.object_key, row.reservation_id, head.exists ? head.contentLength! : null);
+        settled += 1;
+      } catch (error: unknown) {
+        logError('[storage-quota] reconcile probe failed', { cause: error instanceof Error ? error.name : 'unknown' });
+      }
+    }
+    return settled;
+  }
+
+  return {
+    limits,
+
+    /** Authorizes and records a write; one reconcile pass runs before a refusal is final. */
+    async authorize(ownerId: string, write: StorageWrite): Promise<StorageQuotaDecision> {
+      assertWrite(write);
+      const first = await tryAuthorize(ownerId, write);
+      if (first.ok || await reconcile(ownerId) === 0) return first;
+      return tryAuthorize(ownerId, write);
+    },
+
+    /**
+     * Marks a pending write of `bytes` as landed. A newer authorization of the
+     * same key keeps its own state, and an outstanding signed URL keeps the key
+     * pending at its hold. Otherwise the key is now counted at what landed,
+     * releasing the old object's bytes the overwrite was holding.
+     */
+    async confirm(ownerId: string, key: string, reservationId: string, bytes: number): Promise<void> {
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('Storage quota write is invalid');
+      const at = now();
+      await db.transaction(async (trx) => {
+        await lockUsage(trx.executor, ownerId);
+        const row = await trx.executor.selectFrom('runtime_storage_objects').select(['bytes', 'signed_until'])
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
+          .where('reservation_id', '=', reservationId).forUpdate().executeTakeFirst();
+        if (!row) return;
+        if (row.signed_until !== null && new Date(row.signed_until).getTime() > at.getTime()) {
+          await trx.executor.updateTable('runtime_storage_objects')
+            .set({ pending_until: row.signed_until, updated_at: at })
+            .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+          return;
+        }
+        const held = Number(row.bytes);
+        await trx.executor.updateTable('runtime_storage_objects')
+          .set({ bytes, pending_until: null, signed_until: null, updated_at: at })
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).execute();
+        if (bytes !== held) {
+          await trx.executor.updateTable('runtime_storage_usage')
+            .set({ object_bytes: sql<number>`object_bytes + ${bytes - held}`, updated_at: at })
+            .where('clerk_user_id', '=', ownerId).execute();
+        }
+      });
+    },
+
+    /**
+     * Records that a write to `key` is about to land without the broker
+     * knowing its size yet (a multipart completion), as a pending write due
+     * for reconciliation once the completion and its size check have had
+     * time to finish. If that check fails, a later reconcile measures the
+     * stored object instead of leaving it uncounted.
+     * A new key is held at zero bytes; a new file blob takes its file slot now,
+     * under the file limit, so a recovered blob is counted as a file and the
+     * size check after the completion only has bytes left to authorize.
+     */
+    async notePending(ownerId: string, key: string, countsAsFile: boolean): Promise<StorageQuotaDecision> {
+      if (key.length < 1 || key.length > MAX_KEY_LENGTH) throw new Error('Storage quota write is invalid');
+      // Not reconcilable during the size check itself, which would count the write uncapped.
+      const at = new Date(now().getTime() + COMPLETION_CHECK_MS).toISOString();
+      const reservationId = randomUUID();
+      return db.transaction(async (trx): Promise<StorageQuotaDecision> => {
+        const usage = await lockUsage(trx.executor, ownerId);
+        const prior = await trx.executor.selectFrom('runtime_storage_objects').select('reservation_id')
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).executeTakeFirst();
+        if (prior) {
+          // A new reservation per renewal: a reconcile that read the earlier one cannot settle this one.
+          await sql`UPDATE runtime_storage_objects SET reservation_id = ${reservationId}::uuid,
+              pending_until = GREATEST(${at}::timestamptz, COALESCE(signed_until, ${at}::timestamptz)), updated_at = now()
+            WHERE clerk_user_id = ${ownerId} AND object_key = ${key}`.execute(trx.executor);
+          return { ok: true, reservationId };
+        }
+        if (countsAsFile && usage.count + 1 > limits.maxFiles) return { ok: false, code: 'file_limit_reached', priorExisted: false };
+        await trx.executor.insertInto('runtime_storage_objects').values({
+          clerk_user_id: ownerId, object_key: key, bytes: 0, counts_as_file: countsAsFile,
+          reservation_id: reservationId, pending_until: at, updated_at: now(),
+        }).execute();
+        if (countsAsFile) {
+          await trx.executor.updateTable('runtime_storage_usage')
+            .set({ object_count: sql<number>`object_count + 1`, updated_at: now() })
+            .where('clerk_user_id', '=', ownerId).execute();
+        }
+        return { ok: true, reservationId };
+      });
+    },
+
+    /**
+     * Releases a deleted key. Deleting is never refused. A key with an
+     * outstanding signed URL keeps its hold until that URL expires and is then
+     * reconciled, since the URL can still recreate it.
+     */
+    async release(ownerId: string, key: string, options: { ownWriteSettled?: boolean } = {}): Promise<void> {
+      await db.transaction(async (trx) => {
+        await lockUsage(trx.executor, ownerId);
+        // `ownWriteSettled`: the broker removes an object its own refused write just stored, so only
+        // an outstanding signed URL, not that write's pending window, can still recreate the key.
+        const held = await trx.executor.updateTable('runtime_storage_objects')
+          .set({ pending_until: sql<Date>`GREATEST(signed_until, pending_until)`, updated_at: now() })
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
+          .where(eb => options.ownWriteSettled
+            ? eb('signed_until', '>', now())
+            : eb.or([eb('signed_until', '>', now()), eb('pending_until', '>', now())]))
+          .returning('object_key').executeTakeFirst();
+        if (held) return;
+        await sql`
+          WITH gone AS (
+            DELETE FROM runtime_storage_objects WHERE clerk_user_id = ${ownerId} AND object_key = ${key}
+            RETURNING bytes, counts_as_file
+          )
+          UPDATE runtime_storage_usage u
+          SET object_bytes = u.object_bytes - g.bytes,
+            object_count = u.object_count - (CASE WHEN g.counts_as_file THEN 1 ELSE 0 END),
+            updated_at = now()
+          FROM gone g WHERE u.clerk_user_id = ${ownerId}
+        `.execute(trx.executor);
+      });
+    },
+
+    reconcile,
+  };
+}
+
+export type StorageQuota = ReturnType<typeof createStorageQuota>;

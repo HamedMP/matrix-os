@@ -16,6 +16,7 @@ import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js'
 import { migratePreviewDrive } from './migrations/preview-drive.js';
 import { migrateContainerOwnerDatabases } from './migrations/container-owner-databases.js';
 import { migrateFreeTier } from './migrations/free-tier.js';
+import { migrateContainerLimits } from './migrations/container-limits.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -46,6 +47,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'account-deletion', run: migrateAccountDeletion },
   { name: 'container-owner-databases', run: migrateContainerOwnerDatabases },
   { name: 'free-tier', run: migrateFreeTier },
+  { name: 'container-limits', run: migrateContainerLimits },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

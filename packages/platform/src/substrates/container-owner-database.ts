@@ -5,9 +5,12 @@ import type { PlatformDB } from '../db.js';
 
 /**
  * Per-owner database and role on the shared owner cluster for container
- * runtimes (spike S5). The platform enforces size; Postgres enforces the
- * connection limit. Passwords are derived from a platform secret and the
- * generation that last rotated them, so nothing secret is stored.
+ * runtimes (spike S5). Postgres enforces the connection limit on the role and
+ * the database. Postgres has no database size quota, so the platform measures
+ * size and, over the limit, makes the role's sessions read-only by default.
+ * That default is a role setting the owner can override per session; it stops
+ * ordinary writes, not a hostile owner. Passwords are derived from a platform
+ * secret and the generation that last rotated them, so nothing secret is stored.
  */
 
 export interface ContainerOwnerDatabasesTable {
@@ -74,6 +77,7 @@ const OWNER_LOCK_WAIT_MS = 30_000;
 const OWNER_LOCK_POLL_MS = 50;
 /** Owners with operations queued in this process; beyond it new operations answer busy. */
 const MAX_LOCAL_OWNER_QUEUES = 10_000;
+const READ_ONLY_SETTING = 'default_transaction_read_only=on';
 
 export function assertOwnerIdentifier(value: string, prefix: 'mxo_' | 'mxr_'): string {
   if (!IDENTIFIER.test(value) || !value.startsWith(prefix)) throw new ContainerOwnerDatabaseError('invalid_identifier');
@@ -383,6 +387,27 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     },
 
     /**
+     * Measures, then blocks or lifts default writes when the database crosses
+     * its limit. Sessions are terminated only on a change, so they reconnect
+     * under the new default.
+     */
+    async enforceSizeLimit(clerkUserId: string, signal: AbortSignal) {
+      const row = await load(clerkUserId);
+      if (row.state !== 'active') throw new ContainerOwnerDatabaseError('fenced');
+      const { sizeBytes, overLimit } = await this.measureSize(clerkUserId, signal);
+      const roleSql = quoteIdentifier(row.role_name, 'mxr_');
+      const blocked = (await admin.query(
+        'SELECT 1 FROM pg_roles WHERE rolname = $1 AND $2 = ANY(rolconfig)', [row.role_name, READ_ONLY_SETTING], signal)).length > 0;
+      if (overLimit !== blocked) {
+        await admin.query(overLimit
+          ? `ALTER ROLE ${roleSql} SET default_transaction_read_only = on`
+          : `ALTER ROLE ${roleSql} RESET default_transaction_read_only`, [], signal);
+        await terminateSessions(row.role_name, signal);
+      }
+      return { sizeBytes, overLimit, writesBlocked: overLimit };
+    },
+
+    /**
      * Drops the role and database. Safe to repeat; the record stays as a
      * tombstone. Both record updates match the names this call read, so a
      * delayed removal never marks a record that replaced them.
@@ -420,3 +445,64 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
 }
 
 export type ContainerOwnerDatabases = ReturnType<typeof createContainerOwnerDatabases>;
+
+export interface OwnerDatabaseSizeSweeperDeps {
+  db: PlatformDB;
+  ownerDatabases: Pick<ContainerOwnerDatabases, 'enforceSizeLimit'>;
+  intervalMs?: number;
+  batchSize?: number;
+  logError?: (message: string, detail: Record<string, string>) => void;
+}
+
+const SIZE_SWEEP_INTERVAL_MS = 5 * 60_000;
+const SIZE_SWEEP_BATCH = 50;
+const SIZE_ENFORCE_TIMEOUT_MS = 30_000;
+
+/** Recurring size enforcement over active owner databases, least recently measured first. */
+export function createOwnerDatabaseSizeSweeper(deps: OwnerDatabaseSizeSweeperDeps) {
+  const intervalMs = deps.intervalMs ?? SIZE_SWEEP_INTERVAL_MS;
+  const batchSize = deps.batchSize ?? SIZE_SWEEP_BATCH;
+  const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let running: Promise<number> | null = null;
+
+  async function sweepOnce(): Promise<number> {
+    const rows = await deps.db.executor.selectFrom('container_owner_databases').select('clerk_user_id')
+      .where('state', '=', 'active').where('deleted_at', 'is', null)
+      .orderBy(sql`size_measured_at ASC NULLS FIRST`).limit(batchSize).execute();
+    let enforced = 0;
+    for (const row of rows) {
+      try {
+        await deps.ownerDatabases.enforceSizeLimit(row.clerk_user_id, AbortSignal.timeout(SIZE_ENFORCE_TIMEOUT_MS));
+        enforced += 1;
+      } catch (error: unknown) {
+        logError('[container-owner-db] size enforcement failed', {
+          cause: error instanceof ContainerOwnerDatabaseError ? error.code : error instanceof Error ? error.name : 'unknown',
+        });
+      }
+    }
+    return enforced;
+  }
+
+  function tick(): void {
+    if (running) return;
+    running = sweepOnce().catch((error: unknown) => {
+      logError('[container-owner-db] size sweep failed', { cause: error instanceof Error ? error.name : 'unknown' });
+      return 0;
+    }).finally(() => { running = null; });
+  }
+
+  return {
+    sweepOnce,
+    start(): void {
+      if (timer) return;
+      timer = setInterval(tick, intervalMs);
+      timer.unref?.();
+    },
+    async shutdown(): Promise<void> {
+      if (timer) clearInterval(timer);
+      timer = null;
+      if (running) await running;
+    },
+  };
+}

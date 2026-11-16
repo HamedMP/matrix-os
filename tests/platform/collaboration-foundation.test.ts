@@ -93,6 +93,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'account-deletion',
       'container-owner-databases',
       'free-tier',
+      'container-limits',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });

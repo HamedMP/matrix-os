@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { sql, type Updateable } from 'kysely';
 import type { PlatformDB, UserMachinesTable } from '../db.js';
-import { ContainerProviderError, type ContainerProvider, type ContainerUnit } from './container-provider.js';
+import {
+  CONTAINER_UNIT_MAX_LIFETIME_SECONDS, ContainerProviderError, type ContainerProvider, type ContainerUnit,
+} from './container-provider.js';
 import type { EnsureRunningResult } from './types.js';
+import { countRunningContainers, lockCapacity } from '../free-tier/capacity.js';
 
 /**
  * Container runtime status machine (data-model.md). Every transition is one
@@ -64,6 +67,8 @@ export interface ContainerLifecycleDeps {
    */
   minResumeLifetimeMs?: number;
   maxConcurrentLaunches?: number;
+  /** Global ceiling on runtimes holding compute; a start beyond it answers busy. */
+  maxRunning?: number;
   logError?: (message: string, detail: Record<string, string | number>) => void;
 }
 
@@ -115,6 +120,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   const now = deps.now ?? (() => new Date());
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   const maxLaunches = deps.maxConcurrentLaunches ?? DEFAULT_MAX_CONCURRENT_LAUNCHES;
+  if (deps.maxRunning !== undefined && (!Number.isSafeInteger(deps.maxRunning) || deps.maxRunning < 1)) {
+    throw new Error('Container running ceiling is invalid');
+  }
   const launches = new Set<Promise<void>>();
   /** Launch slots held by starts whose claim is still in flight, so a burst cannot overshoot the cap. */
   let claiming = 0;
@@ -152,8 +160,68 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return Boolean(updated);
   }
 
-  async function failStart(machineId: string, generation: number, code: ContainerFailureCode): Promise<void> {
-    await transition(machineId, ['starting'], generation, {
+  /**
+   * Keeps counting a unit that may still run against the running ceiling,
+   * until its provider expiry, or a unit's whole lifetime from now when that
+   * is unknown. A later start clears it once the provider confirms the unit ended.
+   */
+  async function holdUnconfirmed(machineId: string, expiresAt: Date | null): Promise<void> {
+    const until = (expiresAt ?? new Date(now().getTime() + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000)).toISOString();
+    await db.executor.updateTable('user_machines')
+      .set({ compute_unconfirmed_until: sql<Date>`GREATEST(compute_unconfirmed_until, ${until}::timestamptz)` })
+      .where('machine_id', '=', machineId).where('substrate', '=', 'container').execute();
+  }
+
+  /** Ended means the provider no longer knows the unit or reports it terminated; a terminate request alone is not proof. */
+  async function confirmedEnded(unitId: string): Promise<boolean> {
+    try {
+      const unit = await provider.describe(unitId, callSignal());
+      return !unit || unit.state === 'terminated';
+    } catch (error: unknown) {
+      logError('[container-lifecycle] describe failed; unit kept counted', {
+        code: error instanceof ContainerProviderError ? error.code : 'unknown',
+      });
+      return false;
+    }
+  }
+
+  /**
+   * A unit this runtime created but could not use is terminated. Until the
+   * provider confirms it ended, it may still run, so the row keeps counting it.
+   */
+  async function endUnusedUnit(machineId: string, unitId: string, reason: string, expiresAt: Date | null = null): Promise<void> {
+    if (await terminateQuietly(unitId, reason) && await confirmedEnded(unitId)) return;
+    await holdUnconfirmed(machineId, expiresAt);
+  }
+
+  /**
+   * The unit a timed-out start left on its row is ended only when this start
+   * created it (the provider created it at or after the claim). Otherwise it is
+   * the unit a recovery start kept, which may hold the only copy of unsynced
+   * changes: it is left alone and keeps its slot.
+   */
+  async function endTimedOutUnit(machineId: string, unitId: string, claimedAt: Date | null): Promise<void> {
+    let unit: ContainerUnit | null;
+    try {
+      unit = await provider.describe(unitId, callSignal());
+    } catch (error: unknown) {
+      logError('[container-lifecycle] describe failed; timed-out unit kept', {
+        code: error instanceof ContainerProviderError ? error.code : 'unknown',
+      });
+      await holdUnconfirmed(machineId, null);
+      return;
+    }
+    if (!unit || unit.state === 'terminated') return;
+    const createdByThisStart = unit.createdAt !== null && claimedAt !== null && unit.createdAt.getTime() >= claimedAt.getTime();
+    if (!createdByThisStart) {
+      await holdUnconfirmed(machineId, unit.expiresAt);
+      return;
+    }
+    await endUnusedUnit(machineId, unitId, 'start_timeout', unit.expiresAt);
+  }
+
+  async function failStart(machineId: string, generation: number, code: ContainerFailureCode): Promise<boolean> {
+    return transition(machineId, ['starting'], generation, {
       status: 'failed_start', failure_code: code, failure_at: now().toISOString(),
     });
   }
@@ -181,14 +249,27 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     }, callSignal());
   }
 
-  async function terminateQuietly(unitId: string, reason: string): Promise<void> {
+  async function terminateQuietly(unitId: string, reason: string): Promise<boolean> {
     try {
       await provider.terminate(unitId, callSignal());
+      return true;
     } catch (error: unknown) {
       logError('[container-lifecycle] terminate failed; left for reconciliation', {
         reason, code: error instanceof ContainerProviderError ? error.code : 'unknown',
       });
+      return false;
     }
+  }
+
+  /**
+   * The earlier unit a failed stop left unconfirmed is known to hold no compute
+   * any more (the provider has ended it, or it is this runtime's running unit),
+   * so the row stops counting it. Until then the deadline survives failed starts.
+   */
+  async function confirmComputeEnded(machineId: string, generation: number): Promise<void> {
+    await db.executor.updateTable('user_machines').set({ compute_unconfirmed_until: null })
+      .where('machine_id', '=', machineId).where('substrate', '=', 'container')
+      .where('generation', '=', generation).where('compute_unconfirmed_until', 'is not', null).execute();
   }
 
   /** Replaces compute: generation and token epoch move together in one statement, fencing the old unit. */
@@ -214,7 +295,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
     if (!await reopenGateway(row)) return false;
     await transition(row.machine_id, ['starting'], row.generation, {
-      status: 'running', failure_code: null, failure_at: null, ...sessionWithin(previous),
+      status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
     });
     return true;
   }
@@ -234,18 +315,21 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     let generation = row.generation;
     try {
       const previous = row.substrate_ref ? await provider.describe(row.substrate_ref, callSignal()) : null;
+      if (!previous || previous.state === 'terminated') await confirmComputeEnded(row.machine_id, generation);
       if (previous && resumable(previous, recovering)) {
         await provider.resume(previous.unitId, callSignal());
         if (!await reopenGateway(row)) {
           // The unit is awake but still refuses runs. It may hold unflushed changes, so it is kept for recovery.
           await transition(row.machine_id, ['starting'], generation, {
             status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
+            // Awake and holding compute until the provider ends it.
+            compute_unconfirmed_until: previous.expiresAt ?? unconfirmedUntil(row),
           });
           return;
         }
         // Only a recovery resume can leave less than a whole session; sessionWithin bounds it.
         await transition(row.machine_id, ['starting'], generation, {
-          status: 'running', failure_code: null, failure_at: null, ...sessionWithin(previous),
+          status: 'running', failure_code: null, failure_at: null, compute_unconfirmed_until: null, ...sessionWithin(previous),
         });
         return;
       }
@@ -269,14 +353,16 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         bootPayload,
       }, callSignal());
       if (!created.endpointHost) {
-        await terminateQuietly(created.unitId, 'no_endpoint');
+        await endUnusedUnit(row.machine_id, created.unitId, 'no_endpoint', created.expiresAt);
         throw new ContainerProviderError('unavailable');
       }
       const recorded = await transition(row.machine_id, ['starting'], next.generation, {
         substrate_ref: created.unitId, private_address: created.endpointHost,
       });
-      if (!recorded) await terminateQuietly(created.unitId, 'fenced');
-      if (previous && previous.state !== 'terminated') await terminateQuietly(previous.unitId, 'replaced');
+      if (!recorded) await endUnusedUnit(row.machine_id, created.unitId, 'fenced', created.expiresAt);
+      if (previous && previous.state !== 'terminated' && await terminateQuietly(previous.unitId, 'replaced')) {
+        await confirmComputeEnded(row.machine_id, next.generation);
+      }
     } catch (error: unknown) {
       const code = failureCodeFor(error);
       logError('[container-lifecycle] start failed', {
@@ -293,6 +379,32 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     launches.add(tracked);
   }
 
+  /** The running ceiling is counted and the claim made under one capacity lock, so concurrent starts cannot pass it. */
+  async function claimStart(machineId: string, from: ContainerStatus, generation: number): Promise<boolean | 'busy'> {
+    // An unconfirmed earlier unit keeps its deadline: a recovery start that fails before learning
+    // its fate must not free the slot that unit may still hold.
+    const set = {
+      status: 'starting', started_at: now(), failure_code: null, failure_at: null, status_changed_at: now(),
+    };
+    if (deps.maxRunning === undefined) return transition(machineId, [from], generation, set);
+    const maxRunning = deps.maxRunning;
+    return db.transaction(async (trx): Promise<boolean | 'busy'> => {
+      await lockCapacity(trx.executor, 'running_runtimes');
+      // A failed stop's unconfirmed unit already holds its slot, so its recovery needs no other.
+      const own = await trx.executor.selectFrom('user_machines').select(['status', 'compute_unconfirmed_until'])
+        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
+        .executeTakeFirst();
+      const holdsSlot = own?.compute_unconfirmed_until !== null && own?.compute_unconfirmed_until !== undefined
+        && own.compute_unconfirmed_until.getTime() > now().getTime();
+      if (await countRunningContainers(trx.executor, now()) - (holdsSlot ? 1 : 0) >= maxRunning) return 'busy';
+      const updated = await trx.executor.updateTable('user_machines').set(set)
+        .where('machine_id', '=', machineId).where('substrate', '=', 'container').where('deleted_at', 'is', null)
+        .where('status', '=', from).where('generation', '=', generation)
+        .returning('machine_id').executeTakeFirst();
+      return Boolean(updated);
+    });
+  }
+
   async function ensureStarted(machineId: string): Promise<EnsureRunningResult> {
     const row = await load(machineId);
     if (!row) return { state: 'failed', code: 'needs_recovery' };
@@ -303,7 +415,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       case 'starting': {
         const startedAt = row.started_at?.getTime() ?? 0;
         if (now().getTime() - startedAt <= CONTAINER_START_TIMEOUT_MS) return { state: 'starting' };
-        await failStart(machineId, row.generation, 'start_timeout');
+        if (await failStart(machineId, row.generation, 'start_timeout') && row.substrate_ref) {
+          await endTimedOutUnit(machineId, row.substrate_ref, row.started_at);
+        }
         return { state: 'failed', code: 'start_timeout' };
       }
       case 'provisioning':
@@ -311,8 +425,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       case 'quiescing': {
         const since = row.status_changed_at?.getTime() ?? 0;
         if (now().getTime() - since <= CONTAINER_QUIESCE_TIMEOUT_MS) return { state: 'starting' };
+        // Nothing suspended the unit, so it may still hold compute.
         await transition(machineId, ['quiescing'], row.generation, {
           status: 'needs_recovery', failure_code: 'quiesce_timeout', failure_at: now().toISOString(),
+          compute_unconfirmed_until: unconfirmedUntil(row),
         });
         return { state: 'failed', code: 'needs_recovery' };
       }
@@ -330,9 +446,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (launches.size + claiming >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
     claiming += 1;
     try {
-      const claimed = await transition(machineId, [status], row.generation, {
-        status: 'starting', started_at: now(), failure_code: null, failure_at: null,
-      });
+      const claimed = await claimStart(machineId, status, row.generation);
+      if (claimed === 'busy') return { state: 'busy' };
       if (claimed) track(launch({ ...row, status: 'starting' }, status === 'needs_recovery'));
     } finally {
       claiming -= 1;
@@ -380,6 +495,16 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return transition(machineId, ['quiescing'], generation, { status: 'running' });
   }
 
+  /**
+   * A failed stop whose unit was never confirmed suspended may still hold
+   * compute, at most until the provider's lifetime ends a unit started then.
+   */
+  function unconfirmedUntil(row: MachineRow): Date | null {
+    if (!row.substrate_ref) return null;
+    const startedAt = row.started_at?.getTime() ?? now().getTime();
+    return new Date(startedAt + CONTAINER_UNIT_MAX_LIFETIME_SECONDS * 1000);
+  }
+
   async function suspendUnit(unitId: string, signal: AbortSignal): Promise<boolean> {
     try {
       await provider.suspend(unitId, AbortSignal.any([signal, callSignal()]));
@@ -399,10 +524,12 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (!await suspendUnit(row.substrate_ref, signal)) {
       await transition(machineId, ['quiescing'], generation, {
         status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
+        compute_unconfirmed_until: unconfirmedUntil(row),
       });
       return 'needs_recovery';
     }
-    return await transition(machineId, ['quiescing'], generation, { status: 'stopped' }) ? 'stopped' : 'stale_generation';
+    return await transition(machineId, ['quiescing'], generation, { status: 'stopped', compute_unconfirmed_until: null })
+      ? 'stopped' : 'stale_generation';
   }
 
   /**
@@ -417,9 +544,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   ): Promise<boolean> {
     const row = await load(machineId);
     if (!row || row.generation !== generation || row.status !== 'quiescing') return false;
-    if (row.substrate_ref) await suspendUnit(row.substrate_ref, signal);
+    const suspended = row.substrate_ref ? await suspendUnit(row.substrate_ref, signal) : true;
     return transition(machineId, ['quiescing'], generation, {
       status: 'needs_recovery', failure_code: code, failure_at: now().toISOString(),
+      compute_unconfirmed_until: suspended ? null : unconfirmedUntil(row),
     });
   }
 
@@ -453,6 +581,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       .set({
         substrate_ref: null,
         private_address: null,
+        compute_unconfirmed_until: null,
         status: sql<string>`CASE WHEN status IN ('running', 'starting', 'quiescing') THEN 'stopped' ELSE status END`,
         status_changed_at: now(),
       })
@@ -467,7 +596,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   /** The provider ended a running unit (lifetime or loss): the runtime is stopped and the next start runs fresh. */
   async function markComputeLost(machineId: string, generation: number, unitId: string): Promise<boolean> {
     const updated = await db.executor.updateTable('user_machines')
-      .set({ status: 'stopped', status_changed_at: now(), substrate_ref: null, private_address: null })
+      .set({ status: 'stopped', status_changed_at: now(), substrate_ref: null, private_address: null, compute_unconfirmed_until: null })
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
       .where('deleted_at', 'is', null)

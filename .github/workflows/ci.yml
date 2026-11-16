@@ -615,7 +615,7 @@ jobs:
       - name: Container substrate and free tier PostgreSQL
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/platform/ai-funded-container-runtime.test.ts tests/platform/container-owner-database.test.ts tests/platform/free-tier-invites.test.ts tests/platform/free-tier-postgres-helper.test.ts tests/platform/provision-free-runtime.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/ai-funded-container-runtime.test.ts tests/platform/container-database-limits.test.ts tests/platform/container-owner-database.test.ts tests/platform/free-tier-capacity.test.ts tests/platform/free-tier-invites.test.ts tests/platform/free-tier-postgres-helper.test.ts tests/platform/provision-free-runtime.test.ts tests/platform/sync-storage-quota.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Qualify remaining real PostgreSQL suites
         run: node scripts/ci/remaining-postgres.mjs

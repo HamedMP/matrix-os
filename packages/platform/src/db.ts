@@ -112,6 +112,8 @@ export interface UserMachinesTable {
   status_changed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   last_flush_digest: Generated<string | null>;
   last_flushed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** A stop could not confirm the unit suspended; it may hold compute until at most this time. */
+  compute_unconfirmed_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -858,6 +860,8 @@ export interface PlatformDatabase {
   user_machines: UserMachinesTable;
   container_owner_databases: import('./substrates/container-owner-database.js').ContainerOwnerDatabasesTable;
   free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
+  runtime_storage_usage: import('./free-tier/storage-quota.js').RuntimeStorageUsageTable;
+  runtime_storage_objects: import('./free-tier/storage-quota.js').RuntimeStorageObjectsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;

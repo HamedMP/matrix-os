@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
 import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { toBillingEntitlementRow } from '../database/billing-records.js';
 import { insertUserMachine } from '../database/user-machines.js';
 import type { PlatformDB } from '../db.js';
 import type { ContainerOwnerDatabases } from '../substrates/container-owner-database.js';
+import { lockCapacity } from './capacity.js';
 import type { FreeTierConfig } from './config.js';
 import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
 import { countFreeRuntimes, getFreeTierInvite, redeemFreeTierInvite } from './invites.js';
@@ -45,7 +45,6 @@ export interface FreeRuntimeProvisionerDeps {
   logError?: (message: string, detail: Record<string, string>) => void;
 }
 
-const CAPACITY_LOCK_KEY = 'matrix:free-tier:runtime-capacity';
 const OWNER_DATABASE_TIMEOUT_MS = 30_000;
 const UNIQUE_VIOLATION = '23505';
 
@@ -106,7 +105,7 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
         const invite = await getFreeTierInvite(trx, clerkUserId);
         if (!invite || invite.consumedAt) return { kind: 'waitlisted' };
       }
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${CAPACITY_LOCK_KEY}, 0))`.execute(trx.executor);
+      await lockCapacity(trx.executor, 'total_runtimes');
       if (await countFreeRuntimes(trx) >= config.maxRuntimes) return { kind: 'busy' };
       // Redemption is the last check: every return above leaves the invite unconsumed.
       if (config.inviteRequired && await redeemFreeTierInvite(trx, clerkUserId) !== 'redeemed') {
