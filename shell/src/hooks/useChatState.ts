@@ -46,6 +46,7 @@ export interface ChatState {
   composerIdentity?: object;
   isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
+  routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
   steerQueuedTurn?: (id: string) => Promise<boolean>;

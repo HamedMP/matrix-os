@@ -21,6 +21,17 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it("negotiates Schedule origin metadata without changing the legacy URL or retrying errors", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ items: [], pending: [], nextCursor: null }))
+      .mockResolvedValueOnce(Response.json({ code: "invalid_request" }, { status: 400 }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await expect(client.agents.bots!.routines!.list({ archived: "true" })).resolves.toMatchObject({ items: [] });
+    expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/bot-routines?archived=true",
+      expect.objectContaining({ headers: { Accept: "application/json; matrix-routine-origin=1" } }));
+    fetchFn.mockClear();
+    await expect(client.agents.bots!.routines!.list()).rejects.toMatchObject({ status: 400 });
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
   it("does not propagate Bot creation reasons on ordinary Chat paths", async () => {
     const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test",
       fetchFn: vi.fn(async () => new Response(JSON.stringify({ code: "invalid_request", reason: "unsupported_skill" }),
@@ -39,7 +50,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },

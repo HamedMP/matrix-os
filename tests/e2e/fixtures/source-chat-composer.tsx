@@ -1,0 +1,33 @@
+import "../../../packages/ui/src/chat-agents/chat-agents.css";
+import "../../../packages/ui/src/chat/composer/chat-composer.css";
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { ChatApp } from "../../../shell/src/components/ChatApp";
+import { createCanonicalProviderCatalogFixture } from "../../contracts/fixtures/canonical-chat";
+import type { ChatAgentClient } from "@matrix-os/ui";
+
+// Only the external catalog and owner API are synthetic. The ChatApp, composer,
+// responsive controls and natural-language composer submission are real.
+window.fetch = async () => Response.json(createCanonicalProviderCatalogFixture());
+const empty = new URL(window.location.href).searchParams.get("empty") === "true";
+const client = {
+  bots: {
+    directBot: async (chatId: string) => chatId === "chat_executor" ? "bot_existing" : null,
+    directChat: async () => "chat_executor",
+    routineOrigin: { get: async () => ({ sourceChatId: "chat_layout", pending: [], deliveries: [], hasMore: false }) },
+    tasks: async () => [], interactions: async () => [],
+  },
+  list: async () => ({ enabled: true, agents: [{ id: "bot_existing", name: "Existing private Bot with a very long name for this narrow Chat window", recipeRef: { recipeId: "writer", version: "1" } }] }),
+} as unknown as ChatAgentClient;
+
+const root = document.getElementById("root")!;
+createRoot(root).render(<ChatApp
+  messages={empty ? [] : [{ id: "msg_layout", role: "assistant", content: "Layout fixture ready", timestamp: 0 }]}
+  sessionId="chat_layout" agentClient={client} busy={false} connected navigationFresh isCurrentAuthority={() => true}
+  conversations={[]} onNewChat={() => undefined} onSwitchConversation={() => undefined} onSubmit={async (text, _files, options) => {
+    const hasRoutineCreation = options && Object.hasOwn(options, "routineCreation");
+    root.dataset.lastSubmit = JSON.stringify({ text, ...(hasRoutineCreation ? { routineCreation: true } : {}) });
+    return true;
+  }}
+  routineOriginChat={{ id: "chat_layout", ownerScope: { type: "personal", ownerId: "owner" }, lifecycle: "active" }}
+/>);
