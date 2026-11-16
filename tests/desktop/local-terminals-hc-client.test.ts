@@ -170,4 +170,43 @@ describe("herdr-core client", () => {
     await expect(connection.call("terminal.list", {})).rejects.toThrow("disconnected");
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("tells a listener added after the connection already ended", async () => {
+    const { core, connection } = await connected();
+    core.socket.emit("close");
+    const disconnected = vi.fn();
+    connection.onDisconnect(disconnected);
+    expect(disconnected).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A core the app does not own (Herdr sessions on a Matrix computer, spec 651 J6)
+// is accepted by rule, and what it prints before the handshake is not trusted.
+describe("herdr-core client talking to a core it did not start", () => {
+  it("accepts a core by rule instead of by exact version, and still refuses another generation", async () => {
+    const seen: unknown[] = [];
+    const newer = fakeCore({ hello: { result: { version: "0.1.20", generation: 1, framed: true, features: ["framed", "shell"], methods: ["terminal.list"], core: {} } } });
+    const connection = await connectHc({ open: () => newer.socket, accepts: (hello) => { seen.push(hello); return true; } });
+    expect(connection.version).toBe("0.1.20");
+    expect(seen).toEqual([{ version: "0.1.20", generation: 1, features: ["framed", "shell"], methods: ["terminal.list"] }]);
+
+    const refused = fakeCore({ version: "0.1.20" });
+    await expect(connectHc({ open: () => refused.socket, accepts: () => false })).rejects.toBeInstanceOf(HcVersionMismatchError);
+    expect(refused.sent.calls).toEqual([]);
+
+    const generation = fakeCore({ generation: 2 });
+    await expect(connectHc({ open: () => generation.socket, accepts: () => true })).rejects.toBeInstanceOf(HcVersionMismatchError);
+    expect(generation.sent.calls).toEqual([]);
+  });
+
+  it("reports text printed before the handshake as a protocol error and stops", async () => {
+    const socket = new EventEmitter() as EventEmitter & { write(data: Buffer | string): void; destroy(): void };
+    const written: string[] = [];
+    let destroyed = false;
+    socket.write = (data) => { written.push(String(data)); queueMicrotask(() => socket.emit("data", Buffer.from("Welcome to the box!\n{\"id\":1}\n"))); };
+    socket.destroy = () => { destroyed = true; };
+    await expect(connectHc({ open: () => socket, accepts: () => true })).rejects.toBeInstanceOf(HcProtocolError);
+    expect(destroyed).toBe(true);
+    expect(written).toHaveLength(1);
+  });
 });
