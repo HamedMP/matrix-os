@@ -66,6 +66,7 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  async function body<T>(c:Context,schema:z.ZodType<T>){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
  app.get(base,c=>call(c,'GET'));
  app.get(base+'/email-invitation-capabilities',async c=>{
+  c.header('Cache-Control','no-store');
   if(Object.keys(c.req.query()).length)return c.json({error:'Invalid request'},400);
   const capability=options.platform?.emailInvitationCapabilities;
   if(!capability)return c.json({privateEmailInvitations:false});
