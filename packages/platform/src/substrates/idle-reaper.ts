@@ -364,9 +364,10 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       await lifecycle.finishStop(machineId, generation, signal);
     } catch (error: unknown) {
       if (!signal.aborted) throw error;
-      // Shutdown: the compute is still alive, so the runtime keeps serving and a later sweep retries.
-      await resumeQuietly(target);
-      await lifecycle.cancelQuiesce(machineId, generation);
+      // Shutdown: the compute is still alive, so the runtime keeps serving and a later sweep retries,
+      // but only once its gateway has reopened; otherwise it stays recoverable rather than "running".
+      if (await resumeQuietly(target)) await lifecycle.cancelQuiesce(machineId, generation);
+      else await lifecycle.recoverAfterFailedStop(machineId, generation, 'quiesce_timeout', signal);
     }
   }
 

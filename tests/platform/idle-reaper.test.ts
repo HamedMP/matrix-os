@@ -441,4 +441,34 @@ describe('container idle stop', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps a stop interrupted by shutdown recoverable when its gateway does not reopen', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let release: (() => void) | undefined;
+      const runtime = fakeRuntime({ quiesce: [{ ok: true, unsettledRuns: 1 }] });
+      vi.mocked(runtime.client.resume).mockImplementation(async () => { runtime.calls.push('resume'); return false; });
+      const provider = fakeProvider();
+      const lifecycle = createContainerLifecycleService({ db, provider, now: () => new Date(clock), logError: () => undefined, buildBootPayload: async () => '{}' });
+      const reaper = createIdleReaper({
+        db, lifecycle, runtime: runtime.client, activity: createActivityTracker({ db, now: () => new Date(clock), logError: () => undefined }),
+        now: () => new Date(clock), logError: () => undefined,
+        sleep: (_ms, signal) => new Promise<void>((resolve, reject) => {
+          release = resolve;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+      });
+      reaper.start();
+      expect(vi.getTimerCount()).toBe(1);
+      advance(11 * MINUTE);
+      await reaper.sweep();
+      await vi.waitFor(() => expect(release).toBeDefined());
+      await reaper.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(runtime.calls).toEqual(['quiesce', 'resume']);
+      expect(await row()).toMatchObject({ status: 'needs_recovery', substrateRef: 'mvm-1' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
