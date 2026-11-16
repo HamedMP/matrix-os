@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
 import { KeyboardAvoidingView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { BackIcon, NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
+import type { ReactNode } from "react";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 

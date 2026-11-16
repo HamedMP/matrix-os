@@ -51,15 +51,20 @@ export function MessageList({
           renderComputerPhoto={renderComputerPhoto}
         />
       )}
-      {renderAfterMessage?.(item)}
     </AnalyticsMask>
-  ), [chatId, renderRequest, renderResults, renderAfterMessage, renderComputerPhoto]);
+  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
+
+  const renderItemWithAfterMessage = useCallback((info: ListRenderItemInfo<TranscriptMessage>) => {
+    const message = renderItem(info);
+    const after = renderAfterMessage?.(info.item);
+    return after == null ? message : <>{message}<AnalyticsMask>{after}</AnalyticsMask></>;
+  }, [renderItem, renderAfterMessage]);
 
   return (
     <FlatList
       style={styles.list}
       data={messages}
-      renderItem={renderItem}
+      renderItem={renderAfterMessage ? renderItemWithAfterMessage : renderItem}
       keyExtractor={keyExtractor}
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
