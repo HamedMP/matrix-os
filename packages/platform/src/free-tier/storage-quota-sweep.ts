@@ -35,6 +35,11 @@ const QUOTA_SWEEP_INTERVAL_MS = 5 * 60_000;
 const QUOTA_SWEEP_OWNERS = 50;
 const QUOTA_SWEEP_BUDGET_MS = 60_000;
 const SWEEP_LOCK_KEY = 'matrix:storage-quota:pending-sweep';
+/** Owners whose reconcile made no progress are skipped for a doubling interval, up to an hour. */
+const MAX_BACKOFF_MS = 60 * 60_000;
+const MAX_BACKED_OFF_OWNERS = 10_000;
+/** Candidates read per run, so owners behind backed-off ones still fill the batch. */
+const CANDIDATE_FACTOR = 4;
 
 export function createStorageQuotaSweeper(deps: StorageQuotaSweeperDeps) {
   const intervalMs = deps.intervalMs ?? QUOTA_SWEEP_INTERVAL_MS;
@@ -45,12 +50,25 @@ export function createStorageQuotaSweeper(deps: StorageQuotaSweeperDeps) {
   const logError = deps.logError ?? ((message, detail) => console.error(message, detail));
   let timer: ReturnType<typeof setInterval> | null = null;
   let running: Promise<StorageQuotaSweepResult> | null = null;
+  /** Per owner: consecutive failed attempts and when the next attempt may run. */
+  const backoff = new Map<string, { failures: number; retryAt: number }>();
+
+  function noteOutcome(owner: string, progressed: boolean): void {
+    const prior = backoff.get(owner);
+    backoff.delete(owner);
+    if (progressed) return;
+    const failures = (prior?.failures ?? 0) + 1;
+    backoff.set(owner, { failures, retryAt: now().getTime() + Math.min(MAX_BACKOFF_MS, intervalMs * 2 ** (failures - 1)) });
+    while (backoff.size > MAX_BACKED_OFF_OWNERS) backoff.delete(backoff.keys().next().value!);
+  }
 
   async function reconcileBatch(): Promise<Omit<StorageQuotaSweepResult, 'ran'>> {
     const owners = await deps.db.executor.selectFrom('runtime_storage_objects').select('clerk_user_id')
       .where('pending_until', 'is not', null).where('pending_until', '<', now())
       .groupBy('clerk_user_id').orderBy(sql`min(pending_until)`).orderBy('clerk_user_id')
-      .limit(ownerBatch).execute();
+      .limit(ownerBatch * CANDIDATE_FACTOR).execute()
+      .then((rows) => rows.filter(({ clerk_user_id: owner }) => (backoff.get(owner)?.retryAt ?? 0) <= now().getTime())
+        .slice(0, ownerBatch));
     const started = monotonicNow();
     let attempted = 0;
     let settled = 0;
@@ -58,8 +76,11 @@ export function createStorageQuotaSweeper(deps: StorageQuotaSweeperDeps) {
       if (monotonicNow() - started >= budgetMs) break;
       attempted += 1;
       try {
-        settled += await deps.quota.reconcile(owner);
+        const count = await deps.quota.reconcile(owner);
+        settled += count;
+        noteOutcome(owner, count > 0);
       } catch (error: unknown) {
+        noteOutcome(owner, false);
         logError('[storage-quota] sweep reconcile failed', { cause: error instanceof Error ? error.name : 'unknown' });
       }
     }

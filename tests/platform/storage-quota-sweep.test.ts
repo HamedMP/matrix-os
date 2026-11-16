@@ -95,6 +95,24 @@ describe('storage quota sweep', () => {
     expect(errors).toEqual(['[storage-quota] sweep reconcile failed']);
   });
 
+  it('backs off owners whose reconcile keeps failing, so the owners behind them get their turn', async () => {
+    const objects = store();
+    const quota = quotaWith(objects);
+    for (const [index, owner] of ['user_broken', 'user_next'].entries()) {
+      clock.now = new Date(T0.getTime() + index * MINUTE);
+      await quota.authorize(owner, { key: `${owner}/k`, bytes: 10, countsAsFile: true, pendingMs: MINUTE });
+    }
+    objects.headObject.mockImplementation(async (key: string) => {
+      if (key.startsWith('user_broken/')) throw new Error('store unavailable');
+      return { exists: false };
+    });
+    clock.now = new Date(T0.getTime() + 5 * MINUTE);
+    const sweeper = createStorageQuotaSweeper({ db, quota, now: () => clock.now, ownerBatch: 1, logError: () => undefined });
+    await sweeper.sweepOnce();
+    await sweeper.sweepOnce();
+    expect(await usage(db, 'user_next')).toEqual({ bytes: 0, count: 0 });
+  });
+
   it('starts one timer and clears it on shutdown', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
