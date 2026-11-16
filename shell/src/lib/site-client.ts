@@ -1,7 +1,7 @@
 import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinksResponseSchema, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
 
 export const SITE_CLIENT_MAX_RESPONSE_BYTES = 1_048_576;
-export interface SiteMetadata { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number }
+export interface SiteMetadata { title: string; description: string; slug: string | null; accessMode?: SiteRecord["accessMode"]; baseRevision?: number }
 export type { SiteSubmission };
 export type SiteSubmissionsPage = SiteSubmissionsResponse;
 export interface SitePublishMetadata extends SiteMetadata { reviewedConfig: SitePublishing }
