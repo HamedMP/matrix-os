@@ -8,14 +8,30 @@ const NAME_FUNCTION = `const nameOf = e => {
   return (e.getAttribute('aria-label') || (e.labels && Array.from(e.labels).map(text).join(' ')) || (['INPUT','TEXTAREA','SELECT'].includes(e.tagName) ? '' : text(e))).replace(/\\s+/g,' ').trim().slice(0,180);
 };`;
 
+const MODAL_FUNCTION = `const activeModal = () => {
+  const choose = selector => {
+    let last = null, focused = null;
+    for (const candidate of doc.querySelectorAll(selector)) {
+      if (!visible(candidate)) continue;
+      last = candidate;
+      if (candidate.contains(doc.activeElement)) focused = candidate;
+    }
+    return focused || last;
+  };
+  const native = typeof CSS !== 'undefined' && CSS.supports('selector(dialog:modal)') ? choose('dialog:modal') : null;
+  return native || choose('dialog[open][aria-modal="true"],[role="dialog"][aria-modal="true"],[role="alertdialog"][aria-modal="true"]');
+};`;
+
 export const SNAPSHOT_FUNCTION = `function MATRIX_SNAPSHOT(observationId) {
   const doc = this;
   ${NAME_FUNCTION}
   const secret = e => e instanceof HTMLInputElement && (e.type === 'password' || e.autocomplete === 'one-time-code' || [e.name,e.id,e.placeholder,e.getAttribute('aria-label') || '',nameOf(e)].some(value => /password|passcode|secret.?key|one.?time|verification.?code|authentication.?code|security.?code|confirmation.?code|two.?factor|2fa|\\botp\\b|^code$/i.test(value)));
   const visible = e => e.isConnected && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]');
   if (Array.from(doc.querySelectorAll('[data-matrix-owner-handoff]')).some(visible) || Array.from(doc.querySelectorAll('input')).some(e => visible(e) && secret(e))) { globalThis.__matrixBrowserObservation = null; return {handoff:true}; }
+  ${MODAL_FUNCTION}
+  const modal = activeModal();
   const nodes = new Map(); const elements = [];
-  for (const e of doc.querySelectorAll('a[href],button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"]')) {
+  for (const e of (modal || doc).querySelectorAll('a[href],button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"]')) {
     if (elements.length >= 100) break;
     if (!visible(e) || secret(e) || e instanceof HTMLInputElement && ['hidden','file'].includes(e.type)) continue;
     const role = (e.getAttribute('role') || (e.tagName === 'A' ? 'link' : e.tagName === 'BUTTON' ? 'button' : e.tagName === 'SELECT' ? 'combobox' : 'textbox')).slice(0,40);
@@ -24,12 +40,12 @@ export const SNAPSHOT_FUNCTION = `function MATRIX_SNAPSHOT(observationId) {
     nodes.set(ref,{element:e,role,name}); elements.push({ref,role,name});
   }
   let content = ''; let scanned = 0;
-  const walk = doc.createTreeWalker(doc.body || doc.documentElement,NodeFilter.SHOW_TEXT);
+  const walk = doc.createTreeWalker(modal || doc.body || doc.documentElement,NodeFilter.SHOW_TEXT);
   while (content.length < 16000 && scanned++ < 10000 && walk.nextNode()) {
     const node = walk.currentNode; const parent = node.parentElement;
     if (parent && visible(parent) && !parent.closest('input,textarea,select,script,style,noscript,[data-matrix-private]')) content += ' ' + (node.textContent || '').slice(0,1000);
   }
-  globalThis.__matrixBrowserObservation = {id:observationId,document:doc,url:doc.URL,nodes};
+  globalThis.__matrixBrowserObservation = {id:observationId,document:doc,url:doc.URL,nodes,modal};
   return {content:content.replace(/\\s+/g,' ').trim().slice(0,16000),title:(doc.title || '').slice(0,160),elements};
 }`;
 
@@ -40,8 +56,13 @@ export const ACTION_FUNCTION = `function MATRIX_ACTION(observationId,ref,action,
   const secret = e => e instanceof HTMLInputElement && (e.type === 'password' || e.autocomplete === 'one-time-code' || [e.name,e.id,e.placeholder,e.getAttribute('aria-label') || '',nameOf(e)].some(value => /password|passcode|secret.?key|one.?time|verification.?code|authentication.?code|security.?code|confirmation.?code|two.?factor|2fa|\\botp\\b|^code$/i.test(value)));
   const visible = e => e.isConnected && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]');
   if (Array.from(doc.querySelectorAll('[data-matrix-owner-handoff]')).some(visible) || Array.from(doc.querySelectorAll('input')).some(e => visible(e) && secret(e))) return {ok:false,reason:'owner'};
+  ${MODAL_FUNCTION}
+  const inObservedScope = e => {
+    const modal = activeModal();
+    return modal === state.modal && (!modal || modal.contains(e));
+  };
   const row = state.nodes.get(ref); const e = row && row.element;
-  if (!e || !e.isConnected || e.ownerDocument !== doc || secret(e)) return {ok:false,reason:'stale'};
+  if (!e || !e.isConnected || e.ownerDocument !== doc || secret(e) || !inObservedScope(e)) return {ok:false,reason:'stale'};
   if (!e.getClientRects().length || getComputedStyle(e).visibility === 'hidden' || e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]') || e.disabled) return {ok:false,reason:action === 'wait' ? 'waiting' : 'stale'};
   const role = (e.getAttribute('role') || (e.tagName === 'A' ? 'link' : e.tagName === 'BUTTON' ? 'button' : e.tagName === 'SELECT' ? 'combobox' : 'textbox')).slice(0,40);
   const name = nameOf(e);

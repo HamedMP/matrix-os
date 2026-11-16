@@ -18,7 +18,14 @@ const DRAW_CURSOR = `
     const styles={position:'fixed',left:Math.min(32768,x)+'px',top:Math.min(32768,y)+'px',width:'32px',height:'40px',pointerEvents:'none',zIndex:'2147483647',contain:'layout style',display:'block',visibility:'visible',opacity:'1'};
     for (const [key,value] of Object.entries(styles)) layer.style.setProperty(key.replace(/[A-Z]/g,c=>'-'+c.toLowerCase()),value,'important');
     const shadow=layer.attachShadow({mode:'closed'});
-    shadow.innerHTML='<style>:host{pointer-events:none}svg{overflow:visible;pointer-events:none}.pulse{animation:pulse .65s ease-out}@keyframes pulse{from{r:3;opacity:1}to{r:22;opacity:0}}</style><svg width="32" height="40" viewBox="0 0 32 40" aria-hidden="true">'+(action==='click'?'<circle class="pulse" cx="0" cy="0" r="3" fill="none" stroke="#7c3aed" stroke-width="3"/>':'')+'<path d="M0 0 L0 26 L7 20 L13 32 L19 29 L13 17 L23 17 Z" fill="#7c3aed" stroke="white" stroke-width="2"/><circle cx="25" cy="32" r="5" fill="#7c3aed" stroke="white" stroke-width="2"/></svg>';
+    const style=doc.createElement('style');
+    style.textContent=':host{pointer-events:none}svg{overflow:visible;pointer-events:none}.pulse{animation:pulse .65s ease-out}@keyframes pulse{from{r:3;opacity:1}to{r:22;opacity:0}}';
+    const makeSvg=(tag,attrs)=>{const node=doc.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value] of Object.entries(attrs))node.setAttribute(key,value);return node;};
+    const svg=makeSvg('svg',{width:'32',height:'40',viewBox:'0 0 32 40','aria-hidden':'true'});
+    if(action==='click')svg.append(makeSvg('circle',{class:'pulse',cx:'0',cy:'0',r:'3',fill:'none',stroke:'#7c3aed','stroke-width':'3'}));
+    svg.append(makeSvg('path',{d:'M0 0 L0 26 L7 20 L13 32 L19 29 L13 17 L23 17 Z',fill:'#7c3aed',stroke:'white','stroke-width':'2'}),
+      makeSvg('circle',{cx:'25',cy:'32',r:'5',fill:'#7c3aed',stroke:'white','stroke-width':'2'}));
+    shadow.append(style,svg);
     doc.documentElement.appendChild(layer);
     const cursor={element:layer,active:true,timer:null,finish:null}; globalThis.__matrixBrowserCursor=cursor;
     cursor.timer=setTimeout(()=>{if(globalThis.__matrixBrowserCursor===cursor) (${CLEAR_CURSOR_FUNCTION}).call(doc);},5000);
@@ -32,6 +39,7 @@ const DRAW_CURSOR = `
     if (!cursor.active || globalThis.__matrixBrowserObservation!==state || state.url!==doc.URL || !e.isConnected || e.ownerDocument!==doc || nameOf(e)!==row.name || secret(e) || e.disabled || !e.getClientRects().length || getComputedStyle(e).visibility==='hidden' || e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]')) return {ok:false,reason:'stale'};
     if ((e.getAttribute('role') || (e.tagName === 'A' ? 'link' : e.tagName === 'BUTTON' ? 'button' : e.tagName === 'SELECT' ? 'combobox' : 'textbox')).slice(0,40)!==row.role) return {ok:false,reason:'stale'};
     if (doc.querySelector('[data-matrix-owner-handoff]') || Array.from(doc.querySelectorAll('input')).some(secret)) return {ok:false,reason:'owner'};
+    if (!inObservedScope(e)) return {ok:false,reason:'stale'};
   }
 `;
 // Preserve all existing observation/credential checks and operation semantics.

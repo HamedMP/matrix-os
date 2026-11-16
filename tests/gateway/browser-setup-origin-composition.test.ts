@@ -18,9 +18,16 @@ const primary = {
 };
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
-describe("fresh primary Browser retry origin composition", () => {
-  it.each(["https://app.matrix-os.com", "https://custom-app.example"])("preserves owner retry from %s before and after real native enablement", async appOrigin => {
-    for (const [key, value] of Object.entries(primary)) vi.stubEnv(key, value);
+describe("fresh Browser retry origin composition", () => {
+  it.each([
+    { appOrigin: "https://app.matrix-os.com", slot: "primary" },
+    { appOrigin: "https://custom-app.example", slot: "primary" },
+    { appOrigin: "https://app.matrix-os.com", slot: "dev" },
+  ])("preserves owner retry on $slot from $appOrigin before and after real native enablement", async ({ appOrigin, slot }) => {
+    const identity = { ...primary, MATRIX_RUNTIME_SLOT: slot,
+      ...(slot === "dev" ? { MATRIX_BROWSER_DEV_SETUP: "true" } : {}) };
+    vi.stubEnv("MATRIX_BROWSER_DEV_SETUP", undefined);
+    for (const [key, value] of Object.entries(identity)) vi.stubEnv(key, value);
     for (const key of ["SHELL_ORIGIN", "PROXY_ORIGIN", "MATRIX_PUBLIC_APP_URL", "MATRIX_BROWSER_LAB", "PLATFORM_JWT_PUBLIC_KEY", "UPGRADE_TOKEN", "MATRIX_PLATFORM_URL"]) vi.stubEnv(key, undefined);
     vi.stubEnv("MATRIX_PUBLIC_APP_URL", appOrigin);
     vi.stubEnv("MATRIX_AUTH_TOKEN", secret); vi.stubEnv("PLATFORM_JWT_SECRET", jwtSecret); vi.stubEnv("NODE_ENV", "production");
@@ -36,7 +43,7 @@ describe("fresh primary Browser retry origin composition", () => {
       posthogErrorTracker: { captureEvent: vi.fn() } as never, ownerTelemetryDistinctId: "fixture-owner",
     });
     cleanups.push(async () => { runtime.browserLab.close(); runtime.customMcp.stop(); await runtime.processManager.shutdownAll(); });
-    const jwt = async (sub: string) => new SignJWT({ handle: primary.MATRIX_HANDLE, runtime_slot: "primary", gateway_url: appOrigin })
+    const jwt = async (sub: string, runtimeSlot = slot) => new SignJWT({ handle: primary.MATRIX_HANDLE, runtime_slot: runtimeSlot, gateway_url: appOrigin })
       .setSubject(sub).setIssuer("matrix-os-platform").setAudience("matrix-os-sync").setIssuedAt().setExpirationTime("5m").setProtectedHeader({ alg: "HS256" }).sign(new TextEncoder().encode(jwtSecret));
     const request = (token: string, origin?: string) => app.request(`${appOrigin}/api/browser/setup/retry`, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(origin ? { origin } : {}) }, body: "{}",
@@ -47,6 +54,7 @@ describe("fresh primary Browser retry origin composition", () => {
     expect((await request(await jwt(owner), "https://evil.test")).status).toBe(403);
     expect((await request(await jwt(owner))).status).toBe(403);
     expect((await request(await jwt("user_collaborator"), "https://app.matrix-os.com")).status).toBe(403);
+    expect((await request(await jwt(owner, slot === "dev" ? "primary" : "dev"), appOrigin)).status).toBe(401);
     expect(client.retry).toHaveBeenCalledTimes(1);
     // Execute the real helper against a contained host fixture, then rebuild
     // the gateway controller from the environment it actually persisted.
@@ -54,7 +62,7 @@ describe("fresh primary Browser retry origin composition", () => {
     const envPath = join(hostRoot, 'opt/matrix/env/host.env');
     await mkdir(join(hostRoot, 'opt/matrix/env'), { recursive: true });
     await mkdir(join(hostRoot, 'opt/matrix/bin'), { recursive: true });
-    const hostValues = { ...primary, MATRIX_PUBLIC_APP_URL: appOrigin, MATRIX_BROWSER_LAB_VIEWER_AUTH: '"Basic eDp5"' };
+    const hostValues = { ...identity, MATRIX_PUBLIC_APP_URL: appOrigin, MATRIX_BROWSER_LAB_VIEWER_AUTH: '"Basic eDp5"' };
     await writeFile(envPath, Object.entries(hostValues).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o640 });
     execFileSync('python3', ['-I', '-B', '-c', `
 import importlib.util, os, sys

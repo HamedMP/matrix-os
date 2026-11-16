@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserControlSchema } from "../../packages/contracts/src/shared-browser.js";
+import { SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionResultSchema, SharedBrowserActionSchema, SharedBrowserControlSchema } from "../../packages/contracts/src/shared-browser.js";
 
 describe("shared Chrome action boundary", () => {
   it("accepts observed actions and verified-download identifiers", () => {
@@ -24,5 +24,12 @@ describe("shared Chrome action boundary", () => {
     expect(SharedBrowserControlSchema.parse({ action: "takeover" })).toEqual({ action: "takeover" });
     expect(SharedBrowserActionSchema.safeParse({ action: "resume" }).success).toBe(false);
     expect(SharedBrowserControlSchema.safeParse({ action: "resume", runId: "other" }).success).toBe(false);
+  });
+  it("carries twelve owned tabs and bounds the tab list", () => {
+    const tabs = Array.from({ length: 13 }, (_, i) => ({
+      targetId: `tab-${i}`, title: "", url: `https://example.com/page/${i}`,
+    }));
+    expect(SharedBrowserActionResultSchema.parse({ success: true, tabs: tabs.slice(0, 12) }).tabs).toHaveLength(12);
+    expect(SharedBrowserActionResultSchema.safeParse({ success: true, tabs }).success).toBe(false);
   });
 });

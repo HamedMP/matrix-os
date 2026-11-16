@@ -262,6 +262,7 @@ import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibi
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
 import { registerFileRoutes } from "./server/file-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
@@ -508,7 +509,9 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
-    enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
+    supervisedRunExpiresAt: process.env.MATRIX_SUPERVISED_BROWSER_DEV_SCOPE === undefined
+      ? undefined : supervisedBrowserRuntime?.supervisedRunExpiresAt ?? (() => 0),
+    enabled: isBrowserRuntimeEnabled(process.env), ownerId: terminalRuntimeOwnerId,
     clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]

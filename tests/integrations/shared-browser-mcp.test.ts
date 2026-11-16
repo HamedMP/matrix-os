@@ -42,7 +42,63 @@ it("redacts broker errors, invalid results and refused capability rather than le
     expect(result.isError).toBe(true); expect(JSON.stringify(result)).not.toMatch(/private|password|database|\/home/);
   } finally { await client.close(); await server.close(); }
 });
+
+it.each([
+  {
+    failure: "a broker conflict",
+    respond: async () => Response.json({
+      error: "The browser action is unavailable. Its effect must be checked before retrying.",
+    }, { status: 409 }),
+  },
+  {
+    failure: "a transport rejection",
+    respond: async () => { throw new TypeError("socket closed"); },
+  },
+])("reports an unconfirmed click without inferring an owner handoff after $failure", async ({ respond }) => {
+  const fetcher = vi.fn(respond);
+  const server = createSharedBrowserMcpServer({ gatewayPort: 4000, token: "a".repeat(43), fetcher });
+  const client = new Client({ name: "native-browser-uncertain-action", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  try {
+    const result = await client.callTool({
+      name: "shared_browser",
+      arguments: { action: "click", observationId: "obs_1", ref: "ref_1" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).not.toMatch(/owner paused|took over|resume/i);
+    expect(result.content).toEqual([{
+      type: "text",
+      text: "Browser action unavailable. Its effect is uncertain. Check the current Browser state and verify the outcome before continuing. Never replay an uncertain action.",
+    }]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 it("fails closed on missing bearer or invalid port before creating any browser tool", () => {
   expect(() => createSharedBrowserMcpServer({ gatewayPort: 4000, token: "" })).toThrow();
   expect(() => createSharedBrowserMcpServer({ gatewayPort: 0, token: "a".repeat(43) })).toThrow();
+});
+
+it("exposes public context in native discovery and still validates fields per action", async () => {
+  const fetcher = vi.fn(async () => Response.json({ success: true, targetId: "public-tab" }));
+  const server = createSharedBrowserMcpServer({ gatewayPort: 4000, token: "a".repeat(43), fetcher });
+  const client = new Client({ name: "public-browser-native-discovery", version: "1" });
+  const [a,b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  try {
+    const [tool] = (await client.listTools()).tools;
+    expect(tool?.inputSchema).toMatchObject({
+      type: "object", required: ["action"], properties: { context: { const: "public" }, action: { enum: expect.arrayContaining(["tab_new", "snapshot"]) } },
+    });
+    const args = { action: "tab_new", context: "public", url: "https://example.com/" };
+    await expect(client.callTool({ name: "shared_browser", arguments: args })).resolves.not.toHaveProperty("isError", true);
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({ action: "tab_new", url: args.url, context: "public" }) }));
+    const invalid = await client.callTool({ name: "shared_browser", arguments: { action: "snapshot", context: "public" } });
+    expect(invalid.isError).toBe(true);
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally { await client.close(); await server.close(); }
 });

@@ -197,18 +197,23 @@ class Runtime:
             raise ValueError('Browser version limit')
         return value.decode().strip()
 
-    def environment(self):
+    def environment(self, *, recovering_activation=False):
         text = self.read(self.env).decode()
         values = {}
         for line in text.splitlines():
-            if line.startswith(('MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=', 'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=')):
+            if line.startswith(('MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=',
+                                'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=')):
                 key, value = line.split('=', 1)
                 if key in values:
                     raise ValueError('Duplicate Browser host configuration')
-                values[key] = value.strip('"')
+                values[key] = value if key == 'MATRIX_BROWSER_DEV_SETUP' else value.strip('"')
+        slot = values.get('MATRIX_RUNTIME_SLOT')
+        # A root-owned journal can still be rolled back after the opt-in is withdrawn.
+        eligible_slot = slot == 'primary' or (slot == 'dev'
+            and (recovering_activation or values.get('MATRIX_BROWSER_DEV_SETUP') == 'true'))
         if (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', values.get('MATRIX_MACHINE_ID', ''))
             or not re.fullmatch(r'[a-z][a-z0-9-]{0,62}', values.get('MATRIX_HANDLE', ''))
-            or values['MATRIX_HANDLE'].startswith(('pv-', 'pr-')) or values.get('MATRIX_RUNTIME_SLOT') != 'primary'
+            or values['MATRIX_HANDLE'].startswith(('pv-', 'pr-')) or not eligible_slot
             or not re.fullmatch(r'user_[A-Za-z0-9]{1,128}', values.get('MATRIX_CLERK_USER_ID', ''))
             or values.get('MATRIX_USER_ID', values.get('MATRIX_CLERK_USER_ID')) != values.get('MATRIX_CLERK_USER_ID')
             or values.get('MATRIX_BROWSER_LAB', 'true') not in ('true', 'false')):
@@ -367,6 +372,7 @@ class Runtime:
         if not journal.exists() and not journal.is_symlink():
             return
         state = json.loads(self.read(journal, 512 * 1024))
+        current, values = self.environment(recovering_activation=True)
         app, previous = self.prefix / 'app', self.prefix / '.previous'
         if app.is_symlink() or previous.is_symlink():
             raise ValueError('Unsafe Browser recovery tree')
@@ -383,7 +389,6 @@ class Runtime:
         elif not state['hadApp'] and app.exists():
             shutil.rmtree(app)
             self.sync_directory(self.prefix)
-        current, values = self.environment()
         saved = base64.b64decode(state['environment'], validate=True).decode()
         # Activation owns only its Browser enablement. Gateway bootstrap owns
         # origin defaults; preserve all current origin/operator configuration,
