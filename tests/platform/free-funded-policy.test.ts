@@ -1,5 +1,6 @@
 import { FundedAiSafeErrorSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { Hono } from 'hono';
+import { sql } from 'kysely';
 import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
 import { buildPlatformRuntimeVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -203,6 +204,31 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
       await a.executor.deleteFrom(table).execute();
     }
     await enableGlobalPolicy(a);
+  });
+
+  it('takes the owner locks in admission order when a funding read grants the monthly allowance', async () => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    const clock = { now: NOV };
+    const identity = await addRuntime(a, 90, 'free', NOV);
+    const free = harness(b, 3 * USD, clock);
+    // Admission holds the billing owner lock and then wants the funded owner lock.
+    let release!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const billingHeld = new Promise<void>((resolve) => { locked = resolve; });
+    const admission = a.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`billing-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      locked();
+      await holding;
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+    });
+    await billingHeld;
+    const summary = free.repo.getRuntimeFundingSummary(identity);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    const [admitted, read] = await Promise.allSettled([admission, summary]);
+    expect(admitted.status).toBe('fulfilled');
+    expect(read.status).toBe('fulfilled');
   });
 
   it('admits free owners racing at the daily ceiling only up to the ceiling', async () => {

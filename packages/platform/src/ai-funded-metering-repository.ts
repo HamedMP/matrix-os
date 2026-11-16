@@ -135,8 +135,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);
     await options.db.ready;
-    return options.db.transaction(async (trx) => {
-      // Match admission lock order before machine, balance, and grant row locks.
+    // Admission order: the account-deletion and billing owner locks, then the funded owner lock. A free
+    // runtime's read can grant the monthly allowance, which takes the first two, so it takes them first too.
+    return options.db.transaction(async (outer) => withAccountDeletionOwnerLock(outer, identity.ownerId, async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines").select([
@@ -222,7 +223,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
         },
       };
-    });
+    }));
   }
 
   async function getCheckoutFundingSummary(
