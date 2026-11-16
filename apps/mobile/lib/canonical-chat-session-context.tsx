@@ -48,7 +48,8 @@ interface CanonicalChatSessionContextValue {
   /**
    * The permission mode the user picked for the active chat, if any. Like
    * `selectionOverride` it is cleared when another chat is opened or a new one
-   * started, and kept when a draft becomes a chat.
+   * started, and kept when a draft becomes a chat. It applies only to the
+   * account and computer it was picked on.
    */
   permissionModeOverride: string | null;
   setPermissionModeOverride: (mode: string) => void;
@@ -92,7 +93,6 @@ export function useCanonicalChatSession(): CanonicalChatSessionContextValue {
 export function CanonicalChatSessionProvider({ children }: { children: ReactNode }) {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectionOverride, setSelectionOverride] = useState<CanonicalChatModelSelection | null>(null);
-  const [permissionModeOverride, setPermissionModeOverride] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [draftChatRequests, setDraftChatRequests] = useState(0);
   const [streamLive, setStreamLive] = useState(false);
@@ -102,6 +102,17 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const eventSourceRef = useRef<ReturnType<typeof createCanonicalChatEventSource> | null>(null);
   const cacheSyncRef = useRef<CanonicalChatCacheSync | null>(null);
   const computerKey = computer ? `${computer.handle}:${computer.runtimeSlot}` : null;
+  // This provider outlives sign-out and a computer switch, so the mode is kept
+  // with the account and computer it was picked on, as the remembered choice
+  // is: a mode left on an unsent draft never reaches another account's first
+  // message, or another computer's.
+  const modeScope = `${userId ?? "signed-out"}:${computerKey ?? "none"}`;
+  const [pickedMode, setPickedMode] = useState<{ scope: string; mode: string } | null>(null);
+  const permissionModeOverride = pickedMode?.scope === modeScope ? pickedMode.mode : null;
+  const setPermissionModeOverride = useCallback(
+    (mode: string) => setPickedMode({ scope: modeScope, mode }),
+    [modeScope],
+  );
 
   useEffect(() => {
     if (!computerKey || !computer) return;
@@ -155,14 +166,14 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const selectChat = useCallback((id: string) => {
     setActiveChatId(id);
     setSelectionOverride(null);
-    setPermissionModeOverride(null);
+    setPickedMode(null);
     setSelectedProjectId(null);
   }, []);
 
   const startDraftChat = useCallback((projectId: string | null = null) => {
     setActiveChatId(null);
     setSelectionOverride(null);
-    setPermissionModeOverride(null);
+    setPickedMode(null);
     setSelectedProjectId(projectId);
     setDraftChatRequests((count) => count + 1);
   }, []);
@@ -201,6 +212,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       bindDraftChatId,
       selectionOverride,
       permissionModeOverride,
+      setPermissionModeOverride,
       selectedProjectId,
       subscribe,
       streamLive,

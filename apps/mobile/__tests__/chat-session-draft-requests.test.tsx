@@ -5,9 +5,26 @@ import { CanonicalChatSessionProvider, useCanonicalChatSession } from "../lib/ca
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: jest.fn(), userId: "user_a" }) }));
+let mockUserId: string | null = "user_a";
+let mockComputer: { handle: string; runtimeSlot: string; gatewayPath: string } | undefined;
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: jest.fn(), userId: mockUserId }) }));
 jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));
-jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ computer: undefined }) }));
+jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ computer: mockComputer }) }));
+// With a computer the provider opens the chat event stream; nothing here needs it.
+jest.mock("@/lib/canonical-chat-events", () => ({
+  createCanonicalChatEventSource: () => ({
+    subscribe: () => () => {},
+    subscribeLive: () => () => {},
+    connect: () => {},
+    disconnect: () => {},
+  }),
+}));
+jest.mock("@/lib/canonical-chat-cache-sync", () => ({
+  createCanonicalChatCacheSync: () => ({ handle: () => {}, setActiveChat: () => {}, dispose: () => {} }),
+}));
+
+const COMPUTER_A = { handle: "aminmeshk", runtimeSlot: "primary", gatewayPath: "/vm/aminmeshk" };
+const COMPUTER_B = { handle: "aminmeshk-test", runtimeSlot: "primary", gatewayPath: "/vm/aminmeshk-test" };
 
 /** Shows the session as "<chat>:<requests>:<project>" and offers each way of changing it. */
 function Probe() {
@@ -106,6 +123,35 @@ describe("the permission mode chosen for the chat on screen", () => {
     press("choose full access");
 
     press(action);
+
+    expect(screen.getByText("mode:none")).toBeTruthy();
+  });
+});
+
+describe("the permission mode chosen on this phone", () => {
+  beforeEach(() => {
+    mockUserId = "user_a";
+    mockComputer = COMPUTER_A;
+  });
+  afterEach(() => {
+    cleanup();
+    mockUserId = "user_a";
+    mockComputer = undefined;
+  });
+
+  // The provider outlives sign-out, so a mode left on an unsent draft must not
+  // reach the next account's first message, or another computer's.
+  it.each([
+    ["another account signs in on this phone", () => { mockUserId = "user_b"; }],
+    ["the person signs out", () => { mockUserId = null; }],
+    ["the person switches to another computer", () => { mockComputer = COMPUTER_B; }],
+  ])("is not used after %s", (_case, change) => {
+    const view = render(<CanonicalChatSessionProvider><PermissionProbe /></CanonicalChatSessionProvider>);
+    press("choose full access");
+    expect(screen.getByText("mode:full_access")).toBeTruthy();
+
+    change();
+    view.rerender(<CanonicalChatSessionProvider><PermissionProbe /></CanonicalChatSessionProvider>);
 
     expect(screen.getByText("mode:none")).toBeTruthy();
   });
