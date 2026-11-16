@@ -252,6 +252,34 @@ describe('sync broker storage quota for container runtimes', () => {
     expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 101)).status).toBe(507);
   });
 
+  it('counts a recovered multipart file blob against the file limit', async () => {
+    const target = app({ maxBytes: 10_000, maxFiles: 1 });
+    const key = `${FREE_PREFIX}/objects/sha256/${hex(12)}`;
+    r2.completeMultipartUpload.mockImplementation(async (k: string) => { r2.sizes.set(k, 900); return { etag: 'mp' }; });
+    r2.headObject.mockRejectedValueOnce(new Error('store timeout'));
+    const failed = await target.request('/sync/quotafree/multipart/complete', {
+      method: 'POST', headers: free,
+      body: JSON.stringify({ key, uploadId: 'upload-1', parts: [{ partNumber: 1, etag: 'p1' }] }),
+    });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    clock += 3 * 60_000;
+    expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 10_001)).status).toBe(507);
+    expect(await usage()).toEqual({ object_bytes: 900, object_count: 1 });
+    // The recovered blob holds the only file slot.
+    expect((await presignPut(target, free, `${FREE_PREFIX}/objects/sha256/${hex(13)}`, 1)).status).toBe(507);
+  });
+
+  it('refuses a multipart completion of a new file blob past the file limit before it lands', async () => {
+    const target = app({ maxBytes: 10_000, maxFiles: 1 });
+    expect((await presignPut(target, free, `${FREE_PREFIX}/objects/sha256/${hex(14)}`, 10)).status).toBe(200);
+    const refused = await target.request('/sync/quotafree/multipart/complete', {
+      method: 'POST', headers: free,
+      body: JSON.stringify({ key: `${FREE_PREFIX}/objects/sha256/${hex(15)}`, uploadId: 'upload-1', parts: [{ partNumber: 1, etag: 'p1' }] }),
+    });
+    expect(refused.status).toBe(507);
+    expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
   it('reclaims a signed upload that never arrived once its URL has expired', async () => {
     const target = app();
     expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 900)).status).toBe(200);

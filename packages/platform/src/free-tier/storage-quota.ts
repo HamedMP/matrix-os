@@ -245,23 +245,36 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
      * for reconciliation once the completion and its size check have had
      * time to finish. If that check fails, a later reconcile measures the
      * stored object instead of leaving it uncounted.
-     * A new key is held at zero bytes and not yet as a file, so the size check
-     * still authorizes both limits.
+     * A new key is held at zero bytes; a new file blob takes its file slot now,
+     * under the file limit, so a recovered blob is counted as a file and the
+     * size check after the completion only has bytes left to authorize.
      */
-    async notePending(ownerId: string, key: string): Promise<void> {
+    async notePending(ownerId: string, key: string, countsAsFile: boolean): Promise<StorageQuotaDecision> {
       if (key.length < 1 || key.length > MAX_KEY_LENGTH) throw new Error('Storage quota write is invalid');
       // Not reconcilable during the size check itself, which would count the write uncapped.
       const at = new Date(now().getTime() + COMPLETION_CHECK_MS).toISOString();
-      await db.transaction(async (trx) => {
-        await lockUsage(trx.executor, ownerId);
-        await sql`
-          INSERT INTO runtime_storage_objects
-            (clerk_user_id, object_key, bytes, counts_as_file, reservation_id, pending_until, updated_at)
-          VALUES (${ownerId}, ${key}, 0, false, ${randomUUID()}::uuid, ${at}::timestamptz, now())
-          ON CONFLICT (clerk_user_id, object_key) DO UPDATE SET
-            pending_until = GREATEST(${at}::timestamptz, COALESCE(runtime_storage_objects.signed_until, ${at}::timestamptz)),
-            updated_at = now()
-        `.execute(trx.executor);
+      const reservationId = randomUUID();
+      return db.transaction(async (trx): Promise<StorageQuotaDecision> => {
+        const usage = await lockUsage(trx.executor, ownerId);
+        const prior = await trx.executor.selectFrom('runtime_storage_objects').select('reservation_id')
+          .where('clerk_user_id', '=', ownerId).where('object_key', '=', key).executeTakeFirst();
+        if (prior) {
+          await sql`UPDATE runtime_storage_objects SET
+              pending_until = GREATEST(${at}::timestamptz, COALESCE(signed_until, ${at}::timestamptz)), updated_at = now()
+            WHERE clerk_user_id = ${ownerId} AND object_key = ${key}`.execute(trx.executor);
+          return { ok: true, reservationId: prior.reservation_id };
+        }
+        if (countsAsFile && usage.count + 1 > limits.maxFiles) return { ok: false, code: 'file_limit_reached', priorExisted: false };
+        await trx.executor.insertInto('runtime_storage_objects').values({
+          clerk_user_id: ownerId, object_key: key, bytes: 0, counts_as_file: countsAsFile,
+          reservation_id: reservationId, pending_until: at, updated_at: now(),
+        }).execute();
+        if (countsAsFile) {
+          await trx.executor.updateTable('runtime_storage_usage')
+            .set({ object_count: sql<number>`object_count + 1`, updated_at: now() })
+            .where('clerk_user_id', '=', ownerId).execute();
+        }
+        return { ok: true, reservationId };
       });
     },
 
