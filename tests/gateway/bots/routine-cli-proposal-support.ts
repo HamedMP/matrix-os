@@ -23,6 +23,7 @@ import type { ChatGptPlanAuthority } from "../../../packages/gateway/src/bots/ch
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
 export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog; actualSourceOnly?: boolean;
   beforeRoutineFullAccessDispatch?: ConstructorParameters<typeof CanonicalChatOrchestrator>[0]["beforeRoutineFullAccessDispatch"];
+  routineActions?: ConstructorParameters<typeof CanonicalChatOrchestrator>[0]["routineActions"];
 }) {
   await bootstrapCollaborationDatabase(db as unknown as Kysely<OwnerCollaborationDatabase>);
   const f = await requestFixture(db, { actualSourceOnly: extra?.actualSourceOnly }), registry = new BotRuntimeRegistry();
@@ -65,6 +66,7 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
   canonical = new CanonicalChatOrchestrator({ repository: f.chats, adapters: new CanonicalChatProviderRegistry([adapter, ...(extra?.adapters ?? [])]),
     catalog: withBotProviderInstance({ getCatalog: async () => (extra?.catalog ?? { revision: "fixture", drivers: [], instances: [] }) }),
     beforeRoutineFullAccessDispatch: extra?.beforeRoutineFullAccessDispatch,
+    routineActions: extra?.routineActions,
     agentContext: new ChatAgentContext({ repository: f.chats, agents: f.agents, enabled: () => true,
       botChats: { directBot: async (owner, chat) => owner.type === "personal" ? await createBotBindingsRepository(db).directChatId({ ownerId: owner.ownerId, botId: BOT }).then(id => id === chat ? BOT : null) : null } }),
     now: () => new Date(f.state.clock) });
