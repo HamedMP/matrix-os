@@ -25,21 +25,17 @@ async function openShell(page: Page, presentation: "canvas" | "desktop") {
 }
 
 for (const presentation of ["canvas", "desktop"] as const) {
-  test(`${presentation}: Help handoff keeps one checklist anchored to the title bar`, async ({ page }, testInfo) => {
+  test(`${presentation}: Setup pill keeps one checklist anchored to the title bar`, async ({ page }, testInfo) => {
     await openShell(page, presentation);
-    const help = page.getByRole("button", { name: "Help", exact: true });
-    const menu = page.getByRole("dialog", { name: "Help", exact: true });
+    const pill = page.getByRole("button", { name: /^Getting started —/ });
     const card = page.getByRole("dialog", { name: "Getting started", exact: true });
+    await expect(page.getByRole("button", { name: "Help", exact: true })).toHaveCount(0);
     for (const width of [1440, 800]) {
       await page.setViewportSize({ width, height: 900 });
-      await help.click();
-      await expect(menu).toBeVisible();
-      const row = page.getByRole("button", { name: /Getting started —/ });
-      await row.focus();
-      await row.press("Enter");
+      await pill.focus();
+      await pill.press("Enter");
       await expect(card).toBeVisible();
-      await expect(menu).toBeHidden();
-      const anchor = await help.boundingBox();
+      const anchor = await pill.boundingBox();
       await expect.poll(async () => {
         const bounds = await card.boundingBox();
         return Math.abs(bounds!.x + bounds!.width - anchor!.x - anchor!.width);
@@ -48,16 +44,13 @@ for (const presentation of ["canvas", "desktop"] as const) {
       expect(bounds!.y).toBeGreaterThanOrEqual(anchor!.y + anchor!.height);
       expect(bounds!.y).toBeLessThan(anchor!.y + anchor!.height + 16);
       await page.screenshot({ path: testInfo.outputPath(`${presentation}-${width}-checklist.png`) });
-      await help.click();
+      await pill.click();
       await expect(card).toBeHidden();
-      await expect(menu).toBeVisible();
-      await help.click();
     }
   });
 
   test(`${presentation}: checklist yields to launcher and command palette`, async ({ page }, testInfo) => {
     await openShell(page, presentation);
-    await page.getByRole("button", { name: "Help", exact: true }).click();
     const trigger = page.locator('button[aria-label^="Getting started —"]');
     await expect(trigger).toBeVisible();
     await trigger.click();
@@ -87,7 +80,8 @@ for (const presentation of ["canvas", "desktop"] as const) {
     await page.keyboard.press("Escape");
     await expect(card).toBeVisible();
     await expect(trigger).not.toBeFocused();
-    await page.getByRole("button", { name: "Help", exact: true }).click();
+    await trigger.click();
+    await expect(card).toBeHidden();
     await page.keyboard.press("F3");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-launchpad], [data-mission-control]")).toHaveCount(0);

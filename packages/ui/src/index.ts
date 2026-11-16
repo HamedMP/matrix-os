@@ -198,7 +198,12 @@ export {
   useGettingStartedVisibility,
   useGettingStartedBlocker,
   useGettingStartedPopoverFocus,
+  useGettingStartedProgress,
+  usePublishGettingStartedProgress,
+  type GettingStartedProgress,
 } from "./getting-started-visibility.js";
+export { GettingStartedMenuSummary, GettingStartedPill } from "./getting-started-pill.js";
+export { gettingStartedNextStep, shouldShowGettingStartedPill } from "./getting-started-progress.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
@@ -319,7 +324,7 @@ export * from "./onboarding-widget/index.js";
 export * from "./get-started/index.js";
 export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
 
-export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { DesktopTopBarActions, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
 export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
@@ -361,3 +366,5 @@ export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-rec
 export { ScheduledInputText } from "./chat/ScheduledInputText.js";
 
 export { routineOriginChatEligible } from "./chat/routine-origin.js";
+
+export { DiscordIcon } from "./discord-icon.js";

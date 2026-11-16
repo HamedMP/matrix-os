@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import React, { type ComponentProps } from "react";
-import { DesktopHelpMenu } from "@matrix-os/ui";
+import { GettingStartedPill } from "@matrix-os/ui";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebDesktopControls } from "@/components/desktop/WebDesktopControls";
 vi.mock("@/components/UserButton", () => ({ UserButton: () => <button>Account</button> }));
-vi.mock("@/components/onboarding/GettingStartedPopover", () => ({ GettingStartedPopover: ({ helpMenu, onOpenSettings, onOpenFirstWork }: ComponentProps<typeof import("@/components/onboarding/GettingStartedPopover").GettingStartedPopover>) => <DesktopHelpMenu {...helpMenu} incomplete gettingStarted={<button onClick={() => { onOpenSettings("integrations"); onOpenFirstWork(); }}>Getting started</button>} /> }));
+vi.mock("@/components/onboarding/GettingStartedPopover", () => ({ GettingStartedPopover: ({ onOpenSettings, onOpenFirstWork }: ComponentProps<typeof import("@/components/onboarding/GettingStartedPopover").GettingStartedPopover>) => <GettingStartedPill completed={4} total={5} onClick={() => { onOpenSettings("integrations"); onOpenFirstWork(); }} /> }));
 const inventory = { items: [
  { handle: "neo", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", gatewayPath: "/vm/neo", capabilities: [] },
  { handle: "neo", runtimeSlot: "review", label: "Preview Computer", availability: "available", kind: "preview", gatewayPath: "/vm/neo?runtime=review", capabilities: [] },
@@ -29,19 +29,19 @@ describe("shared Web Desktop top bar", () => {
    expect(screen.getByRole("button", { name: "Change computer, currently Preview Computer" })).toBeTruthy();
   } finally { window.history.replaceState({}, "", oldUrl); }
  });
- it("shows Support in the OS view beside Help and opens it directly", async () => {
+ it("leads with the Setup pill, has no Help button and opens Support directly", async () => {
   const settings=vi.fn(), search=vi.fn(), support=vi.fn(), work=vi.fn();
   render(<WebDesktopControls onOpenSettings={settings} onOpenCommandPalette={search} onOpenSupport={support} onOpenFirstWork={work} />);
   const computer = await screen.findByRole("button", { name: "Change computer, currently Main Computer" });
-  expect(screen.getAllByRole("button").map(b => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Search", "Inbox", "Help", "Support", "Change computer, currently Main Computer", "Account"]);
+  expect(screen.getAllByRole("button").map(b => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Getting started — 4 of 5", "Search", "Inbox", "Support", "Change computer, currently Main Computer", "Account"]);
+  expect(screen.queryByRole("button", { name: "Help" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Search" }));expect(search).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));expect(support).toHaveBeenCalledOnce();
   fireEvent.pointerDown(computer, { button: 0, ctrlKey: false });
   const link=screen.getByRole("menuitem", { name: /Preview Computer/ });expect(link.getAttribute("href")).toBe("/vm/neo?runtime=review");
   fireEvent.keyDown(link, { key: "Escape" });
-  fireEvent.click(screen.getByRole("button", { name: "Help" }));
-  expect(screen.getByRole("link", { name: "Join Discord" }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
-  fireEvent.click(screen.getByRole("button", { name: "Support chat" }));expect(support).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByRole("button", { name: "Getting started — 4 of 5" }));
+  expect(settings).toHaveBeenCalledWith("integrations"); expect(work).toHaveBeenCalledOnce();
  });
  it("retains validated choices and All computers when the installed slot is outside the bounded list", async () => {
   const bounded = { ...inventory, items: [inventory.items[0]], hasMore: true };
