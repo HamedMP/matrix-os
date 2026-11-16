@@ -434,7 +434,7 @@ export function createInternalSyncRoutes(opts: {
     const decision = await meter(c, key, head.contentLength, null);
     if (!decision || decision.ok) return null;
     await opts.r2.deleteObject(key);
-    await quota.release(c.get("internalSyncScope").ownerId, key);
+    await quota.release(c.get("internalSyncScope").ownerId, key, { ownWriteSettled: true });
     return refusal(c, decision);
   }
 

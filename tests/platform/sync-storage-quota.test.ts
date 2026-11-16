@@ -280,6 +280,30 @@ describe('sync broker storage quota for container runtimes', () => {
     expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
   });
 
+  it('keeps the hold of a larger proxied upload still in flight when a smaller one or a delete overtakes it', async () => {
+    const quota = createStorageQuota({ db, limits: { maxBytes: 1000, maxFiles: 10 }, headObject: r2.headObject, now: () => new Date(clock) });
+    const key = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const proxied = (bytes: number) => quota.authorize(FREE_OWNER, { key, bytes, countsAsFile: false, pendingMs: 15 * 60_000 });
+    const large = await proxied(800);
+    const small = await proxied(100);
+    if (!large.ok || !small.ok) throw new Error('expected both writes to be authorized');
+    await quota.confirm(FREE_OWNER, key, small.reservationId);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+    // The larger upload lands last.
+    r2.sizes.set(key, 800);
+    await quota.confirm(FREE_OWNER, key, large.reservationId);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+
+    const other = `${FREE_PREFIX}/staging/${randomUUID()}`;
+    const inFlight = await quota.authorize(FREE_OWNER, { key: other, bytes: 150, countsAsFile: false, pendingMs: 15 * 60_000 });
+    expect(inFlight.ok).toBe(true);
+    await quota.release(FREE_OWNER, other);
+    expect(await usage()).toEqual({ object_bytes: 950, object_count: 0 });
+    clock += 16 * 60_000;
+    await quota.reconcile(FREE_OWNER);
+    expect(await usage()).toEqual({ object_bytes: 800, object_count: 0 });
+  });
+
   it('reclaims a signed upload that never arrived once its URL has expired', async () => {
     const target = app();
     expect((await presignPut(target, free, `${FREE_PREFIX}/staging/${randomUUID()}`, 900)).status).toBe(200);

@@ -17,7 +17,10 @@ import type { PlatformDB } from '../db.js';
  * broker does to the key meanwhile. So while one is outstanding
  * (`signed_until`), the key keeps at least the bytes it was signed for: a
  * smaller overwrite does not shrink the hold, a delete does not drop it, and
- * the key is reconciled against the store once the last URL expires.
+ * the key is reconciled against the store once the last URL expires. A
+ * proxied write still in flight (unconfirmed, inside its pending window) is
+ * held the same way, since it can still land after a later write or delete;
+ * `signed_until` then carries the latest such window.
  */
 
 export interface RuntimeStorageUsageTable {
@@ -120,7 +123,9 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
       const authorized = await sql<{ prior_existed: boolean }>`
         WITH prior AS (
           SELECT bytes, counts_as_file,
-            CASE WHEN signed_until > ${at.toISOString()}::timestamptz THEN signed_until END AS outstanding_until
+            -- A signed URL that has not expired, or a write still in flight, can still land at its size.
+            GREATEST(CASE WHEN signed_until > ${at.toISOString()}::timestamptz THEN signed_until END,
+              CASE WHEN pending_until > ${at.toISOString()}::timestamptz THEN pending_until END) AS outstanding_until
           FROM runtime_storage_objects
           WHERE clerk_user_id = ${ownerId} AND object_key = ${write.key}
         ), held AS (
@@ -283,13 +288,17 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
      * outstanding signed URL keeps its hold until that URL expires and is then
      * reconciled, since the URL can still recreate it.
      */
-    async release(ownerId: string, key: string): Promise<void> {
+    async release(ownerId: string, key: string, options: { ownWriteSettled?: boolean } = {}): Promise<void> {
       await db.transaction(async (trx) => {
         await lockUsage(trx.executor, ownerId);
+        // `ownWriteSettled`: the broker removes an object its own refused write just stored, so only
+        // an outstanding signed URL, not that write's pending window, can still recreate the key.
         const held = await trx.executor.updateTable('runtime_storage_objects')
-          .set({ pending_until: sql<Date>`signed_until`, updated_at: now() })
+          .set({ pending_until: sql<Date>`GREATEST(signed_until, pending_until)`, updated_at: now() })
           .where('clerk_user_id', '=', ownerId).where('object_key', '=', key)
-          .where('signed_until', '>', now())
+          .where(eb => options.ownWriteSettled
+            ? eb('signed_until', '>', now())
+            : eb.or([eb('signed_until', '>', now()), eb('pending_until', '>', now())]))
           .returning('object_key').executeTakeFirst();
         if (held) return;
         await sql`
