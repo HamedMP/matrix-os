@@ -33,6 +33,14 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({ ...RequestBase, operation: z.literal("CompleteNativeTab"), input: NativeTabCompletionSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ListWorkspaces"), input: z.object({}).strict() }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ListAgentStatuses"), input: z.object({}).strict() }).strict(),
+  z.object({
+    ...RequestBase,
+    operation: z.literal("ResolvePane"),
+    input: z.object({
+      sessionName: z.string().regex(/^matrix-(?:w-|rt_)[0-9a-f]{32}$/),
+      paneId: z.string().regex(/^[0-9]{1,9}$/),
+    }).strict(),
+  }).strict(),
   z.object({ ...RequestBase, operation: z.literal("GetCommandState"), input: TerminalCommandStateRefSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("CaptureScreen"), input: TerminalScreenCaptureRequestSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal('GetCommandResult'), input: TerminalCommandResultRefSchema }).strict(),

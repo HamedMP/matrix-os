@@ -1,7 +1,6 @@
 import { defineCommand } from "citty";
-import { requireCliAuthToken } from "../auth-state.js";
 import { formatCliSuccess } from "../output.js";
-import { resolveCliProfile } from "../profiles.js";
+import { resolveTerminalAgentCliConnection } from "../local-terminal-connection.js";
 import { createShellClient } from "../shell-client.js";
 import {
   createTerminalAgentClient,
@@ -18,12 +17,11 @@ const tabArgs = {
 } as const;
 
 async function target(args: Record<string, unknown>) {
-  const profile = await resolveCliProfile(args);
-  const token = await requireCliAuthToken(profile);
-  const shell = createShellClient({ gatewayUrl: profile.gatewayUrl, token });
+  const { gatewayUrl, token } = await resolveTerminalAgentCliConnection(args);
+  const shell = createShellClient({ gatewayUrl, token });
   const { workspace } = await resolveWorkspace(shell, args.project);
   const tab = resolveTab(workspace, args.tab);
-  return { ref: refFor(workspace, tab), tab, client: createTerminalAgentClient({ gatewayUrl: profile.gatewayUrl, token }) };
+  return { ref: refFor(workspace, tab), tab, client: createTerminalAgentClient({ gatewayUrl, token }) };
 }
 
 function positionals(args: Record<string, unknown>): string[] {
@@ -56,15 +54,31 @@ function verb<T extends Record<string, unknown>>(
   });
 }
 
+/** Labels are extra: a gateway without agent records, or a failed lookup, shows none. */
+async function terminalLabels(client: TerminalAgentClient, ref: Parameters<TerminalAgentClient["get"]>[0]): Promise<Record<string, string>> {
+  try {
+    return (await client.describe(ref)).labels;
+  } catch (error: unknown) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "not_found" || code === "request_failed") return {};
+    throw error;
+  }
+}
+
 export const shellGetCommand = verb(
   { name: "get", description: "Show one terminal's state, agent status and exit code" },
   {},
   async ({ client, ref }) => {
-    const facts = await client.get(ref);
+    const [facts, labels] = await Promise.all([client.get(ref), terminalLabels(client, ref)]);
     const tab = (facts.tab ?? {}) as Record<string, unknown>;
     const status = typeof facts.agentStatus === "string" ? ` ${facts.agentStatus}` : "";
     const exit = typeof tab.exitCode === "number" ? ` exit ${tab.exitCode}` : "";
-    return { data: facts, text: `${String(tab.name ?? ref.tabId)} ${String(facts.state ?? "")}${status}${exit}`.trim() };
+    const labelText = Object.entries(labels).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => ` ${key}=${value}`).join("");
+    return {
+      data: { ...facts, labels },
+      text: `${String(tab.name ?? ref.tabId)} ${String(facts.state ?? "")}${status}${exit}${labelText}`.trim(),
+    };
   },
 );
 
@@ -126,12 +140,15 @@ export async function waitUntil(
 ): Promise<TerminalWaitOutput> {
   const now = input.now ?? Date.now;
   const deadline = now() + input.totalMs;
+  let seen: number | undefined;
   for (;;) {
     const remaining = deadline - now();
     const result = await client.wait(ref, {
       timeoutMs: Math.max(0, Math.min(remaining, TERMINAL_WAIT_REQUEST_MAX_MS)),
       ...(input.output ? { output: input.output } : {}),
+      ...(seen !== undefined ? { seen } : {}),
     });
+    seen = result.seen ?? seen;
     // A server check-in is not the caller's timeout: keep waiting until ours runs out.
     if (result.reason !== "timeout" || deadline - now() <= 0) return result;
   }

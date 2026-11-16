@@ -156,6 +156,24 @@ async function readStatusFile(path: string): Promise<z.infer<typeof StatusFileSc
 /** Status of every live tab that has reported one, read from its pane's status file. */
 export function createTerminalAgentStatusIndex(options: { homePath: string; store: StatusIndexStore }) {
   return {
+    /** The live tab whose primary pane is `ZELLIJ_PANE_ID` `paneId` in `sessionName`. */
+    async resolvePane(sessionName: string, paneId: string): Promise<TerminalRef | undefined> {
+      if (!SESSION_NAME.test(sessionName) || !PANE_NUMBER.test(paneId)) return undefined;
+      for (const workspace of await options.store.listRuntimeWorkspaces()) {
+        const workspaceId = workspace.id;
+        // The caller's pane sees either the logical name or, on customer VPSes, the physical one.
+        if (!LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
+        if (workspace.zellijSessionName !== sessionName
+          && `matrix-${workspaceRuntimeId(workspace.zellijSessionName)}` !== sessionName) continue;
+        for (const [tabId, tab] of Object.entries(workspace.tabs)) {
+          if (tab.zellijPaneId === `terminal_${paneId}` && tab.status !== "exited" && tab.status !== "failed") {
+            return { workspaceId, tabId };
+          }
+        }
+      }
+      return undefined;
+    },
+
     async list(): Promise<TerminalAgentStatusEntry[]> {
       const entries: TerminalAgentStatusEntry[] = [];
       for (const workspace of await options.store.listRuntimeWorkspaces()) {

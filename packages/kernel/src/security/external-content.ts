@@ -6,6 +6,7 @@ export type ExternalContentSource =
   | "browser"
   | "email"
   | "api"
+  | "terminal"
   | "unknown";
 
 export interface WrapOptions {
@@ -18,7 +19,7 @@ export interface WrapOptions {
 const OPEN_MARKER = "<<<EXTERNAL_UNTRUSTED_CONTENT>>>";
 const CLOSE_MARKER = "<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>";
 
-const WARN_BY_DEFAULT: ExternalContentSource[] = ["web_fetch", "browser"];
+const WARN_BY_DEFAULT: ExternalContentSource[] = ["web_fetch", "browser", "terminal"];
 
 const SECURITY_WARNING =
   "CAUTION: The following content is from an untrusted external source. " +

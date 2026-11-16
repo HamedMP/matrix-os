@@ -46,7 +46,13 @@ fi
 
 # Printable text only, at most 200 characters, JSON-escaped.
 message="$(printf '%s' "$*" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200 | sed 's/\\/\\\\/g; s/"/\\"/g')"
-now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Milliseconds tell a result for the previous task from one for a task sent later in
+# the same second. GNU date has %3N; elsewhere fall back to whole seconds.
+now="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null)"
+case "$now" in
+  *.[0-9][0-9][0-9]Z) ;;
+  *) now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+esac
 # mktemp creates the file exclusively with an unpredictable name; the trap
 # removes it on any exit before the rename.
 tmp="$(mktemp "$dir/.terminal_$pane.XXXXXXXX.tmp")"

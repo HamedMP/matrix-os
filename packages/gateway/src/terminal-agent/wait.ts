@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { TerminalRefSchema, type TerminalRef, type TerminalTab } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { TerminalAgentStatusSource } from "./status-source.js";
-import { terminalRefKey } from "./status-source.js";
+import { reportPredatesSend, terminalRefKey } from "./status-source.js";
 import { visibleTerminalText } from "./screen-text.js";
 import { captureTerminalScreen, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbRuntime } from "./verbs.js";
 
@@ -16,6 +16,10 @@ const DEFAULT_POLL_MS = 500;
 const WAIT_OUTPUT_HISTORY_LINES = 2_000;
 // Failed captures, with none succeeding, before a wait reads the snapshot instead.
 const LIVE_CAPTURE_ATTEMPTS = 3;
+// After a send, a report older than the send describes the previous turn. Herdr waits
+// for the turn the send started; an agent that never reports again counts as stopped
+// once this grace has passed.
+const SEND_TURN_GRACE_MS = 15_000;
 const MAX_WAITERS = 256;
 const MAX_WAITERS_PER_TAB = 16;
 
@@ -201,10 +205,13 @@ export function createTerminalWaiter(options: {
           baselines[read.source] = count;
         }
       } else {
-        const status = await withinWait(() => options.status.get(ref));
-        if (status === GAVE_UP) return ended();
-        lastStatus = status?.status;
-        if (lastStatus && lastStatus !== "working") return confirmed({ reason: "stopped", status: lastStatus });
+        const entry = await withinWait(() => options.status.get(ref));
+        if (entry === GAVE_UP) return ended();
+        lastStatus = entry?.status;
+        const sentAt = options.status.sentAt?.(ref);
+        const previousTurn = entry !== undefined && sentAt !== undefined
+          && reportPredatesSend(entry, sentAt) && now() - sentAt < SEND_TURN_GRACE_MS;
+        if (lastStatus && lastStatus !== "working" && !previousTurn) return confirmed({ reason: "stopped", status: lastStatus });
       }
       const remaining = deadline - now();
       if (remaining <= 0) return ended();

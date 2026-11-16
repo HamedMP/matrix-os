@@ -185,3 +185,24 @@ export const WaitTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
   // Hosted MCP gives each downstream request 50 s; a wait check-in must answer first.
   timeoutMs: z.number().int().min(0).max(40_000).optional(),
 }).strict();
+
+const TerminalLabelsInputSchema = z.record(z.string().regex(/^[a-z][a-z0-9_.-]{0,62}$/), z.string().max(256))
+  .refine((labels) => Object.keys(labels).length <= 32, { message: "Too many labels" });
+
+export const RunTerminalAgentInputSchema = z.object({
+  computer: RuntimeSlotSchema,
+  projectId: z.string().min(1).max(128).optional(),
+  name: z.string().min(1).max(64),
+  cwd: MatrixPathSchema.optional(),
+  argv: z.array(z.string().min(1).max(4096)).min(1).max(128).optional(),
+  template: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
+  task: z.string().min(1).max(8 * 1024).optional(),
+  parent: z.object({ workspaceId: TerminalWorkspaceIdSchema, tabId: TerminalTabIdSchema }).strict().optional(),
+  outliveParent: z.boolean().optional(),
+  labels: TerminalLabelsInputSchema.optional(),
+}).strict();
+
+export const LabelTerminalTabInputSchema = TerminalTabRefInputSchema.extend({
+  set: TerminalLabelsInputSchema.optional(),
+  remove: z.array(z.string().regex(/^[a-z][a-z0-9_.-]{0,62}$/)).max(32).optional(),
+}).strict();
