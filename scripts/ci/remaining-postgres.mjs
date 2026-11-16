@@ -16,6 +16,7 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/bots/interactions-repository.test.ts',
   'tests/gateway/bots/managed-custom-recovery.test.ts',
   'tests/gateway/bots/memory-repository.test.ts',
+  'tests/gateway/bots/routine-direct-chat-contexts.test.ts',
   'tests/gateway/bots/sessions-repository.test.ts',
   'tests/gateway/bots/tasks-repository.test.ts',
   'tests/gateway/chat-order-title.test.ts',
@@ -182,7 +183,7 @@ export function runRemainingPostgres(root = process.cwd(), env = process.env, ex
   let failed = false, assertions = 0;
   const batches = [];
   // Hosted batch 2 exceeded 60s while all assertions seen before the timeout passed.
-  // Keep a bounded per-batch cap and enough total margin for all five batches.
+  // Keep a bounded per-batch cap and enough total margin for all batches.
   const deadline = now() + 240000;
   for (let offset = 0; offset < files.length; offset += 4) {
     const selected = files.slice(offset, offset + 4), report = path.join(output, `batch-${1 + offset / 4}.json`);
