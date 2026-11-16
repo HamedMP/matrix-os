@@ -6,6 +6,7 @@ import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { storageSnapshot } from "./host-bundle-storage-diagnostics.mjs";
 
 const exec = promisify(execFile);
 const rootDefault = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -157,6 +158,7 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
     await run("tar", ["-xf", archive, "-C", source]);
     await mkdir(join(source, ".matrix-builder/home"), { recursive: true, mode: 0o700 });
     await writeFile(join(source, ".matrix-builder/empty.npmrc"), "", { flag: "wx", mode: 0o600 });
+    await storageSnapshot("outer", "before", [source, scratch, destination]);
     const iid = join(temporary, "image-id");
     await run("docker", ["build", "--platform", "linux/amd64", "--iidfile", iid, context]);
     const image = (await readFile(iid, "utf8")).trim();
@@ -188,7 +190,10 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
     await safeDestination(root, destination); await mkdir(dirname(destination), { recursive: true });
     await rm(destination, { recursive: true, force: true }); await rename(output, destination);
     console.log(join(destination, "matrix-host-bundle.tar.gz"));
-  } catch (error) { failure = error; throw error;
+  } catch (error) {
+    failure = error;
+    await storageSnapshot("outer", "failure", [join(temporary, "source"), join(temporary, "scratch"), destination]);
+    throw error;
   } finally {
     clearTimeout(deadline); process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
     let cleanupFailure;

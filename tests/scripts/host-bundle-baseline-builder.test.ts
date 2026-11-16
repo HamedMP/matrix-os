@@ -20,7 +20,7 @@ afterEach(() => {
 function fixture(docker: string) {
   const root = mkdtempSync(join(tmpdir(), "host-baseline-builder-")); fixtures.push(root);
   mkdirSync(join(root, "scripts")); mkdirSync(join(root, "bin")); mkdirSync(join(root, "home"));
-  for (const file of ["build-host-bundle.sh", "host-bundle-baseline-builder.mjs", "host-bundle-builder.Dockerfile"]) {
+  for (const file of ["build-host-bundle.sh", "host-bundle-baseline-builder.mjs", "host-bundle-builder.Dockerfile", "host-bundle-storage-diagnostics.mjs"]) {
     if (existsSync(join(repo, "scripts", file))) cpSync(join(repo, "scripts", file), join(root, "scripts", file));
   }
   writeFileSync(join(root, ".env.private"), "PRIVATE_FIXTURE_VALUE=do-not-transfer\n");

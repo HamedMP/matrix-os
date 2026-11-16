@@ -54,6 +54,14 @@ After successful artifact production and confirmed owned-container cleanup only,
 
 Final host-cache source preparation passed six focused suites, 142 tests with zero skips; the independent helper review passed 33 cases. These checks do not establish the actual post-cache or publication outcome.
 
+## Bounded storage evidence
+
+The isolated builder emits best-effort `host-bundle-storage` JSON before the sandbox build and again on build failure, before owned cleanup. Outer records sample the owned source, sibling scratch and host export-output filesystem; inner records sample `/work`, `/scratch`, the build-output filesystem and sandbox `/tmp`. If output does not exist, sample only its nearest existing directory without creating it. The Bash observation and ERR trap are installed only for the known `/work` source root, after the unchanged actual baseline check. Direct native-baseline builds outside that root neither invoke the diagnostic CLI nor install its trap.
+
+Records contain only fixed scope/phase/role labels, coarse filesystem type (`ext`, `xfs`, `btrfs`, `overlay`, `tmpfs`, `other`) and exact decimal strings for total/free/available bytes and total/free inodes. These are filesystem-wide `statfs` observations, not directory sizes or a mount inventory. Paths, mount sources, environment, credentials and raw diagnostic errors are excluded. The diagnostic subprocess inherits an empty environment, caps output at 8 KiB and has a three-second parent deadline; normal async collection also has a two-second deadline. Collection failure, malformed output or timeout emits only a fixed `status: "unavailable"` record. If the diagnostic output sink itself throws, drop that record without printing its exception or replacing the original build result. Only the diagnostic CLI stderr is suppressed; original build stderr and exit remain intact. Stop is requested for a timed-out diagnostic child without waiting indefinitely or claiming physical exit; the original build result and existing container/temp cleanup remain authoritative.
+
+This instrumentation does not change scratch location, tmpfs capacity, memory/PID limits, caches, build commands, workflow, publisher, source/native verification or authorization. Filesystem free space and inode counts **cannot prove or rule out user/project quota, backend capacity or an intermittent storage failure**. Source/isolated orchestration tests do not diagnose the failed CI execution. A subsequent exact-source trusted build must supply its actual before/failure values before choosing a storage repair.
+
 ## Executable build contract
 
 ### Scope / trigger

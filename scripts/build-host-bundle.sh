@@ -38,6 +38,20 @@ if ! node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs" --check; then
   exec node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs"
 fi
 
+# The diagnostic CLI samples only the isolated /work sandbox. Its bounded probes
+# are best effort; retain the original build exit and let the owner clean up.
+if [[ "$ROOT_DIR" == "/work" ]]; then
+  node "$ROOT_DIR/scripts/host-bundle-storage-diagnostics.mjs" inner before "$ROOT_DIR" 2>/dev/null || true
+  capture_failed_build() {
+    local build_status=$?
+    if [[ "$build_status" -ne 0 ]]; then
+      node "$ROOT_DIR/scripts/host-bundle-storage-diagnostics.mjs" inner failure "$ROOT_DIR" 2>/dev/null || true
+    fi
+    exit "$build_status"
+  }
+  trap capture_failed_build EXIT
+fi
+
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
@@ -60,7 +74,10 @@ test -f "$ROOT_DIR/packages/gateway/dist/terminal/terminal-writer.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
-: "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
+if [[ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]]; then
+  echo "set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle" >&2
+  exit 1
+fi
 # In-app auth routes; defaults keep Clerk cross-links off the hosted Account
 # Portal (accounts.matrix-os.com) on every VPS shell.
 export NEXT_PUBLIC_CLERK_SIGN_IN_URL="${NEXT_PUBLIC_CLERK_SIGN_IN_URL:-/sign-in}"
