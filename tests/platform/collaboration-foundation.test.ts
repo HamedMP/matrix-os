@@ -91,6 +91,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'directory-and-social',
       'preview-drive',
       'account-deletion',
+      'container-owner-databases',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });
