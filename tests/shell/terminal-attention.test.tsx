@@ -93,6 +93,30 @@ describe("terminal attention notifier", () => {
     }
   });
 
+  // Fault detected (review of #3299 @64c115f0d): a tab that finished, asked for input and
+  // finished again kept its first completion's time and vanished at once.
+  it("gives a tab's later completion its own full time on screen", () => {
+    vi.useFakeTimers();
+    try {
+      render(<TerminalAttentionNotifier />);
+      act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
+      act(() => { useTerminalAgentEvents.setState({ tabs: facts("done") }); });
+      act(() => { vi.advanceTimersByTime(10_000); });
+      act(() => { useTerminalAgentEvents.setState({ tabs: facts("blocked") }); });
+      expect(screen.getByRole("alert")).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(5_000); });
+      act(() => { useTerminalAgentEvents.setState({ tabs: facts("done") }); });
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(screen.getByTestId("terminal-attention")).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(10_000); });
+      expect(screen.getByTestId("terminal-attention")).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(2_000); });
+      expect(screen.queryByTestId("terminal-attention")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Fault detected (fifth review of #3299): on a page load the empty store became the
   // baseline, so the first snapshot replayed every blocked agent as a new alert.
   it("takes the first received snapshot as the baseline on a page load", () => {
