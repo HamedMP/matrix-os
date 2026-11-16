@@ -3,7 +3,12 @@ import { requireCliAuthToken } from "../auth-state.js";
 import { formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 import { createShellClient } from "../shell-client.js";
-import { createTerminalAgentClient, type TerminalAgentClient } from "../terminal-agent-client.js";
+import {
+  createTerminalAgentClient,
+  TERMINAL_WAIT_REQUEST_MAX_MS,
+  type TerminalAgentClient,
+  type TerminalWaitOutput,
+} from "../terminal-agent-client.js";
 import { codedError, commonArgs, refFor, resolveTab, resolveWorkspace, writeError } from "./shell.js";
 
 const tabArgs = {
@@ -107,5 +112,49 @@ export const shellInterruptCommand = verb(
       : "exited" in observed ? `the program exited${observed.exitCode === undefined ? "" : ` (code ${observed.exitCode})`}`
       : `status is now ${observed.status}`;
     return { data: result, text: `Pressed ${result.pressed}; ${seen}.` };
+  },
+);
+
+/** Total wait limit for one `matrix shell wait`, like `hc wait`'s default. */
+const DEFAULT_WAIT_SECONDS = 180;
+const MAX_WAIT_SECONDS = 24 * 60 * 60;
+
+export async function waitUntil(
+  client: TerminalAgentClient,
+  ref: { workspaceId: string; tabId: string },
+  input: { output?: string; totalMs: number; now?: () => number },
+): Promise<TerminalWaitOutput> {
+  const now = input.now ?? Date.now;
+  const deadline = now() + input.totalMs;
+  for (;;) {
+    const remaining = deadline - now();
+    const result = await client.wait(ref, {
+      timeoutMs: Math.max(0, Math.min(remaining, TERMINAL_WAIT_REQUEST_MAX_MS)),
+      ...(input.output ? { output: input.output } : {}),
+    });
+    // A server check-in is not the caller's timeout: keep waiting until ours runs out.
+    if (result.reason !== "timeout" || deadline - now() <= 0) return result;
+  }
+}
+
+export const shellWaitCommand = verb(
+  { name: "wait", description: "Wait until a terminal stops working, exits, or prints --output text" },
+  {
+    output: { type: "string", required: false },
+    timeout: { type: "string", required: false, default: String(DEFAULT_WAIT_SECONDS) },
+  },
+  async ({ args, client, ref }) => {
+    const rawTimeout = String(args.timeout ?? DEFAULT_WAIT_SECONDS);
+    if (!/^\d{1,6}$/.test(rawTimeout) || Number(rawTimeout) > MAX_WAIT_SECONDS) {
+      throw codedError(`--timeout must be 0 to ${MAX_WAIT_SECONDS} seconds`);
+    }
+    const output = typeof args.output === "string" && args.output ? args.output : undefined;
+    if (output && output.length > 256) throw codedError("--output must be at most 256 characters");
+    const result = await waitUntil(client, ref, { totalMs: Number(rawTimeout) * 1000, ...(output ? { output } : {}) });
+    // Like `hc wait`: a timeout exits 124 so scripts can tell it from "stopped".
+    if (result.reason === "timeout") process.exitCode = 124;
+    const detail = result.reason === "exited" ? ` (exit ${result.exitCode ?? "unknown"})`
+      : result.status ? ` (${result.status})` : "";
+    return { data: { ...result }, text: `${result.reason}${detail}` };
   },
 );

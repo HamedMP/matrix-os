@@ -8,8 +8,10 @@ import { TerminalRuntime } from "./runtime.js";
 import { TerminalRuntimeSocketClient } from "./socket-client.js";
 import { TerminalRuntimeSocketServer } from "./socket-server.js";
 import { TerminalWorkspaceStore } from "./workspace-store.js";
+import { createTerminalAgentStatusIndex } from "./agent-status.js";
 import { ZellijCliRuntimeAdapter } from "./zellij-adapter.js";
 import { resolveTerminalRuntimeLimits } from "./runtime-config.js";
+import { startHeldPaneExitSweep } from "./held-pane-exit-sweep.js";
 import { startTerminalOrphanSweepLifecycle } from "./orphan-sweep-lifecycle.js";
 import { runBestEffortTerminalShutdown } from "./service-shutdown.js";
 import {
@@ -96,14 +98,19 @@ async function main(): Promise<void> {
   await migrateTerminalWorkspaces({ homePath, projects: await listProjects(homePath), cutover: zellij });
   if (mode === "--migrate-only") return;
 
+  const store = new TerminalWorkspaceStore({ homePath });
   const runtime = new TerminalRuntime({
-    store: new TerminalWorkspaceStore({ homePath }),
+    store,
     nativeHosts: createNativeTerminalHosts({ homePath, runtimeRoot: terminalRuntimeRoot }),
     zellij,
     ...resolveTerminalRuntimeLimits(process.env),
   });
   await runtime.restoreAll();
-  const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
+  const server = new TerminalRuntimeSocketServer({
+    socketPath,
+    runtime,
+    agentStatus: createTerminalAgentStatusIndex({ homePath, store }),
+  });
   await server.start();
   const orphanSweep = startTerminalOrphanSweepLifecycle({
     intervalMs: 15 * 60 * 1_000,
@@ -121,11 +128,21 @@ async function main(): Promise<void> {
       );
     },
   });
+  // Zellij keeps a command tab's pane open after its program exits and sends no
+  // pane_closed, so finished programs are noticed by asking it every 2 s.
+  const heldPaneExits = startHeldPaneExitSweep({
+    intervalMs: 2_000,
+    sweep: () => runtime.sweepHeldPaneExits(),
+    logFailed: (error) => {
+      console.warn("[terminal-runtime] held-pane exit sweep failed:", error instanceof Error ? error.name : "UnknownError");
+    },
+  });
   let closing = false;
   const close = async () => {
     if (closing) return;
     closing = true;
     await server.close();
+    await heldPaneExits.close();
     await orphanSweep.close();
     await runBestEffortTerminalShutdown(() => runtime.shutdown());
   };

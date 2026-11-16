@@ -19,6 +19,7 @@ import {
   ReadTerminalTabInputSchema,
   SendTerminalTabInputSchema,
   TerminalTabRefInputSchema,
+  WaitTerminalTabInputSchema,
   TerminalInputSchema,
   UploadFileInputSchema,
   decodeUploadContent,
@@ -247,6 +248,16 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
     annotations: executionAnnotations,
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
     ok: true, computer, ...(await client.interruptTerminalTab(tabRef(input)) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("wait_terminal_tab", {
+    description: "Wait until a terminal tab's agent stops working (reports idle, done, blocked or error), the program exits, or it prints `output` after the wait starts. Returns reason timeout as a check-in after at most 90 s; call again to keep waiting. Use this instead of sleeping.",
+    inputSchema: WaitTerminalTabInputSchema.shape,
+    annotations: readOnlyAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.waitTerminalTab(tabRef(input), {
+      timeoutMs: input.timeoutMs ?? 30_000, ...(input.output ? { output: input.output } : {}),
+    }) as Record<string, unknown>),
   }))));
 
   server.registerTool("list_files", {

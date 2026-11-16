@@ -23,6 +23,8 @@ import { archiveEndedTerminalTab, TerminalEndedTabArchiveInputSchema, type Termi
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
+import { sweepHeldPaneExits, type HeldPaneExitSweepResult } from "./held-pane-exit-sweep.js";
+import type { HeldPaneExit } from "./terminal-command-state.js";
 import {
   captureTabScreen,
   TerminalScreenCaptureRequestSchema,
@@ -41,6 +43,7 @@ export interface ZellijRuntimeAdapter {
   /** Plain text of a pane's viewport, or its whole scrollback when `full`. */
   dumpPaneText?(sessionName: string, paneId: string, full: boolean): Promise<string>;
   getCommandResult?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult>;
+  listHeldPaneExits?(sessionName: string): Promise<HeldPaneExit[]>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
     internalName: string;
@@ -265,7 +268,7 @@ export class TerminalRuntime {
       }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
       let stagedTab: TerminalTab | undefined = existing;
-      let runtimeIds: { tabId: number; paneId: string } | undefined;
+      let runtimeIds: { tabId: number; paneId: string; launchedAt?: Date } | undefined;
       let createdRuntimeTab = false;
       let sessionName: string | undefined;
       let startupCommand: string[] = [];
@@ -292,11 +295,16 @@ export class TerminalRuntime {
           ? await this.zellij.findTabByInternalName?.(stagedWorkspace.zellijSessionName, internalTab.zellijTabName)
           : undefined;
         if (!runtimeIds) {
-          runtimeIds = await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
-            internalName: internalTab.zellijTabName,
-            cwd: internalTab.cwd,
-            ...(startupCommand?.length ? { command: startupCommand } : {}),
-          });
+          // The command starts inside createTab: mark the pane's start before it.
+          const launchedAt = this.store.currentTime();
+          runtimeIds = {
+            ...await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
+              internalName: internalTab.zellijTabName,
+              cwd: internalTab.cwd,
+              ...(startupCommand?.length ? { command: startupCommand } : {}),
+            }),
+            launchedAt,
+          };
           createdRuntimeTab = true;
         }
         const tab = await this.store.activateTab({ workspaceId, tabId: stagedTab.id }, runtimeIds);
@@ -398,7 +406,7 @@ export class TerminalRuntime {
           await this.store.markTabExited({ workspaceId, tabId: tab.id });
           continue;
         }
-        let ids = recoveredTabs
+        let ids: { tabId: number; paneId: string; launchedAt?: Date } | undefined = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
         if (tab.status === "starting" && tab.startupCommand === undefined) {
@@ -411,21 +419,29 @@ export class TerminalRuntime {
           continue;
         }
         if (!ids && tab.nativeHost) {
-          ids = await this.zellij.createTab(workspace.zellijSessionName, {
-            internalName: tab.zellijTabName, cwd: tab.cwd,
-            command: await this.nativeHosts!.attachCommand(tab.nativeHost),
-          });
+          const command = await this.nativeHosts!.attachCommand(tab.nativeHost);
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName, cwd: tab.cwd, command,
+            }),
+            launchedAt,
+          };
         }
         if (!ids) {
           if (tab.status !== "starting") {
             await this.store.markTabExited({ workspaceId, tabId: tab.id });
             continue;
           }
-          ids = await this.zellij.createTab(workspace.zellijSessionName, {
-            internalName: tab.zellijTabName,
-            cwd: tab.cwd,
-            ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
-          });
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName,
+              cwd: tab.cwd,
+              ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
+            }),
+            launchedAt,
+          };
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
@@ -825,6 +841,32 @@ export class TerminalRuntime {
       const tab = workspace.tabs[parsed.tabId];
       if (!tab || terminalTabIncarnation(tab) !== expectedIncarnation) throw new TerminalRuntimeError("not_found");
       return this.store.readSnapshot(parsed);
+    });
+  }
+
+  /** Records exits zellij reports only through held panes (no pane_closed fires for them). */
+  async sweepHeldPaneExits(): Promise<HeldPaneExitSweepResult> {
+    const listHeldPaneExits = this.zellij.listHeldPaneExits?.bind(this.zellij);
+    if (!listHeldPaneExits || this.shuttingDown) return { sessions: 0, exited: 0 };
+    return sweepHeldPaneExits({
+      // One read of the state file per pass, not one per saved workspace.
+      workspaces: await this.store.listRuntimeWorkspaces(),
+      maxSessions: this.maxObservers,
+      listHeldPaneExits,
+      record: (ref, expected, exitCode) => this.runWorkspaceMutation(async () => {
+        const tab = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];
+        if (!tab || tab.nativeHost || tab.status === "exited" || tab.status === "failed" || tab.zellijTabName !== expected.zellijTabName
+          || tab.zellijPaneId !== expected.paneId) return false;
+        const key = refKey(ref);
+        if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);
+        else await this.store.markTabExited(ref, exitCode);
+        // As on pane close: a workspace with no live tab left releases its observer slot.
+        await this.restartObserver(ref.workspaceId);
+        return true;
+      }),
+      logFailed: (error) => {
+        console.warn("[terminal-runtime] held-pane exit check failed", error instanceof Error ? error.name : "unknown_error");
+      },
     });
   }
 

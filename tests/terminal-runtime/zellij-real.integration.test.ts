@@ -270,6 +270,19 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     }
   }, 30_000);
 
+  // Fault detected (live test on the #3300 preview): zellij holds a command tab's pane
+  // after its program exits and sends no pane_closed, so the exit was never recorded.
+  it("reports a held pane's exit code after its program exits", async () => {
+    const tab = await adapter.createTab(sessionName, {
+      internalName: `matrix-tab-${randomBytes(16).toString("hex")}`, cwd: "",
+      command: [process.execPath, "-e", "setTimeout(() => process.exit(7), 1500)"],
+    });
+    expect(await adapter.listHeldPaneExits(sessionName)).not.toContainEqual(expect.objectContaining({ paneId: tab.paneId }));
+    await expect.poll(() => adapter.listHeldPaneExits(sessionName), { timeout: 10_000 })
+      .toContainEqual({ tabId: tab.tabId, paneId: tab.paneId, exitCode: 7 });
+    await adapter.closeTab(sessionName, tab.tabId);
+  }, 20_000);
+
   it("uses one substantially smaller Zellij server for 23 idle tabs", async () => {
     const denseSession = `matrix-w-${randomBytes(16).toString("hex")}`;
     extraSessionNames.push(denseSession);

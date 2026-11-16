@@ -23,6 +23,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const dependencies = {
     appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime,
     nativeClaudeRecovery: undefined,
+    terminalEventHub: service("terminal events"), terminalWaiter: service("terminal waits"),
     browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),

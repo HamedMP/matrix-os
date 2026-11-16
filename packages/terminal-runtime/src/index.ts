@@ -14,3 +14,4 @@ export * from "./runtime-environment.js";
 export * from "./input-frame-queue.js";
 export { TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
 export * from "./screen-capture.js";
+export * from "./agent-status.js";

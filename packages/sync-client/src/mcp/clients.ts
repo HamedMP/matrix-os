@@ -107,6 +107,7 @@ export interface MatrixMcpGatewayClient {
   sendTerminalTab(ref: McpTerminalRef, input: { text: string; force?: boolean }): Promise<unknown>;
   pressTerminalKeys(ref: McpTerminalRef, keys: string[]): Promise<unknown>;
   interruptTerminalTab(ref: McpTerminalRef): Promise<unknown>;
+  waitTerminalTab(ref: McpTerminalRef, input: { output?: string; timeoutMs: number }): Promise<unknown>;
 }
 
 export interface McpTerminalRef { workspaceId: string; tabId: string }
@@ -300,6 +301,9 @@ export function createMcpGatewayClient(
       method: "POST", body: JSON.stringify({ keys }),
     }),
     interruptTerminalTab: (ref) => request(`${terminalTabPath(ref)}/interrupt`, { method: "POST", body: "{}" }),
+    waitTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/wait`, {
+      method: "POST", body: JSON.stringify(input),
+    }, { timeoutMs: input.timeoutMs + 5_000 }),
     async listTerminals() {
       return parseEnvelopeArray(await request("/api/terminal/sessions"), "sessions", TerminalSchema);
     },

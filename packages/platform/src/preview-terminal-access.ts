@@ -8,8 +8,10 @@ export const PREVIEW_TERMINAL_ACCESS_HEADER = "x-platform-preview-terminal";
 type PreviewMachine = Pick<UserMachineRecord,
   "handle" | "runtimeSlot" | "provisioningClass" | "clerkUserId" | "accessClerkUserIds">;
 
+const PREVIEW_TERMINAL_WS_PATHS: ReadonlySet<string> = new Set(["/ws/terminal/tab", "/ws/terminal/events"]);
+
 function isPreviewTerminalPath(path: string): boolean {
-  return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab";
+  return path.startsWith("/api/terminal/") || PREVIEW_TERMINAL_WS_PATHS.has(path);
 }
 
 /** Build only from the current server-side machine record after actor authentication. */

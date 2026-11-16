@@ -42,7 +42,7 @@ function gateway(verbResponse: (url: string, init?: RequestInit) => Response) {
   return calls;
 }
 
-async function run(name: "read" | "send" | "keys" | "interrupt" | "get", args: Record<string, unknown>) {
+async function run(name: "read" | "send" | "keys" | "interrupt" | "get" | "wait", args: Record<string, unknown>) {
   const loader = shellCommand.subCommands![name] as unknown as () => Promise<{ run: (input: unknown) => Promise<void> }>;
   const command = await loader();
   await command.run({ args: { dev: true, token: "tok", json: true, tab: "review", ...args } });
@@ -125,5 +125,28 @@ describe("matrix shell agent verbs", () => {
 
     expect(calls).toEqual([]);
     expect(JSON.parse(errors[0]!)).toMatchObject({ error: { code: "invalid_request" } });
+  });
+
+  // Fault detected: a server check-in (one bounded HTTP wait) is reported to the
+  // caller as its own timeout, so agents give up on helpers that are still working.
+  it("keeps waiting across server check-ins until the helper stops", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    const replies = [{ reason: "timeout", status: "working" }, { reason: "timeout", status: "working" }, { reason: "stopped", status: "done" }];
+    const calls = gateway(() => json(replies.shift()));
+
+    await run("wait", { timeout: "600" });
+
+    expect(calls).toHaveLength(3);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ timeoutMs: 90_000 });
+    expect(JSON.parse(logs[0]!)).toMatchObject({ data: { reason: "stopped", status: "done" } });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("exits 124 when the caller's own timeout runs out", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    gateway(() => json({ reason: "timeout", status: "working" }));
+    await run("wait", { timeout: "0", output: "ready" });
+    expect(process.exitCode).toBe(124);
   });
 });

@@ -11,6 +11,7 @@ function app(options: {
   verbs?: Partial<TerminalAgentVerbs>;
   userId?: string;
   withWorkspace?: ReturnType<typeof vi.fn>;
+  waiter?: { wait: ReturnType<typeof vi.fn>; shutdown: () => void };
 } = {}) {
   const verbs: TerminalAgentVerbs = {
     get: vi.fn(async () => ({ tab: { id: tabId } as never, state: "live" as const })),
@@ -25,6 +26,7 @@ function app(options: {
   const hono = new Hono();
   hono.route("/api/terminal", createTerminalAgentRoutes({
     verbs,
+    ...(options.waiter ? { waiter: options.waiter as never } : {}),
     getPrincipal: () => ({ userId: options.userId ?? "user_owner", source: "jwt" as const }),
     terminalOwnerIds: ["user_owner"],
     projectAdmission: { withWorkspace, withProject: vi.fn() } as never,
@@ -107,5 +109,28 @@ describe("terminal agent routes", () => {
       expect(body.error).toBe(message);
       expect(JSON.stringify(body)).not.toContain("secret");
     }
+  });
+
+  // Fault detected: a long wait outlives its caller, or an unbounded wait ties up the gateway.
+  it("waits with a bounded timeout and cancels when the caller disconnects", async () => {
+    const wait = vi.fn(async (_ref: unknown, input: { signal?: AbortSignal }) => {
+      expect(input.signal).toBeInstanceOf(AbortSignal);
+      return { reason: "stopped", status: "done" };
+    });
+    const { hono } = app({ waiter: { wait, shutdown: () => undefined } });
+    const response = await hono.request(`${base}/wait`, post({ timeoutMs: 30_000, output: "ready" }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ reason: "stopped", status: "done" });
+    expect(wait).toHaveBeenCalledWith({ workspaceId, tabId }, expect.objectContaining({ timeoutMs: 30_000, output: "ready" }));
+    expect((await hono.request(`${base}/wait`, post({ timeoutMs: 600_000 }))).status).toBe(400);
+    expect((await hono.request(`${base}/wait`, post({ output: "x".repeat(257) }))).status).toBe(400);
+  });
+
+  it("reports wait capacity and a missing waiter as distinct server states", async () => {
+    const { TerminalWaitCapacityError } = await import("../../packages/gateway/src/terminal-agent/wait.js");
+    const busy = app({ waiter: { wait: vi.fn(async () => { throw new TerminalWaitCapacityError(); }), shutdown: () => undefined } });
+    expect((await busy.hono.request(`${base}/wait`, post({}))).status).toBe(429);
+    const missing = app();
+    expect((await missing.hono.request(`${base}/wait`, post({}))).status).toBe(503);
   });
 });

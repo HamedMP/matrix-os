@@ -22,6 +22,9 @@ import { createSystemActivityRoutes } from "../system-activity/routes.js";
 import { createTerminalInputActivity } from "../terminal-agent/input-activity.js";
 import { createTerminalAgentRoutes } from "../terminal-agent/routes.js";
 import { createTerminalAgentVerbs } from "../terminal-agent/verbs.js";
+import { createTerminalAgentStatusSource } from "../terminal-agent/status-source.js";
+import { createTerminalWaiter } from "../terminal-agent/wait.js";
+import { createTerminalEventHub } from "../terminal-agent/events.js";
 
 export interface ShellTerminalRouteOptions {
   app: Hono;
@@ -179,8 +182,16 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
     } : {}),
   }));
   const terminalInputActivity = createTerminalInputActivity();
+  const terminalAgentStatus = createTerminalAgentStatusSource({ runtime: terminalWorkspaceRuntime });
+  const terminalWaiter = createTerminalWaiter({ runtime: terminalWorkspaceRuntime, status: terminalAgentStatus });
+  const terminalEventHub = createTerminalEventHub({ runtime: terminalWorkspaceRuntime, status: terminalAgentStatus });
   app.route("/api/terminal", createTerminalAgentRoutes({
-    verbs: createTerminalAgentVerbs({ runtime: terminalWorkspaceRuntime, inputActivity: terminalInputActivity }),
+    verbs: createTerminalAgentVerbs({
+      runtime: terminalWorkspaceRuntime,
+      inputActivity: terminalInputActivity,
+      agentStatus: async (ref) => (await terminalAgentStatus.get(ref))?.status,
+    }),
+    waiter: terminalWaiter,
     getPrincipal: (c) => requireRequestPrincipal(c),
     getPreviewTerminalOwner: readPreviewTerminalOwner,
     terminalOwnerIds: terminalRuntimeOwnerIds,
@@ -200,6 +211,6 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-  return { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity,
+  return { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity, terminalWaiter, terminalEventHub,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates };
 }

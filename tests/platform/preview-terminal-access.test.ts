@@ -37,6 +37,16 @@ describe("platform preview terminal access boundary", () => {
     }
   });
 
+  // Fault detected (#3297 review): allowed preview users other than the owner could not
+  // open /ws/terminal/events, so their tab status and attention never updated.
+  it.each(machine.accessClerkUserIds)("authorizes %s on the terminal events WebSocket only at its exact path", (actorId) => {
+    const value = buildPreviewTerminalAccess({ machine, actorId, path: "/ws/terminal/events", platformSecret });
+    expect(verify(value, actorId)).toBe(machine.clerkUserId);
+    for (const path of ["/ws/terminal/events/x", "/ws/terminal/eventsx", "/ws/terminal/event"]) {
+      expect(buildPreviewTerminalAccess({ machine, actorId, path, platformSecret })).toBeUndefined();
+    }
+  });
+
   it("does not authorize owners, unlisted actors, customers, name-only previews, or other APIs", () => {
     expect(buildPreviewTerminalAccess({ machine, actorId: machine.clerkUserId,
       path: "/api/terminal/workspaces", platformSecret })).toBeUndefined();
