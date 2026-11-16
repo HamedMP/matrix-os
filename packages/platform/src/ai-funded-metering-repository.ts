@@ -26,6 +26,9 @@ import {
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
 import {
+  effectiveFundedCanaryPolicy, fundedCanaryDeadline, FUNDED_CANARY_MODEL_ID, type FundedCanaryBinding,
+} from "./ai-funded-canary.js";
+import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
   FundedAiAuthorizationResponseSchema,
@@ -102,6 +105,7 @@ export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 export interface AiFundedMeteringRepositoryOptions {
   db: PlatformDB;
   credentialHashSecret: string;
+  canaryBinding?: FundedCanaryBinding;
   now: () => Date;
   policyFreshnessMs: number;
   reservationTtlMs: number;
@@ -177,9 +181,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         || preview.ai_requests_used < preview.ai_request_limit;
       const enabled = global.enabled && runtime.enabled && previewRequestsAvailable
         && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
-      const allowedModelIds = enabled
-        ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
-        : [];
       const funding = {
         ...fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
         ...(preview ? { previewQuota: {
@@ -203,6 +204,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd)
           : 0,
       }) : undefined;
+      const { allowedModelIds, canaryExpiresAt } = enabled
+        ? effectiveFundedCanaryPolicy(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids),
+          options.canaryBinding, identity, machine.runtime_token_epoch, options.now())
+        : { allowedModelIds: [], canaryExpiresAt: undefined };
       return {
         funding,
         ...(chatAvailability ? { chatAvailability } : {}),
@@ -210,10 +215,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           enabled: enabled && allowedModelIds.length > 0,
           globalRevision: global.revision,
           runtimeRevision: runtime.revision,
-          allowedModelIds: enabled ? allowedModelIds : [],
+          allowedModelIds,
           monthlyBudgetMicrousd,
           checkedAt,
-          staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
+          staleAfter: fundedCanaryDeadline(checked, options.policyFreshnessMs, canaryExpiresAt),
         },
       };
     });
@@ -228,6 +233,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     return readCheckoutFundingSnapshot({
       db: options.db, identity, checked: options.now(),
       policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs, ...projection,
+      canaryBinding: options.canaryBinding, now: options.now,
     });
   }
 
@@ -478,16 +484,18 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       || (row.runtime_expires_at !== null && Date.parse(row.runtime_expires_at) <= checked.getTime())) {
       throw new AiFundedPolicyError("access_disabled");
     }
-    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    const identity = { ownerId: row.owner_id, machineId: row.machine_id, runtimeSlot: row.runtime_slot };
+    const { allowedModelIds, canaryExpiresAt } = effectiveFundedCanaryPolicy(
+      parseModels(row.global_models), parseModels(row.runtime_models), options.canaryBinding,
+      identity, row.machine_runtime_token_epoch, options.now(),
+    );
     if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
     return FundedAiPolicyCheckResponseSchema.parse({
       contractVersion: 1,
       authorized: true,
       identity: {
         tokenId: row.token_id,
-        ownerId: row.owner_id,
-        machineId: row.machine_id,
-        runtimeSlot: row.runtime_slot,
+        ...identity,
         audience: FUNDED_AI_AUDIENCE,
         scope: FUNDED_AI_SCOPE,
         expiresAt: row.expires_at,
@@ -499,7 +507,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         allowedModelIds,
         monthlyBudgetMicrousd: exactInteger(row.monthly_budget_microusd),
         checkedAt,
-        staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
+        staleAfter: fundedCanaryDeadline(checked, options.policyFreshnessMs, canaryExpiresAt),
       },
     });
   }
@@ -511,6 +519,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationIdFactory,
     reservationTtlMs: options.reservationTtlMs,
     policyFreshnessMs: options.policyFreshnessMs,
+    canaryBinding: options.canaryBinding,
   });
 
   async function startReservation(
@@ -537,7 +546,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         return saved;
       }
       if (reservation.status !== "reserved") throw new AiFundedPolicyError("reservation_closed");
-      if (Date.parse(reservation.expires_at) <= checked.getTime()) {
+      // A candidate reservation may be cut short by the test window.
+      const deadlineCheck = reservation.model_id === FUNDED_CANARY_MODEL_ID ? options.now() : checked;
+      if (Date.parse(reservation.expires_at) <= deadlineCheck.getTime()) {
         throw new AiFundedPolicyError("reservation_expired");
       }
       const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")

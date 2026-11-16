@@ -98,7 +98,8 @@ import {
   loadAiFundedControlPlaneConfig,
 } from './ai-funded-policy-routes.js';
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
-import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
+import { createFundedCanaryProbes, createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
+import { loadFundedCanaryBinding } from './ai-funded-canary.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -374,6 +375,7 @@ async function startPlatformServerWithCleanup(
     ...process.env,
     PLATFORM_SECRET: platformSecret,
   });
+  const fundedCanary = loadFundedCanaryBinding(process.env);
   const previewRuntimeAccess = loadPreviewRuntimeAccessConfig({ ...process.env, PLATFORM_SECRET: platformSecret });
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
@@ -403,21 +405,28 @@ async function startPlatformServerWithCleanup(
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      canaryBinding: fundedCanary,
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
+    const readPricingReview = pricingRegistryEnabled ? async (modelId: string, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      const review = await pricingStore.readCurrent(modelId);
+      signal.throwIfAborted();
+      return review;
+    } : undefined;
     fundedModelProbes = createFundedModelProbeService({
       db,
       credentials: fundedAiRepository,
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
-      ...(pricingRegistryEnabled ? { readPricingReview: async (modelId: string, signal: AbortSignal) => {
-        signal.throwIfAborted();
-        const review = await pricingStore.readCurrent(modelId);
-        signal.throwIfAborted();
-        return review;
-      } } : {}),
+      readPricingReview,
     });
+    const canary = fundedCanary ? {
+      binding: fundedCanary,
+      routeProbes: createFundedCanaryProbes({ db, relayBaseUrl: fundedCanary.relayOrigin,
+        relayControlToken: fundedAiConfig.relayControlToken, readPricingReview }),
+    } : undefined;
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
@@ -426,6 +435,7 @@ async function startPlatformServerWithCleanup(
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
+      canary,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({

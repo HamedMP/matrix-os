@@ -10,6 +10,8 @@ import {
 const TOKEN_ID = "credential_123";
 const TOKEN = `sk-matrix-funded-${TOKEN_ID}.${"A".repeat(43)}`;
 const NOW = Date.parse("2026-08-30T10:00:00.000Z");
+const PRODUCTION_RELAY = "https://matrix-ai-relay-production-svchash-ey.a.run.app";
+const CANDIDATE_RELAY = "https://relay-1abc234def56---matrix-ai-relay-production-svchash-ey.a.run.app";
 
 function runtimeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -224,6 +226,71 @@ describe("funded AI runtime credential manager", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     manager.close();
     await expect(manager.getCredential({ requestClass: "interactive" })).rejects.toBeInstanceOf(FundedAiCredentialError);
+  });
+});
+
+describe("funded AI test account Relay routing", () => {
+  const expiry = new Date(NOW + 12 * 60_000).toISOString();
+  const relayRoute = { origin: CANDIDATE_RELAY, expiresAt: expiry };
+
+  it("advertises canary support and uses the authenticated route until a refreshed lease returns the incumbent", async () => {
+    let now = NOW;
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...issueResponse(), relayRoute })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(issueResponse(undefined, "credential_incumbent"))));
+    const config = loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RELAY_URL: PRODUCTION_RELAY }))!;
+    const manager = createFundedAiCredentialManager(config, { fetchFn, now: () => now, random: () => 0 });
+
+    const first = await manager.getCredential({ requestClass: "interactive" });
+    expect(fetchFn).toHaveBeenCalledWith(config.issueUrl, expect.objectContaining({
+      headers: expect.objectContaining({ "x-matrix-funded-canary-routing": "1" }),
+    }));
+    expect(first).toMatchObject({ relayBaseUrl: CANDIDATE_RELAY, expiresAt: expiry });
+    expect(await manager.getCredential({ requestClass: "interactive" })).toBe(first);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    now += 70_000;
+    await expect(manager.getCredential({ requestClass: "interactive" })).resolves.toMatchObject({
+      relayBaseUrl: PRODUCTION_RELAY, tokenId: "credential_incumbent", expiresAt: issueResponse().credential.expiresAt,
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a different Cloud Run service, expired route, and mismatched runtime identity", async () => {
+    const cases = [
+      { now: NOW, response: { ...issueResponse(), relayRoute: { ...relayRoute, origin: CANDIDATE_RELAY.replace("svchash", "different") } } },
+      { now: NOW + 13 * 60_000, response: { ...issueResponse(), relayRoute } },
+      { now: NOW, response: {
+        ...issueResponse(), relayRoute,
+        identity: { ownerId: "user_123", machineId: "other", runtimeSlot: "primary" },
+      } },
+    ];
+    const config = loadFundedAiRuntimeConfig(runtimeEnv({ MATRIX_FUNDED_AI_RELAY_URL: PRODUCTION_RELAY }))!;
+    for (const sample of cases) {
+      const manager = createFundedAiCredentialManager(config, {
+        fetchFn: vi.fn(async () => new Response(JSON.stringify(sample.response))),
+        now: () => sample.now,
+      });
+      await expect(manager.getCredential({ requestClass: "interactive", minValidityMs: 60_000 }))
+        .rejects.toBeInstanceOf(FundedAiCredentialError);
+    }
+  });
+
+  it("checks each waiting request's required lifetime before it can use a shared canary lease", async () => {
+    const relayRoute = { origin: CANDIDATE_RELAY, expiresAt: new Date(NOW + 2 * 60_000).toISOString() };
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ ...issueResponse(), relayRoute })));
+    const config = loadFundedAiRuntimeConfig(runtimeEnv({
+      MATRIX_FUNDED_AI_RELAY_URL: "https://funded-pricing-live---matrix-ai-relay-production-svchash-ey.a.run.app",
+    }))!;
+    const manager = createFundedAiCredentialManager(config, { fetchFn, now: () => NOW });
+
+    const shorter = manager.getCredential({ requestClass: "interactive", minValidityMs: 60_000 });
+    const longer = manager.getCredential({ requestClass: "interactive" });
+    await Promise.all([
+      expect(shorter).resolves.toMatchObject({ relayBaseUrl: CANDIDATE_RELAY }),
+      expect(longer).rejects.toBeInstanceOf(FundedAiCredentialError),
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });
 

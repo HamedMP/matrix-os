@@ -20,7 +20,7 @@ const MAX_PENDING_BUDGET_OPERATIONS = Math.max(8, FUNDED_PROBE_MODELS.length + 1
 const MAX_WAITERS_PER_MODEL = 32;
 const MAX_EXPEDITED_PER_DAY = 200;
 const MAX_EXPEDITED_PER_MINUTE = 2;
-const pendingBudgetOperations = new Set<Promise<boolean>>();
+const pendingBudgetOperations = { global: new Set<Promise<boolean>>(), canary: new Set<Promise<boolean>>() };
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
@@ -44,6 +44,7 @@ export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit
  * PostgreSQL's conflicting-row lock serializes reservations across replicas. */
 export async function reserveFundedModelProbe(input: {
   db: PlatformDB; now?: Date; dailyLimit: number; minuteLimit: number; deadlineMs?: number; expedited?: boolean;
+  budgetKey?: "global" | "canary";
 }): Promise<boolean> {
   if (!Number.isSafeInteger(input.dailyLimit) || input.dailyLimit <= 0
     || !Number.isSafeInteger(input.minuteLimit) || input.minuteLimit <= 0) return false;
@@ -51,7 +52,9 @@ export async function reserveFundedModelProbe(input: {
   const retryDailyLimit = Math.min(MAX_EXPEDITED_PER_DAY, Math.floor(input.dailyLimit / 6));
   const retryMinuteLimit = Math.min(MAX_EXPEDITED_PER_MINUTE, input.minuteLimit - FUNDED_PROBE_MODELS.length);
   if (retryCount && (retryDailyLimit <= 0 || retryMinuteLimit <= 0)) return false;
-  if (pendingBudgetOperations.size >= MAX_PENDING_BUDGET_OPERATIONS) return false;
+  const budgetKey = input.budgetKey ?? "global";
+  const pending = pendingBudgetOperations[budgetKey];
+  if (pending.size >= MAX_PENDING_BUDGET_OPERATIONS) return false;
   const deadlineMs = Math.min(1_500, Math.max(1, input.deadlineMs ?? 1_500));
   const operation = (async () => {
     await input.db.ready;
@@ -62,7 +65,7 @@ export async function reserveFundedModelProbe(input: {
       insert into ai_funded_model_probe_budget
         (budget_key, day_start, daily_limit, day_used, minute_start, minute_limit, minute_used,
           retry_day_start, retry_day_used, retry_minute_start, retry_minute_used)
-      select 'global', bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1,
+      select ${budgetKey}, bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1,
         bucket.day_start, ${retryCount}, bucket.minute_start, ${retryCount} from bucket
       on conflict (budget_key) do update
         set day_start = excluded.day_start,
@@ -110,8 +113,8 @@ export async function reserveFundedModelProbe(input: {
     console.warn("[funded-ai] Probe budget unavailable:", error instanceof Error ? error.name : typeof error);
     return false;
   });
-  pendingBudgetOperations.add(operation);
-  void operation.finally(() => { pendingBudgetOperations.delete(operation); });
+  pending.add(operation);
+  void operation.finally(() => { pending.delete(operation); });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([operation, new Promise<false>((resolve) => {
@@ -355,4 +358,14 @@ export function createFundedModelProbeService(input: {
       return join(model, entry, call, windowMs);
     },
   };
+}
+
+export function createFundedCanaryProbes(input: Pick<Parameters<typeof createFundedModelProbeService>[0],
+  "db" | "relayBaseUrl" | "relayControlToken" | "readPricingReview">): FundedModelProbeService {
+  return createFundedModelProbeService({
+    ...input,
+    dailyLimit: 12,
+    minuteLimit: 2,
+    reserveProbe: reservation => reserveFundedModelProbe({ ...reservation, budgetKey: "canary" }),
+  });
 }

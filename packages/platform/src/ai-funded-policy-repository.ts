@@ -22,6 +22,7 @@ import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import { alignCustomerOrdinaryModels } from "./customer-ordinary-model-policy.js";
+import { effectiveFundedCanaryPolicy, fundedCanaryDeadline, type FundedCanaryBinding } from "./ai-funded-canary.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -51,6 +52,7 @@ const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A
 export interface AiFundedPolicyRepositoryOptions {
   db: PlatformDB;
   credentialHashSecret: string;
+  canaryBinding?: FundedCanaryBinding;
   now?: () => Date;
   tokenIdFactory?: () => string;
   tokenSecretFactory?: () => string;
@@ -76,11 +78,6 @@ function parseModels(value: string): string[] {
     console.error(`[ai-funded-policy] invalid stored model configuration (${category})`);
     throw new Error("Invalid funded AI policy model configuration", { cause: error });
   }
-}
-
-function intersectModels(globalModels: string[], runtimeModels: string[]): string[] {
-  const runtimeSet = new Set(runtimeModels);
-  return globalModels.filter((model) => runtimeSet.has(model));
 }
 
 function utcMonthStart(at: Date): string {
@@ -379,7 +376,10 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       }
       throw new AiFundedPolicyError(policy ? "access_disabled" : "identity_mismatch");
     }
-    const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
+    const { allowedModelIds, canaryExpiresAt } = effectiveFundedCanaryPolicy(
+      parseModels(row.global_models), parseModels(row.runtime_models),
+      probe ? undefined : options.canaryBinding, identity, row.runtime_token_epoch, now(),
+    );
     return FundedAiRuntimeCredentialIssueResponseSchema.parse({
       contractVersion: 1,
       credential: { token: credential, tokenId: row.token_id, audience: FUNDED_AI_AUDIENCE, scope: FUNDED_AI_SCOPE, issuedAt: checkedAt, expiresAt },
@@ -391,7 +391,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         allowedModelIds,
         monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
         checkedAt,
-        staleAfter: new Date(checked.getTime() + policyFreshnessMs).toISOString(),
+        staleAfter: fundedCanaryDeadline(checked, policyFreshnessMs, canaryExpiresAt),
       },
       // Echo only an explicitly requested class; legacy gateways parse this response strictly.
       ...(classInput?.requestClass ? { requestClass } : {}),
@@ -411,6 +411,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
   const metering = createAiFundedMeteringRepository({
     db: options.db,
     credentialHashSecret: options.credentialHashSecret,
+    canaryBinding: options.canaryBinding,
     now,
     policyFreshnessMs,
     reservationTtlMs,

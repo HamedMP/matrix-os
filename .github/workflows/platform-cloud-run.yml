@@ -994,6 +994,8 @@ jobs:
         run: node scripts/ci/platform-source-compatibility.mjs
 
       - name: Deploy tagged revision
+        env:
+          MATRIX_FUNDED_AI_CANARY_BINDING: ${{ secrets.MATRIX_FUNDED_AI_CANARY_BINDING }}
         run: |
           set -euo pipefail
           if ! command -v jq >/dev/null 2>&1; then
@@ -1045,6 +1047,15 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS=${MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS}|MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH=${MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH}|MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA=${GITHUB_SHA}"
           fi
           funded_ai_secret_bindings=""
+          if [ -n "${MATRIX_FUNDED_AI_CANARY_BINDING:-}" ] && [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
+            if [ "${#MATRIX_FUNDED_AI_CANARY_BINDING}" -gt 1024 ] ||
+               [[ "$MATRIX_FUNDED_AI_CANARY_BINDING" == *'|'* || "$MATRIX_FUNDED_AI_CANARY_BINDING" == *$'\n'* || "$MATRIX_FUNDED_AI_CANARY_BINDING" == *$'\r'* ]]; then
+              echo "Funded AI canary binding is misconfigured" >&2
+              exit 1
+            fi
+            python3 scripts/verify-funded-relay-evidence.py platform-canary-preflight
+            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_CANARY_BINDING=${MATRIX_FUNDED_AI_CANARY_BINDING}"
+          fi
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"

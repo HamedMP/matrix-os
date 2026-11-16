@@ -868,7 +868,7 @@
     {"table_name":"ai_funded_global_policy","name":"ai_funded_global_policy_pkey","type":"p","definition":"PRIMARY KEY (policy_id)"},
     {"table_name":"ai_funded_global_policy","name":"ai_funded_global_policy_policy_id_check","type":"c","definition":"CHECK ((policy_id = 'default'::text))"},
     {"table_name":"ai_funded_global_policy","name":"ai_funded_global_policy_revision_check","type":"c","definition":"CHECK ((revision >= 0))"},
-    {"table_name":"ai_funded_model_probe_budget","name":"ai_funded_model_probe_budget_budget_key_check","type":"c","definition":"CHECK ((budget_key = 'global'::text))"},
+    {"table_name":"ai_funded_model_probe_budget","name":"ai_funded_model_probe_budget_budget_key_check","type":"c","definition":"CHECK ((budget_key = ANY (ARRAY['global'::text, 'canary'::text])))"},
     {"table_name":"ai_funded_model_probe_budget","name":"ai_funded_model_probe_budget_daily_limit_check","type":"c","definition":"CHECK ((daily_limit > 0))"},
     {"table_name":"ai_funded_model_probe_budget","name":"ai_funded_model_probe_budget_day_used_check","type":"c","definition":"CHECK ((day_used >= 0))"},
     {"table_name":"ai_funded_model_probe_budget","name":"ai_funded_model_probe_budget_minute_limit_check","type":"c","definition":"CHECK ((minute_limit > 0))"},

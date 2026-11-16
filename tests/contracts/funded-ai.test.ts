@@ -118,6 +118,30 @@ describe("funded AI control-plane contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts an expiring route only for a tagged production Relay origin", () => {
+    const origin = "https://relay-1abc234def56---matrix-ai-relay-production-svchash-ey.a.run.app";
+    const value = {
+      contractVersion: 1,
+      credential: { token: credential, tokenId, audience: "matrix-funded-relay", scope: "ai:invoke", issuedAt: now, expiresAt },
+      identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      policy,
+    };
+    const relayRoute = { origin, expiresAt };
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse({ ...value, relayRoute }).relayRoute).toEqual(relayRoute);
+    for (const unsafe of [
+      origin.replace("https:", "http:"), origin.replace("https://", "https://user@"),
+      origin.replace("1abc234def56", "canary"), origin.replace("production", "staging"),
+      origin.replace(".a.run.app", ".evil.invalid"), `${origin}.evil.invalid`,
+      `${origin}/`, `${origin}/v1`, `${origin}:443`, `${origin}?test=1`, `${origin}#test`,
+    ]) {
+      expect(FundedAiRuntimeCredentialIssueResponseSchema.safeParse({ ...value, relayRoute: { ...relayRoute, origin: unsafe } }).success).toBe(false);
+    }
+    for (const invalidExpiry of [now, "2026-08-30T19:59:59.999Z", "2026-99-30T20:15:00.000Z"]) {
+      expect(FundedAiRuntimeCredentialIssueResponseSchema.safeParse({ ...value, relayRoute: { ...relayRoute, expiresAt: invalidExpiry } }).success).toBe(false);
+    }
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.safeParse({ ...value, relayRoute: { ...relayRoute, token: "secret" } }).success).toBe(false);
+  });
+
   it("authorizes one model and request without accepting caller identity", () => {
     const request = {
       credential,

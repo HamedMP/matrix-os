@@ -75,6 +75,66 @@ describe("funded AI policy repository", () => {
       .toMatchObject({ allowedModelIds });
   });
 
+  it("limits the candidate model to the operator's runtime and preserves settlement through expiry", async () => {
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" };
+    const ordinary = { ownerId: "user_bob", machineId: "machine_456", runtimeSlot: "primary" };
+    const incumbent = "@cf/zai-org/glm-5.3";
+    const candidate = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+    const allowedModelIds = [incumbent, candidate];
+    const expiresAt = "2026-08-30T20:00:30.000Z";
+    let checkedAt = now;
+    const repo = createAiFundedPolicyRepository({
+      db, credentialHashSecret: "h".repeat(32), now: () => new Date(checkedAt),
+      canaryBinding: { identity, runtimeTokenEpoch: 1, expiresAt,
+        relayOrigin: "https://relay-0123456789ab---matrix-ai-relay-production-abc.ew.a.run.app" },
+    });
+    await insertUserMachine(db, {
+      machineId: ordinary.machineId, clerkUserId: ordinary.ownerId, handle: "bob",
+      runtimeSlot: ordinary.runtimeSlot, status: "running", imageVersion: "v1",
+      provisionedAt: now, activationState: "authorized",
+    });
+    await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [incumbent] });
+    for (const runtime of [identity, ordinary]) {
+      await repo.setRuntimePolicy({ identity: runtime, expectedRevision: 0, enabled: true, allowedModelIds,
+        monthlyBudgetMicrousd: 1_000, expiresAt: null });
+      await repo.grantCredit({ identity: runtime, entryId: `grant_${runtime.machineId}`,
+        kind: "addon_grant", amountMicrousd: 1_000, sourceReference: "test-fixture" });
+    }
+
+    const issued = await repo.issueRuntimeCredential(identity);
+    expect(issued.policy).toMatchObject({ allowedModelIds, staleAfter: expiresAt });
+    const readDeadline = () => Date.now() + 5_000;
+    expect((await repo.getCheckoutFundingSummary(identity, readDeadline())).policy)
+      .toMatchObject({ allowedModelIds, staleAfter: expiresAt });
+    expect((await repo.getRuntimeFundingSummary(identity)).policy)
+      .toMatchObject({ allowedModelIds, staleAfter: expiresAt });
+    const admitted = { credential: issued.credential.token, modelId: candidate };
+    expect((await repo.checkPolicy(admitted)).policy).toMatchObject({ allowedModelIds, staleAfter: expiresAt });
+
+    const ordinaryCredential = await repo.issueRuntimeCredential(ordinary);
+    expect(ordinaryCredential.policy.allowedModelIds).toEqual([incumbent]);
+    expect((await repo.getCheckoutFundingSummary(ordinary, readDeadline())).policy.allowedModelIds).toEqual([incumbent]);
+    const forbidden = { credential: ordinaryCredential.credential.token, modelId: candidate };
+    await expect(repo.checkPolicy(forbidden)).rejects.toMatchObject({ code: "model_not_allowed" });
+    await expect(repo.authorize({ ...forbidden, requestId: "ordinary", maxCostMicrousd: 100 }))
+      .rejects.toMatchObject({ code: "model_not_allowed" });
+
+    const accepted = await repo.authorize({ ...admitted, requestId: "canary", maxCostMicrousd: 100 });
+    expect(accepted.reservation.expiresAt).toBe(expiresAt);
+    const reservation = { reservationId: accepted.reservation.reservationId, tokenId: issued.credential.tokenId };
+    await repo.startReservation(reservation);
+    checkedAt = expiresAt;
+    await expect(repo.checkPolicy(admitted)).rejects.toMatchObject({ code: "model_not_allowed" });
+    await expect(repo.authorize({ ...admitted, requestId: "canary_after_expiry", maxCostMicrousd: 100 }))
+      .rejects.toMatchObject({ code: "model_not_allowed" });
+    expect((await repo.getCheckoutFundingSummary(identity, readDeadline())).policy.allowedModelIds).toEqual([incumbent]);
+
+    const settled = await repo.settleReservation({ ...reservation, actualCostMicrousd: 25 });
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 25, remainingBalanceMicrousd: 975 });
+    expect(await repo.settleReservation({ ...reservation, actualCostMicrousd: 25 })).toEqual(settled);
+    expect(await repo.getGlobalPolicy()).toMatchObject({ revision: 1, allowedModelIds: [incumbent] });
+  });
+
   it("round-trips every reviewed Workers model through global and runtime policy", async () => {
     const repo = repository();
     const allowedModelIds = [...MANAGED_WORKERS_AI_MODEL_IDS];

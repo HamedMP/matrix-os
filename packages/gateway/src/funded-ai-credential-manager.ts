@@ -1,4 +1,5 @@
 import {
+  FUNDED_AI_CANARY_ROUTING_HEADER,
   FundedAiRuntimeCredentialIssueResponseSchema,
   parseIsolatedChatEnvelope, type IsolatedChatEnvelope,
   type FundedAiRequestClass,
@@ -270,15 +271,27 @@ export function createFundedAiCredentialManager(
     if (!value.policy.enabled
       || value.identity.ownerId !== config.identity.ownerId
       || value.identity.machineId !== config.identity.machineId
-      || value.identity.runtimeSlot !== config.identity.runtimeSlot
-      || Date.parse(value.credential.expiresAt) - now() < minValidityMs) {
+      || value.identity.runtimeSlot !== config.identity.runtimeSlot) {
       throw new FundedAiCredentialError();
     }
+    let relayBaseUrl = config.relayBaseUrl;
+    let expiresAt = value.credential.expiresAt;
+    const route = value.relayRoute;
+    if (route) {
+      // A tag can only target the Cloud Run service already configured for this runtime.
+      const incumbentHost = new URL(relayBaseUrl).hostname.split("---").at(-1);
+      if (!new URL(route.origin).hostname.endsWith(`---${incumbentHost}`)) {
+        throw new FundedAiCredentialError();
+      }
+      relayBaseUrl = route.origin;
+      if (Date.parse(route.expiresAt) < Date.parse(expiresAt)) expiresAt = route.expiresAt;
+    }
+    if (!(Date.parse(expiresAt) - now() >= minValidityMs)) throw new FundedAiCredentialError();
     return {
       token: value.credential.token,
       tokenId: value.credential.tokenId,
-      expiresAt: value.credential.expiresAt,
-      relayBaseUrl: config.relayBaseUrl,
+      expiresAt,
+      relayBaseUrl,
       maxRunMs: config.maxRunMs,
       requestClass: value.requestClass ?? "interactive",
     };
@@ -307,6 +320,7 @@ export function createFundedAiCredentialManager(
             authorization: `Bearer ${config.runtimeAuthToken}`,
             "content-type": "application/json",
             accept: "application/json",
+            [FUNDED_AI_CANARY_ROUTING_HEADER]: "1",
           },
           body: legacy ? "{}" : JSON.stringify({ requestClass }),
         });
@@ -378,7 +392,9 @@ export function createFundedAiCredentialManager(
           });
         inFlight.set(requestClass, pending);
       }
-      return await pending;
+      const lease = await pending;
+      if (Date.parse(lease.expiresAt) - now() < minValidityMs) throw new FundedAiCredentialError();
+      return lease;
     },
     invalidate(tokenId) {
       for (const [requestClass, lease] of cached) {

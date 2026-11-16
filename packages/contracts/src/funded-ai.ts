@@ -137,6 +137,10 @@ export const FundedAiEffectivePolicySchema = z.object({
 
 export const FundedAiRequestClassSchema = z.enum(["interactive", "background"]);
 export const FundedAiClaimKeySchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+export const FUNDED_AI_CANARY_ROUTING_HEADER = "x-matrix-funded-canary-routing";
+export const FundedAiCanaryRelayOriginSchema = z.string().max(256).regex(
+  /^https:\/\/relay-[a-f0-9]{12}---matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app$/,
+);
 
 /** Legacy gateways send `{}`; that remains interactive during rollout. */
 export const FundedAiRuntimeCredentialIssueRequestSchema = z.object({
@@ -157,6 +161,11 @@ export const FundedAiRuntimeCredentialIssueResponseSchema = z.object({
   policy: FundedAiEffectivePolicySchema,
   /** Returned only when the request named a class, so strict legacy parsers keep working. */
   requestClass: FundedAiRequestClassSchema.optional(),
+  /** Returned only to the bound runtime after it advertises canary routing support. */
+  relayRoute: z.object({
+    origin: FundedAiCanaryRelayOriginSchema,
+    expiresAt: IsoTimestampSchema,
+  }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   if (Date.parse(value.credential.expiresAt) <= Date.parse(value.credential.issuedAt)) {
     ctx.addIssue({ code: "custom", path: ["credential", "expiresAt"], message: "Credential must expire after issuance" });
@@ -167,6 +176,9 @@ export const FundedAiRuntimeCredentialIssueResponseSchema = z.object({
   const tokenPrefix = `sk-matrix-funded-${value.credential.tokenId}.`;
   if (!value.credential.token.startsWith(tokenPrefix)) {
     ctx.addIssue({ code: "custom", path: ["credential", "tokenId"], message: "Credential token ID does not match" });
+  }
+  if (value.relayRoute && !(Date.parse(value.relayRoute.expiresAt) > Date.parse(value.credential.issuedAt))) {
+    ctx.addIssue({ code: "custom", path: ["relayRoute", "expiresAt"], message: "Relay route must expire after issuance" });
   }
 });
 

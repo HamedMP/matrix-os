@@ -366,8 +366,8 @@ def traffic_fingerprint(service, exclude_tag=None):
     return hashlib.sha256(snapshot).hexdigest()
 
 
-def candidate_target(service):
-    tag = candidate_tag()
+def candidate_target(service, tag=None):
+    tag = tag if tag is not None else candidate_tag()
     status = service["status"]
     targets = [target for target in status["traffic"] if target.get("tag") == tag]
     require(len(targets) == 1, "Unique source-owned candidate tag required")
@@ -395,6 +395,41 @@ def candidate_isolation():
     previous = os.environ["CANDIDATE_BASELINE_TRAFFIC_SHA256"]
     require(matches(r"[a-f0-9]{64}", previous) and traffic_fingerprint(service, candidate_tag()) == previous,
             "Existing Relay routes changed during candidate construction")
+
+
+def platform_canary_preflight():
+    require(os.environ["DEPLOY_ENVIRONMENT"] == "production" and os.environ["GITHUB_REF"] == "refs/heads/main",
+            "Production Platform main required")
+    binding = read_json(os.environ["MATRIX_FUNDED_AI_CANARY_BINDING"])
+    source = binding["sourceSha"]
+    require(matches(r"[a-f0-9]{40}", source), "Exact canary source required")
+    remaining = timestamp(binding["expiresAt"]) - datetime.now(timezone.utc)
+    require(remaining <= timedelta(hours=6), "Canary exceeds the supported window")
+    if remaining <= timedelta(0):
+        return
+
+    service = cloud_json("services", "matrix-ai-relay-production")
+    status = service["status"]
+    require(status["url"] == os.environ["MATRIX_FUNDED_AI_RELAY_URL"].rstrip("/"), "Incumbent origin mismatch")
+    target = candidate_target(service, "relay-" + source[:12])
+    revision_name = target["revisionName"]
+    traffic_fingerprint(service)
+    for route in status["traffic"]:
+        resolved = status.get("latestReadyRevisionName") if route.get("latestRevision") else route.get("revisionName")
+        require(resolved != revision_name or route.get("percent", 0) == 0, "Test candidate receives default traffic")
+    revision = cloud_json("revisions", revision_name)
+    container, = revision["spec"]["containers"]
+    require(revision["metadata"]["labels"].get("matrix-source-sha") == source and
+            matches(r"[^@]+@sha256:[a-f0-9]{64}", container.get("image")) and
+            not container.get("command") and not container.get("args") and not revision["spec"].get("volumes") and
+            any(item["type"] == "Ready" and item["status"] == "True" for item in revision["status"]["conditions"]),
+            "Test candidate provenance/readiness mismatch")
+    entries = container["env"]
+    env = {item["name"]: item for item in entries}
+    require(len(env) == len(entries) and env.get("MATRIX_FUNDED_AI_ENABLED", {}).get("value") == "true" and
+            env.get("PLATFORM_INTERNAL_URL", {}).get("value") == "https://app.matrix-os.com" and
+            (REGISTRY_ENV not in env or env[REGISTRY_ENV] == {"name": REGISTRY_ENV, "value": "false"}),
+            "Test candidate must use pinned pricing and the canonical funded Platform")
 
 
 def promotion():
@@ -464,11 +499,14 @@ if __name__ == "__main__":
     try:
         {"configuration": configuration, "promotion": promotion, "import": import_evidence,
          "staging-pricing-bindings": emit_staging_pricing_bindings,
-         "deployment-preflight": deployment_preflight, "candidate-isolation": candidate_isolation}[sys.argv[1]]()
+         "deployment-preflight": deployment_preflight, "candidate-isolation": candidate_isolation,
+         "platform-canary-preflight": platform_canary_preflight}[sys.argv[1]]()
     except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
         if sys.argv[1] == "staging-pricing-bindings":
             print("Workers AI review must match the supported version and a current UTC window of at most 31 days.",
                   file=sys.stderr)
+        elif sys.argv[1] == "platform-canary-preflight":
+            print("Funded AI test binding requires the exact ready, zero-traffic Relay using pinned pricing.", file=sys.stderr)
         else:
             print("Funded Relay release evidence/configuration verification failed; production remains blocked.", file=sys.stderr)
         sys.exit(1)

@@ -25,6 +25,8 @@ import {
   FundedAiStartRequestSchema,
   IsoTimestampSchema,
   FundedAiRuntimeCredentialIssueRequestSchema,
+  FundedAiRuntimeCredentialIssueResponseSchema,
+  FUNDED_AI_CANARY_ROUTING_HEADER,
   type FundedAiSafeError,
   IsolatedChatEnvelopeSchema, type IsolatedChatEnvelope,
 } from "@matrix-os/contracts";
@@ -41,6 +43,7 @@ import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
 
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
 import { isBoundedPreviewProvisioningClass, readActivePreviewRuntimeAccess } from "./preview-runtime-access.js";
+import { activeFundedCanaryBinding, FUNDED_CANARY_MODEL_ID, FUNDED_CANARY_COMPARISON_MODEL_ID, type FundedCanaryBinding } from "./ai-funded-canary.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -53,6 +56,7 @@ const PromotionCampaignSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-
 const PromotionAmountSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const MAX_PENDING_ROUTE_FUNDING_READS = 8;
 const pendingRouteFundingReads = new Set<Promise<unknown>>();
+const CANARY_MODELS: readonly string[] = [FUNDED_CANARY_MODEL_ID, FUNDED_CANARY_COMPARISON_MODEL_ID];
 
 async function beforeDeadline<T>(work: Promise<T>, deadlineAtMs: number): Promise<T> {
   const remaining = deadlineAtMs - Date.now();
@@ -241,6 +245,7 @@ export function createAiFundedRuntimeRoutes(options: {
   topUpEnabled?: boolean;
   promotionalGrant?: AiFundedPromotionalGrantConfig;
   routeProbes?: FundedModelProbeService;
+  canary?: { binding: FundedCanaryBinding; routeProbes: FundedModelProbeService };
   isolatedChat?: IsolatedChatEnvelope;
   now?: () => Date;
 }) {
@@ -275,11 +280,20 @@ export function createAiFundedRuntimeRoutes(options: {
     // A legacy `{}` body stays interactive and gets the legacy response shape.
     const explicitClass = typeof raw === "object" && raw !== null && "requestClass" in raw;
     try {
-      const issued = await options.repository.issueRuntimeCredential({
+      const identity = {
         ownerId: machine.clerkUserId,
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
-      }, explicitClass ? { requestClass: body.data.requestClass } : undefined);
+      };
+      const issued = await options.repository.issueRuntimeCredential(identity,
+        explicitClass ? { requestClass: body.data.requestClass } : undefined);
+      const binding = c.req.header(FUNDED_AI_CANARY_ROUTING_HEADER) === "1"
+        ? activeFundedCanaryBinding(options.canary?.binding, identity, machine.runtimeTokenEpoch, now()) : undefined;
+      if (binding && CANARY_MODELS.every(model => issued.policy.allowedModelIds.includes(model))) {
+        return c.json(FundedAiRuntimeCredentialIssueResponseSchema.parse({ ...issued,
+          relayRoute: { origin: binding.relayOrigin, expiresAt: binding.expiresAt },
+        }), 200);
+      }
       return c.json(issued, 200);
     } catch (error) {
       return policyErrorResponse(c, error);
@@ -377,20 +391,32 @@ export function createAiFundedRuntimeRoutes(options: {
       stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();
+      const configuredCanary = options.canary;
+      const binding = configuredCanary && CANARY_MODELS.every(model => first.policy.allowedModelIds.includes(model))
+        ? activeFundedCanaryBinding(configuredCanary.binding, identity, machine.runtimeTokenEpoch, new Date(firstNow)) : undefined;
+      const routeProbes = binding ? configuredCanary?.routeProbes : options.routeProbes;
+      // A budget lookup can outlive the binding. Stop candidate probe waiters
+      // before then, while keeping the route's final policy read independent.
+      const canaryRemainingMs = binding ? Date.parse(binding.expiresAt) - firstNow : Infinity;
+      const canaryCutoffMs = Date.now() + canaryRemainingMs;
+      const canaryProbeSignal = canaryCutoffMs < deadlineAtMs ? AbortSignal.timeout(canaryRemainingMs) : undefined;
       const expandedCatalog = c.req.header(FUNDED_AI_READINESS_CATALOG.header) === FUNDED_AI_READINESS_CATALOG.version;
       const aggregateModels = expandedCatalog ? FUNDED_PROBE_MODELS : FUNDED_AI_LEGACY_READINESS_MODEL_IDS;
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
         ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : aggregateModels)
-          .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
+          .filter((model) => first.policy.allowedModelIds.includes(model) && (!binding || CANARY_MODELS.includes(model))
+            && (!cacheOnly || model === phase!.modelId)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
-      const observations = options.routeProbes
+      const observations = routeProbes
         ? await observeFundedModelRoutes(eligible, (model, call) => (cacheOnly
-          ? options.routeProbes!.readCached?.bind(options.routeProbes)
+          ? routeProbes.readCached?.bind(routeProbes)
             ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(), staleAfter: new Date(now().getTime() + 5000).toISOString() }))
-          : options.routeProbes!.probe.bind(options.routeProbes))(model, {
+          : routeProbes.probe.bind(routeProbes))(model, {
           ...call, receiptId,
+            ...(canaryProbeSignal ? { signal: AbortSignal.any([call.signal, canaryProbeSignal]),
+              deadlineAtMs: Math.min(call.deadlineAtMs, canaryCutoffMs) } : {}),
           ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
         }), { signal: controller.signal, deadlineAtMs })
         : [];
@@ -401,6 +427,7 @@ export function createAiFundedRuntimeRoutes(options: {
       const checked = now();
       const current = checked.getTime();
       const unchanged = (!cacheOnly || (current >= Date.parse(phase!.startsAt) && current < Date.parse(phase!.expiresAt))) && latest.policy.enabled && latest.funding.remainingBudgetMicrousd > 0
+        && (!binding || current < Date.parse(binding.expiresAt))
         && latest.policy.globalRevision === first.policy.globalRevision
         && latest.policy.runtimeRevision === first.policy.runtimeRevision
         && latest.policy.allowedModelIds.length === first.policy.allowedModelIds.length
@@ -415,7 +442,8 @@ export function createAiFundedRuntimeRoutes(options: {
       // constrain its validity; empty receipts retain a short retry horizon.
       const earliestObservation = readyObservations.length > 0
         ? Math.min(...readyObservations.map(({ result }) => Date.parse(result.staleAfter))) : current + 5_000;
-      const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation, cacheOnly ? Date.parse(phase!.expiresAt) : Infinity);
+      const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation,
+        cacheOnly ? Date.parse(phase!.expiresAt) : Infinity, binding && unchanged ? Date.parse(binding.expiresAt) : Infinity);
       stage = "receipt";
       if (staleAfter <= current) { recordReceipt("expired_receipt"); return c.json(safeError("unavailable"), 503); }
       recordReceipt(readyModelIds.length > 0 ? "ready" : eligible.length === 0 ? "empty_no_eligible_models"

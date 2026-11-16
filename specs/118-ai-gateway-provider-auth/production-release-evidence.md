@@ -225,7 +225,59 @@ text review environment values. The exact check set also includes
 `pricing_registry`. See [Funded AI pricing operations](./funded-pricing-operations.md)
 for the required evidence and activation order.
 
-## Canonical Platform control-plane staging
+## Production test-account routing
+
+When the canonical Platform already serves Funded AI customers, leave its
+shared Relay origin, production runtime flag and persisted global model policy
+in place during acceptance. Use the test-account binding to exercise a
+zero-default-traffic Relay candidate from the canonical control plane.
+
+1. Deploy the candidate from the reviewed `stage=preview` receipt and verify
+   its exact `relay-<source-prefix>` tag, digest, Ready state and zero percent
+   default traffic. Keep the incumbent revision and alias map for rollback.
+   Use the receipt's pinned price reviews for this test. A registry-mode
+   candidate can report a provider failure into the incumbent's shared pricing
+   health, so the Platform workflow rejects that mode for a live test binding.
+2. Prepare one dedicated test owner account with no customer workloads and
+   one runtime on a Gateway bundle supporting the canary credential response.
+   Confirm the runtime's authenticated owner,
+   machine, slot and credential epoch, and use only its dedicated test balance.
+   Keep full GLM 5.3 globally available and explicitly allow full GLM 5.3 and
+   DeepSeek V4.1 Flash on that test runtime's policy. Leave the global policy
+   and all other runtime policies in place.
+3. Set the Production GitHub environment secret
+   `MATRIX_FUNDED_AI_CANARY_BINDING` to a compact JSON object. Its fields are
+   `ownerId`, `machineId`, `runtimeSlot`, `runtimeTokenEpoch`, `sourceSha`
+   (the full Relay candidate source SHA) and `expiresAt` (canonical UTC with
+   milliseconds, no more than six hours ahead). Deploy the canonical Platform
+   with this binding. It derives the candidate origin from the configured
+   production Relay origin and source-owned tag. It returns that origin only
+   to the authenticated matching runtime when the Gateway negotiates support
+   and both acceptance models are eligible. Readiness probes use independent
+   persisted quotas of two per minute and twelve per UTC day. Confirm one
+   unmatched test runtime retains the incumbent route and ordinary model list.
+4. Verify both funded Chat selections and exact ledger debits through the
+   candidate. Exercise the production Cloudflare spend limit against just the
+   bound test account. A rule using `matrix_user_ref` applies to its owner
+   across runtime slots. Verify the provider rejection and ledger outcome, then
+   remove the temporary limit. Record the candidate and incumbent provenance
+   and all production receipt checks.
+5. Pause new turns on the test runtime and let admitted test requests settle.
+   Clear the single binding from Platform and verify it is absent from the
+   final serving Platform revision. Refresh the affected Gateway's credential
+   lease, for example by restarting that test Gateway only. Confirm
+   the next test Chat uses the incumbent, full GLM 5.3 works, and all prior
+   debits remain intact. The binding also becomes ineligible automatically
+   at its expiry or if the runtime's verification epoch changes. Leave the
+   candidate tag available for the exact-source promotion workflow.
+
+The test binding cannot grant customer credit or persist a global model change.
+The ordinary runtime policy, global enable switch, exact admission and
+settlement continue to apply. Once the candidate passes, publish the reviewed
+production receipt before promotion and verify that customer routing and
+saved model selections stay usable when the default changes.
+
+## Canonical Platform control-plane staging for first activation
 
 Before production candidate acceptance, deploy the reviewed Platform control
 plane at the canonical origin with `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=true`

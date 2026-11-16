@@ -5,7 +5,8 @@ import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 import { projectExpiredPromotionalCredit } from "./ai-funded-expiry-projection.js";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
-import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
+import { exactInteger, fundingSummary, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
+import { effectiveFundedCanaryPolicy, fundedCanaryDeadline, type FundedCanaryBinding } from "./ai-funded-canary.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 type CheckoutRow = {
@@ -31,6 +32,8 @@ export async function readCheckoutFundingSnapshot(input: {
   checked: Date;
   policyFreshnessMs: number;
   deadlineAtMs: number;
+  canaryBinding?: FundedCanaryBinding;
+  now?: () => Date;
   includeChatAvailability?: true;
   projectExpiredCredit?: true;
 }) {
@@ -106,9 +109,6 @@ export async function readCheckoutFundingSnapshot(input: {
     const previewRequestsAvailable = preview === undefined || preview.requestsUsed < preview.requestLimit;
     const enabled = row.global_enabled && row.runtime_enabled && previewRequestsAvailable
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
-    const allowedModelIds = enabled
-      ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
-      : [];
     const currentBalance = input.projectExpiredCredit
       ? await projectExpiredPromotionalCredit(trx.executor, identity, row, checkedAt) : row;
     const balance = currentBalance.month_period_start === currentPeriod ? currentBalance : {
@@ -133,6 +133,10 @@ export async function readCheckoutFundingSnapshot(input: {
       availableBalanceMicrousd: previewRequestsAvailable
         ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd) : 0,
     }) : undefined;
+    const { allowedModelIds, canaryExpiresAt } = enabled
+      ? effectiveFundedCanaryPolicy(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids),
+        input.canaryBinding, identity, row.machine_runtime_token_epoch, input.now?.() ?? checked)
+      : { allowedModelIds: [], canaryExpiresAt: undefined };
     return {
       funding, ...(chatAvailability ? { chatAvailability } : {}),
       policy: {
@@ -142,7 +146,7 @@ export async function readCheckoutFundingSnapshot(input: {
         allowedModelIds,
         monthlyBudgetMicrousd,
         checkedAt,
-        staleAfter: new Date(checked.getTime() + input.policyFreshnessMs).toISOString(),
+        staleAfter: fundedCanaryDeadline(checked, input.policyFreshnessMs, canaryExpiresAt),
       },
     };
   });

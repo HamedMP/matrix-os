@@ -35,6 +35,8 @@ export async function migrateFundedProbeCache(db: PlatformMigrationExecutor): Pr
       ADD COLUMN IF NOT EXISTS retry_day_start TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS retry_day_used INTEGER NOT NULL DEFAULT 0 CHECK (retry_day_used >= 0),
       ADD COLUMN IF NOT EXISTS retry_minute_start TEXT NOT NULL DEFAULT '',
-      ADD COLUMN IF NOT EXISTS retry_minute_used INTEGER NOT NULL DEFAULT 0 CHECK (retry_minute_used >= 0)
+      ADD COLUMN IF NOT EXISTS retry_minute_used INTEGER NOT NULL DEFAULT 0 CHECK (retry_minute_used >= 0),
+      DROP CONSTRAINT IF EXISTS ai_funded_model_probe_budget_budget_key_check,
+      ADD CONSTRAINT ai_funded_model_probe_budget_budget_key_check CHECK (budget_key IN ('global', 'canary'))
   `.execute(db);
 }

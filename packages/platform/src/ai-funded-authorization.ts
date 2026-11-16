@@ -27,7 +27,6 @@ import {
   exactInteger,
   fundingSummary,
   hashesEqual,
-  intersectModels,
   parseModels,
   utcMonthStart,
 } from "./ai-funded-metering-helpers.js";
@@ -35,6 +34,9 @@ import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBi
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import {
+  effectiveFundedCanaryPolicy, fundedCanaryDeadline, FUNDED_CANARY_MODEL_ID, type FundedCanaryBinding,
+} from "./ai-funded-canary.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -47,6 +49,7 @@ export interface FundedAuthorizeDependencies {
   reservationIdFactory(): string;
   reservationTtlMs: number;
   policyFreshnessMs: number;
+  canaryBinding?: FundedCanaryBinding;
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
@@ -111,14 +114,16 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         || (runtime.expires_at !== null && Date.parse(runtime.expires_at) <= checked.getTime())) {
         throw new AiFundedPolicyError("access_disabled");
       }
-      const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
-      if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
-
       const identity = {
         ownerId: credential.owner_id,
         machineId: credential.machine_id,
         runtimeSlot: credential.runtime_slot,
       };
+      const { allowedModelIds, canaryExpiresAt } = effectiveFundedCanaryPolicy(
+        parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids), deps.canaryBinding,
+        identity, machine.runtime_token_epoch, deps.now(),
+      );
+      if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
       const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: periodStart,
@@ -251,7 +256,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       );
 
       const reservationId = FundedReferenceSchema.parse(deps.reservationIdFactory());
-      const expiresAt = new Date(checked.getTime() + deps.reservationTtlMs).toISOString();
+      const canaryReservationExpiry = request.modelId === FUNDED_CANARY_MODEL_ID ? canaryExpiresAt : undefined;
+      if (canaryReservationExpiry && Date.parse(canaryReservationExpiry) <= deps.now().getTime()) {
+        throw new AiFundedPolicyError("model_not_allowed");
+      }
+      const expiresAt = fundedCanaryDeadline(checked, deps.reservationTtlMs, canaryReservationExpiry);
       const response = FundedAiAuthorizationResponseSchema.parse({
         contractVersion: 1,
         authorized: true,
@@ -269,7 +278,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           allowedModelIds,
           monthlyBudgetMicrousd: monthlyBudget,
           checkedAt,
-          staleAfter: new Date(checked.getTime() + deps.policyFreshnessMs).toISOString(),
+          staleAfter: fundedCanaryDeadline(checked, deps.policyFreshnessMs, canaryExpiresAt),
         },
         funding: fundingSummary(reserved, monthlyBudget, checkedAt),
         reservation: {
