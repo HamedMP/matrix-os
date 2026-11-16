@@ -8,7 +8,9 @@ const ClerkUserIdSchema = z.string().regex(/^user_[A-Za-z0-9_-]{1,200}$/);
 const ClerkSessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,200}$/);
 const ClerkUserSchema = z.object({
   id: ClerkUserIdSchema,
-  banned: z.boolean(), locked: z.boolean(), deprovisioned: z.boolean(),
+  banned: z.boolean(), locked: z.boolean(),
+  // Not present in the installed Clerk UserJSON contract. Honor it if supplied.
+  deprovisioned: z.boolean().optional(),
   email_addresses: z.array(z.object({
     email_address: z.email().max(254),
     verification: z.object({ status: z.string().min(1).max(32) }).nullable(),
@@ -82,8 +84,10 @@ export async function resolveSiteClerkIdentity(
     console.warn('[sites] Clerk user lookup unavailable', error instanceof Error ? error.name : 'UnknownError');
     throw new SiteError('unavailable');
   }
-  if (response.status === 404) throw new SiteError('not_found');
-  if (!response.ok) throw new SiteError('unavailable');
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new SiteError(response.status === 404 ? 'not_found' : 'unavailable');
+  }
   let raw: unknown;
   try { raw = await readBoundedJson(response); }
   catch (error) {
