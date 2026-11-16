@@ -149,21 +149,42 @@ describe("held-pane exits across workspaces", () => {
     await runtime.shutdown();
   });
 
+  // Fault detected (review of #3297): every two seconds the sweep re-read the whole
+  // state file once per saved workspace, even for idle projects with no live tab.
+  it("reads the workspace state once per pass, however many projects are saved", async () => {
+    const { store, zellij, runtime, runtimeTab, session } = await setup();
+    for (const projectId of ["idle-a", "idle-b", "idle-c"]) await runtime.ensureWorkspace({ projectId });
+    zellij.exits.set(session, [{ tabId: runtimeTab.zellijTabId!, paneId: runtimeTab.zellijPaneId!, exitCode: 0 }]);
+    let snapshots = 0;
+    const listRuntimeWorkspaces = store.listRuntimeWorkspaces.bind(store);
+    store.listRuntimeWorkspaces = async () => { snapshots += 1; return listRuntimeWorkspaces(); };
+    let perWorkspaceReads = 0;
+    const getRuntimeWorkspace = store.getRuntimeWorkspace.bind(store);
+    store.getRuntimeWorkspace = async (id) => { perWorkspaceReads += 1; return getRuntimeWorkspace(id); };
+
+    await expect(runtime.sweepHeldPaneExits()).resolves.toEqual({ sessions: 1, exited: 1 });
+
+    expect(snapshots).toBe(1);
+    // Only the exit it records re-reads its own workspace, under the workspace lock.
+    expect(perWorkspaceReads).toBeLessThanOrEqual(2);
+    await runtime.shutdown();
+  });
+
   // Fault detected (review of #3297): a native tab's pane runs the attach helper, not the
   // program. The helper can exit while the program keeps running, and the sweep marked
   // the tab exited with the helper's code, so `wait` reported work that was still going.
   it("leaves native-host tabs to their host and never records the attach helper's exit", async () => {
     const recorded: unknown[] = [];
     const result = await sweepHeldPaneExits({
-      workspaceIds: ["w1"],
-      maxSessions: 4,
-      readWorkspace: async () => ({
+      workspaces: [{
+        id: "w1",
         zellijSessionName: "s1",
         tabs: {
           native: { status: "running", zellijTabName: "n", zellijTabId: 1, zellijPaneId: "terminal_1", nativeHost: { id: "h1" } },
           plain: { status: "running", zellijTabName: "p", zellijTabId: 2, zellijPaneId: "terminal_2" },
         },
-      }),
+      }],
+      maxSessions: 4,
       listHeldPaneExits: async () => [
         { tabId: 1, paneId: "terminal_1", exitCode: 1 },
         { tabId: 2, paneId: "terminal_2", exitCode: 0 },

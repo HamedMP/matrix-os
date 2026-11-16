@@ -849,9 +849,9 @@ export class TerminalRuntime {
     const listHeldPaneExits = this.zellij.listHeldPaneExits?.bind(this.zellij);
     if (!listHeldPaneExits || this.shuttingDown) return { sessions: 0, exited: 0 };
     return sweepHeldPaneExits({
-      workspaceIds: (await this.store.listWorkspaces()).map((workspace) => workspace.id),
+      // One read of the state file per pass, not one per saved workspace.
+      workspaces: await this.store.listRuntimeWorkspaces(),
       maxSessions: this.maxObservers,
-      readWorkspace: (workspaceId) => this.store.getRuntimeWorkspace(workspaceId),
       listHeldPaneExits,
       record: (ref, expected, exitCode) => this.runWorkspaceMutation(async () => {
         const tab = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];

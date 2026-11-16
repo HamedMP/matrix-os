@@ -9,7 +9,7 @@ type Status = "idle" | "working" | "done" | "blocked" | "error" | undefined;
 
 function harness(script: {
   statuses?: Status[];
-  tabStates?: Array<{ status: string; exitCode?: number }>;
+  tabStates?: Array<{ status: string; exitCode?: number; incarnation?: string }>;
   screens?: string[][];
   captures?: Array<{ viewport: string[]; scrollback: string[] }>;
   accessScope?: string;
@@ -255,6 +255,32 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, {})).rejects.toMatchObject({ code: "capacity" });
     waiter.shutdown();
     await expect(Promise.all(pending)).resolves.toEqual(Array(16).fill({ reason: "shutdown" }));
+  });
+
+  // Fault detected (review of #3297): the caller deletes the tab and makes a new one
+  // with the same id; the wait then reported the replacement's result as the task's.
+  it("refuses to follow a replacement tab that reuses the id while waiting for a status", async () => {
+    const { waiter } = harness({
+      statuses: ["working", "done"],
+      tabStates: [{ status: "running", incarnation: "first" }, { status: "running", incarnation: "second" }],
+    });
+    await expect(waiter.wait(ref, {})).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("refuses to report a replacement tab's output as new", async () => {
+    const { waiter } = harness({
+      screens: [["boot"], ["ready on :3000"]],
+      tabStates: [{ status: "running", incarnation: "first" }, { status: "running", incarnation: "second" }],
+    });
+    await expect(waiter.wait(ref, { output: "ready" })).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("refuses to report a replacement tab's exit code", async () => {
+    const { waiter } = harness({
+      statuses: ["working"],
+      tabStates: [{ status: "running", incarnation: "first" }, { status: "exited", exitCode: 7, incarnation: "second" }],
+    });
+    await expect(waiter.wait(ref, {})).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("refuses tabs that are not owner terminals", async () => {

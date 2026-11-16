@@ -16,13 +16,14 @@ interface SweepTab {
 }
 
 /**
- * One pass: for each workspace with live tabs, ask zellij once which panes it holds
- * after their program exited, and record those tabs' exits. Bounded by `maxSessions`.
+ * One pass over one workspace snapshot: for each workspace with live tabs, ask zellij
+ * once which panes it holds after their program exited, and record those tabs' exits.
+ * Bounded by `maxSessions`.
  */
 export async function sweepHeldPaneExits(input: {
-  workspaceIds: string[];
+  /** One snapshot of every workspace for the pass; `record` re-checks a tab under the lock. */
+  workspaces: Array<{ id: string; zellijSessionName: string; tabs: Record<string, SweepTab> }>;
   maxSessions: number;
-  readWorkspace(workspaceId: string): Promise<{ zellijSessionName: string; tabs: Record<string, SweepTab> } | undefined>;
   listHeldPaneExits(sessionName: string): Promise<HeldPaneExit[]>;
   /** Re-checks the tab under the workspace lock; false when it changed or already ended. */
   record(ref: TerminalRef, expected: { zellijTabName: string; paneId: string }, exitCode: number): Promise<boolean>;
@@ -30,10 +31,9 @@ export async function sweepHeldPaneExits(input: {
   logFailed(error: unknown): void;
 }): Promise<HeldPaneExitSweepResult> {
   const result: HeldPaneExitSweepResult = { sessions: 0, exited: 0 };
-  for (const workspaceId of input.workspaceIds) {
+  for (const workspace of input.workspaces) {
     if (result.sessions >= input.maxSessions) break;
-    const workspace = await input.readWorkspace(workspaceId);
-    if (!workspace) continue;
+    const workspaceId = workspace.id;
     // A native tab's pane holds the attach helper, which can exit while the program
     // keeps running; its host owns that tab's lifetime, so the sweep never ends it.
     const live = Object.entries(workspace.tabs).filter(([, tab]) =>

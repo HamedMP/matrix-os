@@ -163,6 +163,20 @@ export function createTerminalWaiter(options: {
     };
     const withinWait = <T>(read: () => Promise<T>) => boundedRead(read, deadline - now(), signal);
     if (signal.aborted) return ended();
+    // The wait belongs to the tab it started on. A tab deleted and re-made with the same
+    // id is another task, so a changed incarnation ends the wait as not found instead of
+    // reporting the replacement's status, output or exit code.
+    const first = await withinWait(() => findTab(ref));
+    if (first === GAVE_UP) return ended();
+    const sameTab = async (): Promise<TerminalTab | typeof GAVE_UP> => {
+      const tab = await withinWait(() => findTab(ref));
+      if (tab !== GAVE_UP && tab.incarnation !== first.incarnation) throw new TerminalAgentVerbError("not_found");
+      return tab;
+    };
+    // Screen and status reads go by tab id, so a result is reported only after the same
+    // tab is confirmed again: the replacement may have appeared during the read.
+    const confirmed = async (result: TerminalWaitResult): Promise<TerminalWaitResult> =>
+      (await sameTab()) === GAVE_UP ? ended() : result;
     if (input.output && input.seen === undefined) {
       const read = await withinWait(readText);
       if (read === GAVE_UP) return ended();
@@ -170,7 +184,7 @@ export function createTerminalWaiter(options: {
     }
     for (;;) {
       if (signal.aborted) return ended();
-      const tab = await withinWait(() => findTab(ref));
+      const tab = await sameTab();
       if (tab === GAVE_UP) return ended();
       if (tab.status === "exited" || tab.status === "failed") return { reason: "exited", exitCode: tab.exitCode ?? null };
       if (input.output) {
@@ -179,7 +193,7 @@ export function createTerminalWaiter(options: {
         if (read) {
           const count = countOccurrences(read.text, input.output);
           const baseline = baselines[read.source];
-          if (baseline !== undefined && count > baseline) return { reason: "output" };
+          if (baseline !== undefined && count > baseline) return confirmed({ reason: "output" });
           // A read holds only recent history: matches that scrolled out (or a cleared
           // screen) lower the count, so the baseline drops with it and the next match
           // still counts. Missed only if an old match leaves and a new one arrives
@@ -190,7 +204,7 @@ export function createTerminalWaiter(options: {
         const status = await withinWait(() => options.status.get(ref));
         if (status === GAVE_UP) return ended();
         lastStatus = status?.status;
-        if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
+        if (lastStatus && lastStatus !== "working") return confirmed({ reason: "stopped", status: lastStatus });
       }
       const remaining = deadline - now();
       if (remaining <= 0) return ended();
