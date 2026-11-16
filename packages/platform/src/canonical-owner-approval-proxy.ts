@@ -11,6 +11,7 @@ import type { UserMachineRecord } from "./db.js";
 import type { AppDomainIdentity } from "./session-routing-identity.js";
 import { authenticatedRoutineFullAccessProxyProof } from "./routine-full-access-proxy.js";
 import { routineFullAccessPath } from "./routine-full-access-proof.js";
+import type { ReadRoutineProofProxyBody } from "./routine-proof-proxy-body.js";
 
 /** Bounded owner body reader shared by legacy integration and new browser proofs.
  * Production explicitly passes the default-off browser feature gate.
@@ -43,8 +44,8 @@ async function scopedDevProof(input: OwnerApprovalProxyInput, scope: SupervisedB
   return mintDevBrowserDecisionProof({ tuple, scope, secret: input.platformSecret, humanSessionExpiresAt });
 }
 
-export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyInput): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
-  if (routineFullAccessPath(input.method, input.path)) return authenticatedRoutineFullAccessProxyProof(input);
+export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyInput, readTurnBody?: ReadRoutineProofProxyBody): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
+  if (routineFullAccessPath(input.method, input.path)) return authenticatedRoutineFullAccessProxyProof(input, readTurnBody);
   const routine = routineActionPathId(input.method, input.path);
   // The proxy has selected/authorized this exact Computer. A fresh Clerk identity may still carry a legacy/default routing handle.
   if (routine && (!input.machine?.machineId || input.machine.handle !== input.handle

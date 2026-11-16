@@ -22,6 +22,8 @@ import { createRoutineCliProposals, type RoutineCliProposalRuntime } from "./rou
 import { createRoutineCliRequestService } from "./routine-cli-requests.js";
 import { RoutineCliScopeSchema } from "./repositories/routine-cli-preferences.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
+import { createRoutineFullAccessTurnService } from "./routine-full-access-turn.js";
+import type { RoutineFullAccessTurnAdmission } from "../chat/turn-admission.js";
 /** Startup composition only. No producer is registered here; native Tasks5/6 and Terminal Task7 must supply actual adapters. */
 export function createRoutineCliRuntime(options: {
   db: Kysely<OwnerBotDatabase>; computerId: string; configuredOwnerIds: readonly string[]; agents: ChatAgentStore;
@@ -49,6 +51,9 @@ export function createRoutineCliRuntime(options: {
       canAccessTarget: async (target, trx) => target.ownerId === ownerId && target.computerId === options.computerId && Boolean(await trx.selectFrom("chats").select("id")
         .where("id", "=", target.chatId).where("owner_id", "=", ownerId).where("owner_type", "=", "personal").where("lifecycle", "=", "active").where("collaboration", "is", null).executeTakeFirst()),
     });
+    const fullAccess = createRoutineFullAccessTurnService({ db: options.db, scope, targets: controller.targets,
+      platform: { ...options.platform, verifyFullAccess: platform.verifyFullAccess },
+      now: options.now ? () => options.now!().getTime() : undefined });
     const proposals = createRoutineCliProposals({ db: options.db, scope, transact: options.transact, sources: controller.sources, targets: controller.targets,
       authorizeTarget: controller.authorizeTarget, approvals: options.approvals, registry: options.registry,
       canonical: { repository: options.repository, orchestrator: canonicalPort }, now: options.now });
@@ -57,7 +62,7 @@ export function createRoutineCliRuntime(options: {
       admitMutation: input => input.operation.operation === "propose" ? proposals.admitMutation(input) : controls.admitMutation(input),
       afterMutationCommit: input => input.operation.operation === "propose" ? proposals.afterMutationCommit(input) : controls.afterMutationCommit(input),
     });
-    return { ownerId, controller, proposals, requests };
+    return { ownerId, controller, fullAccess, proposals, requests };
   });
   let cleaning: Promise<unknown> | undefined;
   const cleanupTimer = setInterval(() => {
@@ -67,6 +72,32 @@ export function createRoutineCliRuntime(options: {
       .finally(() => { cleaning = undefined; });
   }, 30_000); cleanupTimer.unref?.();
   const forOwner = (ownerId: string) => { const found = scopes.find(scope => scope.ownerId === ownerId); if (!found || closed) throw new RoutineCliError("permission_denied"); return found; };
+  type ChatRegistration = Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId" | "bindFullAccess">;
+  const registerChatSource = async (input: ChatRegistration) => {
+    requireCanonical();
+    const owner = forOwner(input.input.owner.ownerId);
+    const actual = createChatRoutineSourceProducer({ ...input, computerId: options.computerId,
+      bindFullAccess: source => owner.fullAccess.bindSource(source, input.input, input.signal) });
+    const target = actual.fullAccess?.target;
+    let ports: Awaited<ReturnType<typeof owner.controller.register>>;
+    try {
+      ports = await owner.controller.register(actual.producer, target && {
+        botId: target.botId, chatId: target.chatId, bindingCreatedAt: target.bindingCreatedAt, preferenceRevision: target.preferenceRevision,
+      });
+    } catch (error: unknown) {
+      actual.fullAccess?.release();
+      throw error;
+    }
+    const revoke = async () => {
+      actual.fullAccess?.release();
+      await ports.revoke();
+    };
+    if (input.signal.aborted || !input.current()) {
+      await revoke();
+      throw new RoutineCliError("permission_denied");
+    }
+    return { ...ports, revoke, narrowNativeMode: actual.narrowNativeMode };
+  };
   const proposalRuntime: RoutineCliProposalRuntime = {
     beginWithin: (tx, input) => forOwner(input.ownerId).proposals.beginWithin(tx, input),
     consume: (binding, signal) => forOwner(binding.ownerId).proposals.consume(binding, signal),
@@ -78,13 +109,10 @@ export function createRoutineCliRuntime(options: {
       if (canonical || closed || typeof value.admitTurn !== "function" || typeof value.enqueueQueuedTurn !== "function") throw new Error("Routine canonical dependency unavailable"); canonical = value;
     },
     register(producer: RoutineSourceProducer) { requireCanonical(); return forOwner(producer.source.ownerId).controller.register(producer); },
-    async registerChat(input: Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId">) {
-      requireCanonical(); const actual = createChatRoutineSourceProducer({ ...input, computerId: options.computerId });
-      const ports = await forOwner(actual.producer.source.ownerId).controller.register(actual.producer);
-      if (input.signal.aborted || !input.current()) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
-      return { ...ports, narrowNativeMode: actual.narrowNativeMode };
-    },
-    async registerManagedChat(input: Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId" | "provider"> & { binding: ManagedPiRuntimeBinding }) {
+    registerChat: registerChatSource,
+    beforeRoutineFullAccessDispatch: (input: RoutineFullAccessTurnAdmission) =>
+      forOwner(input.principal.userId).fullAccess.beforeDispatch(input),
+    async registerManagedChat(input: Omit<ChatRegistration, "provider"> & { binding: ManagedPiRuntimeBinding }) {
       const binding = structuredClone(input.binding), parentSignal = options.registry.inferenceSignal(binding);
       const current = (invocation?: import("./routine-cli-source.js").RoutineCliVerifiedInvocation) => {
         const actual = options.registry.lookupRun(binding);
@@ -94,10 +122,7 @@ export function createRoutineCliRuntime(options: {
       };
       requireCanonical();
       if (!current() || input.input.owner.type !== "personal" || input.input.sharedScopeId) throw new RoutineCliError("permission_denied");
-      const actual = createChatRoutineSourceProducer({ ...input, signal: AbortSignal.any([input.signal, parentSignal!]), current, provider: "matrix_pi", computerId: options.computerId });
-      const ports = await forOwner(binding.ownerId).controller.register(actual.producer);
-      if (!current() || input.signal.aborted) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
-      return ports;
+      return registerChatSource({ ...input, signal: AbortSignal.any([input.signal, parentSignal!]), current, provider: "matrix_pi" });
     },
     async registerBotChild(input: Omit<Parameters<typeof createDelegatedRoutineSourceProducer>[0], "computerId" | "registry">) {
       requireCanonical(); const actual = createDelegatedRoutineSourceProducer({ ...input, computerId: options.computerId, registry: options.registry });
@@ -117,7 +142,10 @@ export function createRoutineCliRuntime(options: {
       if (cap.length !== 1 || !cap[0]) throw new RoutineCliError("permission_denied");
       return forOwner(cap[0].owner_id).requests.execute(input); // Actual one-shot consume revalidates stored scope/source/decision.
     },
-    async close() { closed = true; clearInterval(cleanupTimer); for (const entry of scopes) entry.controller.close(); sourceRegistry.close(); await cleaning; },
+    async close() { closed = true; clearInterval(cleanupTimer); for (const entry of scopes) {
+      entry.fullAccess.close();
+      entry.controller.close();
+    } sourceRegistry.close(); await cleaning; },
   };
 }
 export type RoutineCliRuntime = ReturnType<typeof createRoutineCliRuntime>;
