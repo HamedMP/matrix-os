@@ -246,6 +246,14 @@ export class TerminalWorkspaceStore {
       .map((workspace) => this.toPublicWorkspace(workspace));
   }
 
+  /** Every workspace's runtime state from one read of the state file. */
+  async listRuntimeWorkspaces(): Promise<InternalWorkspace[]> {
+    const state = await this.load();
+    return Object.values(state.workspaces)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((workspace) => structuredClone(workspace));
+  }
+
   async getRuntimeWorkspace(workspaceIdInput: string): Promise<InternalWorkspace | undefined> {
     const targetWorkspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = (await this.load()).workspaces[targetWorkspaceId];

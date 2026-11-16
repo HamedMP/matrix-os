@@ -231,6 +231,22 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
+  // Fault detected (review of #3297): each status refresh re-read and parsed the whole
+  // state file once per saved workspace, every second while an event stream was open.
+  it("reads the workspace state once per status refresh, however many workspaces exist", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const runtime = new TerminalRuntime({ store, zellij: new FakeZellij() });
+    for (const projectId of ["app-a", "app-b", "app-c"]) await runtime.ensureWorkspace({ projectId });
+    let perWorkspaceReads = 0;
+    const getRuntimeWorkspace = store.getRuntimeWorkspace.bind(store);
+    store.getRuntimeWorkspace = async (id) => { perWorkspaceReads += 1; return getRuntimeWorkspace(id); };
+    await createTerminalAgentStatusIndex({ homePath, store }).list();
+    expect(perWorkspaceReads).toBe(0);
+    await runtime.shutdown();
+  });
+
   it("keeps a unique persisted incarnation when a tab ID is reused in the same millisecond", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);

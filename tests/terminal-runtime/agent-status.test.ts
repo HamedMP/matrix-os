@@ -27,14 +27,18 @@ async function home() {
 }
 
 function storeWith(tabs: Array<{ id: string; zellijPaneId: string | null; status?: string; zellijPaneAssignedAt?: string }>) {
-  return {
-    listWorkspaces: async () => [{ id: workspaceId }],
-    getRuntimeWorkspace: async (id: string) => id !== workspaceId ? undefined : {
-      id: workspaceId,
-      zellijSessionName: session,
-      tabs: Object.fromEntries(tabs.map((tab) => [tab.id, { status: "running", ...tab }])),
+  const store = {
+    reads: 0,
+    listRuntimeWorkspaces: async () => {
+      store.reads += 1;
+      return [{
+        id: workspaceId,
+        zellijSessionName: session,
+        tabs: Object.fromEntries(tabs.map((tab) => [tab.id, { status: "running", ...tab }])),
+      }];
     },
   };
+  return store;
 }
 
 describe("terminal agent status", () => {

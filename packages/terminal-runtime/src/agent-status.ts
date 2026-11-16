@@ -125,11 +125,12 @@ export function agentStatusForHookEvent(event: string): TerminalAgentStatusWord 
 }
 
 interface StatusIndexStore {
-  listWorkspaces(): Promise<Array<{ id: string }>>;
-  getRuntimeWorkspace(workspaceId: string): Promise<{
+  /** One consistent snapshot of all workspaces per refresh, not one read per workspace. */
+  listRuntimeWorkspaces(): Promise<Array<{
+    id: string;
     zellijSessionName: string;
     tabs: Record<string, { status: string; zellijPaneId: string | null; zellijPaneAssignedAt?: string }>;
-  } | undefined>;
+  }>>;
 }
 
 async function readStatusFile(path: string): Promise<z.infer<typeof StatusFileSchema> | undefined> {
@@ -157,9 +158,9 @@ export function createTerminalAgentStatusIndex(options: { homePath: string; stor
   return {
     async list(): Promise<TerminalAgentStatusEntry[]> {
       const entries: TerminalAgentStatusEntry[] = [];
-      for (const { id: workspaceId } of await options.store.listWorkspaces()) {
-        const workspace = await options.store.getRuntimeWorkspace(workspaceId);
-        if (!workspace || !LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
+      for (const workspace of await options.store.listRuntimeWorkspaces()) {
+        const workspaceId = workspace.id;
+        if (!LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
         const sessionNames = [workspace.zellijSessionName, `matrix-${workspaceRuntimeId(workspace.zellijSessionName)}`];
         for (const [tabId, tab] of Object.entries(workspace.tabs)) {
           if (entries.length >= TERMINAL_AGENT_STATUS_MAX_ENTRIES) return entries;

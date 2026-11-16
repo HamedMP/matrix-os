@@ -26,11 +26,11 @@ function index(home: string) {
   return createTerminalAgentStatusIndex({
     homePath: home,
     store: {
-      listWorkspaces: async () => [{ id: workspaceId }],
-      getRuntimeWorkspace: async () => ({
+      listRuntimeWorkspaces: async () => [{
+        id: workspaceId,
         zellijSessionName: session,
         tabs: { [tabId]: { status: "running", zellijPaneId: "terminal_5" } },
-      }),
+      }],
     },
   });
 }
