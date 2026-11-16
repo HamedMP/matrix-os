@@ -22,6 +22,12 @@ export interface IdleReaperConfig {
   flushBackoffMs: number;
   maxConcurrentStops: number;
   maxCandidatesPerSweep: number;
+  /**
+   * An idle stop does not flush before this long after the sweep chose the
+   * runtime, so owner activity another replica observed but has not yet
+   * written (it writes every ACTIVITY_FLUSH_INTERVAL_MS) can still cancel it.
+   */
+  activityFlushGraceMs: number;
 }
 
 export const DEFAULT_IDLE_REAPER_CONFIG: IdleReaperConfig = {
@@ -34,6 +40,7 @@ export const DEFAULT_IDLE_REAPER_CONFIG: IdleReaperConfig = {
   flushBackoffMs: 5_000,
   maxConcurrentStops: 8,
   maxCandidatesPerSweep: 50,
+  activityFlushGraceMs: 30_000 + 5_000,
 };
 
 const DEFAULT_TRACKER_MAX_ENTRIES = 10_000;
@@ -169,8 +176,10 @@ interface Candidate {
   substrate_ref: string;
   private_address: string;
   reason: StopReason;
-  /** When the sweep chose this runtime; owner activity after it cancels an idle stop. */
+  /** When the sweep chose this runtime. */
   selected_at: Date;
+  /** The idle cutoff it was chosen against; any owner activity after it cancels an idle stop. */
+  idle_before: Date;
 }
 
 export interface IdleReaperDeps {
@@ -253,6 +262,7 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       private_address: row.private_address,
       reason: row.started_at && row.started_at.getTime() <= sessionBefore.getTime() ? 'max_session' as const : 'idle' as const,
       selected_at: at,
+      idle_before: idleBefore,
     }] : []);
   }
 
@@ -307,7 +317,7 @@ export function createIdleReaper(deps: IdleReaperDeps) {
     let quiesced = false;
     /** Owner activity since the runtime was selected cancels an idle stop. */
     const cancelledByOwner = async (): Promise<'flush' | 'cancelled' | null> => {
-      if (candidate.reason !== 'idle' || !await ownerReturned(candidate.machine_id, candidate.selected_at)) return null;
+      if (candidate.reason !== 'idle' || !await ownerReturned(candidate.machine_id, candidate.idle_before)) return null;
       // A gateway that will not reopen keeps refusing runs, so the stop goes on and the owner wakes it after.
       if (quiesced && !await resumeQuietly(target)) return 'flush';
       await lifecycle.cancelQuiesce(candidate.machine_id, candidate.generation);
@@ -320,7 +330,9 @@ export function createIdleReaper(deps: IdleReaperDeps) {
       // The first reply is checked too: an owner who came back must not be flushed and suspended.
       const returned = await cancelledByOwner();
       if (returned) return returned;
-      if (result.ok && result.unsettledRuns === 0) return 'flush';
+      const activityCaughtUp = candidate.reason !== 'idle'
+        || now().getTime() >= candidate.selected_at.getTime() + config.activityFlushGraceMs;
+      if (result.ok && result.unsettledRuns === 0 && activityCaughtUp) return 'flush';
       if (now().getTime() >= deadline) return quiesced ? 'flush' : 'unreachable';
       await sleep(config.pollIntervalMs, signal);
       const returnedWhileWaiting = await cancelledByOwner();

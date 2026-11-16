@@ -103,7 +103,8 @@ describe('container idle stop', () => {
     const reaper = createIdleReaper({
       db, lifecycle, runtime: runtime.client, activity, now,
       logError: () => undefined,
-      config: options.config,
+      // Existing tests run without the wait for other replicas' activity unless they ask for it.
+      config: { activityFlushGraceMs: 0, ...options.config },
       sleep: async (ms, signal) => {
         signal.throwIfAborted();
         advance(ms);
@@ -381,6 +382,49 @@ describe('container idle stop', () => {
     });
     await reaper.sweep();
     await reaper.drain();
+    expect(provider.suspend).not.toHaveBeenCalled();
+    expect((await row()).status).toBe('running');
+  });
+
+  it('cancels an idle stop for activity inside the idle window that another replica writes only after selection', async () => {
+    const runtime = fakeRuntime();
+    const { reaper, provider } = setup({ runtime });
+    advance(11 * MINUTE);
+    let written = false;
+    vi.mocked(runtime.client.quiesce).mockImplementation(async () => {
+      runtime.calls.push('quiesce');
+      if (!written) {
+        written = true;
+        // Seen 20 s before the sweep chose the runtime, persisted only now.
+        await db.executor.updateTable('user_machines').set({ last_activity_at: new Date(clock.getTime() - 20_000) })
+          .where('machine_id', '=', 'ctr-1').execute();
+      }
+      return { ok: true, unsettledRuns: 0 };
+    });
+    await reaper.sweep();
+    await reaper.drain();
+    expect(provider.suspend).not.toHaveBeenCalled();
+    expect((await row()).status).toBe('running');
+  });
+
+  it('waits out other replicas\' activity flush before an idle stop flushes and suspends', async () => {
+    const runtime = fakeRuntime();
+    let polls = 0;
+    const { reaper, provider } = setup({
+      runtime, config: { activityFlushGraceMs: 35_000, pollIntervalMs: 5_000 },
+      onSleep: async () => {
+        polls += 1;
+        // Another replica flushes the owner's request 20 s into the stop.
+        if (polls === 4) {
+          await db.executor.updateTable('user_machines').set({ last_activity_at: new Date(clock.getTime() - 25_000) })
+            .where('machine_id', '=', 'ctr-1').execute();
+        }
+      },
+    });
+    advance(11 * MINUTE);
+    await reaper.sweep();
+    await reaper.drain();
+    expect(runtime.calls).not.toContain('flush');
     expect(provider.suspend).not.toHaveBeenCalled();
     expect((await row()).status).toBe('running');
   });
