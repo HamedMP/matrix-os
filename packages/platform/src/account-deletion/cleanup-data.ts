@@ -184,7 +184,9 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       'prebilling_provisioning_intents','billing_checkout_attempts','billing_trial_accounts','onboarding_first_run',
       'onboarding_journey_events','device_codes','free_tier_invites','container_owner_databases',
       // The per-key storage ledger cascades from the usage row.
-      'runtime_storage_usage'] as const) {
+      'runtime_storage_usage',
+      // Monthly compute history, export-only wakes included; open intervals live on the runtime rows erased below.
+      'runtime_compute_usage'] as const) {
       await trx.executor.deleteFrom(table).where('clerk_user_id','=',owner).execute();
     }
     await sql`UPDATE user_machines SET access_clerk_user_ids = array_remove(access_clerk_user_ids, ${owner})
