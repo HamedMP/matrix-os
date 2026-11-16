@@ -23,7 +23,7 @@ export function WorkRailSection({ label, expanded, onToggle, action, icon, count
         <span className="work-rail-section-disclosure" aria-hidden>
           <ChevronRight size={11} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
         </span>
-        {count > 0 && (attention || !expanded) ? <span className={`work-rail-section-count ${attention ? "work-rail-attention-count" : ""}`} aria-label={`${count} ${attention ? "chats need attention" : "hidden items"}`}>{count}</span> : null}
+        {count > 0 && (attention || !expanded || label === "Done" || label === "Projects") ? <span className={`work-rail-section-count ${attention ? "work-rail-attention-count" : ""}`} aria-label={`${count} ${attention ? "chats need attention" : "hidden items"}`}>{count}</span> : null}
       </button>
       {action}
     </div>

@@ -18,3 +18,9 @@ export function resolveCanonicalChatLifecycleGroup(record: ChatNavigationRecord)
   if (state === 'running') return 'working';
   return state === 'unseen_completion' || record.latestSuccessfulCompletion ? 'done' : 'recent';
 }
+
+export function archiveRestoreLocation(record: ChatNavigationRecord, projectName?: string) {
+  const groupNames = { needsYou: "Needs you", working: "Working", done: "Done", recent: "Done" };
+  const group = groupNames[resolveCanonicalChatLifecycleGroup(record)];
+  return projectName ? `${group} · ${projectName}` : group;
+}

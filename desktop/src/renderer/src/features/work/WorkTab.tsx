@@ -1,3 +1,5 @@
+import { ChatInspectorResizeHandle as ResizeHandle } from "@matrix-os/ui";
+import { type WorkLayout, type NarrowWorkPane, type WorkResponsiveState, workLayoutForWidth, effectiveNarrowPane, resizeWork, NAVIGATION_WIDTH, MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH, DEFAULT_INSPECTOR_WIDTH, MIN_CHAT_WIDTH, COLLAPSE_RESIZE_THRESHOLD } from "./work-responsive-layout";
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
@@ -39,6 +41,7 @@ import { ProjectLanding } from "../project/ProjectLanding";
 import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
+import { WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from "./WorkSurfaceRuntime";
 import { WorkFilesInspector } from "./WorkFilesInspector";
 import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
@@ -51,76 +54,6 @@ import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
 import { SideChatDraftContext, type SideChatDraftRequest } from "./SideChatDraftContext";
-
-type WorkLayout = "wide" | "medium" | "narrow";
-type NarrowWorkPane = "rail" | "chat" | "inspector";
-
-interface WorkResponsiveState {
-  layout: WorkLayout;
-  navigationOpen: boolean;
-  inspectorOpen: boolean;
-  narrowPane: NarrowWorkPane;
-  narrowPaneRouteKey: string | null;
-}
-
-const WIDE_WORK_MIN_WIDTH = 1_280;
-const MEDIUM_WORK_MIN_WIDTH = 740;
-const NAVIGATION_WIDTH = 240;
-const MIN_INSPECTOR_WIDTH = 240;
-const MAX_INSPECTOR_WIDTH = 820;
-const DEFAULT_INSPECTOR_WIDTH = 400;
-const MIN_CHAT_WIDTH = 360;
-const COLLAPSE_RESIZE_THRESHOLD = 48;
-
-function workLayoutForWidth(width: number): WorkLayout {
-  if (width >= WIDE_WORK_MIN_WIDTH) return "wide";
-  if (width >= MEDIUM_WORK_MIN_WIDTH) return "medium";
-  return "narrow";
-}
-
-function effectiveNarrowPane(
-  state: WorkResponsiveState,
-  routeKey: string,
-  canInspect: boolean,
-): NarrowWorkPane {
-  if (!canInspect || state.narrowPaneRouteKey !== routeKey) return "chat";
-  return state.narrowPane;
-}
-
-function resizeWork(
-  state: WorkResponsiveState,
-  nextLayout: WorkLayout,
-  routeKey: string,
-  canInspect: boolean,
-  inspectorFocused: boolean,
-  firstMeasurement: boolean,
-  preferInspectorOnFirstMeasurement: boolean,
-): WorkResponsiveState {
-  if (state.layout === nextLayout) return state;
-  const pane = effectiveNarrowPane(state, routeKey, canInspect);
-  const wasExplicitlyOpen = canInspect && (
-    (state.layout === "medium" && state.inspectorOpen)
-    || (state.layout === "narrow" && (pane === "inspector" || state.inspectorOpen))
-  );
-  const preserveInspector = wasExplicitlyOpen
-    || (canInspect && firstMeasurement && preferInspectorOnFirstMeasurement)
-    || (state.layout === "wide" && canInspect && inspectorFocused);
-  return {
-    ...state,
-    layout: nextLayout,
-    ...(nextLayout === "wide" ? {
-      inspectorOpen: firstMeasurement ? canInspect : preserveInspector,
-    } : {}),
-    ...(nextLayout === "medium" ? {
-      inspectorOpen: preserveInspector,
-      navigationOpen: !preserveInspector,
-    } : {}),
-    ...(nextLayout === "narrow" ? {
-      narrowPane: "chat",
-      narrowPaneRouteKey: routeKey,
-    } : {}),
-  };
-}
 
 function ResponsiveWorkInspector({
   detail,
@@ -213,7 +146,12 @@ function ResponsiveWorkInspector({
 }
 
 export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
-  return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
+  const runtimeSlot = useConnection(state => state.runtimeSlot);
+  const userId = useConnection(state => state.userId);
+  const authGeneration = useConnection(state => state.authGeneration);
+  const hostedArchive = useWorkArchiveNavigation();
+  if (hostedArchive) return <ChatAgentsWorkspace><WorkTabContent {...props}/></ChatAgentsWorkspace>;
+  return <WorkArchiveProvider key={`${userId}:${runtimeSlot}:${authGeneration}`}><ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace></WorkArchiveProvider>;
 }
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing Work surface coordinates routes, the rail, hosted Chat chrome and inspectors; this change only removes the live-share suspension wiring. Splitting it belongs in a focused refactor.
@@ -238,6 +176,7 @@ function WorkTabContent({
   initialChatTitle?: string;
   sharedScopeId?: string;
 }) {
+  const archiveNavigation = useWorkArchiveNavigation();
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -328,7 +267,7 @@ function WorkTabContent({
   const presentationVisible = hostedChrome ? visible : active;
   const agentProviderCatalog = useWorkAgentProviderCatalog(projects.length > 0, presentationVisible);
   const routeKey = `${presentationVisible}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
-  const hasInspector = Boolean(presentationVisible && (route === "chat" || route === "project"));
+  const hasInspector = Boolean(!archiveNavigation?.open && presentationVisible && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
   const inspectorVisible = presentationVisible && hasInspector && (
     ((layout === "wide" || layout === "medium") && inspectorOpen)
@@ -824,14 +763,14 @@ function WorkTabContent({
     <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
       className="no-drag pointer-events-auto flex items-center gap-1" />
   ) : sharingControl, [sharedScopeId, sharingControl]);
-  const chromeSpec = useMemo(() => ({ showTitle: agentsOpen,
+  const chromeSpec = useMemo(() => ({ hideTitle: Boolean(archiveNavigation?.open), showTitle: agentsOpen,
     titleLayout: !agentsOpen && headerAgentId ? "identity" as const : undefined,
     title: agentsOpen ? agentsNavigation?.opened?.title ?? "Your AI team" : headerAgentId
       ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
       : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
-    rightActions: agentsOpen ? null : hasInspector ? (
+    rightActions: archiveNavigation?.open || agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
         {sharedChromeSlot}
         <PaneButton
@@ -848,7 +787,7 @@ function WorkTabContent({
         </PaneButton>
       </div>
     ) : sharedChromeSlot,
-  }), [agentsOpen, agentsNavigation?.opened?.title, headerAgentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [archiveNavigation?.open, agentsOpen, agentsNavigation?.opened?.title, headerAgentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!surfaceChromeHost) return;
@@ -955,8 +894,7 @@ function WorkTabContent({
           <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
           <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
             onOpenBotChat={openBotChat} providerCatalog={agentProviderCatalog}>
-            {content}
-            {draftInspector}
+            <WorkArchiveOutlet client={client} projects={projects}>{content}{draftInspector}</WorkArchiveOutlet>
           </ChatAgentsContent>
           </BotHeaderContext.Provider>
           </BotHeaderBindingContext.Provider>
@@ -966,43 +904,6 @@ function WorkTabContent({
     </ChatFileNavigationProvider>
     </SideChatDraftContext.Provider>
     </CanonicalChatClientProvider>
-  );
-}
-
-function ResizeHandle({ side, label, value, min, max, onPointerDown, onKeyboardResize, onReset }: {
-  side: "left" | "right";
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onKeyboardResize: (delta: number) => void;
-  onReset: () => void;
-}) {
-  return (
-    <div
-      role="separator"
-      aria-label={label}
-      aria-orientation="vertical"
-      aria-valuemin={min}
-      aria-valuemax={max}
-      aria-valuenow={Math.round(value)}
-      tabIndex={0}
-      className={`group/resize absolute inset-y-0 z-20 w-2 cursor-col-resize outline-none ${side === "left" ? "-left-1" : "-right-1"}`}
-      onPointerDown={onPointerDown}
-      onDoubleClick={onReset}
-      onKeyDown={(event) => {
-        const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
-        if (direction === 0) return;
-        event.preventDefault();
-        onKeyboardResize(side === "left" ? -direction * 16 : direction * 16);
-      }}
-    >
-      <span
-        className="absolute inset-y-0 left-[3px] w-px group-hover/resize:bg-[var(--accent)]"
-        style={{ background: side === "left" ? "transparent" : "var(--border-subtle)" }}
-      />
-    </div>
   );
 }
 

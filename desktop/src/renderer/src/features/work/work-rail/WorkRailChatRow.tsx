@@ -25,6 +25,7 @@ export function WorkRailChatRow({
   record,
   active,
   fresh = true,
+  projectName,
   pinning,
   placement,
   onSelect,
@@ -46,6 +47,7 @@ export function WorkRailChatRow({
   record: ChatNavigationRecord;
   active: boolean;
   fresh?:boolean;
+  projectName?: string;
   pinning: boolean;
   placement: "pinned" | "project" | "recent";
   onSelect: () => void;
@@ -86,11 +88,12 @@ export function WorkRailChatRow({
     { label: pinned ? "Unpin" : "Pin", disabled: pinning, onSelect: onPin },
     { label: "Rename", disabled: renameDisabled, onSelect: () => scheduleRename(20) },
     ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
+    ...(onToggleRead ? [{ label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead }] : []),
     ...(onArchive ? [{ label: "Archive", disabled: Boolean(record.activeRun), onSelect: onArchive }] : []),
     { label: "Delete", danger: true, disabled: Boolean(record.activeRun), onSelect: onDelete },
   ];
   return (
-    <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
+    <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} items={menuItems}>
       <div
         data-chat-title-row
         data-navigation-fresh={fresh || undefined}
@@ -137,16 +140,16 @@ export function WorkRailChatRow({
             if (!renameDisabled) scheduleRename(0);
           }}
         >
+          <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} fresh={fresh} />
           {record.importSource ? <ChatImportSourceIcon harness={record.importSource.harness}/> : null}
           <span className="work-rail-chat-label min-w-0 flex-1">
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
-            {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
+            {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{projectName && placement === "recent" ? `${projectName} · ` : ""}{railStateLabel[agentState]}</span> : null}
           </span>
           {nowMs !== undefined ? <time dateTime={record.chat.createdAt} title={chatStartTitle(record.chat.createdAt)}
             className="shrink-0 text-[11px] tabular-nums group-hover/chat:invisible group-focus-within/chat:invisible"
             style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{compactChatStartLabel(record.chat.createdAt, nowMs)}</time> : null}
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
-          <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} fresh={fresh} />
         </button>}
         {!renaming ? <div
           className="work-rail-chat-actions pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-[8px] opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
@@ -184,7 +187,7 @@ function ChatAgentStateIndicator({
     return (
       <span
         aria-label={`Unseen completion for ${title}`}
-        className="ml-auto size-2 shrink-0 rounded-full bg-[var(--accent)]"
+        className="size-2 shrink-0 rounded-full bg-[var(--accent)]"
       />
     );
   }
@@ -195,6 +198,6 @@ function ChatAgentStateIndicator({
       : state === "input_required"
         ? `Input required for ${title}`
         : `Agent failed for ${title}`;
-  return <span aria-label={fresh?label:`Last known: ${label}; syncing`} className="ml-auto size-[6px] shrink-0 rounded-full"
+  return <span aria-label={fresh?label:`Last known: ${label}; syncing`} className="size-[6px] shrink-0 rounded-full"
     style={{ background: state === "running" ? "var(--matrix-chat-rail-success, var(--success))" : "var(--matrix-chat-rail-warning, var(--warning))" }} />;
 }

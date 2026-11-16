@@ -1,24 +1,27 @@
 "use client";
 
+import { Archive, Copy, Folder, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, type LucideIcon } from "lucide-react";
+
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Fragment, useEffect, useRef, useState, type ReactElement } from "react";
 
 export type ChatContextMenuAction = { label: string; disabled?: boolean; danger?: boolean; onSelect?: () => void; children?: ChatContextMenuAction[] };
 
-const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40";
+const menuItemClass = "flex items-center gap-3 cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40";
 function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContextMenuAction[]; zIndex: number; Menu?: typeof ContextMenu | typeof DropdownMenu }) {
   return items.map(item => item.children ? <Menu.Sub key={item.label}>
     <Menu.SubTrigger disabled={item.disabled} className={`${menuItemClass} flex items-center gap-3`}>
-      <span>{item.label}</span><span className="ml-auto" aria-hidden>›</span>
+      <ChatMenuActionLabel label={item.label}/><span className="ml-auto" aria-hidden>›</span>
     </Menu.SubTrigger>
-    <Menu.Portal><Menu.SubContent className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{zIndex,background:"var(--bg-overlay, var(--popover))",color:"var(--text-primary, var(--popover-foreground))",borderColor:"var(--border-default, var(--border))"}}>
+    <Menu.Portal><Menu.SubContent className="min-w-[220px] rounded-xl border p-1 shadow-lg" style={{zIndex,background:"var(--bg-overlay, var(--popover))",color:"var(--text-primary, var(--popover-foreground))",borderColor:"var(--border-default, var(--border))"}}>
       <MenuActions items={item.children} zIndex={zIndex} Menu={Menu} />
     </Menu.SubContent></Menu.Portal>
-  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger-text, var(--destructive-text, var(--danger, var(--destructive))))"} : undefined}>{item.label}</Menu.Item></Fragment>);
+  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger-text, var(--destructive-text, var(--danger, var(--destructive))))"} : undefined}><ChatMenuActionLabel label={item.label}/></Menu.Item></Fragment>);
 }
 
-export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange, onContextMenuOpenChange }: {
+export function ChatContextMenu({ chatId, children, hint, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange, onContextMenuOpenChange }: {
+  hint?: string;
   dropdownTrigger?: ReactElement; onDropdownOpenChange?: (open: boolean) => void;
   onContextMenuOpenChange?: (open: boolean) => void;
   chatId?: string | null;
@@ -60,23 +63,25 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
   };
   const contents = (Menu: typeof ContextMenu | typeof DropdownMenu) => (
       <Menu.Portal>
-        <Menu.Content className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{
+        <Menu.Content className="min-w-[220px] rounded-xl border p-1 shadow-lg" style={{
           zIndex, background: "var(--bg-overlay, var(--popover))",
           color: "var(--text-primary, var(--popover-foreground))",
           borderColor: "var(--border-default, var(--border))",
         }}>
           {primaryAction ? <Menu.Item disabled={primaryAction.disabled} onSelect={primaryAction.onSelect}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40">{primaryAction.label}</Menu.Item> : null}
+            className="flex items-center gap-3 cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40"><ChatMenuActionLabel label={primaryAction.label}/></Menu.Item> : null}
           {selectedText && <Menu.Item disabled={feedback === "pending"}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
+            className="flex items-center gap-3 cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
             onSelect={(event) => copy(selectedText, "selected text", event)}>Copy selected text</Menu.Item>}
-          <Menu.Item disabled={feedback === "pending"} className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
-            onSelect={(event) => copy(chatId, "chat ID", event)}>Copy chat ID</Menu.Item>
+          <MenuActions items={items.filter(item => !item.danger)} zIndex={zIndex} Menu={Menu} />
+          <Menu.Item disabled={feedback === "pending"} className="flex items-center gap-3 cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
+            onSelect={(event) => copy(chatId, "chat ID", event)}><ChatMenuActionLabel label="Copy chat ID"/></Menu.Item>
           {feedback && <div className="px-2.5 py-1.5 text-xs" role={feedback === "failed" ? "alert" : "status"}>
             {feedback === "failed" ? `Could not copy ${copyTarget}. Try again.`
               : feedback === "copied" ? (copyTarget === "chat ID" ? "Chat ID copied" : "Text copied") : "Copying…"}
           </div>}
-          <MenuActions items={items} zIndex={zIndex} Menu={Menu} />
+          <MenuActions items={items.filter(item => item.danger)} zIndex={zIndex} Menu={Menu} />
+          {hint ? <p className="px-2 pb-1 pt-2 text-xs leading-4" style={{color:"var(--text-secondary, var(--muted-foreground))"}}>{hint}</p> : null}
         </Menu.Content>
       </Menu.Portal>
   );
@@ -90,4 +95,17 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
       {contents(DropdownMenu)}
     </DropdownMenu.Root> : null}
   </>;
+}
+
+const actions: Record<string, { icon: LucideIcon; shortcut?: string }> = {
+  Pin: { icon: Pin, shortcut: "⌥⌘P" }, Unpin: { icon: PinOff, shortcut: "⌥⌘P" },
+  Rename: { icon: Pencil, shortcut: "⌥⌘R" }, "Move to project": { icon: Folder },
+  "Mark as unread": { icon: Mail, shortcut: "⇧⌘U" }, "Mark as read": { icon: MailOpen },
+  Archive: { icon: Archive, shortcut: "⇧⌘A" }, Delete: { icon: Trash2 }, "Copy chat ID": { icon: Copy },
+};
+/** Shared row-menu icon and shortcut treatment from Figma 8.1. */
+export function ChatMenuActionLabel({ label }: { label: string }) {
+  const action = actions[label];
+  const Icon = action?.icon;
+  return <><span aria-hidden style={{ width: 14, height: 14, flexShrink: 0 }}>{Icon ? <Icon size={14}/> : null}</span><span className="min-w-0 flex-1">{label}</span>{action?.shortcut ? <kbd aria-hidden style={{ font: "11px Geist, sans-serif", color: "var(--text-secondary, var(--muted-foreground))" }}>{action.shortcut}</kbd> : null}</>;
 }

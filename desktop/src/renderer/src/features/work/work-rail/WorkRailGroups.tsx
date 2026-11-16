@@ -6,7 +6,7 @@ import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
 import { useWorkRailPage } from "./useWorkRailPage";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
-import { Plus } from "lucide-react";
+import { Plus, Folder } from "lucide-react";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
@@ -60,7 +60,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         </WorkRailSection> : null}
 
         <WorkRailSection
-          label="Projects"
+          label="Projects" icon={<Folder size={15} aria-hidden/>}
           count={model.projects.length + sharedProjects.length}
           expanded={sections.projects}
           onToggle={() => onToggle("projects")}

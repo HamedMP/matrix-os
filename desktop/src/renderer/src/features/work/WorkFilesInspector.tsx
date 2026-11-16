@@ -1,9 +1,10 @@
+import { GripHorizontal } from "lucide-react";
 import { useChatFileNavigation } from "./ChatFileNavigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CanonicalChatDetailResponse, TerminalSessionSummary } from "@matrix-os/contracts";
 import { FileCode2, PanelRightCloseIcon, Plus, SquareTerminal, X } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import type { Project } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
@@ -21,7 +22,7 @@ import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 import { Dialog } from "../../design/primitives";
 import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
-import { SideChatPanel } from "@matrix-os/ui";
+import { SideChatPanel, ChatInspectorTabs, ChatInspectorNewTab, type InspectorTool, InspectorToolIcon } from "@matrix-os/ui";
 import { useScopedCanonicalChatClient } from "../chat/CanonicalChatClientContext";
 import { useSideChatDraft } from "./SideChatDraftContext";
 
@@ -33,11 +34,13 @@ const MIN_FILE_PREVIEW_HEIGHT = 160;
 const FILE_SPLIT_DIVIDER_HEIGHT = 8;
 
 type WorkInspectorTab =
+  | { id: "new-tab"; kind: "new"; label: "New tab" }
   | { id: "files"; kind: "files"; label: "Files" }
   | { id: "browser"; kind: "browser"; label: "Browser" }
   | { id: "side-chat"; kind: "side-chat"; label: "Side chat" }
   | { id: string; kind: "terminal"; label: string; sessionId: string };
 
+const NEW_TAB: WorkInspectorTab = { id: "new-tab", kind: "new", label: "New tab" };
 const FILES_TAB: WorkInspectorTab = { id: "files", kind: "files", label: "Files" };
 const BROWSER_TAB: WorkInspectorTab = { id: "browser", kind: "browser", label: "Browser" };
 const SIDE_CHAT_TAB: WorkInspectorTab = { id: "side-chat", kind: "side-chat", label: "Side chat" };
@@ -206,7 +209,7 @@ function WorkInspectorContent({
       const session = sessions.find(candidate => candidate.id === sessionId);
       return sessionId ? [{ id, kind: "terminal", sessionId, label: session?.name ?? "Terminal" }] : [];
     });
-    const withFiles = [FILES_TAB, ...restored.filter(tab => tab.id !== FILES_TAB.id)];
+    const withFiles = restored.length ? restored : [FILES_TAB];
     return initialTerminalTab && !withFiles.some(tab => tab.id === initialTerminalTab.id)
       ? [...withFiles, initialTerminalTab] : withFiles;
   });
@@ -246,6 +249,7 @@ function WorkInspectorContent({
   useEffect(() => {
     if (!requestedFile || requestedFile.chatId !== scope.chatId) return;
     setSelectedFile(requestedFile.target);
+    setTabs(current => current.some(tab => tab.id === "files") ? current : [FILES_TAB, ...current]);
     setSelectedId(FILES_TAB.id);
   }, [requestedFile, scope.chatId, setSelectedFile]);
   const [resolvedChatId, setResolvedChatId] = useState<string | null>(
@@ -330,11 +334,11 @@ function WorkInspectorContent({
     const index = tabs.findIndex((tab) => tab.id === id);
     if (index < 0) return;
     const prior = tabs.filter((tab) => tab.id !== id);
-    const fallback = prior[Math.min(Math.max(index - 1, 0), prior.length - 1)]?.id ?? FILES_TAB.id;
+    const fallback = prior[Math.min(Math.max(index - 1, 0), prior.length - 1)]?.id ?? NEW_TAB.id;
     setTabs((current) => {
       if (!current.some((tab) => tab.id === id)) return current;
       const next = current.filter((tab) => tab.id !== id);
-      return next.some((tab) => tab.id === FILES_TAB.id) ? next : [FILES_TAB, ...next];
+      return next.length ? next : [NEW_TAB];
     });
     setSelectedId((current) => current === id ? fallback : current);
   };
@@ -368,14 +372,15 @@ function WorkInspectorContent({
   };
   const closeTab = (id: string) => {
     const tab = tabs.find(candidate => candidate.id === id);
-    if (!tab || tab.kind !== "terminal") return;
+    if (!tab) return;
+    if (tab.kind !== "terminal") { removeTab(id); return; }
     const session = sessions.find(candidate => candidate.id === tab.sessionId);
     if (!session || (hasFreshSummary && !session.attachable)) { removeTab(id); return; }
     setTerminalCloseTarget(id);
   };
 
   const splitRef = useRef<HTMLDivElement>(null);
-  const [fileTreeHeight, setFileTreeHeight] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view.treeHeight ?? 240);
+  const [fileTreeHeight, setFileTreeHeight] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view.treeHeight ?? 300);
   useEffect(() => { useInspectorFileViews.getState().update(viewKey, { treeHeight: fileTreeHeight }); }, [viewKey, fileTreeHeight]);
   const clampFileTreeHeight = (nextHeight: number, splitHeight: number) => Math.max(
     MIN_FILE_TREE_HEIGHT,
@@ -414,59 +419,52 @@ function WorkInspectorContent({
     window.addEventListener("pointerup", stop, { once: true });
   };
 
+  const openPicker = () => {
+    setTabs(current => current.some(tab => tab.kind === "new") ? current : [...current, NEW_TAB]);
+    setSelectedId(NEW_TAB.id); setMenuOpen(false);
+  };
+  const chooseTool = (kind: Exclude<InspectorTool, "new">) => {
+    setTabs(current => current.filter(tab => tab.kind !== "new"));
+    if (kind === "terminal") { void createTerminal(); return; }
+    const target = kind === "files" ? FILES_TAB : kind === "browser" ? BROWSER_TAB : SIDE_CHAT_TAB;
+    setTabs(current => current.some(tab => tab.id === target.id) ? current : [...current, target]);
+    setSelectedId(target.id);
+  };
+  const handleToolShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || !active || event.repeat) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest("input, textarea, [contenteditable=true]")) return;
+    const key = event.key.toLowerCase();
+    const kind = event.metaKey && event.altKey && key === "s" ? "side-chat"
+      : event.metaKey && !event.altKey && key === "p" ? "files"
+      : event.ctrlKey && !event.metaKey && key === "`" ? "terminal" : null;
+    if (!kind || (kind === "side-chat" && !detail)) return;
+    event.preventDefault(); event.stopPropagation(); chooseTool(kind);
+  });
+  useEffect(() => {
+    if (!active) return;
+    window.addEventListener("keydown", handleToolShortcut);
+    return () => window.removeEventListener("keydown", handleToolShortcut);
+  }, [active]);
   return (
     <Tooltip.Provider>
       <aside
         aria-label="Chat inspector"
         className={`flex min-h-0 flex-col overflow-hidden border-l ${className}`}
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <div
-          className="flex h-11 shrink-0 items-center gap-1 border-b px-2"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-        >
-          <div role="tablist" aria-label="Inspector tabs" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                className="flex h-8 min-w-0 shrink-0 items-center rounded-lg"
-                style={{ background: selected.id === tab.id ? "var(--bg-selected)" : "transparent" }}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={selected.id === tab.id}
-                  aria-controls={`work-inspector-panel-${tab.id}`}
-                  className={`flex h-full min-w-0 items-center gap-2 px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${tab.kind === "terminal" ? "rounded-l-lg" : "rounded-lg"}`}
-                  style={{ color: selected.id === tab.id ? "var(--text-primary)" : "var(--text-tertiary)" }}
-                  onClick={() => setSelectedId(tab.id)}
-                >
-                  {tab.kind === "terminal" ? <SquareTerminal size={14} aria-hidden /> : <FileCode2 size={14} aria-hidden />}
-                  <span className="max-w-32 truncate">{tab.label}</span>
-                </button>
-                {tab.kind === "terminal" ? (
-                  <button
-                    type="button"
-                    aria-label={`Close ${tab.label} tab`}
-                    className="flex size-7 items-center justify-center rounded-r-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                    style={{ color: "var(--text-tertiary)" }}
-                    disabled={closingSessionIds.includes(tab.sessionId)}
-                    onClick={() => closeTab(tab.id)}
-                  >
-                    <X size={12} aria-hidden />
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-          {selected.kind === "files" ? <button type="button" aria-label={fileTreeVisible ? "Hide file tree" : "Show file tree"} title={fileTreeVisible ? "Hide file tree" : "Show file tree"} aria-pressed={!fileTreeVisible}
-            onClick={() => useInspectorFileViews.getState().update(viewKey, { treeVisible: !fileTreeVisible })} className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"><FileCode2 size={15} /></button> : null}
-          <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
+        <ChatInspectorTabs tabs={tabs.map(tab => ({ ...tab, closing: tab.kind === "terminal" && closingSessionIds.includes(tab.sessionId) }))}
+          selectedId={selected.id} onSelect={setSelectedId} onClose={closeTab} onAdd={openPicker}
+          addControl={          <DropdownMenu.Root open={menuOpen} onOpenChange={next => {
+            if (next && detail && tabs.length === 1 && tabs[0]?.kind === "files" && !selectedFile && attachableSessions.length === 0) openPicker();
+            else setMenuOpen(next);
+          }}>
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
                 aria-label="Add inspector tab"
-                className="flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                onClick={() => { if (detail && tabs.length === 1 && tabs[0]?.kind === "files" && !selectedFile && attachableSessions.length === 0) openPicker(); }}
+                className="mb-1 flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 style={{ color: "var(--text-tertiary)" }}
               >
                 <Plus size={16} aria-hidden />
@@ -479,12 +477,14 @@ function WorkInspectorContent({
                 className="z-[100] min-w-52 rounded-lg border p-1"
                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
               >
-                <InspectorMenuItem label="Files" icon={<FileCode2 size={14} />} onSelect={() => setSelectedId(FILES_TAB.id)} />
-                {detail ? <InspectorMenuItem label="Side chat" icon={<FileCode2 size={14} />} onSelect={() => {
+                {selected.kind === "files" ? <InspectorMenuItem label={fileTreeVisible ? "Hide file tree" : "Show file tree"} icon={<FileCode2 size={14}/>} onSelect={() => useInspectorFileViews.getState().update(viewKey, { treeVisible: !fileTreeVisible })}/> : null}
+                <InspectorMenuItem label="New tab" icon={<Plus size={14}/>} onSelect={openPicker}/>
+                <InspectorMenuItem label="Files" icon={<InspectorToolIcon kind="files"/>} onSelect={() => chooseTool("files")} />
+                {detail ? <InspectorMenuItem label="Side chat" icon={<InspectorToolIcon kind="side-chat"/>} onSelect={() => {
                   setTabs(current => current.some(tab => tab.id === SIDE_CHAT_TAB.id) ? current : [...current, SIDE_CHAT_TAB]);
                   setSelectedId(SIDE_CHAT_TAB.id);
                 }} /> : null}
-                <InspectorMenuItem label="Browser" icon={<FileCode2 size={14} />} onSelect={() => {
+                <InspectorMenuItem label="Browser" icon={<InspectorToolIcon kind="browser"/>} onSelect={() => {
                   setTabs((current) => current.some((tab) => tab.id === BROWSER_TAB.id) ? current : [...current, BROWSER_TAB]);
                   setSelectedId(BROWSER_TAB.id);
                 }} />
@@ -506,22 +506,13 @@ function WorkInspectorContent({
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-          {onClose ? (
-            <button
-              ref={closeButtonRef}
-              type="button"
-              aria-label={closeLabel}
-              aria-controls="work-inspector"
-              aria-expanded="true"
-              title={closeLabel}
-              className="flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              style={{ color: "var(--text-tertiary)" }}
-              onClick={onClose}
-            >
-              <PanelRightCloseIcon size={14} aria-hidden />
-            </button>
-          ) : null}
-        </div>
+}
+          trailing={onClose ? <button ref={closeButtonRef} type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="mb-1 ml-auto grid size-7 shrink-0 place-items-center"><PanelRightCloseIcon size={14} aria-hidden/></button> : undefined}/>
+        {selected.kind === "new" ? <ChatInspectorNewTab browser onChoose={chooseTool} recent={[
+          ...(selectedFile ? [{ id: "recent-file", kind: "files" as const, title: selectedFile.label, subtitle: selectedFile.path, onOpen: () => chooseTool("files") }] : []),
+          ...attachableSessions.map(session => ({ id: session.id, kind: "terminal" as const, title: session.name, subtitle: "Terminal", onOpen: () => { setTabs(current => current.filter(tab => tab.kind !== "new")); openTerminal(session); } })),
+          ...(tabs.some(tab => tab.kind === "side-chat") ? [{ id: "recent-side", kind: "side-chat" as const, title: "Side chat", onOpen: () => chooseTool("side-chat") }] : []),
+        ]}/> : null}
         {terminalCreateStatus === "error" ? (
           <p role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             The terminal could not be created. Try again.
@@ -533,9 +524,10 @@ function WorkInspectorContent({
           </p>
         ) : null}
         <div
+          hidden={selected.kind === "new"}
           ref={splitRef}
           data-layout={selected.kind === "terminal" ? "terminal" : selectedFile ? "split" : "files-only"}
-          className="flex min-h-0 flex-1 flex-col"
+          className={selected.kind === "new" ? "hidden" : "flex min-h-0 flex-1 flex-col"}
         >
           {selected.kind === "files" ? (
             <section
@@ -546,7 +538,7 @@ function WorkInspectorContent({
                 : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
               style={{
                 ...(selectedFile ? { height: fileTreeHeight } : {}),
-                background: "var(--bg-sunken)",
+                background: "var(--bg-surface)",
               }}
             >
               <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
@@ -569,7 +561,7 @@ function WorkInspectorContent({
                 resizeFileTree(fileTreeHeight + (event.key === "ArrowDown" ? 16 : -16));
               }}
             >
-              <span className="absolute inset-x-0 top-[3px] h-px bg-[var(--border-subtle)] group-hover/file-resize:bg-[var(--accent)]" />
+              <span className="absolute inset-x-0 top-[3px] h-px bg-[var(--border-subtle)]" /><GripHorizontal aria-hidden size={12} className="absolute left-1/2 top-[-2px] -translate-x-1/2"/>
             </div>
           ) : null}
           <div
@@ -582,7 +574,7 @@ function WorkInspectorContent({
               <SidebarBrowser active={active && selected.kind === "browser"} />
             </div> : null}
             {selected.kind === "side-chat" ? <div role="tabpanel" aria-label="Side chat" id="work-inspector-panel-side-chat" className="flex min-h-0 flex-1 flex-col">
-              {detail && chatClient && sideDraft ? <SideChatPanel chatId={detail.record.chat.id} client={chatClient}
+              {detail && chatClient && sideDraft ? <SideChatPanel chatTitle={detail?.record.chat.title} chatId={detail.record.chat.id} client={chatClient}
                 onSendToMain={text => sideDraft.request(detail.record.chat.id, text)}/>
                 : <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>Side chat is unavailable.</p>}
             </div> : null}
@@ -609,6 +601,8 @@ function WorkInspectorContent({
                   <TerminalTab
                     sessionId={tab.sessionId}
                     sessions={sessions}
+                    onNewTerminal={() => { void createTerminal(); }}
+                    creating={terminalCreateStatus === "creating"}
                     chatId={resolvedChatId ?? ""}
                     active={active && selected.id === tab.id}
                   />
@@ -632,17 +626,21 @@ function WorkInspectorContent({
   );
 }
 
-function TerminalTab({ sessionId, sessions, chatId, active }: { sessionId: string; sessions: readonly TerminalSessionSummary[]; chatId: string; active: boolean }) {
+function TerminalTab({ sessionId, sessions, chatId, active, onNewTerminal, creating }: { sessionId: string; sessions: readonly TerminalSessionSummary[]; chatId: string; active: boolean; onNewTerminal(): void; creating: boolean }) {
+  const summary = useCodingAgentWorkspace(state => state.summary);
+  const directory = summary ? runtimeTerminalTabs(summary).find(tab => tab.refKey === sessionId)?.cwd : undefined;
   const session = sessions.find((candidate) => candidate.id === sessionId && candidate.attachable);
   if (!session) return <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>This terminal is unavailable.</p>;
-  return <TerminalView sessionName={session.id} chatId={chatId} active={active} />;
+  return <><header className="desktop-chat-design chat-inspector-terminal-header"><span aria-label="Terminal working directory" title={directory || "Home directory"}>{directory || "~"}</span><button type="button" onClick={onNewTerminal} disabled={creating}><Plus size={14} aria-hidden/>New terminal</button></header>
+    <TerminalView sessionName={session.id} chatId={chatId} active={active} controlsHost={null} /></>;
 }
 
 function InspectorMenuItem({ label, icon, onSelect }: { label: string; icon: ReactNode; onSelect: () => void }) {
+  const shortcut = label === "Files" ? "⌘P" : label === "New terminal" ? "⌃`" : label === "Side chat" ? "⌥⌘S" : undefined;
   return (
     <DropdownMenu.Item aria-label={label} className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]" style={{ color: "var(--text-primary)" }} onSelect={onSelect}>
       {icon}
-      {label}
+      <span className="flex-1">{label}</span>{shortcut ? <kbd aria-hidden className="text-xs" style={{ color: "var(--text-secondary)", fontFamily: "inherit" }}>{shortcut}</kbd> : null}
     </DropdownMenu.Item>
   );
 }

@@ -116,6 +116,14 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("turns a New tab picker into a side chat and hides the extra add button while choosing", async () => {
+    render(<WorkFilesInspector detail={detail("chat_picker")} projects={[]} active/>);
+    fireEvent.click(screen.getByRole("button", { name: "Add inspector tab" }));
+    expect(screen.getByRole("tabpanel", { name: "New tab" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add inspector tab" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Side chat/ }));
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+  });
   it("keeps a saved terminal tab while a cached summary is being refreshed", async () => {
     useConnection.setState({ userId: "user_test" });
     useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1 });
@@ -301,12 +309,14 @@ describe("Work Files and Terminal inspector", () => {
     expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
     expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
-    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
     view.unmount();
     const restored = render(<WorkFilesInspector scope={scope} projects={[]} active />);
-    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show file tree" }));
     expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("guide");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     fireEvent.click(await screen.findByRole("button", { name: "Collapse folder notes" }));
@@ -319,9 +329,11 @@ describe("Work Files and Terminal inspector", () => {
   it("hides and restores the file tree while preserving its search", () => {
     render(<WorkFilesInspector scope={{ kind: "home", chatId: "chat" }} projects={[]} active />);
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter files" }), { target: { value: "notes" } });
-    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
     expect(screen.queryByRole("searchbox", { name: "Filter files" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show file tree" }));
     expect((screen.getByRole("searchbox", { name: "Filter files" }) as HTMLInputElement).value).toBe("notes");
   });
 
@@ -343,8 +355,8 @@ describe("Work Files and Terminal inspector", () => {
   it("creates and immediately opens a new Chat-bound terminal", async () => {
     render(<WorkFilesInspector detail={detail("chat_fresh")} projects={[]} active />);
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("menuitem", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add inspector tab" }));
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/ }));
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
@@ -462,6 +474,23 @@ describe("Work Files and Terminal inspector", () => {
     expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
   });
 
+  it("opens side chat from the inspector shortcut without creating a main turn", () => {
+    render(<WorkFilesInspector detail={detail("chat_shortcut")} projects={[]} active />);
+    fireEvent.keyDown(window, { key: "s", metaKey: true, altKey: true });
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+    expect(useConnection.getState().api!.post).not.toHaveBeenCalled();
+  });
+
+  it("provides a terminal header and creates another session without closing the existing one", async () => {
+    render(<WorkFilesInspector detail={detail("chat_header", "live")} projects={[]} initialTerminal={{ chatId: "chat_header", session: { ...terminal("live"), id: refKey("live") } }} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "live" }));
+    expect(screen.getByLabelText("Terminal working directory").textContent).toBe("~");
+    expect(terminalViewMock.props.at(-1)).toMatchObject({ controlsHost: null });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(useConnection.getState().api!.post).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Stop this terminal?" })).toBeNull();
+  });
+
   it("shows the file list alone until a preview opens and hides it for Terminal", async () => {
     render(<WorkFilesInspector detail={detail("chat_first", "terminal_first")} projects={[]} active />);
 
@@ -493,9 +522,9 @@ describe("Work Files and Terminal inspector", () => {
     expect(panes?.children[2]?.querySelector('[aria-label="File preview"]')).not.toBeNull();
     const divider = screen.getByRole("separator", { name: "Resize file list" });
     expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
-    expect(divider.getAttribute("aria-valuenow")).toBe("240");
+    expect(divider.getAttribute("aria-valuenow")).toBe("300");
     fireEvent.keyDown(divider, { key: "ArrowDown" });
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("256");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
   });
 
   it("keeps a usable preview when the inspector becomes narrower", async () => {
