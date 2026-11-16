@@ -1,0 +1,239 @@
+{
+  "version": "0.1.15",
+  "channel": "stable",
+  "date": "2026-10-15T17:12:32Z",
+  "locale": "en",
+  "title": "A gallery of apps",
+  "shortTitle": "App gallery",
+  "summary": "Discover and install curated apps, enjoy refreshed built-in apps, and try the redesigned mobile app.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "App gallery",
+      "body": "Discover curated apps, read their details and install them safely. Built-in apps and games have fresh artwork and a cleaner look.",
+      "art": "sparkle",
+      "tone": "teal",
+      "prs": [
+        2387,
+        2388,
+        2389,
+        2390,
+        2391,
+        2392,
+        2393,
+        2394,
+        2395,
+        2396,
+        2397,
+        2398,
+        2399,
+        2400,
+        2401,
+        2402,
+        2403,
+        2404,
+        2405,
+        2406
+      ]
+    },
+    {
+      "tag": "Mobile",
+      "title": "Redesigned mobile app",
+      "body": "The mobile app moves to bottom tabs with a new icon. Attach photos and files, pick skills from the composer and copy or share any message.",
+      "surfaces": [
+        "native-mobile"
+      ],
+      "art": "notification",
+      "tone": "lime",
+      "prs": [
+        2510,
+        2555,
+        2539,
+        2528,
+        2529,
+        2530,
+        2580,
+        2581,
+        2287,
+        2306,
+        2307,
+        2525
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Apps can use your connected integrations and AI, with your permission."
+    },
+    {
+      "kind": "new",
+      "text": "Eight more Matrix AI models."
+    },
+    {
+      "kind": "new",
+      "text": "Claude chats can use your connected integrations and custom MCP servers."
+    },
+    {
+      "kind": "new",
+      "text": "Inbox Triage now runs on Matrix bots."
+    },
+    {
+      "kind": "improved",
+      "text": "Your personal Matrix bot follows your personality settings."
+    },
+    {
+      "kind": "new",
+      "text": "Paste from the terminal's right-click menu."
+    },
+    {
+      "kind": "improved",
+      "text": "Chat navigation loads faster and works the same in Chat and Projects."
+    },
+    {
+      "kind": "improved",
+      "text": "Your remaining allowance is easier to read."
+    },
+    {
+      "kind": "improved",
+      "text": "Project sharing matches the new design."
+    },
+    {
+      "kind": "improved",
+      "text": "Claude Code chats always use your Claude subscription."
+    },
+    {
+      "kind": "fixed",
+      "text": "Account artwork no longer sits under the window controls."
+    },
+    {
+      "kind": "fixed",
+      "text": "Shared chats accept prompts again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Bots can be created again, from scratch or a preset, with the right model."
+    },
+    {
+      "kind": "fixed",
+      "text": "Bots ask for Gmail access and show connected accounts."
+    },
+    {
+      "kind": "fixed",
+      "text": "Starter credit is granted once your account is active."
+    },
+    {
+      "kind": "fixed",
+      "text": "Settings prefers the Claude CLI Matrix manages, and ChatGPT sign-ins recover."
+    }
+  ],
+  "hidden": [
+    2305,
+    2351,
+    2360,
+    2363,
+    2362,
+    2345,
+    2366,
+    2361,
+    2368,
+    2370,
+    2382,
+    2427,
+    2430,
+    2431,
+    2416,
+    2347,
+    2348,
+    2352,
+    2449,
+    2451,
+    2455,
+    2452,
+    2440,
+    2442,
+    2456,
+    2457,
+    2458,
+    2459,
+    2460,
+    2461,
+    2462,
+    2463,
+    2464,
+    2465,
+    2466,
+    2467,
+    2468,
+    2469,
+    2470,
+    2471,
+    2472,
+    2473,
+    2474,
+    2475,
+    2476,
+    2477,
+    2478,
+    2479,
+    2480,
+    2481,
+    2482,
+    2483,
+    2484,
+    2485,
+    2486,
+    2487,
+    2488,
+    2489,
+    2490,
+    2491,
+    2497,
+    2498,
+    2512,
+    2513,
+    2515,
+    2516,
+    2518,
+    2527,
+    2532,
+    2533,
+    2534,
+    2535,
+    2537,
+    2543,
+    2542,
+    2544,
+    2546,
+    2556,
+    2557,
+    2558,
+    2560,
+    2559,
+    2552,
+    2561,
+    2565,
+    2553,
+    2563,
+    2566,
+    2567,
+    2445,
+    2499,
+    2500,
+    2503,
+    2504,
+    2505,
+    2572,
+    2576,
+    2577,
+    2589,
+    2605,
+    2614,
+    2616,
+    2626,
+    2579,
+    2627,
+    2631,
+    2635
+  ]
+}

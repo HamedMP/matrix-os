@@ -1,0 +1,53 @@
+{
+  "version": "0.1.13",
+  "channel": "stable",
+  "date": "2026-10-07T00:08:39Z",
+  "locale": "en",
+  "title": "Manage your organization",
+  "shortTitle": "Organizations",
+  "summary": "Create and manage organizations in Matrix, with a cleaner view for people working alone.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Organization management",
+      "body": "Manage your organization and its members from the browser or the desktop app.",
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        2208,
+        2209,
+        2210
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "If you're not in an organization, organization-only options stay out of your way."
+    },
+    {
+      "kind": "improved",
+      "text": "Agent failures show a short, actionable explanation."
+    },
+    {
+      "kind": "new",
+      "text": "The mobile app prompts you when an update is ready."
+    },
+    {
+      "kind": "fixed",
+      "text": "Shared project chats stay consistent for everyone."
+    },
+    {
+      "kind": "fixed",
+      "text": "Saved bots open in their own conversation."
+    },
+    {
+      "kind": "fixed",
+      "text": "Bots start reliably."
+    }
+  ],
+  "hidden": [
+    2134,
+    2221
+  ]
+}

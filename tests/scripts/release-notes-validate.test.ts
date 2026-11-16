@@ -33,7 +33,7 @@ describe("release notes validator", () => {
   it("accepts every committed release-notes file", async () => {
     const result = await validateReleaseNotesDirectory(join(root, "release-notes"));
     expect(result.errors).toEqual([]);
-    expect(result.files).toContain("0.1.29.json");
+    expect(result.files).toContain("0.1.24.json");
   });
 
   it("reports malformed JSON, schema failures, name mismatches and missing media", async () => {
