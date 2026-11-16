@@ -189,3 +189,23 @@ it.each(['NaN', '-1', '1.5', '1e12', '9999999999999999'])('rejects an invalid in
  const response = await app.request('/internal/containers/launch/sites/event?runtimeSlot=primary', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-matrix-site-deadline': deadline }, body: '{}' });
  expect(response.status).toBe(400);
 });
+
+it('advertises disabled invitation readiness before publication without creating a site', async () => {
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ expect((await app.request(url)).status).toBe(401);
+ const response=await app.request(url,{headers:{authorization:'Bearer '+token}});
+ expect(response.status).toBe(200);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+ expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(await db.executor.selectFrom('public_sites').select('id').where('app_slug','=','not-published').execute()).toEqual([]);
+});
+it('reads readiness through verified machine authority and rejects untrusted query input', async () => {
+ const enabled=vi.fn(async()=>true);
+ const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:enabled}));
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ expect((await ready.request(url)).status).toBe(401);
+ expect(enabled).not.toHaveBeenCalled();
+ const response=await ready.request(url,{headers:{authorization:'Bearer '+token}});
+ expect(await response.json()).toEqual({privateEmailInvitations:true});
+ expect((await ready.request(url+'&enabled=true',{headers:{authorization:'Bearer '+token}})).status).toBe(400);
+});

@@ -128,3 +128,18 @@ describe('owner friendly-path availability', () => {
   expect(await failed.json()).toEqual({ error: 'Site unavailable' });
  });
 });
+
+it('reads uncached invitation readiness only for the owner before any publication',async()=>{
+ const capability=vi.fn(async()=>({privateEmailInvitations:false}));
+ const platform={request:vi.fn(),emailInvitationCapabilities:capability};
+ const path='/api/apps/event/site/email-invitation-capabilities';
+ expect((await ownerApp('collaborator',platform).request(path)).status).toBe(403);
+ expect(capability).not.toHaveBeenCalled();
+ const response=await ownerApp('owner',platform).request(path);
+ expect(response.status).toBe(200);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+ expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(platform.request).not.toHaveBeenCalled();
+ expect((await ownerApp('owner',platform).request(path+'?enabled=true')).status).toBe(400);
+ expect(await (await ownerApp().request(path)).json()).toEqual({privateEmailInvitations:false});
+});
