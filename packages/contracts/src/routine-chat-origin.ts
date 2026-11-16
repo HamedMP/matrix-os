@@ -2,12 +2,16 @@ import { z } from "zod/v4";
 import { CanonicalChatIdSchema, CanonicalChatMessageIdSchema } from "#canonical-chat";
 import { BotInteractionSchema, botInteractionPayloadByteLimit } from "#bots/interactions";
 import { IsoTimestampSchema } from "#contract-primitives";
-import { RoutineChatReceiptPartSchema } from "#routine-chat-receipt";
+import { isRoutineDirectBotId, RoutineChatReceiptPartSchema } from "#routine-chat-receipt";
 export { RoutineChatReceiptPartSchema, ROUTINE_DIRECT_CHAT_ID_PATTERN, ROUTINE_DIRECT_BOT_ID_PATTERN,
   isRoutineDirectChatId, isRoutineDirectBotId, type RoutineChatReceiptPart } from "#routine-chat-receipt";
 
 /** A presentation label for no-Bot schedules. It never identifies a Chat agent. */
 export const ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID = "bot_matrixschedules";
+/** Recognize the public label and retained preview display values. Never use for authorization. */
+export function isRoutineDirectScheduleDisplayBotId(value: string): boolean {
+  return value === ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID || isRoutineDirectBotId(value);
+}
 const ROUTINE_CHAT_ORIGIN_PAGE_LIMIT = 32;
 // Budget 1 KiB for the response envelope, 1 KiB per approval's metadata,
 // and 4 KiB per delivery including its escaped model label.

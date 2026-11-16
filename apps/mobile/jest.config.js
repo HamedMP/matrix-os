@@ -23,6 +23,7 @@ module.exports = {
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
     "^\\./client\\.js$": "<rootDir>/../../packages/ui/src/routine-action/client.ts",
+    "^\\./owner-browser-request\\.js$": "<rootDir>/../../packages/ui/src/routine-action/owner-browser-request.ts",
     "^\\./use-routine-action\\.js$": "<rootDir>/../../packages/ui/src/routine-action/use-routine-action.ts",
     "^\\./use-routine-destination\\.js$": "<rootDir>/../../packages/ui/src/routine-destination/use-routine-destination.ts",
     "^\\.\\./chat-agents/safe-http-status\\.js$": "<rootDir>/../../packages/ui/src/chat-agents/safe-http-status.ts",

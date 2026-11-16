@@ -1,4 +1,4 @@
-import { BotRoutineProposalSchema, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
+import { BotRoutineProposalSchema, isRoutineDirectScheduleDisplayBotId, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
@@ -27,6 +27,16 @@ export function routineStatusLabel(row: BotRoutineCenterItem): string {
   if (row.lastFire && ["claimed", "dispatched"].includes(row.lastFire.status)) return "Running";
   if (row.status === "paused") return row.lastFire?.status === "failed" ? "Paused after failure" : "Paused";
   return row.lastFire?.status === "failed" ? "Active · last run failed" : "Active";
+}
+
+/** Navigate only to Chat identities present in the owner-scoped schedule projection. */
+export function routineTaskChat(row: BotRoutineCenterItem) {
+  if (row.originAvailable && row.originChatId) {
+    return { chatId: row.originChatId, label: "Open source Chat" };
+  }
+  // Execution availability is separate from read-only access to a saved Bot Chat.
+  if (isRoutineDirectScheduleDisplayBotId(row.botId)) return null;
+  return { chatId: row.chatId, label: row.originChatId ? "Open Bot Chat" : "Open task Chat" };
 }
 
 /** Display only. The service checks the stored digest/source; parsing never grants approval. */
