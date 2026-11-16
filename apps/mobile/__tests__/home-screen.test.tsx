@@ -55,6 +55,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
   }),
 }));
 
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   useCanonicalChatDetail: () => ({ detail: mockDetail, computer: mockComputer }),
 }));

@@ -37,6 +37,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
     selectedProjectId: null,
   }),
 }));
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   useCanonicalChatDetail: () => ({
     detail: mockDetail,

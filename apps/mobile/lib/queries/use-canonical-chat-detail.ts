@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { fetchActiveComputer, fetchChatDetail, mobileQueryKeys } from "@/lib/requests";
+import { mergeChatReadState } from "@/lib/shared-chat-state";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 // Matches desktop's fallback poll: slow enough to stay out of the stream's way.
@@ -62,7 +63,10 @@ export function useCanonicalChatDetail(chatId: string | null) {
       // Streamed content may have moved the cache past this snapshot while it
       // was in flight; replacing it would rewind the text on screen.
       const cached = queryClient.getQueryData<CanonicalChatDetailResponse>(detailQueryKey);
-      return cached && cached.record.chat.revision > snapshot.record.chat.revision ? cached : snapshot;
+      // The snapshot's read state still counts: it has its own version.
+      return cached && cached.record.chat.revision > snapshot.record.chat.revision
+        ? { ...cached, record: mergeChatReadState(cached.record, snapshot.record) }
+        : snapshot;
     },
     // Events for a chat that is not open are not applied to it, so its cached
     // detail can be behind however recently it was fetched. Opening a chat

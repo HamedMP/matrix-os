@@ -69,6 +69,10 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   }),
 }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ chats: mockChats }) }));
+const mockMarkChatRead = jest.fn();
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({
+  useMarkChatRead: (...args: unknown[]) => mockMarkChatRead(...args),
+}));
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
   useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: false, isFetching: false }),
 }));
@@ -447,6 +451,13 @@ describe("chat screen: open chat", () => {
 
     expect(mockStartDraftChat).toHaveBeenCalledTimes(1);
     expect(mockStartDraftChat).toHaveBeenCalledWith();
+  });
+
+  it("marks the chat on screen read, so the chat lists stop showing it as Completed", () => {
+    openChat();
+    render(<ChatScreen />);
+
+    expect(mockMarkChatRead).toHaveBeenLastCalledWith(mockDetail);
   });
 
   it("takes the title from the chat list while the chat itself is still loading", () => {
