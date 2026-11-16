@@ -64,6 +64,20 @@ describe("applyCanonicalChatContent", () => {
     expect(initial.messages).toEqual([]);
   });
 
+  it("keeps the chat's read state when a frame carries none, and takes a newer one when it does", () => {
+    const unread = { unread: true, markedUnread: false, version: 2, readThroughSeq: 0, latestIncomingSeq: 1 };
+    const withReadState = { ...initial, record: { ...initial.record, readState: unread } };
+
+    const kept = applyCanonicalChatContent(withReadState, textDelta(2, 0, "hello"))!;
+    expect(kept.record.readState).toEqual(unread);
+    expect(kept.record.chat.revision).toBe(2);
+
+    const read = { ...unread, unread: false, version: 3, readThroughSeq: 1 };
+    const newer = frame(3, { messageDelta: { message: { ...message, parts: [{ type: "text", text: "!" }] }, partIndex: 0, offset: 5 } });
+    newer.content.record = { ...newer.content.record, readState: read };
+    expect(applyCanonicalChatContent(kept, newer)!.record.readState).toEqual(read);
+  });
+
   it("ignores frames the detail already reflects", () => {
     const applied = applyCanonicalChatContent(initial, textDelta(2, 0, "hello"))!;
 

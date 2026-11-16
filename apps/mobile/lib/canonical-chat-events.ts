@@ -1,5 +1,6 @@
 import {
   chatMessageVersionUrl,
+  chatReadStateVersionUrl,
   CanonicalChatTransportFrameSchema,
   type CanonicalChatContentFrame,
   type CanonicalChatStreamEvent,
@@ -262,7 +263,11 @@ export function createCanonicalChatEventSource(options: {
     },
     connect() {
       try {
-        streamUrl = chatMessageVersionUrl(buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" }));
+        // Without readStateVersion the gateway strips the read state from
+        // every streamed record, and an open chat could not be marked read.
+        streamUrl = chatReadStateVersionUrl(chatMessageVersionUrl(
+          buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" }),
+        ));
         assertSecureTokenTransport(streamUrl);
       } catch (error: unknown) {
         console.warn(
