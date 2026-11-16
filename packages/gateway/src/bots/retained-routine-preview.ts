@@ -1,14 +1,12 @@
 import { sql, type Transaction } from "kysely";
-import { BOT_MIGRATIONS } from "./database-migrations.js";
 import type { OwnerBotDatabase } from "./database.js";
 
-// These ID ranges were reserved by the direct-routine preview. The v15 runtime
-// cannot prove the extra source-Chat authority its internal coordinators require.
+// Keep preview coordinator identities fenced until the direct runtime can
+// verify source-Chat authority. Installing the schema gives no such authority.
 const coordinatorBot = /^bot_routine[a-f0-9]{32}$/;
 const coordinatorChat = /^chat_routine_[a-f0-9]{32}$/;
 export function isRetainedRoutineCoordinator(botId: string, chatId: string): boolean {
-  return (coordinatorBot.test(botId) || coordinatorChat.test(chatId))
-    && !BOT_MIGRATIONS.some(migration => migration.version === 17 && migration.name === "routine_direct_chat");
+  return coordinatorBot.test(botId) || coordinatorChat.test(chatId);
 }
 
 /** #3209 wrote these immutable ledger records on Dev before the v15 test build. */
