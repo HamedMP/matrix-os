@@ -33,11 +33,28 @@ export function useWebChatRailOrder(items: readonly RenameableConversation[], cl
   const move = (kind:"chat"|"project",source:string,target:string,visibleIds?:readonly string[])=> {
     if (!identity.current.mounted || identity.current.client !== client || identity.current.scopeKey !== scopeKey) return;
     const visible = visibleIds?.slice(0,1000);
+    if (visible && (!visible.includes(source) || !visible.includes(target))) return;
     const prior = current.mode === "manual" ? current.ids : chats.map(item=>item.id);
-    const ids = visible ? [...visible, ...prior.filter(id=>!visible.includes(id))].slice(0,1000) : chats.map(item=>item.id).slice(0,1000);
+    const ids = [...prior].slice(0,1000);
+    // Add newly paged rows around their visible anchors without moving saved rows.
+    visible?.forEach((id,index) => {
+      if (ids.includes(id)) return;
+      if (ids.length >= 1000) {
+        const evict = ids.findLastIndex(saved => !visible.includes(saved));
+        if (evict < 0) return;
+        ids.splice(evict,1);
+      }
+      const next = visible.slice(index + 1).find(saved => ids.includes(saved));
+      const previous = visible.slice(0,index).findLast(saved => ids.includes(saved));
+      const at = next !== undefined ? ids.indexOf(next) : previous !== undefined ? ids.indexOf(previous) + 1 : ids.length;
+      ids.splice(at,0,id);
+    });
     if (kind !== "chat" || source === target || !ids.includes(source) || !ids.includes(target)) return;
     // The first explicit reorder snapshots the visible automatic order.
-    setState({...current,mode:"manual",ids:moveRailItem(ids,source,target)});
+    const displayed = visible ?? ids;
+    const movedDown = displayed.indexOf(source) < displayed.indexOf(target);
+    const alreadyOrdered = movedDown ? ids.indexOf(source) > ids.indexOf(target) : ids.indexOf(source) < ids.indexOf(target);
+    setState({...current,mode:"manual",ids:alreadyOrdered ? ids : moveRailItem(ids,source,target)});
   };
   return {chats,manualIds:current.mode === "manual" ? current.ids : undefined,mode:current.mode,setMode,move,scopeKey:current.scopeKey};
 }
