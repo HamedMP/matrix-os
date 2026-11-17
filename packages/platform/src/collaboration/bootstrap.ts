@@ -28,6 +28,7 @@ import { collaborationRelayHandle, collaborationRuntimeOrigin } from "./runtime-
 import { PlatformCollaborationCutover } from "./cutover.js";
 import { createPlatformCutoverHomeResolver } from "./cutover-home-transport.js";
 import { createCompatibleDirectBuildVerifier } from "./compatible-build.js";
+import { fetchWithStaleConnectionRetry } from "../customer-vps-dispatcher.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -150,7 +151,8 @@ export async function bootstrapPlatformCollaboration(
       const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
       return collaborationRuntimeOrigin(machine, ownerId);
     },
-    relayFetch: (input, init) => fetch(input, {
+    // Pooled VPS connections can go stale; body-less GET/HEAD relay requests are replayed once.
+    relayFetch: (input, init) => fetchWithStaleConnectionRetry(fetch, input, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(10_000),
       dispatcher: options.customerVpsProxyDispatcher,

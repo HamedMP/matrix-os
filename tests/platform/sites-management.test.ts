@@ -7,6 +7,7 @@ import { createSitesService } from '../../packages/platform/src/sites/service.js
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { randomUUID } from 'node:crypto';
 import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
+import { seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
 let app: Hono;
 const secret = 's'.repeat(40);
@@ -52,23 +53,43 @@ it('preserves the legacy site response unless the gateway negotiates access mode
  expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
-it('preserves legacy access-link listings unless the gateway negotiates pagination',async()=>{
+it('lists and revokes legacy access links but refuses to create new ones for any client contract',async()=>{
  const siteId=randomUUID();
  await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-event',title:'Private event',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
  const url='/internal/containers/launch/sites/private-event/access-links?runtimeSlot=primary';
  const listUrl=`${url}&limit=50`;
  const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ const currentHeaders={...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
  expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
- const created=await app.request(url,{method:'POST',headers,body:JSON.stringify({baseRevision:1})});
- expect(created.status).toBe(200);
- const value=await created.json() as {link:{id:string};url:string};
- expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
+ for(const requestHeaders of [headers,currentHeaders]){
+  const created=await app.request(url,{method:'POST',headers:requestHeaders,body:JSON.stringify({baseRevision:1})});
+  expect(created.status).toBe(410);
+  expect(await created.json()).toEqual({error:'One-time links are no longer available'});
+ }
+ expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
+ const seeded=await seedLegacyAccessLink(db,siteId);
  const listed=await (await app.request(listUrl,{headers})).json();
- expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
- expect(JSON.stringify(listed)).not.toContain('#access=');
- expect(await (await app.request(listUrl,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}})).json()).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
- expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
+ expect(listed).toEqual({links:[expect.objectContaining({id:seeded.linkId,status:'unclaimed'})]});
+ expect(JSON.stringify(listed)).not.toContain(seeded.secret);
+ expect(await (await app.request(listUrl,{headers:currentHeaders})).json()).toEqual({links:[expect.objectContaining({id:seeded.linkId,status:'unclaimed'})],nextCursor:null});
+ expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${seeded.linkId}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
  expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
+});
+
+it('maps a switch into one-time links to a generic gone response while legacy private sites stay editable',async()=>{
+ const publicId=randomUUID();
+ const privateId=randomUUID();
+ await db.executor.insertInto('public_sites').values([
+  {id:publicId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'public-switch',title:'Public',description:'',slug:null,revision:1,status:'published',access_mode:'public',active_version:null,created_at:new Date().toISOString()},
+  {id:privateId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-keep',title:'Private',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()},
+ ]).execute();
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json',[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
+ const refused=await app.request('/internal/containers/launch/sites/public-switch?runtimeSlot=primary',{method:'PATCH',headers,body:JSON.stringify({accessMode:'private_link',baseRevision:1})});
+ expect(refused.status).toBe(410);
+ expect(await refused.json()).toEqual({error:'One-time links are no longer available'});
+ const kept=await app.request('/internal/containers/launch/sites/private-keep?runtimeSlot=primary',{method:'PATCH',headers,body:JSON.stringify({title:'Private renamed',accessMode:'private_link',baseRevision:1})});
+ expect(kept.status).toBe(200);
+ expect(await kept.json()).toMatchObject({title:'Private renamed',accessMode:'private_link',revision:2});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{

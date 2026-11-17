@@ -17,6 +17,16 @@ describe('owner publishing authentication',()=>{
  it('returns no publication and validates app paths',async()=>{expect((await ownerApp().request('/api/apps/event/site')).status).toBe(404);expect((await ownerApp().request('/api/apps/%24evil/site')).status).toBe(400);});
  it('fails safely when publication services are missing',async()=>{const response=await ownerApp('owner',null).request('/api/apps/event/site');expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Site unavailable'});});
  it('caps every mutation before JSON parsing',async()=>{const response=await ownerApp().request('/api/apps/event/site',{method:'DELETE',body:'x'.repeat(20000)});expect(response.status).toBe(413);});
+ it('relays the retired one-time link refusal as a generic gone response',async()=>{
+  const {SitePlatformError}=await import('../../packages/gateway/src/sites/platform-client.js');
+  const platform={request:vi.fn().mockRejectedValue(new SitePlatformError(410)),createAccessLink:vi.fn().mockRejectedValue(new SitePlatformError(410))};
+  const app=ownerApp('owner',platform);
+  for(const [path,method,body] of [['/api/apps/event/site/access-links','POST',{baseRevision:4}],['/api/apps/event/site','PATCH',{accessMode:'private_link',baseRevision:4}]] as const){
+   const response=await app.request(path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+   expect(response.status).toBe(410);
+   expect(await response.json()).toEqual({error:'One-time links are no longer available'});
+  }
+ });
  it('validates and forwards owner access-link management without exposing platform details',async()=>{
   const linkId=randomUUID();
   const platform={request:vi.fn(),accessLinks:vi.fn().mockResolvedValue({links:[],nextCursor:null}),createAccessLink:vi.fn().mockResolvedValue({link:{id:linkId},url:'https://matrix.page/link'}),revokeAccessLink:vi.fn().mockResolvedValue(undefined)};

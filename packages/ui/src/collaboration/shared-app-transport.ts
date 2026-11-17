@@ -52,29 +52,66 @@ interface PendingMutation {
   action: unknown;
 }
 
+/** A launch request already sent for this target; settled so it never rejects unobserved. */
+export interface SharedAppInitialLaunch {
+  clientRequestId: string;
+  result: Promise<{ ok: true; value: unknown } | { ok: false; error: unknown }>;
+}
+
+/** Sends the idempotent launch request for a target whose build and share revision are already known. */
+export function startSharedAppLaunch(
+  platform: Pick<SharedAppPlatformApi, "post">,
+  scopeId: string,
+  expected: { buildId: string; shareRevision: string },
+): SharedAppInitialLaunch {
+  const clientRequestId = crypto.randomUUID();
+  const result = Promise.resolve()
+    .then(() => platform.post(`/api/collaboration/shared-apps/${encodeURIComponent(scopeId)}/launch`, {
+      clientRequestId,
+      expectedShareRevision: expected.shareRevision,
+      expectedBuildId: expected.buildId,
+    }))
+    .then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+  return { clientRequestId, result };
+}
+
 export function createSharedAppTransport(input: {
   platform: SharedAppPlatformApi;
   direct: Pick<CollaborationDirectClient, "request" | "subscribeEvents" | "close">;
   target: SharedAppTarget;
+  /** Consumed by the first `launch()`; later launches retry with the same client request id. */
+  initialLaunch?: SharedAppInitialLaunch;
 }): SharedAppTransport {
   const target = CollaborativeAppDirectoryItemSchema.parse(input.target);
   const base = `/api/collaboration/scopes/${target.scopeId}/apps/${encodeURIComponent(target.appId)}`;
-  let launchRequestId: string | null = null;
+  let initialLaunch = input.initialLaunch ?? null;
+  let launchRequestId: string | null = initialLaunch?.clientRequestId ?? null;
   let uncertain: PendingMutation[] = [];
   let pendingConflict = false;
   const inFlight = new Set<string>();
 
-  const launch = async () => {
+  const requestLaunch = async (): Promise<unknown> => {
+    const started = initialLaunch;
+    initialLaunch = null;
+    if (started) {
+      const settled = await started.result;
+      if (!settled.ok) throw settled.error;
+      return settled.value;
+    }
     launchRequestId ??= crypto.randomUUID();
+    return input.platform.post(
+      `/api/collaboration/shared-apps/${target.scopeId}/launch`,
+      {
+        clientRequestId: launchRequestId,
+        expectedShareRevision: target.shareRevision,
+        expectedBuildId: target.buildId,
+      },
+    );
+  };
+
+  const launch = async () => {
     try {
-      const response = CollaborativeAppLaunchResponseSchema.parse(await input.platform.post(
-        `/api/collaboration/shared-apps/${target.scopeId}/launch`,
-        {
-          clientRequestId: launchRequestId,
-          expectedShareRevision: target.shareRevision,
-          expectedBuildId: target.buildId,
-        },
-      ));
+      const response = CollaborativeAppLaunchResponseSchema.parse(await requestLaunch());
       if (response.target.scopeId !== target.scopeId || response.target.appId !== target.appId
         || response.target.buildId !== target.buildId || response.target.shareRevision !== target.shareRevision) {
         throw new SharedAppTransportError("invalid_response", false);

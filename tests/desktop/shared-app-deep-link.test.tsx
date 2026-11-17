@@ -4,20 +4,22 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isSharedAppOpenPath, parseSharedAppDesktopUrl, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "../../desktop/src/main/shared-app-deep-link";
+import { CollaborationDirectError } from "../../packages/ui/src/collaboration/direct-client";
 
 // Outcome: a copied org link opens the shared app in the Matrix desktop app.
 // Faults: accepting a malformed or foreign deep link, leaking display hints
-// into IPC, losing a cold-start link, a non-main window taking the link, and a
-// link opening an app the member's directory does not list.
+// into IPC, losing a cold-start link, a non-main window taking the link, a
+// link opening an app the member's directory does not list, and the opener
+// paging the member's whole directory before opening one linked app.
 
 const SCOPE = "10000000-0000-4000-8000-000000000001";
 const BUILD = "b".repeat(64);
 const SCHEMES = ["matrixos", "matrix-os"];
 
-const directory = vi.hoisted(() => ({ value: { items: [] as unknown[], loaded: false, unavailable: false, hasMore: false, loading: false, loadMore: (() => undefined) as () => void } }));
+const platform = vi.hoisted(() => ({ api: null as { get: (path: string) => Promise<unknown> } | null }));
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
-vi.mock("../../desktop/src/renderer/src/features/collaboration/useSharedLauncherApps", () => ({ useSharedLauncherApps: () => directory.value }));
+vi.mock("../../desktop/src/renderer/src/features/collaboration/DesktopCollaborationOrganization", () => ({ useDesktopCollaborationApi: () => platform.api }));
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({ invoke: vi.fn(async () => ({ link: null })), onEvent: vi.fn(() => () => undefined) }));
 
 describe("org link contract", () => {
@@ -130,60 +132,83 @@ describe("main-process router", () => {
 });
 
 describe("renderer opener", () => {
-  beforeEach(() => { toastError.mockClear(); directory.value = { items: [], loaded: false, unavailable: false, hasMore: false, loading: false, loadMore: () => undefined }; });
+  beforeEach(() => { toastError.mockClear(); platform.api = null; });
   afterEach(cleanup);
 
   const target = { scopeId: SCOPE, runtimeId: "runtime_owner", organizationId: "org_finna", authorityGeneration: 1, appId: "sales-crm",
     catalogId: "30000000-0000-4000-8000-000000000001", readinessId: "40000000-0000-4000-8000-000000000001",
     registrationIncarnation: "a".repeat(64), buildId: BUILD, shareRevision: "1", owner: { actorId: "user_owner", displayName: "Owner" } };
-
-  it("opens a scope the member's directory lists", async () => {
-    const { SharedAppDeepLinkOpener, usePendingSharedAppLink } = await import("../../desktop/src/renderer/src/features/collaboration/shared-app-deep-links");
+  const platformWith = (lookup: (path: string) => Promise<unknown>) => {
+    const get = vi.fn(lookup);
+    platform.api = { get };
+    return get;
+  };
+  const opener = async () => {
+    const module = await import("../../desktop/src/renderer/src/features/collaboration/shared-app-deep-links");
     const { useTabs } = await import("../../desktop/src/renderer/src/stores/tabs");
     const { useConnection } = await import("../../desktop/src/renderer/src/stores/connection");
-    useConnection.setState({ organizationStatus: "member", organizationId: "org_finna" });
-    directory.value = { ...directory.value, items: [target], loaded: true };
+    useConnection.setState({ organizationStatus: "member", organizationId: "org_finna", userId: "user_member" });
+    return { ...module, useTabs };
+  };
+
+  it("opens a scope with one lookup of that scope instead of paging the directory", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, useTabs } = await opener();
+    const get = platformWith(async () => target);
     usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
     render(<SharedAppDeepLinkOpener />);
     await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ sharedAppTarget: target })])));
+    expect(get.mock.calls).toEqual([[`/api/collaboration/shared-apps/${SCOPE}?fields=display`]]);
     expect(usePendingSharedAppLink.getState().link).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("never opens a scope the directory does not list", async () => {
-    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, NOT_SHARED_WITH_YOU } = await import("../../desktop/src/renderer/src/features/collaboration/shared-app-deep-links");
-    const { useTabs } = await import("../../desktop/src/renderer/src/stores/tabs");
-    const { useConnection } = await import("../../desktop/src/renderer/src/stores/connection");
-    useConnection.setState({ organizationStatus: "member", organizationId: "org_finna" });
+  // Fault: a link-opened window titled from the slug while the launcher showed the owner's name.
+  it("titles a link-opened app with the owner's app name", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, useTabs } = await opener();
+    platformWith(async () => ({ ...target, name: "Team Tracker" }));
+    usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
+    render(<SharedAppDeepLinkOpener />);
+    await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Team Tracker" })])));
+  });
+
+  it("never opens a scope the platform says is not shared with the member", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, NOT_SHARED_WITH_YOU, useTabs } = await opener();
     const before = useTabs.getState().tabs.length;
-    directory.value = { ...directory.value, items: [], loaded: true };
+    platformWith(async () => { throw new CollaborationDirectError("not_found"); });
     usePendingSharedAppLink.getState().set({ scopeId: "10000000-0000-4000-8000-000000000009" });
     render(<SharedAppDeepLinkOpener />);
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(NOT_SHARED_WITH_YOU));
     expect(useTabs.getState().tabs.length).toBe(before);
+    expect(usePendingSharedAppLink.getState().link).toBeNull();
   });
 
-  it("keeps paging the directory before treating a scope as not shared", async () => {
-    const { SharedAppDeepLinkOpener, usePendingSharedAppLink } = await import("../../desktop/src/renderer/src/features/collaboration/shared-app-deep-links");
-    const { useConnection } = await import("../../desktop/src/renderer/src/stores/connection");
-    useConnection.setState({ organizationStatus: "member", organizationId: "org_finna" });
-    const loadMore = vi.fn();
-    directory.value = { ...directory.value, items: [], loaded: true, hasMore: true, loadMore };
+  it("does not claim no access when the lookup itself fails", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, NOT_SHARED_WITH_YOU, useTabs } = await opener();
+    const before = useTabs.getState().tabs.length;
+    platformWith(async () => { throw new CollaborationDirectError("unavailable"); });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
     render(<SharedAppDeepLinkOpener />);
-    await waitFor(() => expect(loadMore).toHaveBeenCalled());
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn’t open the shared app. Try again."));
+    expect(toastError).not.toHaveBeenCalledWith(NOT_SHARED_WITH_YOU);
+    expect(useTabs.getState().tabs.length).toBe(before);
+  });
+
+  it("waits for a signed-in platform client before looking anything up", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink } = await opener();
+    platform.api = null;
+    usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
+    render(<SharedAppDeepLinkOpener />);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(toastError).not.toHaveBeenCalled();
     expect(usePendingSharedAppLink.getState().link).toEqual({ scopeId: SCOPE });
     usePendingSharedAppLink.getState().set(null);
   });
 
   it("rejects a link made before sharing was restarted", async () => {
-    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, OUTDATED_LINK } = await import("../../desktop/src/renderer/src/features/collaboration/shared-app-deep-links");
-    const { useTabs } = await import("../../desktop/src/renderer/src/stores/tabs");
-    const { useConnection } = await import("../../desktop/src/renderer/src/stores/connection");
-    useConnection.setState({ organizationStatus: "member", organizationId: "org_finna" });
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, OUTDATED_LINK, useTabs } = await opener();
     const before = useTabs.getState().tabs.length;
-    directory.value = { ...directory.value, items: [{ ...target, shareRevision: "2" }], loaded: true };
+    platformWith(async () => ({ ...target, shareRevision: "2" }));
     usePendingSharedAppLink.getState().set({ scopeId: SCOPE, expectedShareRevision: "1" });
     render(<SharedAppDeepLinkOpener />);
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(OUTDATED_LINK));

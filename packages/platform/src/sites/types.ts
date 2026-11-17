@@ -46,5 +46,6 @@ export interface SiteOwner {
     authenticatedRuntime?: { handle: string; runtimeSlot: string; runtimeTokenEpoch: number };
 }
 export class SiteError extends Error {
-    constructor(public code: 'conflict' | 'not_found' | 'unavailable' | 'invalid_request') { super(`Site ${code}`); }
+    /** `gone` marks a retired capability (one-time links, ENG-490); routes map it to a generic 410. */
+    constructor(public code: 'conflict' | 'not_found' | 'unavailable' | 'invalid_request' | 'gone') { super(`Site ${code}`); }
 }

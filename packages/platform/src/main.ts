@@ -18,6 +18,7 @@ import {
 } from '@matrix-os/observability';
 import type Dockerode from 'dockerode';
 import { Agent } from 'undici';
+import { createCustomerVpsProxyDispatcher } from './customer-vps-dispatcher.js';
 import { z } from 'zod/v4';
 import {
   type PlatformDB,
@@ -184,15 +185,9 @@ const containerProxyDispatcher = new Agent({
   connections: 64,
 });
 
-const customerVpsProxyDispatcher = new Agent({
-  pipelining: 0,
-  keepAliveTimeout: 1,
-  keepAliveMaxTimeout: 1,
-  connections: 64,
-  connect: {
-    rejectUnauthorized: shouldVerifyCustomerVpsTls(),
-  },
-});
+// Customer VPS origins are stable per machine, so this pool keeps warm TLS
+// connections; see customer-vps-dispatcher.ts for the stale-socket policy.
+const customerVpsProxyDispatcher = createCustomerVpsProxyDispatcher({ verifyTls: shouldVerifyCustomerVpsTls() });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 
 const SocialSendBodySchema = z.object({
