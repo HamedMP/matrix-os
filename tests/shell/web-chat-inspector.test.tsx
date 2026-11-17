@@ -181,6 +181,7 @@ it('reopens the current file and saved Side chat from the New tab Recent list', 
  fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
  fireEvent.click(screen.getByRole('button',{name:'MobileNav.tsxdesktop/src/nav/MobileNav.tsx'}));
  expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
+ expect(screen.queryByRole('tab',{name:'New tab'})).toBeNull();
  fireEvent.keyDown(screen.getByRole('button',{name:'Add inspector tab'}),{key:'Enter'});
  fireEvent.click(await screen.findByRole('menuitem',{name:/^Side chat/}));
  await screen.findByRole('note');
@@ -188,6 +189,7 @@ it('reopens the current file and saved Side chat from the New tab Recent list', 
  fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
  fireEvent.click(screen.getByRole('button',{name:'Side chatSaved conversation'}));
  expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
+ expect(screen.queryByRole('tab',{name:'New tab'})).toBeNull();
 });
 function terminalApi(){
  const workspaceId=`tws_${"a".repeat(32)}`;let created=0;

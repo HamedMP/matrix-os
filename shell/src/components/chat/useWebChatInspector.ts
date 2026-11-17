@@ -171,7 +171,7 @@ export function useWebChatInspector({
       ...current,
       selected: tab.id,
       tabs: current.tabs.some((item) => item.id === tab.id)
-        ? current.tabs
+        ? current.tabs.filter((item) => item.kind !== "new")
         : [...current.tabs.filter((item) => item.kind !== "new").slice(-(MAX_TABS - 1)), tab],
     }));
   useEffect(() => {
