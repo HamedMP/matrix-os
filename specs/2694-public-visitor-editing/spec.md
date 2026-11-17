@@ -130,7 +130,12 @@ When a limit is exceeded the response is `429 Try again later`. The kill switch 
   - **Undo all from this visitor** (same `source_hash`, chosen window).
   - **Undo since time T.**
 
-  A revert runs in one transaction and works per row, never per log entry. It groups the selected entries by `(table, id)` and orders each group by `row_version`, newest first. Each group must form an unbroken chain: every selected entry's `row_version_before` equals the next older one's `row_version_after`, and the newest entry's `row_version_after` equals the row's current `row_version`. When that holds, the row is restored once to the oldest selected entry's before-image, with an `UPDATE … WHERE id = :id AND row_version = :current`. A broken chain means someone outside the selection edited the row in between, so the whole row is skipped and reported. Selected edits are never partly undone around another person's change. An undone delete re-inserts the full before-image, and is skipped if the `id` already exists. A revert advances revisions once through `recordAppDataChange`.
+  A revert runs in one transaction and works per row, never per log entry. It groups the selected entries by `(table, id)` and orders each group by `row_version_before`, newest first. Within a group the selected entries must chain: each entry's `row_version_before` equals the next older entry's `row_version_after`. A broken chain means someone outside the selection edited the row in between, so the whole row is skipped and reported, and selected edits are never partly undone around another person's change. A delete logs `row_version_after` as null. What happens next depends on how the group ends:
+  - **Newest entry is an update.** The current row must exist with `row_version` equal to that entry's `row_version_after`. The row is restored once to the oldest selected entry's `before`, with `UPDATE … WHERE id = :id AND row_version = :current`.
+  - **Newest entry is a delete.** The check is that the `id` is absent; there is no current version to compare. The row is re-inserted from the delete's full before-image, with declared columns overlaid from the oldest selected entry's `before`, using `INSERT … ON CONFLICT (id) DO NOTHING`. Zero rows inserted means someone recreated the `id`, so the row is skipped and reported.
+  - **Oldest entry is the visitor's insert.** Undoing returns the row to not existing. If the row is present, it is deleted with `WHERE id = :id AND row_version = :current` under the update-ending check above. If the group already ends in that visitor's delete, nothing is written.
+
+  A revert advances revisions once through `recordAppDataChange`.
 - Audit events: grant changes, kill switch use, reverts, quota trips and denied write classes. Telemetry stays coarse (`access_mode`, `visitor_access`, outcome), with no row content.
 
 ## Stored XSS and content safety
@@ -198,7 +203,7 @@ Deploy surfaces: the Cloudflare Worker (edge-router), platform Cloud Run (routes
 - Republishing with a migrated schema causes an old open tab's writes to return `Reload to continue`, with no write landing.
 - Turning editing off denies the next write within one request. Unpublish closes reads and writes. Stopping the org share leaves public access unchanged, and vice versa.
 - With the owner VPS stopped, visitors see the unavailable state and unsaved edits stay marked. After restart, the same data returns.
-- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else. Two edits by one visitor to the same row undo to the value before the first edit. Undoing a visitor delete restores the full row, including undeclared columns.
+- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else. Two edits by one visitor to the same row undo to the value before the first edit. Undoing a visitor delete restores the full row, including undeclared columns, and so does undoing a visitor's update followed by their delete of the same row.
 - Quota or rate breaches return 429 and the maps stay at their caps under a load test. A visitor `<img onerror>` title renders as text in the owner app. Errors never include Postgres, path or provider text.
 - Integration test: the real Worker handler → platform routes → HMAC → gateway → Postgres (551 harness), with fault injection for timeout, digest drift and revoke races.
 
