@@ -358,7 +358,7 @@ function compareAcceptedSequence(left: CollaborationAiRequest, right: Collaborat
 }
 
 function requestStateLabel(state: CollaborationAiRequest["state"]): string {
-  return state === "queued" ? "Waiting for the current reply" : state === "claimed" || state === "running"
+  return state === "queued" ? "Preparing reply…" : state === "claimed" || state === "running"
     ? "Working…" : state === "waiting_for_approval" ? "Tool approval needed" : state.replaceAll("_", " ");
 }
 

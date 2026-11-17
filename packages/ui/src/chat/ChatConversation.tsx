@@ -103,6 +103,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   // (history prepended above) while the reader is away from the live edge,
   // the viewport shifts by the prepended height so the visible row stays put.
   useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
     const viewport = viewportRef.current;
     let observedContent: Element | null = null;
     let settleFrame: number | undefined;
@@ -159,16 +160,16 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
       if (delta > 0) viewport.scrollTop += delta;
     };
 
-    const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(scrollIfPinned);
+    const resizeObserver = new ResizeObserver(scrollIfPinned);
     const prependObserver = new MutationObserver(preserveOnPrepend);
     const observeContent = () => {
       const content = viewport?.firstElementChild;
       if (!viewport || !content || content === observedContent) return;
-      resizeObserver?.disconnect();
+      resizeObserver.disconnect();
       prependObserver.disconnect();
       observedContent = content;
       firstRowRef.current = content.firstElementChild;
-      resizeObserver?.observe(content);
+      resizeObserver.observe(content);
       prependObserver.observe(content, { childList: true });
       scrollIfPinned();
     };
@@ -180,7 +181,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
 
     return () => {
       mutationObserver.disconnect();
-      resizeObserver?.disconnect();
+      resizeObserver.disconnect();
       prependObserver.disconnect();
       if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame);
     };

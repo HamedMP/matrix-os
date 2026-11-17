@@ -9,6 +9,22 @@ import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "../bots/selection.js";
 
 const CLAUDE_CHAT_INSTANCE_ID = "claude_code_default";
 
+/** Internal native model lookup; the saved shared selection remains unchanged. */
+export function createSharedNativeModelResolver(input: {
+  providerCatalog: Pick<ChatProviderCatalogService, "resolveExecutionModel">;
+  ownerId: string;
+  decision: SharedRunOwnerSourceDecision;
+  selection: CanonicalChatModelSelection;
+}) {
+  return async (model: string): Promise<string | null> => {
+    if (model !== input.selection.model) return null;
+    return input.providerCatalog.resolveExecutionModel?.(
+      { userId: input.ownerId, source: "jwt" },
+      catalogChatSelectionForOwnerAuthority(input.decision, input.selection),
+    ) ?? null;
+  };
+}
+
 /** Resolve current owner authority and validate the executable selection without creating a run. */
 export function createSharedProviderAuthorityResolver(options: {
   ownerSource: Pick<SharedRunOwnerSource, "authority">;

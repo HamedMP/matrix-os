@@ -39,6 +39,24 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe("shared Chat AI controls", () => {
+  it("does not send or clear a prompt when Enter confirms an IME composition", async () => {
+    const updateDraft = vi.fn();
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
+      post: vi.fn(async () => ({ request: request(), resourceRevision: "5" })), delete: vi.fn() };
+    render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor" resourceRevision="4"
+      draft={{ text: "你好", mode: "ai" }} updateDraft={updateDraft} changeDraftMode={vi.fn()}
+      discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
+    const input = await screen.findByLabelText("Message Chat");
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(api.post).not.toHaveBeenCalled();
+    expect(updateDraft).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
+  });
   it("lets project members compose immediately while status refresh is pending or offline", async () => {
     let reject!: (error: Error) => void;
     const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(() => new Promise((_, fail) => { reject = fail; })),

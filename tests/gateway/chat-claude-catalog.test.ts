@@ -3,6 +3,8 @@ import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createClaudeModelCatalogSource } from "../../packages/gateway/src/chat/claude-model-catalog.js";
+import { createSharedNativeModelResolver } from "../../packages/gateway/src/collaboration/shared-provider-authority.js";
+import type { SharedRunOwnerSourceDecision } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import { EventEmitter } from "node:events";
 import { KyselyPGlite } from "kysely-pglite";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
@@ -30,6 +32,21 @@ function catalogService(overrides: Partial<Parameters<typeof createChatProviderC
 }
 
 describe("Claude catalog selection and CLI handoff", () => {
+  it("resolves a legacy standalone shared instance without replacing its saved binding", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },
+    ] });
+    const selection = { instanceId: "claude_shared", model: "opus" };
+    const decision: SharedRunOwnerSourceDecision = { authorityKind: "standalone_policy", policyRevision: "1",
+      settingsRevision: "1", routeGeneration: "a".repeat(64), harness: "claude_code", modelId: "opus",
+      providerInstanceId: "claude_shared", providerAccessSourceId: "owner_claude_profile", accessSourceId: "owner_claude_profile",
+      allowedModelIds: ["opus"], effectiveSubmitMode: "members" };
+    const resolve = createSharedNativeModelResolver({ providerCatalog: catalogService({ codingModelCatalogSource: source }),
+      ownerId: principal.userId, decision, selection });
+    expect(await resolve("opus")).toBe("claude-opus-5");
+    expect(await resolve("invented")).toBeNull();
+    expect(selection).toEqual({ instanceId: "claude_shared", model: "opus" });
+  });
   it("keeps the selectable alias but resolves isolated execution to the native wire model", async () => {
     const source = createClaudeModelCatalogSource({ discover: async () => [
       { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },

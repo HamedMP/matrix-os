@@ -280,6 +280,7 @@ export function createScopeRuntimeBroker(options: {
       const nativeIdentity = nativeProfile
         ? await resolveClaudeIdentity(AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)])) : null;
       if ((!apiKey && !authToken && !nativeIdentity) || (apiKey && authToken)) {
+        console.warn("[collaboration] selected inference identity unavailable", { nativeProfile });
         return failure(request.requestId, "provider_unavailable");
       }
       const baseUrl = nativeProfile ? "https://api.anthropic.com"
@@ -335,6 +336,7 @@ export function createScopeRuntimeBroker(options: {
         : await send();
       if (response === "denied") return failure(request.requestId, "action_denied");
       if (!response.ok) {
+        console.warn("[collaboration] shared inference upstream unavailable", { status: response.status, nativeProfile });
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }

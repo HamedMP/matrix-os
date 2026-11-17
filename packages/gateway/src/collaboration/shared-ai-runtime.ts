@@ -1,5 +1,5 @@
 import { createSharedScopedClient } from "./shared-scoped-client.js";
-import { createSharedProviderAuthorityResolver, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
+import { createSharedNativeModelResolver, createSharedProviderAuthorityResolver, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
 export { canonicalChatSelectionForOwnerAuthority, catalogChatSelectionForOwnerAuthority, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
 import {
   CanonicalChatModelSelectionSchema,
@@ -415,9 +415,8 @@ export async function createSharedAiRuntime(options: {
               actorId: context.actorId,
               providerIdentity,
               ...(execution.driverKind === "claude_code" && options.providerCatalog?.resolveExecutionModel ? {
-                resolveExecutionModel: (model: string) => options.providerCatalog!.resolveExecutionModel!(
-                  { userId: context.ownerId, source: "jwt" }, { ...execution.selection, model },
-                ),
+                resolveExecutionModel: createSharedNativeModelResolver({ providerCatalog: options.providerCatalog,
+                  ownerId: context.ownerId, decision: ownerDecision, selection: execution.selection }),
               } : {}),
               ...(ownerDecision.authorityKind === "provider_settings_active"
                 ? { ownerRoute: ownerDecision }
