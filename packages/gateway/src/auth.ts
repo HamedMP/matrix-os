@@ -122,6 +122,7 @@ const WS_QUERY_TOKEN_PATHS = [
   "/ws/terminal/events",
   "/ws/onboarding",
   "/ws/vocal",
+  "/ws/voice/live",
 ];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [
   /^\/api\/canvases\/[^/]+\/ws$/,
