@@ -20,6 +20,7 @@ import {
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
   canonicalChatApprovals,
+  canonicalChatDisplayedIncomingSeq,
   canonicalChatExecutionControls,
 } from "@matrix-os/contracts";
 import {
@@ -653,6 +654,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const switchConversation = useCallback((chatId: string) => {
     if (!isCurrent()) return;
+    if (activeChatIdRef.current === chatId) {
+      void loadDetail(chatId);
+      return;
+    }
     setDraftProjectId(undefined);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
@@ -662,7 +667,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, [setActiveChatId, setDraftProjectId, isCurrent]);
+  }, [setActiveChatId, setDraftProjectId, isCurrent, loadDetail]);
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;
@@ -923,7 +928,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: selectedDetail?.record.readState,
-    displayedThroughSeq: Math.max(0, ...(selectedDetail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    displayedThroughSeq: canonicalChatDisplayedIncomingSeq(selectedDetail?.messages ?? []),
     updateReadState,
     messages,
     sessionId: activeChatId,
@@ -940,6 +945,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     composerIdentity,
     isCurrentAuthority: isCurrent,
     botEventRevision,
+    routineOriginChat: selectedDetail?.record.chat,
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
     steerQueuedTurn,

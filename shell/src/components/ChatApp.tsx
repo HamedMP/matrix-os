@@ -1,4 +1,5 @@
 "use client";
+import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
@@ -15,7 +16,7 @@ import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChat
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
@@ -182,6 +183,7 @@ interface ChatAppProps {
   composerIdentity?: object;
   isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
+  routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   navigationFresh?:boolean;
   navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
@@ -236,7 +238,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -270,6 +272,12 @@ function ChatAppContent({
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
   if (agentDraftRequest && agentDraftRequest.ownerIdentity !== draftIdentity) setAgentDraftRequest(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
+  const submitScope = useMemo(() => ({ composerScope, draftIdentity, authorityKey }), [composerScope, draftIdentity, authorityKey]);
+  const liveSubmitScope = useRef<typeof submitScope | null>(null);
+  useLayoutEffect(() => {
+    liveSubmitScope.current = submitScope;
+    return () => { liveSubmitScope.current = null; };
+  }, [submitScope]);
   const startNewChat = (projectId?: string) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     botDraftNavigation.clearNotice();
@@ -399,12 +407,24 @@ function ChatAppContent({
   useEffect(() => {
     writeHermesSetup(selectedChannels);
   }, [selectedChannels]);
+  const routineOriginEligible = Boolean(agentClient?.bots?.routineOrigin) && !botIdentityUnknown && routineOriginChatEligible({
+    chat: routineOriginChat?.id === sessionId ? routineOriginChat : undefined, ordinary: !collaborationView && botBinding.status === "ordinary",
+    fresh: navigationFresh === true && (isCurrentAuthority?.() ?? false),
+  });
+  const routineOriginScope = useMemo(()=>({client:agentClient,authorityKey,sessionId}),[agentClient,authorityKey,sessionId]);
+  const routineOrigin = useRoutineOrigin({client:agentClient?.bots?.routineOrigin,chatId:sessionId,eligible:routineOriginEligible,revision:botEventRevision,identity:routineOriginScope});
+  const routineApprovals = routineApprovalPlacement(routineOrigin.view, grouped.map(group => group.type === "tool_group"
+    ? { id: group.messages[0]!.id }
+    : { id: group.message.id, boundary: group.message.role === "user" || Boolean(group.message.routineReceipt || group.message.scheduledMessage) }));
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
     mentionOptions?: ChatSubmitOptions,
   ) => {
-    if (botIdentityUnknown) return Promise.resolve(false);
+    // Attachment reads can finish after this composer has left its Chat or draft.
+    if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
+      return Promise.resolve(false);
+    }
     if (directBotId) {
       if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
       return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
@@ -742,14 +762,18 @@ function ChatAppContent({
             <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+                <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.earlier} notices={false} earlier />
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
+                  const id = group.type === "tool_group" ? group.messages[0]!.id : group.message.id;
+                  const inlineApprovals = routineApprovals.after.get(id);
+                  const review = inlineApprovals ? <div className="mt-5"><RoutineOriginApprovals state={routineOrigin} items={inlineApprovals} notices={false}/></div> : null;
                   if (group.type === "tool_group") {
-                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
+                    return <div key={`tg-${id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/>{review}</div>;
                   }
                   const msg = group.message;
                   return (
                     <div key={msg.id}>
-                      {msg.role === "user" || msg.scheduledMessage ? (
+                      {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" || msg.scheduledMessage ? (
                         <Message from="user">
                           {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
@@ -798,6 +822,7 @@ function ChatAppContent({
                       )}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
+                    {review}
                     </div>
                   );
                 }}</BotTranscriptMessages>
@@ -812,6 +837,8 @@ function ChatAppContent({
                     </div>
                   </div>
                 )}
+                <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.currentChanges} notices={false} label="Pending schedule changes" />
+                <RoutineOriginApprovals state={routineOrigin} items={[]} />
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>

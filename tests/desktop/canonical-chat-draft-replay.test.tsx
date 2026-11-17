@@ -20,6 +20,19 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it.each(["work tab", "hosted work surface"])("opts the %s stream into live routine receipts", async (surface) => {
+  const openStream = vi.fn<ApiClient["openStream"]>(() => new Promise<Response>(() => {}));
+  useConnection.setState({ api: { baseUrl: "https://matrix.test", openStream, get: vi.fn(async () => ({ items: [] })) } as unknown as ApiClient });
+  render(surface === "work tab"
+    ? <WorkTab route="chat" initialChatView="draft" active />
+    : <WorkSurfaceRuntimeProvider active><span>Hosted Chat</span></WorkSurfaceRuntimeProvider>);
+  await waitFor(() => expect(openStream).toHaveBeenCalled());
+  const path = openStream.mock.calls[0]![0];
+  const stream = new URL(path, "https://matrix.test");
+  expect(stream.pathname).toBe("/api/chats/events");
+  expect(stream.searchParams.get("routineReceiptVersion")).toBe("1");
+});
+
 it("defers a hidden draft seed, consumes it once when active and accepts a newer intent", async () => {
   const client = createCanonicalChatWorkspaceClient();
   const onDraftConsumed = vi.fn();

@@ -51,6 +51,7 @@ import {
   buildBillingSetupPath,
   buildForwardedQueryString,
   buildPostAuthRedirectPath,
+  routineChatAuthReturnPath,
   getPlatformShellAssetUpstreamPath,
   getAuthShellOrigin,
   isAppDomainGatewayPath,
@@ -668,7 +669,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
-      if (isAppDomain && allowAuthShellUnroutedIdentity) {
+      const routineChatTarget = isAppDomain && (c.req.method === 'GET' || c.req.method === 'HEAD')
+        ? routineChatAuthReturnPath(c.req.url) : null;
+      if (isAppDomain && allowAuthShellUnroutedIdentity && !routineChatTarget) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
       }
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
@@ -695,7 +698,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, routineChatTarget ?? buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
     }
 
     if (isAppDomain) {
