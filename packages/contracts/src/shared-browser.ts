@@ -46,6 +46,7 @@ export const SharedBrowserMcpActionInputSchema = z.object({
 }).strict();
 
 /** Keep model-facing action guidance identical across direct and MCP harnesses. */
+export const SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE = "Browser action unavailable. Its effect is uncertain. Check the current Browser state and verify the outcome before continuing. Never replay an uncertain action.";
 export const SHARED_BROWSER_TERMINAL_GUIDANCE = "If the tool says the Browser run ended, do not wait for or suggest Resume. Stop Browser calls in this run and report only verified results.";
 export const SHARED_BROWSER_PUBLIC_GUIDANCE = 'When the user asks to use only public pages, make your first Browser action after status {"action":"tab_new","context":"public","url":"https://example.com"}, using the intended public HTTPS URL. This keeps all Browser actions in a separate context for the run. No sign-in or downloads. If unavailable, report it and do not fall back to the owner session.';
 
