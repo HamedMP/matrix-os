@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createProjectManager } from "../../packages/gateway/src/project-manager";
 import { createCodingAgentFilePreviewWiring } from "../../packages/gateway/src/coding-agents/file-preview-wiring";
 import { createFilePreviewRoutes } from "../../packages/gateway/src/file-preview-routes";
+import { fileSearch } from "../../packages/gateway/src/file-search";
 import { Hono } from "hono";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -20,6 +21,40 @@ vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 vi.mock("@clerk/nextjs",()=>({useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
 vi.mock("../../shell/src/components/chat-provider-onboarding",()=>({ChatProviderOnboarding:({children}:{children:React.ReactNode})=><>{children}</>}));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
+it('reveals a selected file through an ancestor beyond the first directory window', async () => {
+ const entries=Array.from({length:1002},(_,index)=>({name:`folder_${index.toString().padStart(4,'0')}`,type:'directory'}));
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>Response.json({entries:url.includes('path=folder_1001')?[{name:'preview.txt',type:'file'}]:entries})));
+ render(<WebChatInspector {...inspectorProps({filePath:'folder_1001/preview.txt'})}/>);
+ expect((await screen.findByRole('treeitem',{name:'preview.txt'})).getAttribute('aria-selected')).toBe('true');
+});
+it('searches unopened project folders through the bounded Gateway file search', async () => {
+ const homePath=await realpath(await mkdtemp(join(tmpdir(),'eng461-file-search-')));
+ try {
+  await mkdir(join(homePath,'projects/preview/repo/src'),{recursive:true});
+  await writeFile(join(homePath,'projects/preview/repo/src/preview.txt'),'Preview');
+  const app=new Hono().get('/api/files/search',async c=>c.json(await fileSearch(homePath,{q:c.req.query('q')!,path:c.req.query('path'),limit:Number(c.req.query('limit'))})));
+  const request=vi.fn(async(url:string)=>{
+   const parsed=new URL(url);
+   if(parsed.pathname.endsWith('/files/search'))return app.request(parsed.pathname+parsed.search);
+   if(parsed.pathname.endsWith('/files-location'))return Response.json({path:'projects/preview/repo'});
+   return Response.json({entries:[{name:'src',type:'directory'}]});
+  }); vi.stubGlobal('fetch',request);
+  const open=vi.fn();
+  render(<WebChatInspector {...inspectorProps({project:{id:'project_preview',slug:'preview'},onFilePathChange:open})}/>);
+  await screen.findByRole('treeitem',{name:'src'});
+  fireEvent.click(screen.getByRole('button',{name:'Filter files'}));
+  fireEvent.change(screen.getByRole('searchbox',{name:'Filter files'}),{target:{value:'preview.txt'}});
+  fireEvent.click(await screen.findByRole('button',{name:'Open search result src/preview.txt'}));
+  expect(open).toHaveBeenCalledWith('src/preview.txt');
+  expect(request.mock.calls.some(([url])=>{const parsed=new URL(url);return parsed.pathname.endsWith('/files/search')&&parsed.searchParams.get('path')==='projects/preview/repo'&&Number(parsed.searchParams.get('limit'))<=500;})).toBe(true);
+ } finally {cleanup();await rm(homePath,{recursive:true,force:true});}
+});
+it('does not offer an unavailable desktop inspector on phones',()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[]})));
+ render(<ChatApp mobile messages={[]} sessionId="chat_mobile" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+ expect(screen.queryByRole('button',{name:'Toggle chat inspector'})).toBeNull();
+});
 
 it("covers the chat pane in a narrow floating window instead of leaving an unusable sliver", () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: [] })));
@@ -79,7 +114,7 @@ it("ignores a saved terminal binding after its runtime tab was deleted", async (
 });
 
 it("opens a folder with more than 1,000 files using a bounded visible window", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index.toString().padStart(4,"0")}`, type: "file" })) })));
+  vi.stubGlobal("fetch", vi.fn(async (url:string) => Response.json(url.includes("/files/search?") ? {results:[{name:"file_0000",path:"file_0000",type:"file"}],truncated:false} : { entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index.toString().padStart(4,"0")}`, type: "file" })) })));
   render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
     filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
     sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
@@ -91,7 +126,7 @@ it("opens a folder with more than 1,000 files using a bounded visible window", a
   expect(screen.getAllByRole("treeitem")).toHaveLength(2);
   fireEvent.click(screen.getByRole("button",{name:"Filter files"}));
   fireEvent.change(screen.getByRole("searchbox",{name:"Filter files"}),{target:{value:"file_0000"}});
-  expect(await screen.findByRole("treeitem",{name:"file_0000"})).toBeTruthy();
+  expect(await screen.findByRole("button",{name:"Open search result file_0000"})).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -264,12 +299,13 @@ it.each([false,true])('opens a canonical project chat file through the actual sl
 });
 
 it('keeps file filtering behind the project-root action and clears it when closed',async()=>{
- vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[{name:'alpha.txt',type:'file'},{name:'beta.txt',type:'file'}]})));
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>Response.json(url.includes('/files/search?')?{results:[{name:'alpha.txt',path:'alpha.txt',type:'file'}],truncated:false}:{entries:[{name:'alpha.txt',type:'file'},{name:'beta.txt',type:'file'}]})));
  render(<WebChatInspector {...inspectorProps()}/>);
  await screen.findByRole('treeitem',{name:'alpha.txt'});
  expect(screen.queryByRole('searchbox',{name:'Filter files'})).toBeNull();
  fireEvent.click(screen.getByRole('button',{name:'Filter files'}));
  fireEvent.change(screen.getByRole('searchbox',{name:'Filter files'}),{target:{value:'alpha'}});
+ expect(await screen.findByRole('button',{name:'Open search result alpha.txt'})).toBeTruthy();
  expect(screen.queryByRole('treeitem',{name:'beta.txt'})).toBeNull();
  fireEvent.click(screen.getByRole('button',{name:'Close file filter'}));
  expect(screen.queryByRole('searchbox',{name:'Filter files'})).toBeNull();

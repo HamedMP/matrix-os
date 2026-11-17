@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
 import { ChatInspectorFileRoot } from "@matrix-os/ui";
 import { z } from "zod/v4";
+import { WebChatFileSearch } from "./WebChatFileSearch";
 
 const FileEntrySchema = z
   .object({
@@ -60,7 +61,8 @@ function FileBranch({
         // The existing endpoint returns the directory. Retain only one window, filtering before slicing.
         const matching = all.filter(entry => entry.type === "directory" || entry.name.toLowerCase().includes(query.toLowerCase()))
           .sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1);
-        const selected = !query && offset === undefined ? matching.findIndex(entry => (path ? `${path}/${entry.name}` : entry.name) === selectedPath) : -1;
+        const nextSegment = selectedPath && (!path || selectedPath.startsWith(`${path}/`)) ? selectedPath.slice(path ? path.length + 1 : 0).split("/")[0] : undefined;
+        const selected = !query && offset === undefined ? matching.findIndex(entry => entry.name === nextSegment) : -1;
         const requested = offset ?? (selected < 0 ? 0 : Math.floor(selected / 1000) * 1000);
         const start = Math.min(requested, Math.floor(Math.max(0, matching.length - 1) / 1000) * 1000);
         setEntries(matching.slice(start, start + 1000));
@@ -185,7 +187,7 @@ function FileTree({
     <>
       <ChatInspectorFileRoot label={rootLabel} value={query} onChange={setQuery}/>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        <FileBranch
+        {query.trim() ? <WebChatFileSearch key={rootPath} gatewayUrl={gatewayUrl} rootPath={rootPath} query={query.trim()} onOpenFile={onOpenFile}/> : <FileBranch
           key={rootPath}
           gatewayUrl={gatewayUrl}
           path={rootPath}
@@ -196,7 +198,7 @@ function FileTree({
           selectedPath={selectedPath ? [rootPath, selectedPath].filter(Boolean).join("/") : undefined}
           revealKey={revealKey}
           onOpenFile={onOpenFile}
-        />
+        />}
       </div>
     </>
   );
