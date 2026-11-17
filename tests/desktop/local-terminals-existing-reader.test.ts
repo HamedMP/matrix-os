@@ -90,6 +90,12 @@ describe("existing Mac terminal read", () => {
     await expect(reader.read("t1", new AbortController().signal)).rejects.toThrow();
   });
 
+  it("allows a complete empty screen for an active watch", async () => {
+    const { host } = start({ screen: { ...output, text: " \u202e\x1b[0m " } });
+    const reader = await host.openExistingTerminalReader();
+    await expect(reader.read("t1", new AbortController().signal, { allowEmpty: true })).resolves.toBe("");
+  });
+
   it.each([
     { ...primary, state: "finished" },
     { ...primary, created_ms: 180_000 },
@@ -115,6 +121,7 @@ describe("existing Mac terminal read", () => {
     const { host, core, openSocket } = start();
     const reader = await host.openExistingTerminalReader();
     core.socket.emit("close");
+    expect(() => reader.assertConnected()).toThrow("Local terminal connection changed");
     await expect(reader.assertCurrent("t1", new AbortController().signal)).rejects.toThrow();
     await expect(reader.read("t1", new AbortController().signal)).rejects.toThrow();
     expect(openSocket).toHaveBeenCalledTimes(1);

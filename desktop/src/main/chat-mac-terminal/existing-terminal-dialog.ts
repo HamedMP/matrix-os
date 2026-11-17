@@ -59,3 +59,23 @@ export async function approveExistingMacTerminal(
   });
   return result.response === 1;
 }
+
+export async function approveMacTerminalWatch(
+  window: BrowserWindow, context: MacTerminalContext, terminal: TerminalChoice, signal: AbortSignal,
+): Promise<boolean> {
+  if (window.isDestroyed() || signal.aborted) return false;
+  const result = await showMacActivityDialog(window, {
+    type: "question",
+    message: "Watch this Mac terminal?",
+    detail: [
+      `Terminal ${terminal.title} (${terminal.id})`,
+      `Chat ${context.chatId} · Worktree ${context.worktreeId}`,
+      "Watch the visible screen in this Chat for up to five minutes. The output stays on this Mac. You can stop at any time.",
+    ].join("\n\n"),
+    buttons: ["Cancel", "Watch locally"],
+    cancelId: 0,
+    defaultId: 0,
+    signal,
+  });
+  return result.response === 1;
+}

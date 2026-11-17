@@ -9,7 +9,12 @@ const output = "approved local output\nonly from t7";
 
 function setup() {
   const activity = { update: vi.fn(), finish: vi.fn() };
-  const reader = { terminals: [terminal, other], read: vi.fn().mockResolvedValue(output), assertCurrent: vi.fn().mockResolvedValue(undefined) };
+  const reader = {
+    terminals: [terminal, other],
+    read: vi.fn().mockResolvedValue(output),
+    assertCurrent: vi.fn().mockResolvedValue(undefined),
+    assertConnected: vi.fn(),
+  };
   const lease = { check: vi.fn().mockResolvedValue(true), close: vi.fn() };
   const deps = {
     enabled: true,
