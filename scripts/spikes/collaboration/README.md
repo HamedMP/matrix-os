@@ -70,7 +70,7 @@ provider responses or private content.
 | CPUQuota | 200% |
 | TasksMax | 256 |
 | Writable storage maximum | 10,737,418,240 bytes isolated tmpfs |
-| Supported adapter and harness version | `claude-code`; Agent SDK `0.3.301`; native harness `2.1.301` |
+| Supported adapter and harness version | `claude-code`; Agent SDK `0.3.240`; native harness `2.1.240` |
 | Unrestricted baseline result | Failed as required: owner home, fake owner sentinel, foreign processes, direct network/DNS, and supervisor socket were exposed |
 | Fixed-profile result | Passed every file, environment, process, descriptor, network, DNS, broker, supervisor-injection, and child-inheritance check |
 | SDK/broker result | Passed one real `query()` turn through the Unix-socket `inference.messages` fixture; rejected `host.fetch` |
@@ -80,7 +80,12 @@ The disposable host was still running bundle `v2026.09.07-1176` because the
 current application bundle failed to activate independently of this experiment.
 The workflow therefore uploaded the immutable probe scripts from the commit
 above and required the host's installed Agent SDK to equal the same head's
-pinned `0.3.301` dependency before accepting the result.
+pinned `0.3.240` dependency before accepting the result.
+
+The ENG-29 Opus 5.5 compatibility update pins SDK `0.3.301` and native
+harness `2.1.301`. The historical run above does not qualify that upgrade.
+Its current worker/binary tests and live acceptance are tracked in
+[PR #3473](https://github.com/HamedMP/matrix-os/pull/3473).
 
 ## Probe coverage
 
