@@ -9,8 +9,8 @@ import type {
  */
 export interface ShareSiteClient {
   get(app: string, signal: AbortSignal): Promise<SiteRecord | null>;
-  deploy(app: string, metadata: { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number; reviewedConfig: SitePublishing }, signal: AbortSignal): Promise<SiteRecord>;
-  update(app: string, metadata: { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number }, signal: AbortSignal): Promise<SiteRecord>;
+  deploy(app: string, metadata: { title: string; description: string; slug: string | null; accessMode?: SiteRecord["accessMode"]; baseRevision?: number; reviewedConfig: SitePublishing }, signal: AbortSignal): Promise<SiteRecord>;
+  update(app: string, metadata: { title: string; description: string; slug: string | null; accessMode?: SiteRecord["accessMode"]; baseRevision?: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
   accessLinks(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteAccessLinksResponse>;

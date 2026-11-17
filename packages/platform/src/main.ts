@@ -78,7 +78,7 @@ import {
   createUnavailableStripeBillingClient,
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
-import { registerSiteRoutes } from './sites/registration.js';
+import { registerSiteRoutesIfConfigured } from './sites/registration.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -692,7 +692,7 @@ export function createApp(deps: {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
 
-  registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
+  registerSiteRoutesIfConfigured(app, { db, platformSecret, storage: deps.sitesObjectStore,
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
     dispatcher: customerVpsProxyDispatcher, env: appEnv, captureEvent: capturePlatformEvent });
 

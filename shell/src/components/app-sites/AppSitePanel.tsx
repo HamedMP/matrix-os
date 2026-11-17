@@ -24,9 +24,9 @@ function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSl
   const [title, setTitle] = useState(site?.title ?? appSlug);
   const [description, setDescription] = useState(site?.description ?? "");
   const [slug, setSlug] = useState(site?.slug ?? "");
-  const [accessModeOverride, setAccessModeOverride] = useState<"public" | "private_link" | null>(null);
+  const [accessModeOverride, setAccessModeOverride] = useState<SiteRecord["accessMode"] | null>(null);
   const accessMode = accessModeOverride ?? site?.accessMode ?? "public";
-  const setAccessMode = (value: "public" | "private_link") => setAccessModeOverride(value);
+  const setAccessMode = (value: SiteRecord["accessMode"]) => setAccessModeOverride(value);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [config, setConfig] = useState<SitePublishing | null>(null);
@@ -118,14 +118,14 @@ function ShareInviteSection({ appSlug, client, state, disabled, ownerIdentity, o
 }
 
 function SiteMetadataFields({ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }: {
-  fieldId: string; disabled: boolean; title: string; description: string; slug: string; accessMode: "public" | "private_link"; invalid: boolean;
-  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; setAccessMode: (value: "public" | "private_link") => void; invalidateReview: () => void;
+  fieldId: string; disabled: boolean; title: string; description: string; slug: string; accessMode: SiteRecord["accessMode"]; invalid: boolean;
+  setTitle: (value: string) => void; setDescription: (value: string) => void; setSlug: (value: string) => void; setAccessMode: (value: SiteRecord["accessMode"]) => void; invalidateReview: () => void;
 }) { return <fieldset disabled={disabled} className="space-y-3">
       <Input label="Title" id={`${fieldId}-title`} maxLength={200} value={title} onChange={event => { setTitle(event.target.value); invalidateReview(); }} />
       <Input label="Description" id={`${fieldId}-description`} maxLength={1000} value={description} onChange={event => { setDescription(event.target.value); invalidateReview(); }} />
       <Input label="Friendly path (optional)" id={`${fieldId}-slug`} maxLength={63} placeholder="matrix-launch" value={slug} onChange={event => { setSlug(event.target.value); invalidateReview(); }} />
       <p className="text-xs">matrix.page/{slug || "your-permanent-id"}</p>
-      <label className="block space-y-1 text-sm" htmlFor={`${fieldId}-access`}><span className="font-medium">Access</span><select id={`${fieldId}-access`} className="block w-full rounded border bg-transparent p-2" value={accessMode} onChange={event => { setAccessMode(event.target.value as "public" | "private_link"); invalidateReview(); }}><option value="public">Public</option><option value="private_link">Private — one-time links</option></select></label>
+      <label className="block space-y-1 text-sm" htmlFor={`${fieldId}-access`}><span className="font-medium">Access</span><select id={`${fieldId}-access`} className="block w-full rounded border bg-transparent p-2" value={accessMode} onChange={event => { setAccessMode(event.target.value as SiteRecord["accessMode"]); invalidateReview(); }}><option value="public">Public</option><option value="private_link">Private — one-time links</option></select></label>
       {invalid && slug ? <p className="text-xs">Use 2–63 lowercase letters, numbers, or hyphens, starting with a letter. Some paths are reserved.</p> : null}
     </fieldset>; }
 function SiteDeploymentReview({ config, reviewed, setReviewed }: { config: SitePublishing | null; reviewed: boolean; setReviewed: (value: boolean) => void }) {
@@ -174,7 +174,7 @@ function SitePublicLinks({ site, disabled, action }: { site: SiteRecord | null; 
 }
 function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }: SiteSectionProps & {
   invalid: boolean; reviewed: boolean; previewReady: boolean; config: SitePublishing | null;
-  metadata: { title: string; description: string; slug: string | null; accessMode: "public" | "private_link"; baseRevision?: number }; review: () => Promise<void>;
+  metadata: { title: string; description: string; slug: string | null; accessMode: SiteRecord["accessMode"]; baseRevision?: number }; review: () => Promise<void>;
 }) {
   const { site, pending, mutate } = state;
   const published = site?.status === "published";
