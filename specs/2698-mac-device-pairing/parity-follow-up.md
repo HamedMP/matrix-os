@@ -4,12 +4,12 @@
 
 | Area | Existing code | Smallest remaining acceptance |
 | --- | --- | --- |
-| Device identity | Matrix account login and the pairing operation in this change | Use a signed client and an isolated Matrix Computer with real device sign-in. Bind proof of the paired key and current pairing revision to device-action admission. Confirm that disconnect revokes that permission. |
+| Device identity | Matrix login, key enrollment, and revision-bound action proofs for existing native Chat actions | Use a signed client and an isolated Matrix Computer with real device sign-in. Confirm local disconnect and remote revocation cancel an approved action. |
 | Existing terminal | The Mac's private `herdr-core` host already lists and attaches to local sessions for the native Terminal. The Chat check creates its own PTY. | Let the owner select a running Terminal from the native client and give one worktree Chat a short, read-only attachment. Test that closing, replacing or choosing another terminal invalidates it. |
 | Interactive input | `hc` attach has flow control and bidirectional I/O. Hosted CLI support can address a known hosted terminal independently. | Add input only after the attachment check is proven. Allow one active writer, surface who holds input, and release it locally on Take Over or Stop. Prove that input queued under an old attachment cannot arrive after takeover or reconnect. |
 | Chat close and restart | The running Mac client polls the approved Chat and can retry a pending receipt with the same request key. Activity history is scoped to the account and Computer. | Exercise close/reopen and reconnect with the existing terminal attachment. A Mac process restart keeps the pairing and history and revokes active grants. Preserve that behavior. |
 
-An initial device-bound action should keep the existing short-lived native consent, owner/Computer/Chat/worktree checks, result idempotency and Stop behavior. Scope it to verified device proof and the pairing revision before allowing selection or input on an existing terminal. Prototype admission, device registration and actual cross-machine terminal control are independently verifiable milestones.
+The existing device-bound actions keep short-lived native consent, owner/Computer/Chat/worktree checks, idempotent receipts and Stop. Reuse these checks for a read-only existing Terminal attachment before adding live input.
 
 ## Local GUI
 

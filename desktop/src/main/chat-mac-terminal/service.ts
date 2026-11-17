@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MacTerminalContext, MacTerminalRequest } from "../chat-electron-preview/transport";
+import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { ChatTerminalProbe } from "../local-terminals/chat-terminal-probe";
 import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
 import type {
@@ -8,6 +9,7 @@ import type {
 
 interface Dependencies {
   enabled: boolean;
+  acquireActionPairing?: MacActionPairing;
   readTerminalContext(target: PrepareMacTerminalCheck, signal?: AbortSignal): Promise<MacTerminalContext | null>;
   isTerminalContextCurrent(context: MacTerminalContext): boolean;
   readTerminalRequest(target: RunMacTerminalCheck, signal?: AbortSignal): Promise<MacTerminalRequest | null>;
@@ -34,6 +36,8 @@ interface Grant {
   expiry: number;
   state: "ready" | "checking" | "used";
   operation: AbortController;
+  pairing?: MacActionPairingLease;
+  onRevoked(): void;
   activity?: MacActivityHandle;
   disposeTimer: ReturnType<typeof setTimeout>;
 }
@@ -63,7 +67,9 @@ export function createChatMacTerminalService(deps: Dependencies) {
     if (grant !== current) return Promise.resolve();
     grant = null;
     clearTimeout(current.disposeTimer);
+    current.operation.signal.removeEventListener("abort", current.onRevoked);
     current.operation.abort(reason);
+    current.pairing?.close();
     const result = disposeTerminal(current, reason).finally(() => { disposing = null; });
     disposing = { chatId: current.context.chatId, result };
     return result;
@@ -77,6 +83,7 @@ export function createChatMacTerminalService(deps: Dependencies) {
 
   async function prepareGrant(target: PrepareMacTerminalCheck, operation: AbortController): Promise<PrepareMacTerminalCheckReply> {
     let activity: MacActivityHandle | undefined;
+    let pairing: MacActionPairingLease | null | undefined;
     let consent = operation.signal;
     let completion: MacActivityPhase = "failed";
     try {
@@ -95,6 +102,13 @@ export function createChatMacTerminalService(deps: Dependencies) {
         completion = "declined";
         return { status: "declined" };
       }
+      if (deps.acquireActionPairing) {
+        pairing = await deps.acquireActionPairing(operation, consent);
+        if (!pairing || consent.aborted || !deps.isTerminalContextCurrent(context)) {
+          completion = "revoked";
+          return { status: "unavailable" };
+        }
+      }
       const terminal = await deps.prepareTerminal();
       if (consent.aborted || !deps.isTerminalContextCurrent(context)) {
         completion = "revoked";
@@ -104,10 +118,14 @@ export function createChatMacTerminalService(deps: Dependencies) {
       const expiry = Date.now() + GRANT_WINDOW;
       const current: Grant = {
         context, terminal, expiry, targetId: randomUUID(), state: "ready", operation, activity,
+        pairing: pairing ?? undefined,
+        onRevoked: () => { void release(current, "revoked"); },
         disposeTimer: setTimeout(() => { void release(current, "expired"); }, GRANT_WINDOW),
       };
       current.disposeTimer.unref();
       grant = current;
+      operation.signal.addEventListener("abort", current.onRevoked, { once: true });
+      pairing = undefined;
       activity?.update("ready");
       activity = undefined;
       return { status: "ready", targetId: current.targetId, terminalId: terminal.id, expiresAt: expiry };
@@ -116,6 +134,7 @@ export function createChatMacTerminalService(deps: Dependencies) {
       deps.reportError?.(error);
       return { status: "failed" };
     } finally {
+      pairing?.close();
       activity?.finish(consent.aborted ? canceledPhase(consent) : completion);
     }
   }
@@ -142,12 +161,16 @@ export function createChatMacTerminalService(deps: Dependencies) {
         || request.scopeKey !== current.context.scopeKey || !deps.isTerminalContextCurrent(current.context)
         || !deps.isTerminalRequestCurrent(request)) return { status: "unavailable" };
 
-      current.state = "used";
       signal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+      if (current.pairing && !await current.pairing.check(signal)) return { status: "unavailable" };
+      if (grant !== current || signal.aborted || !deps.isTerminalContextCurrent(current.context)
+        || !deps.isTerminalRequestCurrent(request)) return { status: "unavailable" };
+      current.state = "used";
       current.activity?.update("running");
       const output = await current.terminal.run(signal);
       if (output !== "Darwin") throw new Error("unexpected one-time Mac terminal output");
-      if (grant !== current || signal.aborted || !deps.isTerminalRequestCurrent(request)
+      const pairingValid = !signal.aborted && (!current.pairing || await current.pairing.check(signal));
+      if (!pairingValid || grant !== current || signal.aborted || !deps.isTerminalRequestCurrent(request)
         || !deps.isTerminalContextCurrent(current.context)) {
         completion = "revoked";
         return { status: "unavailable" };

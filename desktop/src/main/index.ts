@@ -730,6 +730,7 @@ if (!gotLock) {
         showMacActivityMenu?.(macBackgroundChecksActive, Boolean(macActivity && getMacActivityScope()));
       };
       const chatDeviceTransport = createChatElectronPreviewTransport(auth);
+      const acquireActionPairing = desktopPairing?.acquireActionPairing ?? (async () => null);
       const chatElectronPreview = registerChatElectronPreview(ipcMain, {
         allowed: macDeveloperBuild,
         checkout: previewCheckout,
@@ -737,6 +738,7 @@ if (!gotLock) {
         electronPath: app.getPath("exe"),
         auth,
         transport: chatDeviceTransport,
+        acquireActionPairing,
         beginActivity: macActivity?.begin,
         window: () => mainWindow ?? terminalWindowController.current(),
         isTrustedSender: (event) => !drainingMacActivity && senderRole(windowSenders, event) === "main",
@@ -763,6 +765,7 @@ if (!gotLock) {
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
         auth,
         transport: chatDeviceTransport,
+        acquireActionPairing,
         beginActivity: macActivity?.begin,
         tryBackgroundPreview: chatElectronPreview.tryBackgroundPreview,
         host: localTerminalHost,

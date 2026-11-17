@@ -56,6 +56,17 @@ export class DesktopPairingRepository {
     };
   }
 
+  async readRegisteredKey(deviceId: string, revision: number) {
+    const row = await this.bounded(tx => tx.selectFrom("desktop_pairings")
+      .select("public_key")
+      .where("owner_id", "=", this.scope.ownerId)
+      .where("machine_id", "=", this.scope.machineId)
+      .where("device_id", "=", deviceId)
+      .where("revision", "=", revision)
+      .executeTakeFirst());
+    return row?.public_key ?? null;
+  }
+
   async pair(deviceId: string, publicKey: string, revision: number) {
     const nextRevision = revision + 1;
     if (!Number.isSafeInteger(nextRevision)) return null;
