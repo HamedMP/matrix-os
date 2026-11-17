@@ -612,9 +612,9 @@ describe("Work Files and Terminal inspector", () => {
     expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
   });
 
-  it("opens side chat from the inspector shortcut without creating a main turn", () => {
+  it.each([{key:"s"},{key:"ß",code:"KeyS"}])("opens side chat from the inspector shortcut without creating a main turn (%o)", (event) => {
     render(<WorkFilesInspector detail={detail("chat_shortcut")} projects={[]} active />);
-    fireEvent.keyDown(window, { key: "s", metaKey: true, altKey: true });
+    fireEvent.keyDown(window, { ...event, metaKey: true, altKey: true });
     expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
     expect(useConnection.getState().api!.post).not.toHaveBeenCalled();
   });

@@ -281,7 +281,7 @@ export function useWebChatInspector({
       return;
     const key = event.key.toLowerCase();
     const kind =
-      event.metaKey && event.altKey && key === "s"
+      event.metaKey && event.altKey && (key === "s" || event.code === "KeyS")
         ? "side-chat"
         : event.metaKey && !event.altKey && key === "p"
           ? "files"
