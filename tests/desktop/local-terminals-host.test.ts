@@ -381,6 +381,88 @@ describe("local terminal host against a scripted core", () => {
     // Nothing is left attached for a dead terminal.
     expect(host.input(sink.closed.mock.calls[0]![0] as number, "x", false)).toBe(false);
   });
+
+  function probing() {
+    const { host, cores } = start((core, call) => {
+      if (call.method === "terminal.run") core.reply(call.id, { result: { address: "t24" } });
+      if (call.method === "terminal.attach") core.reply(call.id, { result: { channel: 24 } });
+      if (call.method === "terminal.kill") core.reply(call.id, { result: {} });
+    });
+    const core = () => cores[0]!;
+    const input = () => core().sent.frames.filter((frame) => frame.kind === HC_FRAME.DATA);
+    const output = (data: string) => core().stream(24, HC_FRAME.DATA, Buffer.from(data));
+    const attached = () => vi.waitFor(() => {
+      expect(core().sent.calls.find((call) => call.method === "terminal.attach")?.params.terminal).toBe("t24");
+    });
+    return { host, core, cores, input, output, attached };
+  }
+
+  it("waits before sending the trigger, ignores unverified output and closes only the dedicated check", async () => {
+    const { host, core, input, output, attached } = probing();
+    const probe = await host.prepareChatTerminalProbe();
+    const runCall = core().sent.calls.find((call) => call.method === "terminal.run")!;
+    const argv = runCall.params.argv as string[];
+    expect(runCall.params.labels).toEqual({ "matrix.title": "Mac terminal check" });
+    expect(argv.slice(0, 5)).toEqual(["/usr/bin/env", "-i", "/bin/bash", "--noprofile", "--norc"]);
+    expect(argv[6]).toContain("/usr/bin/uname -s");
+    expect(probe.id).toBe("t24");
+    expect(input()).toHaveLength(0);
+
+    const run = probe.run(new AbortController().signal);
+    const completed = vi.fn();
+    void run.then(completed, completed);
+    await attached();
+    output(`MATRIX_MAC_PROBE_RESULT:${argv.at(-1)}:Darwin:\r\n`);
+    expect(input()).toHaveLength(0);
+    output("Mac terminal check ready\r\nMATRIX_MAC_PROBE_");
+    output(`READY:${argv.at(-1)}:\x1b[4;1H`);
+    await vi.waitFor(() => expect(input().map((frame) => [frame.channel, frame.payload.toString("ascii")])).toEqual([[24, `${argv.at(-2)}\r`]]));
+    output("Darwin\r\nMATRIX_MAC_PROBE_RESULT:wrong:Darwin:\r\n");
+    output(`MATRIX_MAC_PROBE_RESULT:${argv.at(-1)}:Darwinfoo:\r\n`);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completed).not.toHaveBeenCalled();
+    output(`MATRIX_MAC_PROBE_RESULT:${argv.at(-1)}:Dar`);
+    output("win:\r\n");
+    await expect(run).resolves.toBe("Darwin");
+    await expect(probe.run(new AbortController().signal)).rejects.toThrow();
+    expect(input()).toHaveLength(1);
+    await Promise.all([probe.dispose(), probe.dispose()]);
+    expect(core().sent.calls.filter((call) => call.method === "terminal.kill").map((call) => call.params)).toEqual([{ terminal: "t24" }]);
+  });
+
+  it("releases the attachment on cancel and ignores late readiness", async () => {
+    const { host, core, input, output, attached } = probing();
+    const probe = await host.prepareChatTerminalProbe();
+    const controller = new AbortController();
+    const failure = expect(probe.run(controller.signal)).rejects.toThrow();
+    await attached();
+    controller.abort();
+    await failure;
+    expect(core().sent.frames.find((frame) => frame.kind === HC_FRAME.CLOSE)?.channel).toBe(24);
+    output("Mac terminal check ready\r\n");
+    expect(input()).toHaveLength(0);
+    await probe.dispose();
+  });
+
+  it("rejects an oversized output instead of waiting indefinitely for a frame", async () => {
+    const { host, output, attached } = probing();
+    const probe = await host.prepareChatTerminalProbe();
+    const failure = expect(probe.run(new AbortController().signal)).rejects.toThrow("output");
+    await attached();
+    output("X".repeat(4_097));
+    await failure;
+    await probe.dispose();
+  });
+
+  it("never redials to close an address after its original core disconnects", async () => {
+    const { host, core, cores } = probing();
+    const probe = await host.prepareChatTerminalProbe();
+    const original = core();
+    original.socket.emit("close");
+    await expect(probe.dispose()).rejects.toThrow();
+    expect(original.sent.calls.some((call) => call.method === "terminal.kill")).toBe(false);
+    expect(cores).toHaveLength(1);
+  });
 });
 
 // The real pinned binary: an opt-in check of the same behaviour against
@@ -474,6 +556,25 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     await expect(mismatched.create({ cols: 80, rows: 24 })).rejects.toThrow();
     expect(mismatched.status()).toBe("version-mismatch");
     mismatched.dispose();
+    expect((await host.list()).map((terminal) => terminal.id)).toEqual([terminalId]);
+  }, 30_000);
+
+  it.skipIf(process.platform !== "darwin")("runs uname in a visible dedicated Mac PTY without changing the existing terminal", async () => {
+    const probe = await host.prepareChatTerminalProbe();
+    try {
+      expect(await host.list()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: terminalId }),
+        { id: probe.id, title: "Mac terminal check", status: null },
+      ]));
+      const attachId = await host.attach(probe.id, { cols: 100, rows: 30 });
+      await until(() => (outputs.get(attachId) ?? "").includes("Mac terminal check ready"));
+      expect(outputs.get(attachId)).not.toContain("/usr/bin/uname -s");
+      await expect(probe.run(new AbortController().signal)).resolves.toBe("Darwin");
+      await until(() => (outputs.get(attachId) ?? "").includes("/usr/bin/uname -s\r\nDarwin\r\n"));
+      host.detach(attachId);
+    } finally {
+      await probe.dispose();
+    }
     expect((await host.list()).map((terminal) => terminal.id)).toEqual([terminalId]);
   }, 30_000);
 
