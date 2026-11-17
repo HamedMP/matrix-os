@@ -60,8 +60,23 @@ async function createRequestFixture(db: Kysely<OwnerBotDatabase>, options: Reque
     return { disposition: "queued" };
   };
   const transact = createBotStateTransactions(chats);
-  const service = (overrides: Partial<RoutineCliRequestDependencies> = {}) => createRoutineCliRequestService({ db, scope, sources, targets, transact,
-    now: () => new Date(state.clock), authorizeTarget: async () => state.targetAllowed, admitMutation, ...overrides });
+  const service = (overrides: Partial<RoutineCliRequestDependencies> = {}) => {
+    const create = () => createRoutineCliRequestService({ db, scope, sources, targets, transact,
+      now: () => new Date(state.clock), authorizeTarget: async () => state.targetAllowed, admitMutation, ...overrides });
+    const requests = create();
+    return {
+      ...requests,
+      async execute(input: Parameters<typeof requests.execute>[0]) {
+        // Legacy proposal fixtures inspect the canonical run/queue immediately after submission.
+        // Join the real post-commit handoff before they drain the canonical executor. Runtime/Hono
+        // receipt timing is qualified independently without this fixture observation barrier.
+        if (input.operation.operation !== "propose" || !overrides.afterMutationCommit) return requests.execute(input);
+        const proposalRequests = create();
+        try { return await proposalRequests.execute(input); }
+        finally { await proposalRequests.close(); }
+      },
+    };
+  };
   const requireSource = (): RoutineCliSourceReference => {
     if (!source) throw new Error("Actual canonical native source required");
     return source;
