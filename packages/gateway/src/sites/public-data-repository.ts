@@ -62,6 +62,8 @@ function columns(data: Row) {
     names: sql.join(entries.map(([column]) => identifier(column))),
     values: sql.join(entries.map(([, value]) => bound(value))),
     assignments: sql.join(entries.map(([column, value]) => sql`${identifier(column)} = ${bound(value)}`)),
+    // Like the owner bridge, writes stamp updated_at unless the app sets it explicitly.
+    touch: Object.hasOwn(data, "updated_at") ? sql`` : sql`, updated_at = now()`,
   };
 }
 function snapshot(value: unknown): string | null {
@@ -176,7 +178,8 @@ export class SitePublicDataRepository {
           for (const update of updates) {
             const before = await sql<Row>`SELECT * FROM ${target} WHERE id = ${update.id} FOR UPDATE`.execute(trx);
             if (!before.rows[0]) continue;
-            const rows = await sql<Row>`UPDATE ${target} SET ${columns(update.data).assignments}, updated_at = now() WHERE id = ${update.id} RETURNING *`.execute(trx);
+            const data = columns(update.data);
+            const rows = await sql<Row>`UPDATE ${target} SET ${data.assignments}${data.touch} WHERE id = ${update.id} RETURNING *`.execute(trx);
             record("update", before.rows[0], rows.rows[0] ?? null);
           }
           return { result: { ok: true }, changed };
@@ -184,7 +187,8 @@ export class SitePublicDataRepository {
         case "compareAndSwap": {
           const before = await sql<Row>`SELECT * FROM ${target} WHERE id = ${action.id} FOR UPDATE`.execute(trx);
           // The snapshot predicate stays in the write statement, as on the owner bridge.
-          const rows = await sql<Row>`UPDATE ${target} SET ${columns(action.data).assignments}, updated_at = now()
+          const data = columns(action.data);
+          const rows = await sql<Row>`UPDATE ${target} SET ${data.assignments}${data.touch}
  WHERE id = ${action.id} AND payload = ${JSON.stringify(action.expectedPayload)}::jsonb RETURNING *`.execute(trx);
           if (!rows.rows[0]) return { result: { ok: false }, changed: null };
           record("update", before.rows[0] ?? null, rows.rows[0]);

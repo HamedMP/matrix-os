@@ -134,6 +134,13 @@ describe("public site visitor data at the owner gateway", () => {
     expect((await log()).map((entry) => entry.op)).toEqual(["update", "update", "update"]);
   });
 
+  it("stamps updated_at on visitor updates unless the app sets it", async () => {
+    const { body } = await call(db({ action: "insert", table: "tasks", data: { title: "Plan" } }));
+    expect((await call(db({ action: "update", table: "tasks", id: body.result.id, data: { title: "Ship", updated_at: "2020-01-01T00:00:00.000Z" } }))).status).toBe(200);
+    const row = (await call(db({ action: "findOne", table: "tasks", id: body.result.id }))).body.result;
+    expect(new Date(row.updated_at).toISOString()).toBe("2020-01-01T00:00:00.000Z");
+  });
+
   it("returns appInfo and the app's own schema without exposing other apps", async () => {
     expect((await call(db({ action: "schema" }))).body.result).toEqual({ tasks: expect.any(Object) });
     expect((await call(db({ action: "appInfo" }))).body.result).toEqual({ installedVersion: "1.0.0" });
