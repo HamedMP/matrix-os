@@ -254,7 +254,7 @@ export function ArchivedChatsPage({ client, projects, onChanged }: {
         <label className="chat-archive-search"><Search size={16} aria-hidden/><Input ref={searchRef} aria-label="Search archived chats" type="search" maxLength={200} placeholder="Search" value={query} disabled={actions.busy} onChange={event => { actions.clearForSearch(); setQuery(event.target.value); }}/></label>
       </header>
       {actions.selected.length ? <ArchiveSelection count={actions.selected.length} busy={actions.busy} onRestore={() => { void actions.apply(selectedRows, "restore"); }} onDelete={() => actions.setDeleting(selectedRows)} onClear={() => actions.setSelected([])}/> : null}
-      {error && !actions.deleting ? <p role="alert">{error}</p> : null}
+      {error && !actions.deleting ? <div role="alert"><p>{error}</p>{actions.error ? <Button variant="ghost" size="sm" disabled={actions.busy} onClick={page.reload}>Reload archives</Button> : null}</div> : null}
       <ArchiveGroups groups={groups} projectByRef={projectByRef} selectedIds={selectedIds} selecting={actions.selected.length > 0} busy={actions.busy}
         onToggle={actions.toggle} onRestore={row => { void actions.apply([row], "restore"); }} onDelete={row => actions.setDeleting([row])}/>
       <ArchivePageStatus status={page.status} hasRows={visibleRows.length > 0} error={error} query={query.trim()} cursor={page.cursor} capped={page.rows.length >= MAX_ROWS} busy={actions.busy}

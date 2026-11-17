@@ -193,6 +193,7 @@ export function WorkRail({
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCenterX, setSearchCenterX] = useState<number>();
+  const [searchBounds, setSearchBounds] = useState<{ left: number; right: number }>();
   const railRef = useRef<HTMLElement>(null);
   const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
   const openSearch = useCallback(() => {
@@ -200,6 +201,7 @@ export function WorkRail({
     const rail = railRef.current?.getBoundingClientRect();
     const frame = railRef.current?.closest("[data-surface-mode]")?.getBoundingClientRect();
     const start = rail?.width ? rail.right : frame?.left ?? 0;
+    setSearchBounds(frame?.width ? { left: frame.left, right: frame.right } : { left: 0, right: window.innerWidth });
     setSearchCenterX((start + (frame?.right ?? window.innerWidth)) / 2);
     setSearchOpen(true);
   }, [authorityCurrent]);
@@ -706,6 +708,7 @@ export function WorkRail({
       <WorkRailSearchDialog
         open={authorityReady && searchOpen}
         centerX={searchCenterX}
+        bounds={searchBounds}
         client={client}
         records={sourceRecords}
         projects={projects}

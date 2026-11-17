@@ -693,9 +693,10 @@ function WorkTabContent({
         : null;
 
   const openBotChat = useCallback((chatId: string) => {
+    archiveNavigation?.close();
     showChat(layout === "narrow");
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false });
-  }, [layout, showChat]);
+  }, [archiveNavigation, layout, showChat]);
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;
   const navigationRail = useMemo(() => (
     <WorkRail

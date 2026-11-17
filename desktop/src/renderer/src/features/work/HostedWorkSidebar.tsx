@@ -5,21 +5,22 @@ import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { WorkRail } from "./WorkRail";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
-import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
+import { useWorkSurfaceRuntime, useWorkArchiveNavigation } from "./WorkSurfaceRuntime";
 
 export const HOSTED_WORK_SIDEBAR_WIDTH = 240;
 
 export function HostedWorkSidebar({ tab, active, searchShortcutActive = active }: { tab: Tab; active: boolean; searchShortcutActive?: boolean }) {
   const runtime = useWorkSurfaceRuntime();
+  const archiveNavigation = useWorkArchiveNavigation();
   const projects = useBoard((state) => state.projects);
   const route = tab.workRoute ?? (tab.kind === "projects" ? "projects" : tab.kind === "project" ? "project" : "chat");
-  const navigateToGlobalDraft = () => useTabs.getState().openTab({
+  const navigateToGlobalDraft = () => { archiveNavigation?.close(); return useTabs.getState().openTab({
     kind: "work",
     title: "Chat",
     workRoute: "chat",
     chatView: "draft",
     closable: false,
-  });
+  }); };
   const openGlobalDraft = () => {
     if (runtime && !runtime.requestAgentDraft("", [])) return;
     navigateToGlobalDraft();
@@ -58,10 +59,10 @@ export function HostedWorkSidebar({ tab, active, searchShortcutActive = active }
         if (runtime && !runtime.requestAgentDraft(text, resources)) return;
         navigateToGlobalDraft();
       }}
-      onOpenBotChat={(chatId) => useTabs.getState().openTab({
+      onOpenBotChat={(chatId) => { archiveNavigation?.close(); return useTabs.getState().openTab({
         kind: "work", title: "Chat", workRoute: "chat", chatId,
         chatView: "conversation", closable: false,
-      })}
+      }); }}
       onCreateProject={() => useUi.getState().openCreateProject()}
       onSelectProject={openWorkProject}
       onNewProjectChat={openWorkProjectDraft}
