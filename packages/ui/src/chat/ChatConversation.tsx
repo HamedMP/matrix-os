@@ -44,6 +44,38 @@ function maximumScrollTop(viewport: Pick<HTMLElement, "scrollHeight" | "clientHe
   return Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 }
 
+/** Own both content subscriptions and the viewport replacement subscription. */
+function observeConversationContent(
+  viewport: HTMLElement | null,
+  onResize: () => void,
+  onPrepend: () => void,
+  onContent: (content: Element) => void,
+): () => void {
+  let observedContent: Element | null = null;
+  const resizeObserver = new ResizeObserver(onResize);
+  const prependObserver = new MutationObserver(onPrepend);
+  const observeContent = () => {
+    const content = viewport?.firstElementChild;
+    if (!viewport || !content || content === observedContent) return;
+    resizeObserver.disconnect();
+    prependObserver.disconnect();
+    observedContent = content;
+    resizeObserver.observe(content);
+    prependObserver.observe(content, { childList: true });
+    onContent(content);
+  };
+  const mutationObserver = new MutationObserver(observeContent);
+  if (viewport) {
+    mutationObserver.observe(viewport, { childList: true });
+    observeContent();
+  }
+  return () => {
+    mutationObserver.disconnect();
+    resizeObserver.disconnect();
+    prependObserver.disconnect();
+  };
+}
+
 export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref<ConversationHandle> }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -105,7 +137,6 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
     const viewport = viewportRef.current;
-    let observedContent: Element | null = null;
     let settleFrame: number | undefined;
 
     const updateBottomState = (bottom: boolean) => {
@@ -140,7 +171,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
     };
 
     const preserveOnPrepend = () => {
-      const content = observedContent;
+      const content = viewport?.firstElementChild;
       if (!content || !viewport) return;
       const first = content.firstElementChild;
       const previousFirst = firstRowRef.current;
@@ -160,29 +191,13 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
       if (delta > 0) viewport.scrollTop += delta;
     };
 
-    const resizeObserver = new ResizeObserver(scrollIfPinned);
-    const prependObserver = new MutationObserver(preserveOnPrepend);
-    const observeContent = () => {
-      const content = viewport?.firstElementChild;
-      if (!viewport || !content || content === observedContent) return;
-      resizeObserver.disconnect();
-      prependObserver.disconnect();
-      observedContent = content;
+    const disconnect = observeConversationContent(viewport, scrollIfPinned, preserveOnPrepend, (content) => {
       firstRowRef.current = content.firstElementChild;
-      resizeObserver.observe(content);
-      prependObserver.observe(content, { childList: true });
       scrollIfPinned();
-    };
-    const mutationObserver = new MutationObserver(observeContent);
-    if (viewport) {
-      mutationObserver.observe(viewport, { childList: true });
-      observeContent();
-    }
+    });
 
     return () => {
-      mutationObserver.disconnect();
-      resizeObserver.disconnect();
-      prependObserver.disconnect();
+      disconnect();
       if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame);
     };
   }, []);
