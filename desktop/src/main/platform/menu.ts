@@ -2,7 +2,7 @@
 // management, and full-screen behave like a first-class Mac app.
 import { app, Menu, shell, type BrowserWindow } from "electron";
 import { createMenuRouter } from "./menu-routing";
-import { createAppMenuTemplate, STOP_BACKGROUND_MAC_CHECKS_MENU_ID } from "./menu-template";
+import { createAppMenuTemplate, RECENT_MAC_ACTIVITY_MENU_ID, STOP_BACKGROUND_MAC_CHECKS_MENU_ID } from "./menu-template";
 
 export function installAppMenu(options: {
   mainWindow(): BrowserWindow | null;
@@ -12,6 +12,7 @@ export function installAppMenu(options: {
   checkForUpdates(): void;
   openTerminalWindow(): void;
   stopBackgroundMacChecks?(): void;
+  openMacActivity?(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
 }) {
@@ -30,6 +31,7 @@ export function installAppMenu(options: {
     reloadWindow: router.reload,
     openTerminalWindow: options.openTerminalWindow,
     stopBackgroundMacChecks: options.stopBackgroundMacChecks,
+    openMacActivity: options.openMacActivity,
     ...(options.thirdPartyNoticesPath ? {
       openThirdPartyNotices: () => {
         // openPath resolves to an error string instead of rejecting.
@@ -42,8 +44,10 @@ export function installAppMenu(options: {
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
-  return (active: boolean) => {
+  return (active: boolean, hasActivityScope: boolean) => {
     const stop = menu.getMenuItemById(STOP_BACKGROUND_MAC_CHECKS_MENU_ID);
     if (stop) stop.visible = active;
+    const activity = menu.getMenuItemById(RECENT_MAC_ACTIVITY_MENU_ID);
+    if (activity) activity.enabled = hasActivityScope;
   };
 }

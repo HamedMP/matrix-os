@@ -1,6 +1,7 @@
 import { dialog, type BrowserWindow, type IpcMain } from "electron";
 import type { AuthService } from "../auth/auth-service";
 import type { LocalTerminalHost } from "../local-terminals/host";
+import type { BeginMacActivity } from "../mac-activity/activity";
 import { createChatElectronPreviewTransport, type MacTerminalContext } from "../chat-electron-preview/transport";
 import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
 import { MAC_TERMINAL_SYSTEM_CHECKS } from "../../shared/mac-terminal-probe";
@@ -15,6 +16,7 @@ interface Options {
   window(): BrowserWindow | null;
   isTrustedSender(event: unknown): boolean;
   onBackgroundActiveChange?(active: boolean): void;
+  beginActivity?: BeginMacActivity;
   transport?: ReturnType<typeof createChatElectronPreviewTransport>;
   tryBackgroundPreview?(context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal): Promise<void>;
 }
@@ -43,6 +45,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
 
   const service = createChatMacTerminalService({
     ...transport,
+    beginActivity: options.beginActivity,
     enabled: options.allowed,
     approve: (context, signal) => requestConsent(context, signal, {
       message: "Approve one Mac terminal check?",
@@ -59,6 +62,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
   });
   const background = createMacTerminalBackgroundService({
     ...transport,
+    beginActivity: options.beginActivity,
     enabled: options.allowed,
     oneTimeBusy: service.isBusy,
     approve: (context, signal) => requestConsent(context, signal, {
@@ -104,7 +108,8 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     return { ok: single || repeated };
   });
   return {
-    async cancelAll() { await Promise.all([service.cancelAll(), background.stop()]); },
+    async cancelAll() { await Promise.all([service.cancelAll(), background.stop("authority-changed")]); },
+    async stopAll() { await Promise.all([service.cancelAll("stopped"), background.stop()]); },
     stopBackground: background.stop,
   };
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ChatElectronPreviewReply, ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
+import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
 import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest } from "./transport";
 
 interface PreviewResult {
@@ -9,14 +10,21 @@ interface PreviewResult {
 
 interface Dependencies {
   enabled: boolean;
-  read(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding): Promise<ChatElectronPreviewRequest | null>;
+  read(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding, signal?: AbortSignal): Promise<ChatElectronPreviewRequest | null>;
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
   claim(key: string): Promise<boolean>;
   approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
   returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal?: AbortSignal): Promise<void>;
+  beginActivity?: BeginMacActivity;
   reportError?(error: unknown): void;
+}
+
+function canceledPhase(signal: AbortSignal): MacActivityPhase {
+  if (signal.reason === "stopped") return "stopped";
+  if (signal.reason === "expired" || signal.reason?.name === "TimeoutError") return "expired";
+  return "revoked";
 }
 
 function matchesApproval(approved: ChatElectronPreviewRequest, candidate: ChatElectronPreviewRequest): boolean {
@@ -29,17 +37,15 @@ function matchesApproval(approved: ChatElectronPreviewRequest, candidate: ChatEl
 }
 
 export function createChatElectronPreviewService(deps: Dependencies) {
-  let active: AbortController | null = null;
+  let active: { operation: AbortController; result: Promise<ChatElectronPreviewReply> } | null = null;
 
-  async function run(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding): Promise<ChatElectronPreviewReply> {
-    if (!deps.enabled || background?.signal.aborted) return { status: "unavailable" };
-    if (active) return { status: "busy" };
-    const operation = new AbortController();
-    active = operation;
-    const signal = background ? AbortSignal.any([operation.signal, background.signal]) : operation.signal;
-    const read = () => background ? deps.read(target, { ...background, signal }) : deps.read(target);
-    const returnResult = (request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) =>
-      background ? deps.returnResult(request, result, signal) : deps.returnResult(request, result);
+  async function runPreview(
+    target: ChatElectronPreviewTarget, background: ChatElectronPreviewBackgroundBinding | undefined, signal: AbortSignal,
+  ): Promise<ChatElectronPreviewReply> {
+    const read = () => deps.read(target, background ? { ...background, signal } : undefined, signal);
+    let activity: MacActivityHandle | undefined;
+    let completion: MacActivityPhase = "failed";
+    let approvalSignal = signal;
     try {
       const request = await read();
       if (!request || !deps.isCurrent(request) || signal.aborted) return { status: "unavailable" };
@@ -47,11 +53,17 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       if (await deps.wasHandled(key)) return { status: "already-handled" };
       const remaining = request.expiresAt - Date.now();
       if (remaining <= 0 || signal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
-      const approvalSignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+      approvalSignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+      activity = deps.beginActivity?.("preview", request.worktreeId);
+      activity?.update("awaiting-approval");
       const approved = await deps.approve(request, approvalSignal);
+      completion = "revoked";
       if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       if (!await deps.claim(key)) return { status: "already-handled" };
-      if (!approved) return { status: "declined" };
+      if (!approved) {
+        completion = "declined";
+        return { status: "declined" };
+      }
       // The sheet may have been open while the agent edited, switched or
       // deleted the worktree. Keep the one-time claim and revalidate the bytes
       // bound to the approved request before starting any local work.
@@ -60,25 +72,60 @@ export function createChatElectronPreviewService(deps: Dependencies) {
         || !deps.isCurrent(current) || !matchesApproval(request, current)) return { status: "unavailable" };
 
       let result: Awaited<ReturnType<Dependencies["execute"]>>;
+      // The request deadline governs approval and revalidation. The active
+      // operation signal remains attached to execution and delivery.
+      approvalSignal = signal;
+      activity?.update("running");
+      completion = "failed";
       try {
         result = await deps.execute(current, signal);
       } catch (error: unknown) {
-        if (signal.aborted || !deps.isCurrent(current)) return { status: "unavailable" };
+        if (signal.aborted || !deps.isCurrent(current)) {
+          completion = "revoked";
+          return { status: "unavailable" };
+        }
         deps.reportError?.(error);
-        await returnResult(current, { error: "build-failed" });
+        activity?.update("returning");
+        await deps.returnResult(current, { error: "build-failed" }, signal);
         return { status: "failed" };
       }
-      if (signal.aborted || !deps.isCurrent(current)) return { status: "unavailable" };
-      await returnResult(current, result);
+      if (signal.aborted || !deps.isCurrent(current)) {
+        completion = "revoked";
+        return { status: "unavailable" };
+      }
+      activity?.update("returning");
+      await deps.returnResult(current, result, signal);
+      completion = "returned";
       return { status: "returned" };
     } catch (error: unknown) {
-      if (signal.aborted) return { status: "unavailable" };
+      if (approvalSignal.aborted) return { status: "unavailable" };
+      completion = "failed";
       deps.reportError?.(error);
       return { status: "failed" };
     } finally {
-      active = null;
+      activity?.finish(completion !== "returned" && approvalSignal.aborted ? canceledPhase(approvalSignal) : completion);
     }
   }
 
-  return { available: deps.enabled, run, cancel: () => active?.abort() };
+  async function run(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding): Promise<ChatElectronPreviewReply> {
+    if (!deps.enabled || background?.signal.aborted) return { status: "unavailable" };
+    if (active) return { status: "busy" };
+    const operation = new AbortController();
+    const signal = background ? AbortSignal.any([operation.signal, background.signal]) : operation.signal;
+    const result = runPreview(target, background, signal).finally(() => { active = null; });
+    active = { operation, result };
+    return result;
+  }
+
+  async function cancel(reason: "stopped" | "revoked" = "revoked"): Promise<void> {
+    const current = active;
+    current?.operation.abort(reason);
+    try {
+      await current?.result;
+    } catch (error: unknown) {
+      deps.reportError?.(error);
+    }
+  }
+
+  return { available: deps.enabled, run, cancel };
 }
