@@ -22,7 +22,7 @@ import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 import { Dialog } from "../../design/primitives";
 import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
-import { SideChatPanel, ChatInspectorTabs, ChatInspectorNewTab, type InspectorTool, InspectorToolIcon } from "@matrix-os/ui";
+import { Button, SideChatPanel, ChatInspectorTabs, ChatInspectorNewTab, type InspectorTool, InspectorToolIcon } from "@matrix-os/ui";
 import { useScopedCanonicalChatClient } from "../chat/CanonicalChatClientContext";
 import { useSideChatDraft } from "./SideChatDraftContext";
 
@@ -616,9 +616,9 @@ function WorkInspectorContent({
         <div className="space-y-4 p-4 text-sm" style={{ color: "var(--text-primary)" }}>
           <p>Closing this tab stops its terminal session.</p>
           <div className="flex justify-end gap-2">
-            <button type="button" className="rounded-md px-3 py-1.5" onClick={() => setTerminalCloseTarget(null)}>Cancel</button>
-            <button type="button" className="rounded-md px-3 py-1.5" style={{ background: "var(--danger)", color: "var(--bg-surface)" }}
-              onClick={() => { if (terminalCloseTarget) void stopTerminalTab(terminalCloseTarget); }}>Stop terminal</button>
+            <Button variant="ghost" size="sm" onClick={() => setTerminalCloseTarget(null)}>Cancel</Button>
+            <Button variant="destructive" size="sm"
+              onClick={() => { if (terminalCloseTarget) void stopTerminalTab(terminalCloseTarget); }}>Stop terminal</Button>
           </div>
         </div>
       </Dialog>

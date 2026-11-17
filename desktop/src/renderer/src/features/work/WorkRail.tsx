@@ -1,4 +1,4 @@
-import { archiveRestoreLocation } from "@matrix-os/ui";
+import { Button, archiveRestoreLocation } from "@matrix-os/ui";
 import { ChatSourceFilterMenu } from "@matrix-os/ui";
 import { filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
@@ -701,8 +701,8 @@ export function WorkRail({
         <div className="p-4 text-sm">
           <p>Archive all idle chats in this project? Running chats will be skipped.</p>
           {bulkArchiveError ? <p role="alert" className="mt-2" style={{ color: "var(--danger)" }}>{bulkArchiveError}</p> : null}
-          <div className="mt-4 flex justify-end gap-3"><button type="button" disabled={bulkArchivePending} onClick={() => setArchiveProjectTarget(null)}>Cancel</button>
-            <button type="button" disabled={bulkArchivePending} className="font-semibold" onClick={() => { void archiveProject(); }}>Archive chats</button></div>
+          <div className="mt-4 flex justify-end gap-3"><Button variant="ghost" size="sm" disabled={bulkArchivePending} onClick={() => setArchiveProjectTarget(null)}>Cancel</Button>
+            <Button size="sm" disabled={bulkArchivePending} onClick={() => { void archiveProject(); }}>Archive chats</Button></div>
         </div>
       </Dialog>
       <WorkRailSearchDialog
