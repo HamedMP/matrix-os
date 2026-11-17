@@ -455,6 +455,24 @@ describe("Work Files and Terminal inspector", () => {
     expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("retains a failed terminal stop confirmation and retries without reopening it", async () => {
+    const stop = vi.mocked(useConnection.getState().api!.delete);
+    stop.mockRejectedValueOnce(new Error("Stop unavailable")).mockResolvedValueOnce({} as never);
+    render(<WorkFilesInspector detail={detail("chat_retry_stop", "terminal_first")} projects={[]} active />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal terminal_first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await screen.findByText("The terminal could not be closed. Try again.");
+    expect(screen.getByRole("tab", { name: "terminal_first", hidden: true })).toBeTruthy();
+    const retry = screen.getByRole("button", { name: "Stop terminal" });
+    await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Stop this terminal?")).toBeNull();
+  });
+
   it("asks before stopping a restored terminal while session discovery is pending", () => {
     useConnection.setState({ userId: "user_test" });
     useCodingAgentWorkspace.setState({ status: "loading", summary: null });

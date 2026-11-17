@@ -205,6 +205,12 @@ export function WorkRail({
     setSearchCenterX((start + (frame?.right ?? window.innerWidth)) / 2);
     setSearchOpen(true);
   }, [authorityCurrent]);
+  const openArchivedList = () => {
+    invalidateSelection();
+    setSearchOpen(false);
+    agentsNavigation?.close();
+    archiveNavigation?.show();
+  };
   useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
   const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
@@ -674,7 +680,7 @@ export function WorkRail({
       {archiveUndo ? <div role="status" className="desktop-chat-design chat-lifecycle-toast">
         <span className="truncate">{archiveUndo.label}</span>
         <button type="button" className="ml-2 font-semibold underline" onClick={() => { void undoArchive(); }}>Undo</button>
-        <button type="button" onClick={() => archiveNavigation?.show()}>View archived</button>
+        <button type="button" onClick={openArchivedList}>View archived</button>
       </div> : null}
       <DeleteConversationDialog
         conversation={authorityReady && deleteChatTarget ? {
@@ -719,7 +725,7 @@ export function WorkRail({
         onArchiveRestored={record => {
           setArchiveUndo({ chats: [{ chatId: record.chat.id, revision: record.chat.revision }], lifecycle: "archived", label: `Chat restored to ${archiveRestoreLocation(record, projects.find(project => project.id === record.projectId || project.slug === record.projectId)?.name)}` });
         }}
-        onOpenArchivedList={() => { setSearchOpen(false); archiveNavigation?.show(); }}
+        onOpenArchivedList={openArchivedList}
         onArchiveChanged={() => { void navigation.store?.refresh(); }}
         onSelect={(record) => {
           setSearchOpen(false);
