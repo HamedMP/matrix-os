@@ -21,6 +21,16 @@ vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 vi.mock("@clerk/nextjs",()=>({useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
 vi.mock("../../shell/src/components/chat-provider-onboarding",()=>({ChatProviderOnboarding:({children}:{children:React.ReactNode})=><>{children}</>}));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
+it.each([1512,768])('blocks inspector file names and saved Side chat text from session replay at width %s',async rootWidth=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[{name:'private.txt',type:'file'}]})));
+ const sideChatClient={getSideChat:vi.fn(async()=>({threadId:'side_'+'a'.repeat(32),messages:[{seq:1,role:'assistant' as const,content:'Private saved answer',createdAt:'2026-11-17T00:00:00.000Z'}]})),createSideChat:vi.fn(),askSideChat:vi.fn()};
+ render(<WebChatInspector {...inspectorProps({rootWidth,sideChatClient})}/>);
+ // This is the block selector consumed by posthog-client.ts session_recording.
+ expect((await screen.findByRole('treeitem',{name:'private.txt'})).closest('.ph-no-capture')).not.toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Add inspector tab'}));
+ fireEvent.click(screen.getByRole('button',{name:/Side chat/}));
+ expect((await screen.findByText('Private saved answer')).closest('.ph-no-capture')).not.toBeNull();
+});
 it('reveals a selected file through an ancestor beyond the first directory window', async () => {
  const entries=Array.from({length:1002},(_,index)=>({name:`folder_${index.toString().padStart(4,'0')}`,type:'directory'}));
  vi.stubGlobal('fetch',vi.fn(async(url:string)=>Response.json({entries:url.includes('path=folder_1001')?[{name:'preview.txt',type:'file'}]:entries})));

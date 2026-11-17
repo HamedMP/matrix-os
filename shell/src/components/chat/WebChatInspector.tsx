@@ -106,7 +106,7 @@ function InspectorContent({
       <aside
         ref={panelRef}
         aria-label="Chat inspector"
-        className={`${overlay ? "absolute inset-y-0 right-0 z-30" : "relative shrink-0"} desktop-chat-design flex min-h-0 flex-col border-l bg-background`}
+        className={`${overlay ? "absolute inset-y-0 right-0 z-30" : "relative shrink-0"} ph-no-capture desktop-chat-design flex min-h-0 flex-col border-l bg-background`}
         style={{
           width: overlay ? Math.max(240, rootWidth - railWidth) : width,
         }}
