@@ -68,6 +68,7 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
     const registry = await sql<{present:boolean}>`SELECT to_regclass('public_sites') IS NOT NULL AS present`.execute(trx.executor);
     const sites = registry.rows[0]?.present ? await trx.executor.selectFrom('public_sites').select([
       'id','machine_id','app_slug','title','description','slug','revision','status','access_mode','active_version','created_at',
+      'social_title','social_description','social_image_path',
     ]).where('owner_id','=',owner).orderBy('id').limit(1001).execute() : [];
     const siteIds=sites.map(site=>site.id);
     const versions=siteIds.length ? await trx.executor.selectFrom('public_site_versions').selectAll()

@@ -5,8 +5,9 @@ import {
     SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
     SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
+    SITE_SOCIAL_IMAGE_TYPES, SiteSocialImagePathSchema, SiteSocialSettingsSchema, SiteSocialUpdateSchema,
     SiteSlugAvailabilityQuerySchema, SiteSlugAvailabilitySchema, classifySiteSlug, siteSlugSuggestionCandidates,
-    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability,
+    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability, type SiteSocialSettings,
 } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
@@ -42,6 +43,19 @@ async function project(db: PlatformDB, row: Selectable<SitesTable>, emailCapabil
         activeVersion: row.active_version,
         versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}),
         ...(emailCapability ? { capabilities: { privateEmailInvitations: await emailCapability() } } : {}) });
+}
+const socialImageTypes: ReadonlySet<string> = new Set(SITE_SOCIAL_IMAGE_TYPES);
+/** Raster images in the active build that a link preview may reference. */
+async function socialImageOptions(db: PlatformDB, siteId: string, versionId: string | null): Promise<string[]> {
+    if (!versionId) return [];
+    const version = await db.executor.selectFrom('public_site_versions').select('files')
+        .where('id', '=', versionId).where('site_id', '=', siteId).executeTakeFirst();
+    return (version?.files ?? []).filter(file => socialImageTypes.has(file.contentType)
+        && SiteSocialImagePathSchema.safeParse(file.path).success).map(file => file.path).sort();
+}
+function socialSettings(row: Selectable<SitesTable>, imageOptions: string[]): SiteSocialSettings {
+    return SiteSocialSettingsSchema.parse({ title: row.social_title, description: row.social_description,
+        imagePath: row.social_image_path, imageOptions });
 }
 function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now = Date.now()): SiteAccessLinkSummary {
     const expired = Date.parse(row.claimed_at ? row.session_expires_at! : row.claim_expires_at) <= now;
@@ -271,6 +285,45 @@ export function createSitesService(options: {
             { previous_access_mode: previousAccessMode!, access_mode: result.accessMode }, owner.ownerId);
         return result;
     }
+    async function social(owner: SiteOwner) {
+        await db.ready;
+        const row = await ownership(db, owner).executeTakeFirst();
+        if (!row) throw new SiteError('not_found');
+        return socialSettings(row, await socialImageOptions(db, row.id, row.active_version));
+    }
+    /**
+     * Preview overrides are presentation-only, so they do not bump the site
+     * revision (an open Share popover keeps working). Last write wins; the row
+     * lock orders the image check against concurrent redeploys.
+     */
+    async function updateSocial(owner: SiteOwner, input: unknown) {
+        const parsed = SiteSocialUpdateSchema.safeParse(input);
+        if (!parsed.success) throw new SiteError('invalid_request');
+        const request = parsed.data;
+        return managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+            await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
+            await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
+            await assertCurrentPublishingRuntime(trx, owner);
+            const row = await ownership(trx, owner).forUpdate().executeTakeFirst();
+            if (!row) throw new SiteError('not_found');
+            const imageOptions = await socialImageOptions(trx, row.id, row.active_version);
+            if (request.imagePath !== null && !imageOptions.includes(request.imagePath)) throw new SiteError('invalid_request');
+            const next = await trx.executor.updateTable('public_sites').set({ social_title: request.title,
+                social_description: request.description, social_image_path: request.imagePath })
+                .where('id', '=', row.id).returningAll().executeTakeFirstOrThrow();
+            return socialSettings(next, imageOptions);
+        }, env));
+    }
+    /** Public preview for a resolved site; a stale image (dropped by a redeploy) is omitted. */
+    async function publicSocial(site: SiteRecord) {
+        const row = await db.executor.selectFrom('public_sites').select(['social_title', 'social_description', 'social_image_path'])
+            .where('id', '=', site.id).executeTakeFirst();
+        if (!row) return undefined;
+        // Check against the version the page will reference, not a newer row state.
+        const imagePath = row.social_image_path && (await socialImageOptions(db, site.id, site.activeVersion)).includes(row.social_image_path)
+            ? row.social_image_path : null;
+        return { title: row.social_title, description: row.social_description, imagePath };
+    }
     async function unpublish(owner: SiteOwner, revision?: number) {
         const result = await mutate(owner, revision, async (trx, row) => {
             await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
@@ -493,6 +546,6 @@ export function createSitesService(options: {
         return result;
     }
     return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
-        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability };
+        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability, social, updateSocial, publicSocial };
 }
 export type SitesService = ReturnType<typeof createSitesService>;
