@@ -24,7 +24,9 @@ beforeAll(async () => {
   service = createSitesService({ db, storage: { async putObject() { return {}; }, async getObject() { return { body: null }; } } });
   const owner = { ownerId: 'user_tasks_host', machineId: identity.machineId };
   publicSite = await service.deploy({ ...owner, appSlug: 'tasks-lab' }, { title: 'Tasks', config: {}, files });
-  privateSite = await service.deploy({ ...owner, appSlug: 'notes' }, { title: 'Notes', accessMode: 'private_link', config: {}, files });
+  privateSite = await service.deploy({ ...owner, appSlug: 'notes' }, { title: 'Notes', config: {}, files });
+  // New private-link publication is retired; model an existing private-link site directly.
+  await db.executor.updateTable('public_sites').set({ access_mode: 'private_link' }).where('id', '=', privateSite.id).execute();
 });
 afterAll(async () => { await destroyTestPlatformDb(db); });
 afterEach(() => { vi.unstubAllGlobals(); });
