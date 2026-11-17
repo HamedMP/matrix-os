@@ -1,6 +1,6 @@
 import { ROUTINE_CHAT_ORIGIN_RESPONSE_MAX_BYTES } from "@matrix-os/contracts";
 
-const ROUTINE_ORIGIN_LIST_PATH = /^\/api\/chats\/chat_[A-Za-z0-9_-]{1,128}\/routine-origin(?:\?timeline=1)?$/;
+const ROUTINE_ORIGIN_LIST_PATH = /^\/api\/chats\/chat_[A-Za-z0-9_-]{1,128}\/routine-origin(?:\?timeline=[12])?$/;
 const CONFIRMATION_RESPONSE_MAX_BYTES = 128 * 1024;
 
 export interface OwnerBrowserJsonRequest {

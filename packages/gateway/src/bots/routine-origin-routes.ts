@@ -12,7 +12,7 @@ import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipa
 import type { createRoutineOriginPlatformClient, VerifiedRoutineOriginApproval } from './routine-origin-platform-client.js';
 import type { BotContinuationAdmitter } from './continuations.js';
 export interface RoutineOriginRouteService {
-  read(ownerId:string,sourceChatId:string,includeHistory?:boolean):Promise<RoutineChatOriginView>;
+  read(ownerId:string,sourceChatId:string,includeHistory?:boolean,includeExecutorNames?:true):Promise<RoutineChatOriginView>;
   resolve(ownerId:string,sourceChatId:string,interactionId:string,request:RoutineOriginDecisionSubmit,
     verified:VerifiedRoutineOriginApproval):Promise<{response:ResolveBotInteractionResponse;continuation?:BotContinuation}>;
 }
@@ -30,7 +30,7 @@ export function createRoutineOriginRoutes(options:{service:RoutineOriginRouteSer
   app.use('/api/chats/:chatId/routine-origin*',async(c,next)=>{c.header('Cache-Control','private, no-store');
     const query = new URL(c.req.url).searchParams;
     if (query.size && !(c.req.method === 'GET' && c.req.path.endsWith('/routine-origin')
-      && query.size === 1 && query.get('timeline') === '1')) return unavailable(c,400);
+      && query.size === 1 && ['1', '2'].includes(query.get('timeline') ?? ''))) return unavailable(c,400);
     const principal = options.getPrincipal(c);
     if (!(c.req.method === 'POST' ? decisions : reads).check(principal.userId)) return unavailable(c,429);
     c.set('originPrincipal', principal);
@@ -43,10 +43,12 @@ export function createRoutineOriginRoutes(options:{service:RoutineOriginRouteSer
   });
   app.get('/api/chats/:chatId/routine-origin',async c=>{
     const principal=c.get('originPrincipal'),chatId=CanonicalChatIdSchema.parse(c.req.param('chatId'));
-    const includeHistory = c.req.query('timeline') === '1';
-    const { history, ...view } = RoutineChatOriginViewSchema.parse(await (includeHistory
-      ? options.service.read(principal.userId, chatId, true)
-      : options.service.read(principal.userId, chatId)));
+    const timeline = c.req.query('timeline');
+    const includeHistory = timeline !== undefined;
+    const read = timeline === '2' ? options.service.read(principal.userId, chatId, true, true)
+      : includeHistory ? options.service.read(principal.userId, chatId, true)
+      : options.service.read(principal.userId, chatId);
+    const { history, ...view } = RoutineChatOriginViewSchema.parse(await read);
     return c.json(includeHistory && history ? { ...view, history } : view);
   });
   app.post('/api/chats/:chatId/routine-origin/:interactionId/resolve',bodyLimit({maxSize:2048,onError:c=>unavailable(c,413)}),async c=>{

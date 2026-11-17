@@ -1,4 +1,5 @@
-import { BotRoutineProposalSchema, isRoutineDirectScheduleDisplayBotId, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
+import { BotRoutineProposalSchema, isRoutineDirectScheduleDisplayBotId, type BotRoutineSchedule,
+  type BotRoutineCenterItem, type ChatAgent, type RoutineChatOriginHistoryItem } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
@@ -37,6 +38,16 @@ export function routineTaskChat(row: BotRoutineCenterItem) {
   // Execution availability is separate from read-only access to a saved Bot Chat.
   if (isRoutineDirectScheduleDisplayBotId(row.botId)) return null;
   return { chatId: row.chatId, label: row.originChatId ? "Open Bot Chat" : "Open task Chat" };
+}
+
+export type RoutineOriginExecutor = { kind: "bot" | "direct"; label: string };
+
+/** The saved interaction identifies the executor. An old host may supply only its ID. */
+export function routineOriginExecutor(item: RoutineChatOriginHistoryItem): RoutineOriginExecutor {
+  const { agentId } = item.interaction;
+  return isRoutineDirectScheduleDisplayBotId(agentId)
+    ? { kind: "direct", label: "Matrix Schedules" }
+    : { kind: "bot", label: item.executorName ?? agentId };
 }
 
 /** Display only. The service checks the stored digest/source; parsing never grants approval. */

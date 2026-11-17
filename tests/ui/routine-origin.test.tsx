@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import type { BotInteraction, RoutineChatOriginView } from "@matrix-os/contracts";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, type BotInteraction, type RoutineChatOriginView } from "@matrix-os/contracts";
 import { createRoutineOriginClient } from "../../packages/ui/src/chat/routine-origin-client";
 import { useRoutineOrigin } from "../../packages/ui/src/chat/use-routine-origin";
 import { RoutineReceipt } from "../../packages/ui/src/chat/RoutineReceipt";
@@ -14,6 +14,28 @@ import { nativeScheduledMessageFixture } from "../helpers/native-scheduled-messa
 afterEach(cleanup);
 const interaction: BotInteraction = {interactionId:"in_abcdefgh",chatId:"chat_executor",agentId:"bot_existing",taskId:"task_real_execution",kind:"approval",blocking:true,status:"pending",expiresAt:"2099-01-01T00:00:00.000Z",revision:7,payload:{kind:"approval",tool:"routine.activate",audience:"direct",policyRevision:3,argsDigest:"a".repeat(64),preview:JSON.stringify({proposal:{name:"Morning brief",prompt:"Write a private brief.",schedule:{kind:"once",at:"2099-01-01T00:00:00.000Z"},selection:{instanceId:"matrix_chatgpt_plan",model:"gpt-6-luna"},authorizedEffects:["read"]},source:{accountId:"account_private",computerId:"computer_fixture",grantRevision:3,definitionRevision:2}})}};
 const view = (): RoutineChatOriginView => ({sourceChatId:"chat_source",pending:[{sourceChatId:"chat_source",anchorMessageId:"msg_source",interaction}],deliveries:[],deliveryPending:false,hasMore:false});
+it.each([ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, `bot_routine${"a".repeat(32)}`])(
+ "shows the actual Bot and reserves the scheduler name for direct Chat approvals (%s)", async (directId) => {
+ const bot = { ...view().pending[0]!, executorName: "Research Bot" };
+ const direct = { ...bot, executorName: "Private coordinator name", interaction: { ...interaction,
+   interactionId: "in_direct01", agentId: directId, chatId: `chat_routine_${"b".repeat(32)}` } };
+ const legacy = { ...view().pending[0]!, interaction: { ...interaction, interactionId: "in_legacy01", agentId: "bot_legacy01" } };
+ const client = createRoutineOriginClient(async () => ({ ...view(), pending: [bot, direct, legacy] }));
+ function Fixture() {
+  return <RoutineOriginApprovals state={useRoutineOrigin({ client, chatId: "chat_source", eligible: true })} />;
+ }
+ render(<Fixture />);
+ const [botCard, directCard, legacyCard] = await screen.findAllByRole("region", { name: "Schedule Morning brief" });
+ expect(within(botCard!).getByText("Research Bot")).toBeTruthy();
+ expect(within(botCard!).getByText("Bot")).toBeTruthy();
+ expect(within(botCard!).queryByText("Matrix Schedules")).toBeNull();
+ expect(within(directCard!).getByText("Matrix Schedules")).toBeTruthy();
+ expect(within(directCard!).getByText("Runs on")).toBeTruthy();
+ expect(within(directCard!).queryByText("Bot")).toBeNull();
+ expect(within(directCard!).queryByText("Private coordinator name")).toBeNull();
+ expect(within(directCard!).queryByText(directId)).toBeNull();
+ expect(within(legacyCard!).getByText("bot_legacy01")).toBeTruthy();
+});
 it("keeps a Chat quiet until its routine source endpoint becomes available", async () => {
  const get = vi.fn().mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 })).mockResolvedValue(view());
  const client = { get, resolve: vi.fn() };
@@ -33,10 +55,10 @@ it("keeps two approvals in creation order when the later one is decided first", 
  expect(order({ ...view(), pending: [later, earlier] })).toEqual(expected);
  expect(order({ ...view(), pending: [earlier], history: [{ ...later, interaction: { ...later.interaction, status: "resolved" }, decision: "approve" }] })).toEqual(expected);
 });
-it("falls back to the legacy read on an old host without repeating a decision", async () => {
+it.each(["?timeline=1", ""] as const)("falls back to the supported timeline %j without repeating a decision", async (supported) => {
  const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
   if (options?.method === "POST") return Response.json({interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}});
-  return String(input).includes("?timeline=1") ? Response.json({}, { status: 400 }) : Response.json(view());
+  return new URL(String(input)).search === supported ? Response.json(view()) : Response.json({}, { status: 400 });
  });
  const request = createOwnerBrowserJsonRequest("https://fixture.test", async () => null, fetcher);
  const client = createRoutineOriginClient((path, method, body, options) => request({ path, method, body, ...options }));
@@ -44,8 +66,15 @@ it("falls back to the legacy read on an old host without repeating a decision", 
  await expect(client.get("chat_source")).resolves.toEqual(view());
  await client.resolve("chat_source", interaction.interactionId, { kind:"approval",baseRevision:7,decision:"approve" });
  expect(fetcher.mock.calls.map(([url, options]) => [new URL(String(url)).search, options?.method])).toEqual([
-  ["?timeline=1", "GET"], ["", "GET"], ["", "GET"], ["", "POST"],
+  ["?timeline=2", "GET"], ["?timeline=1", "GET"],
+  ...(supported ? [] : [["", "GET"]]), [supported, "GET"], ["", "POST"],
  ]);
+});
+it("parses authoritative executor names from the negotiated read", async () => {
+ const complete = { ...view(), pending: [{ ...view().pending[0]!, executorName: "Research Bot" }] };
+ const request = vi.fn(async () => complete);
+ await expect(createRoutineOriginClient(request).get("chat_source")).resolves.toEqual(complete);
+ expect(request).toHaveBeenCalledExactlyOnceWith("/api/chats/chat_source/routine-origin?timeline=2", "GET", undefined, { signal: undefined });
 });
 it("uses the source alias and unchanged canonical interaction revision, without a Bot binding context", async () => {
  let decided=false;const request=vi.fn(async (_p:string, method:string)=>{if(method==="GET")return {...view(),pending:decided?[]:view().pending};decided=true;return {interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}};});

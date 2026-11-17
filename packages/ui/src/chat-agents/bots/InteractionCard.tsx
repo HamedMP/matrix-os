@@ -1,18 +1,19 @@
 import { botSavedAnswerRecovery, botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
-import { routineApprovalPreview } from "./routine-presentation.js";
+import { routineApprovalPreview, type RoutineOriginExecutor } from "./routine-presentation.js";
 import { RoutineApprovalDetails } from "./RoutineApprovalDetails.js";
 
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
 
-export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, currentRoutineRevision, unavailableMessage, approvalDecision, decisionError, readOnlyStatus }: {
+export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, routineExecutor, currentRoutineRevision, unavailableMessage, approvalDecision, decisionError, readOnlyStatus }: {
   unavailableMessage?: string;
   approvalDecision?: "approve" | "deny";
   decisionError?: string;
   readOnlyStatus?: string;
   agentName?: string;
+  routineExecutor?: RoutineOriginExecutor;
   currentRoutineRevision?: number | null;
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
@@ -153,7 +154,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "connect_request", baseRevision: interaction.revision, action }); }}>
         {action === "start" ? "Connect" : "Decline"}</button>)}</div>
     </> : null}
-    {routine && payload?.kind === "approval" ? <RoutineApprovalDetails approval={routine} agentName={agentName} preview={payload.preview} historical={Boolean(readOnlyStatus)}/> : null}
+    {routine && payload?.kind === "approval" ? <RoutineApprovalDetails approval={routine} agentName={agentName} executor={routineExecutor} preview={payload.preview} historical={Boolean(readOnlyStatus)}/> : null}
     {actionable && payload?.kind === "approval" ? <>
       {!routine ? <><p className="whitespace-pre-wrap text-sm leading-6">{payload.preview}</p>
       <details className="text-xs"><summary className="cursor-pointer font-medium">Approval details</summary><dl className="mt-2 grid gap-2">

@@ -133,6 +133,22 @@ Web Canvas, Web Desktop, Electron Desktop and Web Mobile reach the shared BotCha
 Qualification is source/component/client/owner HTTP + native PostgreSQL, including actual Native Mobile sheet and route Jest renders. No interactive GUI/device/native-provider acceptance is inferred. The common exact action approval/controller is implemented in Task4b below; trusted source execution startup/adapters, existing-target binding reuse and all-five live acceptance remain unfinished. Separate site-repository docs remain Task8.
 
 
+## Source Chat approval executor
+
+**Scope.** The schedule approval card identifies the executor whose future access the owner is reviewing.
+
+**Signature.** `GET /api/chats/:chatId/routine-origin?timeline=2` adds executor display names to the existing timeline response. The unversioned GET and `timeline=1` keep their existing response fields.
+
+**Contract.** `pending` and `history` items may contain `executorName`. Gateway reads the name from the authenticated owner's Bot definition using the Bot ID on the verified approval. The field is display metadata. The decision route and authorization checks use the original approval identity and revision.
+
+**Validation.** The version is a single GET query parameter. Unsupported or repeated values return `400`. After `400`, new clients try `timeline=1` and then the unversioned GET. A missing Bot definition or older server leaves the name absent.
+
+**Cases.** A named Bot displays its name. A legacy Bot item displays its bound Bot ID. A direct schedule displays `Matrix Schedules` for its public or retained internal executor marker. Another owner's approval remains unavailable.
+
+**Tests.** Compare the strict legacy and new timeline shapes. Assert that the Bot name comes from the authenticated owner's exact target, that direct items skip the Bot lookup, and that Web, Electron, and Native Mobile use the same executor classification.
+
+**Example.** A Bot-backed approval displays `Bot: Research Bot`. A direct approval displays `Runs on: Matrix Schedules` on the shared card.
+
 ## Retained direct-routine preview schema
 
 `bootstrapBotDatabase` recognizes the exact retained `routine_chat_origin` (16), `routine_direct_chat` (17), and `bot_chat_binding_history_index` (18) ledger only when the v15 runtime is reading the complete matching migration history and the deployed additive catalog matches. The check runs under the existing Bot schema advisory lock, uses read-only checks for the retained preview, and neither rewrites the ledger nor removes owner data. The v15 path permits this known shape only when no retained source routine or direct-coordinator work is live. Historical uncertain results retain their original status. A v15 routine cannot use a reserved direct coordinator Bot or Chat as its target. Any unknown schema or live work requiring the preview runtime still stops Bot startup.

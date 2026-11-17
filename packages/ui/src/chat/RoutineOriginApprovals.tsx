@@ -1,5 +1,6 @@
 import type { RoutineChatOriginHistoryItem } from "@matrix-os/contracts";
 import { InteractionCard } from "../chat-agents/bots/InteractionCard.js";
+import { routineOriginExecutor } from "../chat-agents/bots/routine-presentation.js";
 import { chatAgentButtonClass } from "../chat-agents/theme.js";
 import { routineOriginHistoryStatus } from "./routine-approval-placement.js";
 import type { RoutineOriginState } from "./use-routine-origin.js";
@@ -22,7 +23,7 @@ export function RoutineOriginApprovals({ state, items = state.view?.pending ?? [
       const exactDecision = state.uncertain?.interactionId === interaction.interactionId ? state.uncertain : null;
       const canRespond = !historicalStatus && state.fresh && !state.pending && (!state.uncertain || Boolean(exactDecision));
       return <div key={interaction.interactionId} data-origin-anchor={item.anchorMessageId}>
-        <InteractionCard interaction={interaction} agentName="Matrix Schedules" actionsAvailable={canRespond && !onReviewInBrowser}
+        <InteractionCard interaction={interaction} routineExecutor={routineOriginExecutor(item)} actionsAvailable={canRespond && !onReviewInBrowser}
           readOnlyStatus={historicalStatus} approvalDecision={exactDecision?.decision}
           decisionError="Your decision could not be confirmed. Check execution history before retrying."
           unavailableMessage={onReviewInBrowser ? "Review in your browser to respond." : undefined}

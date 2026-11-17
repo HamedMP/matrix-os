@@ -15,17 +15,18 @@ export const ROUTINE_ORIGIN_ERROR="Scheduled task status could not be confirmed.
 /** The host transport retains authentication, proof signing and its bounded timeout. */
 export function createRoutineOriginClient(request:(path:string,method:"GET"|"POST",body?:unknown,options?:RoutineOriginRequestOptions)=>Promise<unknown>):RoutineOriginClient {
   const path=(id:string)=>`/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(id))}/routine-origin`;
-  let legacyRead = false;
+  let supportedTimeline = 2;
   return {
     get: async (id, signal) => {
       const endpoint = path(id);
-      if (!legacyRead) {
+      for (const timeline of [2, 1]) {
+        if (timeline > supportedTimeline) continue;
         try {
-          return RoutineChatOriginViewSchema.parse(await request(`${endpoint}?timeline=1`, "GET", undefined, { signal }));
+          return RoutineChatOriginViewSchema.parse(await request(`${endpoint}?timeline=${timeline}`, "GET", undefined, { signal }));
         } catch (error: unknown) {
-          // Older hosts reject any query parameter on this GET. Only retry the read.
+          // Older hosts may only accept timeline=1 or the unversioned GET. Only retry reads.
           if (signal?.aborted || safeHttpStatus(error) !== 400) throw error;
-          legacyRead = true;
+          supportedTimeline = Math.min(supportedTimeline, timeline - 1);
         }
       }
       return RoutineChatOriginViewSchema.parse(await request(endpoint, "GET", undefined, { signal }));

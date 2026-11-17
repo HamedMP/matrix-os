@@ -1,11 +1,13 @@
 import { chatAgentMutedStyle } from "../theme.js";
-import { routineScheduleCopy, ROUTINE_EXECUTION_IMPACT, type routineApprovalPreview } from "./routine-presentation.js";
+import { routineScheduleCopy, ROUTINE_EXECUTION_IMPACT, type RoutineOriginExecutor, type routineApprovalPreview } from "./routine-presentation.js";
 
-export function RoutineApprovalDetails({ approval, agentName, preview, historical = false }: {
-  approval: NonNullable<ReturnType<typeof routineApprovalPreview>>; agentName?: string; preview: string; historical?: boolean;
+export function RoutineApprovalDetails({ approval, agentName, executor, preview, historical = false }: {
+  approval: NonNullable<ReturnType<typeof routineApprovalPreview>>; agentName?: string; executor?: RoutineOriginExecutor;
+  preview: string; historical?: boolean;
 }) {
   const { proposal, source } = approval, schedule = routineScheduleCopy(proposal.schedule);
-  const fields: [string, string][] = [["Bot", agentName ?? "This Bot"], ["Model", proposal.selection.model], ["Computer", source.computerId],
+  const fields: [string, string][] = [[executor?.kind === "direct" ? "Runs on" : "Bot", executor?.label ?? agentName ?? "This Bot"],
+    ["Model", proposal.selection.model], ["Computer", source.computerId],
     ["When", schedule.frequency], ["Time zone", schedule.timezone]];
   if (!historical) {
     const estimate = approval.estimatedNextFireAt;
