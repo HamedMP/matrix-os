@@ -1,5 +1,10 @@
 import type { ContainerLifecycleService } from './container-lifecycle-service.js';
-import type { ContainerProvider, ContainerUnitState, EndpointCredential } from './container-provider.js';
+import {
+  ContainerProviderError,
+  type ContainerProvider,
+  type ContainerUnitState,
+  type EndpointCredential,
+} from './container-provider.js';
 import type {
   EnsureRunningResult,
   OnDemandRuntimeSubstrate,
@@ -79,6 +84,21 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
     return value;
   }
 
+  /** Checked only after a failed mint, so healthy requests make no extra provider call. */
+  async function unitEnded(unitId: string, error: unknown, signal: AbortSignal): Promise<boolean> {
+    if (!(error instanceof ContainerProviderError)) return false;
+    if (error.code === 'not_found') return true;
+    if (error.code !== 'conflict') return false;
+    try {
+      const unit = await provider.describe(unitId, signal);
+      return !unit || unit.state === 'terminated' || unit.state === 'terminating'
+        || (unit.expiresAt !== null && unit.expiresAt.getTime() <= now().getTime());
+    } catch (describeError: unknown) {
+      console.error('[container-substrate] unit describe failed', describeError instanceof Error ? describeError.name : 'Unknown');
+      return false;
+    }
+  }
+
   async function forget(machineId: string): Promise<void> {
     const machine = await deps.loadMachine(machineId);
     if (machine?.substrateRef) credentials.delete(machine.substrateRef);
@@ -115,6 +135,11 @@ export function createContainerSubstrate(deps: ContainerSubstrateDeps): OnDemand
         remember(unitId, await provider.mintEndpointCredential(unitId, signal));
       } catch (error: unknown) {
         console.error('[container-substrate] endpoint credential unavailable', error instanceof Error ? error.name : 'Unknown');
+        if (machine.generation !== undefined && await unitEnded(unitId, error, signal)) {
+          credentials.delete(unitId);
+          await lifecycle.markComputeLost(ref.machineId, machine.generation, unitId);
+          return lifecycle.ensureStarted(ref.machineId);
+        }
         return { state: 'failed', code: 'provider_unavailable' };
       }
       return result;

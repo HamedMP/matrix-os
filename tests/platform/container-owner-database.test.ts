@@ -146,6 +146,76 @@ describe('container owner databases', () => {
     expect(current.passwordEpoch).toBe(2);
   });
 
+  it('keeps the role on the newest recorded password when rotations interleave', async () => {
+    let rolePassword: string | null = null;
+    let holdFirstTerminate: (() => void) | null = null;
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    let terminates = 0;
+    const fakeAdmin: OwnerClusterAdmin = {
+      async query(statement) {
+        const password = /PASSWORD '([A-Za-z0-9_-]{43})'/.exec(statement);
+        if (password) rolePassword = password[1]!;
+        if (statement.includes('pg_terminate_backend') && terminates++ === 0) {
+          holdFirstTerminate?.();
+          await released;
+        }
+        return statement.startsWith('SELECT 1 FROM') ? [{ '?column?': 1 }] : [];
+      },
+      async executeInDatabase() { return undefined; },
+    };
+    const owners = createContainerOwnerDatabases({ db, admin: fakeAdmin, passwordSecret: SECRET, sizeLimitBytes: 1024 });
+    const { roleName } = await owners.ensure('user_owner_a', 4, signal());
+
+    const firstHeld = new Promise<void>(resolve => { holdFirstTerminate = resolve; });
+    const newer = owners.rotate('user_owner_a', 6, signal());
+    await firstHeld;
+    // Rotations on one owner are serialized, so the older one waits for the newer to finish.
+    const olderPending = owners.rotate('user_owner_a', 5, signal());
+    release();
+    await newer;
+    const older = await olderPending;
+
+    const row = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
+    expect(row.password_epoch).toBe(6);
+    expect(older).toEqual({ rotated: false, passwordEpoch: 6 });
+    expect(rolePassword).toBe(owners.passwordFor(roleName, 6));
+  });
+
+  it('re-applies the newest password when an older claimed rotation applies late', async () => {
+    let rolePassword: string | null = null;
+    let holding = false;
+    let onHeld!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { onHeld = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const fakeAdmin: OwnerClusterAdmin = {
+      async query(statement) {
+        const password = /^ALTER ROLE "[a-z0-9_]+" PASSWORD '([A-Za-z0-9_-]{43})'/.exec(statement);
+        if (password && holding) {
+          holding = false;
+          onHeld();
+          await released;
+        }
+        if (password) rolePassword = password[1]!;
+        return statement.startsWith('SELECT 1 FROM') ? [{ '?column?': 1 }] : [];
+      },
+      async executeInDatabase() { return undefined; },
+    };
+    const owners = createContainerOwnerDatabases({ db, admin: fakeAdmin, passwordSecret: SECRET, sizeLimitBytes: 1024 });
+    const { roleName } = await owners.ensure('user_owner_a', 4, signal());
+
+    holding = true;
+    const older = owners.rotate('user_owner_a', 5, signal());
+    await held;
+    // The newer rotation waits for the slow older one instead of racing it.
+    const newer = owners.rotate('user_owner_a', 6, signal());
+    release();
+    expect(await older).toEqual({ rotated: true, passwordEpoch: 5 });
+    expect(await newer).toEqual({ rotated: true, passwordEpoch: 6 });
+    expect(rolePassword).toBe(owners.passwordFor(roleName, 6));
+  });
+
   it('ensure at a newer generation rotates before returning credentials', async () => {
     const owners = service();
     await owners.ensure('user_owner_a', 1, signal());
@@ -248,6 +318,31 @@ describe('container owner databases', () => {
     const newest = service().passwordFor(credentials.roleName, 2);
     const applied = log.filter(s => s.startsWith(`ALTER ROLE "${credentials.roleName}"`) && s.includes(' PASSWORD '));
     expect(applied.at(-1)).toContain(`'${newest}'`);
+    expect((await db.executor.selectFrom('container_owner_databases').select('password_epoch').executeTakeFirstOrThrow())
+      .password_epoch).toBe(2);
+  });
+
+  it('finishes a rotation whose password change failed when the same generation is retried', async () => {
+    const credentials = await service().ensure('user_owner_a', 1, signal());
+    const base = pgliteAdmin(cluster, log);
+    let failNext = true;
+    const flaky = createContainerOwnerDatabases({
+      db, passwordSecret: SECRET, sizeLimitBytes: 1024 ** 3,
+      admin: {
+        ...base,
+        async query(statement, params, s) {
+          if (failNext && / PASSWORD '/.test(statement) && !/WITH LOGIN/.test(statement)) {
+            failNext = false;
+            throw new Error('cluster unavailable');
+          }
+          return base.query(statement, params, s);
+        },
+      },
+    });
+    await expect(flaky.rotate('user_owner_a', 2, signal())).rejects.toThrow('cluster unavailable');
+    await flaky.rotate('user_owner_a', 2, signal());
+    const applied = log.filter(s => s.startsWith(`ALTER ROLE "${credentials.roleName}" PASSWORD`));
+    expect(applied.at(-1) ?? 'no password applied').toContain(`'${service().passwordFor(credentials.roleName, 2)}'`);
     expect((await db.executor.selectFrom('container_owner_databases').select('password_epoch').executeTakeFirstOrThrow())
       .password_epoch).toBe(2);
   });

@@ -113,6 +113,8 @@ async function migrateRuntimeSubstrates(db: PlatformMigrationExecutor): Promise<
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS private_address TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`.execute(db);
+  // When the container status last changed, so a stuck stop can be bounded.
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active_container
     ON user_machines(clerk_user_id)

@@ -72,6 +72,8 @@ const DUPLICATE_CODES = new Set(['42710', '42P04', '23505']);
 /** How long an owner database operation waits for another one on the same owner. */
 const OWNER_LOCK_WAIT_MS = 30_000;
 const OWNER_LOCK_POLL_MS = 50;
+/** Owners with operations queued in this process; beyond it new operations answer busy. */
+const MAX_LOCAL_OWNER_QUEUES = 10_000;
 
 export function assertOwnerIdentifier(value: string, prefix: 'mxo_' | 'mxr_'): string {
   if (!IDENTIFIER.test(value) || !value.startsWith(prefix)) throw new ContainerOwnerDatabaseError('invalid_identifier');
@@ -90,6 +92,8 @@ function quotePassword(value: string): string {
 function assertGeneration(generation: number): void {
   if (!Number.isSafeInteger(generation) || generation < 1) throw new ContainerOwnerDatabaseError('stale_generation');
 }
+
+function queuedOperationEnded(): void {}
 
 function isDuplicate(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
@@ -227,7 +231,28 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
    * without it a fence or unfence could interleave with provisioning and
    * leave the role out of step with the record.
    */
+  const localQueues = new Map<string, Promise<unknown>>();
+
+  /**
+   * Queues operations on one owner inside this process first. A session
+   * advisory lock is re-entrant, so two operations sharing one connection (a
+   * single-connection database) would otherwise both pass it.
+   */
   async function serialized<T>(clerkUserId: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    const previous = localQueues.get(clerkUserId);
+    if (!previous && localQueues.size >= MAX_LOCAL_OWNER_QUEUES) throw new ContainerOwnerDatabaseError('busy');
+    // The earlier operation's caller already received its outcome; this one only waits for it to end.
+    const run = (previous ?? Promise.resolve()).then(queuedOperationEnded, queuedOperationEnded)
+      .then(() => advisoryLocked(clerkUserId, signal, work));
+    localQueues.set(clerkUserId, run);
+    try {
+      return await run;
+    } finally {
+      if (localQueues.get(clerkUserId) === run) localQueues.delete(clerkUserId);
+    }
+  }
+
+  async function advisoryLocked<T>(clerkUserId: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
     const key = `matrix:container-owner-db:${clerkUserId}`;
     return platformDb.kysely.connection().execute(async (connection) => {
       const deadline = Date.now() + OWNER_LOCK_WAIT_MS;
@@ -247,23 +272,25 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     });
   }
 
+  /**
+   * Runs under the owner lock. The password is applied and the role's
+   * sessions ended before the epoch is recorded, so a recorded epoch always
+   * means its rotation finished, and a failed one is redone by the retry.
+   */
   async function rotate(clerkUserId: string, generation: number, signal: AbortSignal) {
     assertGeneration(generation);
     const row = await load(clerkUserId);
     if (row.password_epoch >= generation) return { rotated: false, passwordEpoch: row.password_epoch };
     await applyPassword(row, generation, signal);
-    const updated = await db.executor.updateTable('container_owner_databases')
+    const recorded = await db.executor.updateTable('container_owner_databases')
       .set({ password_epoch: generation })
       .where('clerk_user_id', '=', clerkUserId)
       .where('password_epoch', '<', generation)
       .where('state', '!=', 'deleting')
       .returning('password_epoch')
       .executeTakeFirst();
-    if (updated) return { rotated: true, passwordEpoch: generation };
-    // A newer rotation committed first; its password must be the one in force.
-    const newer = await load(clerkUserId);
-    await applyPassword(newer, newer.password_epoch, signal);
-    return { rotated: false, passwordEpoch: newer.password_epoch };
+    if (!recorded) throw new ContainerOwnerDatabaseError('deleting');
+    return { rotated: true, passwordEpoch: generation };
   }
 
   async function ensureLocked(clerkUserId: string, generation: number, signal: AbortSignal): Promise<OwnerDatabaseCredentials> {

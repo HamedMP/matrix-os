@@ -9,6 +9,7 @@ import {
   type LambdaMicrovmsProviderConfig,
 } from './container-provider.js';
 import { createContainerSubstrate } from './container-substrate.js';
+import { createLambdaMicrovmsApi, createLambdaMicrovmsClient, type LambdaMicrovmsSender } from './lambda-microvms-client.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
 const list = z.string().transform(value => value.split(',').map(item => item.trim()).filter(Boolean))
@@ -16,6 +17,7 @@ const list = z.string().transform(value => value.split(',').map(item => item.tri
 const port = (fallback: number) => z.coerce.number().int().min(1).max(65_535).default(fallback);
 
 const FIELDS = {
+  MATRIX_CONTAINER_REGION: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/),
   MATRIX_CONTAINER_IMAGE: z.string().min(1).max(512),
   MATRIX_CONTAINER_IMAGE_VERSION: z.string().min(1).max(64).optional(),
   MATRIX_CONTAINER_INGRESS_CONNECTORS: list,
@@ -33,6 +35,7 @@ const FIELDS = {
 const ConfigSchema = z.object(FIELDS);
 
 export interface ContainerSubstrateConfig {
+  region: string;
   provider: LambdaMicrovmsProviderConfig;
   ownerDatabase: {
     adminUrl: string;
@@ -61,6 +64,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
   return {
     ok: true,
     config: {
+      region: c.MATRIX_CONTAINER_REGION,
       provider: {
         imageIdentifier: c.MATRIX_CONTAINER_IMAGE,
         ...(c.MATRIX_CONTAINER_IMAGE_VERSION ? { imageVersion: c.MATRIX_CONTAINER_IMAGE_VERSION } : {}),
@@ -91,13 +95,14 @@ export interface ConfiguredContainerSubstrate {
 export interface ConfiguredContainerSubstrateDeps {
   db: PlatformDB;
   env: NodeJS.ProcessEnv;
-  /** Provider client; without one the substrate is not registered. */
+  /** Injected provider client for tests; otherwise the SDK client is built from configuration. */
   microvmsApi?: LambdaMicrovmsApi;
+  createClient?: (options: { region: string }) => LambdaMicrovmsSender & { destroy(): void };
   ownerClusterAdmin?: OwnerClusterAdmin;
   log?: (message: string) => void;
 }
 
-/** Builds the container substrate only when every setting and the provider client are present. */
+/** Builds the container substrate only when every setting is present. */
 export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubstrateDeps): ConfiguredContainerSubstrate | null {
   const log = deps.log ?? ((message: string) => console.warn(message));
   const loaded = loadContainerSubstrateConfig(deps.env);
@@ -107,11 +112,9 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     }
     return null;
   }
-  if (!deps.microvmsApi) {
-    log('[platform] container substrate not registered; no provider client is configured');
-    return null;
-  }
   const { config } = loaded;
+  const sdkClient = deps.microvmsApi ? null : (deps.createClient ?? createLambdaMicrovmsClient)({ region: config.region });
+  const microvmsApi = deps.microvmsApi ?? createLambdaMicrovmsApi(sdkClient!);
   const pgAdmin = deps.ownerClusterAdmin ? null : createPgOwnerClusterAdmin({ connectionString: config.ownerDatabase.adminUrl });
   const ownerDatabases = createContainerOwnerDatabases({
     db: deps.db,
@@ -119,7 +122,7 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     passwordSecret: config.ownerDatabase.passwordSecret,
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
   });
-  const provider = createLambdaMicrovmsProvider({ api: deps.microvmsApi, config: config.provider });
+  const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
   const lifecycle = createContainerLifecycleService({
     db: deps.db,
     provider,
@@ -154,6 +157,7 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     ownerDatabases,
     async shutdown() {
       await lifecycle.shutdown();
+      sdkClient?.destroy();
       await pgAdmin?.close();
     },
   };
