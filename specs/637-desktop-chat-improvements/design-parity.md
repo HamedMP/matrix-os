@@ -21,3 +21,7 @@ WorkTab already exceeds the entrypoint size guideline. Extract responsive layout
 - Terminal close remains confirmed and stops only its own session; closing other tabs leaves sessions intact.
 - Restored rows return in both project and status placements; per-group pages and counts stay stable.
 - New captures replace stale qualification claims. Missing runtime access remains a blocker, not visual approval.
+
+### Full-CI unit shard reconciliation
+
+The Linux shard exposed three stale consumer tests: the agent chrome fixture replaced the archive hook, the token audit omitted shared UI CSS, and Done expected its Figma live count to disappear while expanded. Preserve the real archive exports, include shared CSS definitions in the existing token audit, and retain the live-count assertion through collapse/expand. CI supplies red evidence for all four assertions. Archive, Side chat, and paged-rail regression suites are retained unchanged in the final integration layer to keep the native layer at 50 files; none of their assertions are deleted. Runtime source is unchanged by this reconciliation.
