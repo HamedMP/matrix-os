@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 
 import AppSettingsScreen from "../app/settings-detail/app-settings";
+import { fetchActiveComputer } from "@/lib/requests";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
 
@@ -43,6 +44,8 @@ describe("App settings", () => {
   beforeEach(() => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     jest.mocked(Haptics.selectionAsync).mockClear();
+    mockEnablePush.mockClear();
+    mockSaveSettings.mockClear();
   });
 
   afterEach(async () => {
@@ -51,19 +54,53 @@ describe("App settings", () => {
     await disposeTestQueryClient(queryClient);
   });
 
-  it("plays the selection tick as a switch is flipped", async () => {
+  function renderScreen() {
     render(
       <QueryClientProvider client={queryClient}>
         <AppSettingsScreen />
       </QueryClientProvider>,
     );
-    const push = await screen.findByLabelText("Push notifications");
-    await waitFor(() => expect(push.props.disabled).toBeFalsy());
+  }
 
-    fireEvent(push, "valueChange", true);
+  async function findEnabledSwitch(name: string) {
+    const row = await screen.findByRole("switch", { name });
+    await waitFor(() => expect(row.props.accessibilityState?.disabled).toBeFalsy());
+    return row;
+  }
+
+  it("turns push on from a tap anywhere on its row, with the selection tick", async () => {
+    renderScreen();
+    const push = await findEnabledSwitch("Push notifications");
+    expect(push.props.accessibilityState).toMatchObject({ checked: false });
+
+    fireEvent.press(push);
 
     expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByLabelText("Push notifications").props.value).toBe(true));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: true }));
     expect(mockEnablePush).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns the biometric lock on from a tap on its row", async () => {
+    renderScreen();
+    const biometric = await findEnabledSwitch("Face ID lock");
+
+    fireEvent.press(biometric);
+
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Face ID lock" }).props.accessibilityState)
+      .toMatchObject({ checked: true }));
+    expect(mockSaveSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the push row off until a computer is connected", async () => {
+    jest.mocked(fetchActiveComputer).mockRejectedValueOnce(new Error("Computer unavailable."));
+    renderScreen();
+    const push = await screen.findByRole("switch", { name: "Push notifications" });
+    await screen.findByText("Connect a computer to enable");
+
+    fireEvent.press(push);
+
+    expect(push.props.accessibilityState).toMatchObject({ disabled: true, checked: false });
+    expect(mockEnablePush).not.toHaveBeenCalled();
   });
 });
