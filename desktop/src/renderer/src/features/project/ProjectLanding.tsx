@@ -27,17 +27,22 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const nowMs = useMinuteClock(active && showMetadata);
   return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
-    {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] pb-2 pt-[52px]`}>
-      <ProjectLandingHeader project={project} disabled={!actions.available || actions.pending} editButtonRef={editButtonRef}
-        onEdit={() => actions.setDialog("edit")} onOpenFiles={() => { void actions.showInFiles(); }} />
-      <DesktopProjectAgentContext projectId={project.id}
-        projectSlug={project.slug} filesPending={actions.pending} onOpenFiles={() => actions.showInFiles(true)} />
-      <ProjectConversationList projectName={project.name} {...list} nowMs={nowMs} onSelect={onSelectChat} />
-      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{actions.error}</p> : null}
+    {/* The full-width scroller reserves a gutter on both edges, so a growing chat
+        list never shifts the layout and its centred column lines up with the
+        composer below, which keeps its full width. */}
+    {showMetadata ? <header className="min-h-0 w-full flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+      <div className={`${PROJECT_LANDING_CONTENT_CLASS} pb-2 pt-[52px]`}>
+        <ProjectLandingHeader project={project} disabled={!actions.available || actions.pending} editButtonRef={editButtonRef}
+          onEdit={() => actions.setDialog("edit")} onOpenFiles={() => { void actions.showInFiles(); }} />
+        <DesktopProjectAgentContext projectId={project.id}
+          projectSlug={project.slug} filesPending={actions.pending} onOpenFiles={() => actions.showInFiles(true)} />
+        <ProjectConversationList projectName={project.name} {...list} nowMs={nowMs} onSelect={onSelectChat} />
+        {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{actions.error}</p> : null}
+      </div>
     </header> : null}
     {/* Metadata owns spare height; the draft uses its content height and may
         shrink for scrollable provider guidance in a short window. */}
-    <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink [scrollbar-gutter:stable]" : "flex-1"}`}>{children}</div>
+    <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink" : "flex-1"}`}>{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
 }
