@@ -9,6 +9,7 @@ import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLif
 import { ArchivedChatsPage, type ChatArchiveClient } from "@matrix-os/ui";
 import { WebChatSearchDialog } from "./chat/WebChatSearchDialog";
 import { useWebChatHistory, useInlineChatSearch, useWebChatRowShortcuts } from "./chat/useWebChatHistory";
+import { WebChatInspector } from "./chat/WebChatInspector";
 import type { SideChatClient } from "@matrix-os/ui";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { EmptyState, AssistantBubble } from "./chat/ChatAppContentViews";
@@ -28,6 +29,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
+import { appendSideChatAnswer } from "./chat/side-chat-draft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
@@ -343,13 +345,25 @@ function ChatAppContent({
     else onComposerDraftConsumed?.(id);
   };
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [rootWidth, setRootWidth] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (typeof ResizeObserver === "undefined") { setRootWidth(root.clientWidth); return; }
+    const observer = new ResizeObserver(() => setRootWidth(root.clientWidth));
+    observer.observe(root);
+    setRootWidth(root.clientWidth);
+    return () => observer.disconnect();
+  }, []);
   const previewTrigger = useRef<HTMLElement | null>(null);
   const openMessageFile = (path: string) => {
     const target = resolveChatMessageLink(path);
     if (!sessionId || target?.kind !== "file") return false;
     previewTrigger.current = document.activeElement as HTMLElement | null;
     setPreviewFile({ chatId: sessionId, path: target.path });
+    setInspectorOpen(true);
     return true;
   };
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
@@ -791,6 +805,7 @@ function ChatAppContent({
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+          {!collaborationView && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelLeftCloseIcon className="size-4 rotate-180"/></Button> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
@@ -810,6 +825,7 @@ function ChatAppContent({
           </>}
           headerActions={<>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+            {sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelLeftCloseIcon className="size-4 rotate-180"/></Button> : null}
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => openProviderSettings()}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
           </>}
@@ -970,7 +986,13 @@ function ChatAppContent({
         </BotChatPanel>
         </>}
       </main>
-      {previewFile && previewFile.chatId === sessionId && !archivesOpen
+      {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
+        chatId={sessionId} chatTitle={activeConversationTitle} project={webProjects.projects.find(project => project.id === (chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId) || project.slug === (chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId))} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
+        rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
+        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
+        sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
+        onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
+      {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
         ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider> : null}
     </div>

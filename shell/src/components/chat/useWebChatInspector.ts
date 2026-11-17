@@ -1,0 +1,331 @@
+"use client";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { z } from "zod/v4";
+import type { InspectorTool, SideChatClient } from "@matrix-os/ui";
+import {
+  readLayout,
+  createChatTerminal,
+  deleteChatTerminal,
+  FILES,
+  NEW,
+  SIDE,
+  MAX_TABS,
+  type Tab,
+  type Session,
+} from "./web-chat-inspector-state";
+
+export interface WebChatInspectorProps {
+  chatId: string;
+  chatTitle?: string;
+  gatewayUrl: string;
+  layoutKey: string | null;
+  rootWidth: number;
+  railWidth: number;
+  project?: { id: string; slug: string };
+  filePath: string | null;
+  onFilePathChange(path: string | null): void;
+  terminalSessionIds: readonly string[];
+  sideChatClient: SideChatClient;
+  onSendToMain(text: string): void;
+  onClose(): void;
+}
+export function useWebChatInspector({
+  chatId,
+  chatTitle,
+  gatewayUrl,
+  layoutKey,
+  rootWidth,
+  railWidth,
+  project,
+  filePath,
+  onFilePathChange,
+  terminalSessionIds,
+  sideChatClient,
+  onSendToMain,
+  onClose,
+}: WebChatInspectorProps) {
+  const [layout, setLayout] = useState(() => readLayout(layoutKey, terminalSessionIds));
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [registryReady, setRegistryReady] = useState(false);
+  const [pending, setPending] = useState(false);
+  const lock = useRef(false);
+  const [error, setError] = useState(false);
+  const [closeTarget, setCloseTarget] = useState<Tab | null>(null);
+  const [fileExpanded, setFileExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
+  const lifetime = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    if (layoutKey) {
+      try {
+        localStorage.setItem(layoutKey, JSON.stringify(layout));
+      } catch (cause: unknown) {
+        console.warn("[chat-inspector] Layout save unavailable:", cause instanceof Error ? cause.name : "UnknownError");
+      }
+    }
+  }, [layoutKey, layout]);
+  const signal = () => AbortSignal.any([lifetime.current!.signal, AbortSignal.timeout(10_000)]);
+  const bindings = terminalSessionIds.join("\0");
+  useEffect(() => {
+    if (!bindings && !layout.tabs.some((tab) => tab.kind === "terminal")) {
+      setRegistryReady(true);
+      return;
+    }
+    const controller = new AbortController();
+    void fetch(`${gatewayUrl}/api/terminal/workspaces`, {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("TerminalUnavailable");
+        return z
+          .object({
+            workspaces: z
+              .array(
+                z.object({
+                  id: z.string().max(128),
+                  tabs: z
+                    .array(
+                      z.object({
+                        id: z.string().max(128),
+                        name: z.string().max(200).optional(),
+                        cwd: z.string().max(4096).optional(),
+                        status: z.string().max(40).optional(),
+                      }),
+                    )
+                    .max(1000),
+                }),
+              )
+              .max(100),
+          })
+          .parse(await response.json());
+      })
+      .then(({ workspaces }) => {
+        if (controller.signal.aborted) return;
+        setSessions(
+          workspaces
+            .flatMap((workspace) =>
+              workspace.tabs.map((tab) => ({
+                ref: `${workspace.id}:${tab.id}`,
+                name: tab.name ?? "Terminal",
+                cwd: tab.cwd ?? "",
+                attachable: !tab.status || ["running", "idle", "starting"].includes(tab.status),
+              })),
+            )
+            .filter(
+              (session) =>
+                bindings.split("\0").includes(session.ref) ||
+                layout.tabs.some((tab) => tab.id === `terminal:${session.ref}`),
+            )
+            .slice(0, MAX_TABS),
+        );
+        setRegistryReady(true);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn(
+            "[chat-inspector] Terminal discovery failed:",
+            cause instanceof Error ? cause.name : "UnknownError",
+          );
+          setError(true);
+        }
+      });
+    return () => controller.abort();
+    // Persisted tabs seed discovery. Creating a tab already has its authoritative response.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gatewayUrl, bindings]);
+  const openTab = (tab: Tab) =>
+    setLayout((current) => ({
+      ...current,
+      selected: tab.id,
+      tabs: current.tabs.some((item) => item.id === tab.id)
+        ? current.tabs
+        : [...current.tabs.filter((item) => item.kind !== "new").slice(-(MAX_TABS - 1)), tab],
+    }));
+  useEffect(() => {
+    if (filePath) {
+      setLayout((current) => ({
+        ...current,
+        selected: "files",
+        tabs: current.tabs.some((tab) => tab.kind === "files")
+          ? current.tabs
+          : [...current.tabs, FILES].slice(-MAX_TABS),
+      }));
+    }
+  }, [filePath]);
+  const selected = layout.tabs.find((tab) => tab.id === layout.selected) ?? layout.tabs[0]!;
+  const overlay = rootWidth > 0 && rootWidth - railWidth < 600;
+  const maxWidth = Math.max(240, Math.min(820, rootWidth - railWidth - 360));
+  const width = Math.min(layout.width, maxWidth);
+  const removeTab = (id: string) =>
+    setLayout((current) => {
+      const tabs = current.tabs.filter((tab) => tab.id !== id);
+      return {
+        ...current,
+        tabs: tabs.length ? tabs : [NEW],
+        selected: current.selected === id ? (tabs.at(-1)?.id ?? NEW.id) : current.selected,
+      };
+    });
+  const createTerminal = () => {
+    if (lock.current || layout.tabs.filter((tab) => tab.kind !== "new").length >= MAX_TABS) return;
+    lock.current = true;
+    setPending(true);
+    setError(false);
+    return createChatTerminal(gatewayUrl, chatId, signal())
+      .then((session) => {
+        if (lifetime.current!.signal.aborted) return;
+        setSessions((current) => [...current.filter((item) => item.ref !== session.ref), session].slice(-MAX_TABS));
+        openTab({
+          id: `terminal:${session.ref}`,
+          kind: "terminal",
+          label: session.name,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (!lifetime.current!.signal.aborted) {
+          console.warn(
+            "[chat-inspector] Terminal create failed:",
+            cause instanceof Error ? cause.name : "UnknownError",
+          );
+          setError(true);
+        }
+      })
+      .finally(() => {
+        lock.current = false;
+        if (!lifetime.current!.signal.aborted) setPending(false);
+      });
+  };
+  const choose = (kind: Exclude<InspectorTool, "new">) => {
+    setMenuOpen(false);
+    if (kind === "terminal") {
+      void createTerminal();
+    } else if (kind !== "browser") openTab(kind === "files" ? FILES : SIDE);
+  };
+  const closeTab = (id: string) => {
+    const tab = layout.tabs.find((item) => item.id === id);
+    if (!tab) return;
+    const session = sessions.find((item) => `terminal:${item.ref}` === id);
+    if (tab.kind === "terminal" && (!registryReady || session?.attachable)) {
+      setError(false);
+      setCloseTarget(tab);
+    } else removeTab(id);
+  };
+  const stopTerminal = () => {
+    const target = closeTarget;
+    if (!target || lock.current) return;
+    lock.current = true;
+    setPending(true);
+    setError(false);
+    return deleteChatTerminal(gatewayUrl, target, signal())
+      .then(() => {
+        if (lifetime.current!.signal.aborted) return;
+        setSessions((current) => current.filter((item) => `terminal:${item.ref}` !== target.id));
+        removeTab(target.id);
+        setCloseTarget(null);
+      })
+      .catch((cause: unknown) => {
+        if (!lifetime.current!.signal.aborted) {
+          console.warn("[chat-inspector] Terminal stop failed:", cause instanceof Error ? cause.name : "UnknownError");
+          setError(true);
+        }
+      })
+      .finally(() => {
+        lock.current = false;
+        if (!lifetime.current!.signal.aborted) setPending(false);
+      });
+  };
+  const shortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.repeat ||
+      (event.target instanceof HTMLElement && event.target.closest("input, textarea, [contenteditable=true]"))
+    )
+      return;
+    const key = event.key.toLowerCase();
+    const kind =
+      event.metaKey && event.altKey && key === "s"
+        ? "side-chat"
+        : event.metaKey && !event.altKey && key === "p"
+          ? "files"
+          : event.ctrlKey && !event.metaKey && key === "`"
+            ? "terminal"
+            : null;
+    if (kind) {
+      event.preventDefault();
+      choose(kind);
+    }
+  });
+  useEffect(() => {
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+  const drag = (event: React.PointerEvent<HTMLDivElement>, axis: "width" | "tree") => {
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = axis === "width" ? event.clientX : event.clientY;
+    const initial = axis === "width" ? width : layout.treeHeight;
+    target.setPointerCapture(event.pointerId);
+    const move = (next: PointerEvent) => {
+      const requested = initial + (axis === "width" ? start - next.clientX : next.clientY - start);
+      if (axis === "width" && requested < 192) {
+        onClose();
+        return;
+      }
+      setLayout((current) => ({
+        ...current,
+        ...(axis === "width"
+          ? { width: Math.max(240, Math.min(maxWidth, requested)) }
+          : {
+              treeHeight: Math.max(120, Math.min(1200, (panelRef.current?.clientHeight ?? 600) - 216, requested)),
+            }),
+      }));
+    };
+    const end = () => {
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", end);
+      target.removeEventListener("pointercancel", end);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", end, { once: true });
+    target.addEventListener("pointercancel", end, { once: true });
+    lifetime.current!.signal.addEventListener("abort", end, { once: true });
+  };
+  const picker = () => {
+    setMenuOpen(false);
+    setLayout((current) => ({
+      ...current,
+      selected: NEW.id,
+      tabs: current.tabs.some((tab) => tab.kind === "new") ? current.tabs : [...current.tabs, NEW].slice(-MAX_TABS),
+    }));
+  };
+  return {
+    layout,
+    setLayout,
+    sessions,
+    registryReady,
+    pending,
+    error,
+    closeTarget,
+    setCloseTarget,
+    fileExpanded,
+    setFileExpanded,
+    menuOpen,
+    setMenuOpen,
+    panelRef,
+    selected,
+    overlay,
+    maxWidth,
+    width,
+    closeTab,
+    picker,
+    choose,
+    openTab,
+    createTerminal,
+    stopTerminal,
+    drag,
+  };
+}
