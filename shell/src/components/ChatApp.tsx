@@ -185,6 +185,7 @@ interface ChatAppProps {
   botEventRevision?: number;
   routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   navigationFresh?:boolean;
+  navigationTruncated?:boolean;
   navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
@@ -238,7 +239,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject, navigationTruncated,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -758,7 +759,8 @@ function ChatAppContent({
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
-              conversations={projectChats(ordinaryConversations, projectHome)} onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
+              conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} botClient={summaryClient}
+              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">

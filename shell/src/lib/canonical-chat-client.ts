@@ -60,7 +60,8 @@ export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
   navigation?():Promise<CanonicalChatNavigationResponse>;
-  list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
+  /** Owner-wide by default; `projectId` pages one Project's own Chats. */
+  list(input?: { unreadOnly?: boolean; cursor?: string; projectId?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   /** The newest page, or the older page `cursor` names. */
@@ -241,7 +242,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");
-      const query = new URLSearchParams({ limit: "100", scope: "global" });
+      const query = new URLSearchParams(input.projectId ? { limit: "100", projectId: input.projectId } : { limit: "100", scope: "global" });
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);
       return CanonicalChatListResponseSchema.parse(await request(`/api/chats?${query}`));

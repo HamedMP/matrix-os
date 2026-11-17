@@ -22,20 +22,17 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   onSelectChat?: (record: ChatNavigationRecord) => void;
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
-  const loaded = useProjectLandingChats(project, client, eventSource, active);
-  const chats = records ?? loaded.chats;
+  const list = conversationListState(records, useProjectLandingChats(project, client, eventSource, active));
   const actions = useProjectActions(project);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const nowMs = useMinuteClock(active && showMetadata);
-  const listStatus = records ? "ready" : loaded.loading ? "loading" : loaded.error ? "error" : "ready";
   return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
     {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] pb-2 pt-[52px]`}>
       <ProjectLandingHeader project={project} disabled={!actions.available || actions.pending} editButtonRef={editButtonRef}
         onEdit={() => actions.setDialog("edit")} onOpenFiles={() => { void actions.showInFiles(); }} />
       <DesktopProjectAgentContext projectId={project.id}
         projectSlug={project.slug} filesPending={actions.pending} onOpenFiles={() => actions.showInFiles(true)} />
-      <ProjectConversationList projectName={project.name} records={chats} status={listStatus} nowMs={nowMs}
-        onSelect={onSelectChat} onRetry={records ? undefined : loaded.retry} truncated={records ? false : loaded.truncated} />
+      <ProjectConversationList projectName={project.name} {...list} nowMs={nowMs} onSelect={onSelectChat} />
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{actions.error}</p> : null}
     </header> : null}
     {/* Metadata owns spare height; the draft uses its content height and may
@@ -43,6 +40,13 @@ export function ProjectLanding({ project, children, showMetadata = true, records
     <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink [scrollbar-gutter:stable]" : "flex-1"}`}>{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
+}
+
+/** Caller-supplied rows are authoritative; otherwise the project's own loaded Chats drive the list state. */
+function conversationListState(records: ChatNavigationRecord[] | undefined, loaded: ReturnType<typeof useProjectLandingChats>) {
+  if (records) return { records, status: "ready" as const, truncated: false };
+  const status = loaded.loading ? "loading" as const : loaded.error ? "error" as const : "ready" as const;
+  return { records: loaded.chats, status, onRetry: loaded.retry, truncated: loaded.truncated };
 }
 
 function ProjectLandingHeader({ project, disabled, editButtonRef, onEdit, onOpenFiles }: {

@@ -1,27 +1,34 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
-import { ProjectConversationList, useMinuteClock, type ChatNavigationRecord } from "@matrix-os/ui";
+import { useMemo } from "react";
+import { ProjectConversationList, useMinuteClock, type ChatAgentClient } from "@matrix-os/ui";
 import { FolderOpen } from "@/lib/hugeicons";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { WebProjectAgentContext } from "./WebProjectAgentContext";
+import { useWebProjectHistory } from "./useWebProjectHistory";
 import type { WebProject } from "./web-projects";
 
+const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
+
 /** Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat. */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = [], onSelectChat, active = true }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, botClient, onSelectChat, active = true }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
   isCurrentAuthority?: () => boolean;
   /** This project's Chats from the shared navigation projection. */
   conversations?: readonly RenameableConversation[];
+  /** The shared navigation window was cut off, so this project's own history is read too. */
+  historyIncomplete?: boolean;
+  /** Classifies history-only Chats so Bot Chats stay out of the project list. */
+  botClient?: ChatAgentClient;
   onSelectChat?: (chatId: string) => void;
   active?: boolean;
 }) {
   const nowMs = useMinuteClock(active);
-  const records = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
-  const previews = useMemo(() => new Map(conversations.map((chat) => [chat.id, chat.preview])), [conversations]);
-  const snippetFor = useCallback((record: ChatNavigationRecord) => previews.get(record.chat.id), [previews]);
+  const listed = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
+  const history = useWebProjectHistory({ project, gatewayUrl, listed, enabled: historyIncomplete && active, botClient });
+  const status = history.records.length > 0 ? "ready" : history.error ? "error" : history.loading ? "loading" : "ready";
   return (
     <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-slot="chat-project-home">
       <div className="mx-auto w-full max-w-[808px] px-6 pb-4 pt-5">
@@ -34,8 +41,10 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
           </h1>
         </div>
         <WebProjectAgentContext project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority} />
-        <ProjectConversationList projectName={project.name} records={records} status="ready" nowMs={nowMs}
-          snippetFor={snippetFor} onSelect={onSelectChat ? (record) => onSelectChat(record.chat.id) : undefined} />
+        {/* No snippet: the navigation projection carries no message excerpt, only the title. */}
+        <ProjectConversationList projectName={project.name} records={history.records} status={status} nowMs={nowMs}
+          onRetry={history.retry} truncated={history.capped}
+          onSelect={onSelectChat ? (record) => onSelectChat(record.chat.id) : undefined} />
       </div>
     </div>
   );

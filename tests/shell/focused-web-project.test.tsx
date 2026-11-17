@@ -362,8 +362,48 @@ it("lists the project's Chats with live status and opens the exact Chat on Web D
   render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" identity="owner"
     conversations={conversations} onSelectChat={onSelectChat} />);
   const running = screen.getByRole("button", { name: "Open Plan the trip, Running" });
-  expect(running.textContent).toContain("Booked the train");
+  // The navigation projection's preview is only the title, so rows show no snippet.
+  expect(running.textContent).not.toContain("Booked the train");
   expect(screen.getByRole("button", { name: "Open Pack list, Done" })).toBeTruthy();
   fireEvent.click(running);
   expect(onSelectChat).toHaveBeenCalledWith("chat_a");
+});
+
+it("reads an older project's own history on Web Desktop when the shared Chat list is cut off", async () => {
+  const older = {
+    chat: { id: "chat_old", ownerScope: { type: "personal", ownerId: "owner" }, title: "Old itinerary", lifecycle: "active", attention: "none", revision: 1, messageCount: 2,
+      createdAt: "2026-01-10T10:00:00.000Z", updatedAt: "2026-01-10T10:00:00.000Z" },
+    projectId: "proj_france",
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/chats" && url.searchParams.get("projectId") === "proj_france") {
+      return new Response(JSON.stringify({ items: [older] }), { status: 200 });
+    }
+    if (url.pathname === "/api/chats") return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    return new Response("{}", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const botClient = { list: vi.fn(async () => ({ enabled: true, agents: [] })),
+    bots: { directBot: vi.fn(async () => null), tasks: vi.fn(async () => []), interactions: vi.fn(async () => []) } } as never;
+  try {
+    render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" identity="owner"
+      conversations={[]} historyIncomplete botClient={botClient} onSelectChat={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Open Old itinerary, Done" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("projectId=proj_france"), expect.anything());
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("does not read project history while the shared Chat list is complete", () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" identity="owner"
+      conversations={[]} />);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/chats"))).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
