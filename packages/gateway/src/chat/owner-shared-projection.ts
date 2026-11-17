@@ -36,6 +36,14 @@ export async function ownerSharedProjection(
   projectId?: string | null,
 ): Promise<CanonicalChatCollaboration | undefined> {
   if (!scopeId && !projectId) return undefined;
+  // Collaboration is optional at gateway startup. Only automatic project
+  // discovery may have no schema; a persisted binding still requires its tables.
+  if (!scopeId) {
+    const schema = await sql<{ configured: boolean }>`
+      SELECT to_regclass('collaboration_scopes') IS NOT NULL AS configured
+    `.execute(executor);
+    if (!schema.rows[0]?.configured) return undefined;
+  }
   const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
   let query = collaborationExecutor.selectFrom("collaboration_scopes")
     .select(["id", "parent_scope_id", "membership_mode", "lifecycle", "authority_runtime_id"])
