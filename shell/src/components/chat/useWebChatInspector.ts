@@ -16,6 +16,7 @@ import {
 } from "./web-chat-inspector-state";
 
 export interface WebChatInspectorProps {
+  active?: boolean;
   chatId: string;
   chatTitle?: string;
   gatewayUrl: string;
@@ -24,6 +25,8 @@ export interface WebChatInspectorProps {
   railWidth: number;
   project?: { id: string; slug: string };
   projectLoading?: boolean;
+  projectError?: boolean;
+  onRetryProject?(): void;
   filePath: string | null;
   fileResource?: FileResourceRef;
   onFilePathChange(path: string | null): void;
@@ -33,6 +36,7 @@ export interface WebChatInspectorProps {
   onClose(): void;
 }
 export function useWebChatInspector({
+  active = true,
   chatId,
   chatTitle,
   gatewayUrl,
@@ -50,6 +54,8 @@ export function useWebChatInspector({
   const [layout, setLayout] = useState(() => readLayout(layoutKey, terminalSessionIds));
   const [sessions, setSessions] = useState<Session[]>([]);
   const [registryReady, setRegistryReady] = useState(false);
+  const [registryVersion, setRegistryVersion] = useState(0);
+  const registryMutation = useRef(0);
   const [pending, setPending] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState(false);
@@ -57,6 +63,20 @@ export function useWebChatInspector({
   const [fileExpanded, setFileExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
+  const [panelHeight, setPanelHeight] = useState(600);
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const measure = () => setPanelHeight(panel.clientHeight || 600);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, []);
+  const treeMax = Math.max(0, Math.min(1200, panelHeight - 216));
+  const treeMin = Math.min(120, treeMax);
+  const treeHeight = Math.max(treeMin, Math.min(treeMax, layout.treeHeight));
   const lifetime = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -80,6 +100,7 @@ export function useWebChatInspector({
       return;
     }
     const controller = new AbortController();
+    const mutation = registryMutation.current;
     void fetch(`${gatewayUrl}/api/terminal/workspaces`, {
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
     })
@@ -108,7 +129,7 @@ export function useWebChatInspector({
           .parse(await response.json());
       })
       .then(({ workspaces }) => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || mutation !== registryMutation.current) return;
         setSessions(
           workspaces
             .flatMap((workspace) =>
@@ -124,7 +145,7 @@ export function useWebChatInspector({
                 bindings.split("\0").includes(session.ref) ||
                 layout.tabs.some((tab) => tab.id === `terminal:${session.ref}`),
             )
-            .slice(0, MAX_TABS),
+            .slice(-MAX_TABS),
         );
         setRegistryReady(true);
       })
@@ -140,7 +161,7 @@ export function useWebChatInspector({
     return () => controller.abort();
     // Persisted tabs seed discovery. Creating a tab already has its authoritative response.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayUrl, bindings]);
+  }, [gatewayUrl, bindings, registryVersion]);
   const openTab = (tab: Tab) =>
     setLayout((current) => ({
       ...current,
@@ -174,13 +195,15 @@ export function useWebChatInspector({
       };
     });
   const createTerminal = () => {
-    if (lock.current || layout.tabs.filter((tab) => tab.kind !== "new").length >= MAX_TABS) return;
+    if (lock.current) return;
     lock.current = true;
     setPending(true);
     setError(false);
     return createChatTerminal(gatewayUrl, chatId, signal())
       .then((session) => {
         if (lifetime.current!.signal.aborted) return;
+        registryMutation.current++;
+        setRegistryVersion(registryMutation.current);
         setSessions((current) => [...current.filter((item) => item.ref !== session.ref), session].slice(-MAX_TABS));
         openTab({
           id: `terminal:${session.ref}`,
@@ -226,6 +249,8 @@ export function useWebChatInspector({
     return deleteChatTerminal(gatewayUrl, target, signal())
       .then(() => {
         if (lifetime.current!.signal.aborted) return;
+        registryMutation.current++;
+        setRegistryVersion(registryMutation.current);
         setSessions((current) => current.filter((item) => `terminal:${item.ref}` !== target.id));
         removeTab(target.id);
         setCloseTarget(null);
@@ -243,6 +268,7 @@ export function useWebChatInspector({
   };
   const shortcut = useEffectEvent((event: KeyboardEvent) => {
     if (
+      !active ||
       event.defaultPrevented ||
       event.repeat ||
       (event.target instanceof HTMLElement && event.target.closest("input, textarea, [contenteditable=true]"))
@@ -263,14 +289,15 @@ export function useWebChatInspector({
     }
   });
   useEffect(() => {
+    if (!active) return;
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, []);
+  }, [active]);
   const drag = (event: React.PointerEvent<HTMLDivElement>, axis: "width" | "tree") => {
     event.preventDefault();
     const target = event.currentTarget;
     const start = axis === "width" ? event.clientX : event.clientY;
-    const initial = axis === "width" ? width : layout.treeHeight;
+    const initial = axis === "width" ? width : treeHeight;
     target.setPointerCapture(event.pointerId);
     const move = (next: PointerEvent) => {
       const requested = initial + (axis === "width" ? start - next.clientX : next.clientY - start);
@@ -283,7 +310,7 @@ export function useWebChatInspector({
         ...(axis === "width"
           ? { width: Math.max(240, Math.min(maxWidth, requested)) }
           : {
-              treeHeight: Math.max(120, Math.min(1200, (panelRef.current?.clientHeight ?? 600) - 216, requested)),
+              treeHeight: Math.max(treeMin, Math.min(treeMax, requested)),
             }),
       }));
     };
@@ -319,6 +346,9 @@ export function useWebChatInspector({
     menuOpen,
     setMenuOpen,
     panelRef,
+    treeHeight,
+    treeMin,
+    treeMax,
     selected,
     overlay,
     maxWidth,
