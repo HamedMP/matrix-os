@@ -1,4 +1,3 @@
-import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
@@ -253,6 +252,7 @@ import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
+import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
@@ -1633,6 +1633,7 @@ export async function createGateway(config: GatewayConfig) {
     if (botServices?.managedAdapter) canonicalExecutableDriverKinds.push("matrix_pi");
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
+      beforeRoutineCreationAdmission: botServices?.beforeRoutineCreationAdmission,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
@@ -1655,7 +1656,7 @@ export async function createGateway(config: GatewayConfig) {
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     nativeClaudeChatRuntime?.bind(() => canonicalChatOrchestrator);
-    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }, "approval"));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the

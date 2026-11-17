@@ -10,7 +10,7 @@ import type { BotStateTransactions } from "./events.js";
 import { BotInteractionError, projectBotInteraction, type BotInteractionService } from "./interactions.js";
 import { createBotInteractionsRepository } from "./repositories/interactions.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import { initialRoutineChatOrigin, routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
+import { initialRoutineChatOrigin, projectRoutineOriginInteraction, routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
 import type { VerifiedRoutineOriginApproval } from "./routine-origin-platform-client.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { ChatAgentStore } from "../chat/agent-store.js";
@@ -66,7 +66,7 @@ async function readApprovalItems(
     const anchor = await liveOrigin(db, origin);
     if (!anchor) continue;
     const decision = interaction.status === "resolved" ? interaction.resolution?.decision : undefined;
-    const projected = projectBotInteraction(interaction, ownerId, { estimateRoutineNextFire: !history });
+    const projected = projectRoutineOriginInteraction(projectBotInteraction(interaction, ownerId, { estimateRoutineNextFire: !history }), origin);
     // The canonical resolver already refuses an overdue row, even before the sweep persists expiry.
     const presentation = history && projected.status === "pending" ? { ...projected, status: "expired" as const } : projected;
     items.push({ sourceChatId, anchorMessageId: anchor.id, interaction: presentation,

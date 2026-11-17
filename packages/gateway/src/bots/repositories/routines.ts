@@ -6,7 +6,7 @@ import { BotRoutineProposalSchema, type BotRoutineProposal, type BotRoutineStatu
 import type { OwnerBotDatabase } from "../database.js";
 import { BotStateError, isoTimestamp, optionalIsoTimestamp, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 import { createBotTasksRepository } from "./tasks.js";
-import { directRoutineOriginLiveSql, lockDirectRoutineSource } from "../routine-direct-chat-lifecycle.js";
+import { directRoutineOriginLiveSql, isDirectRoutineTargetSql, lockDirectRoutineSource } from "../routine-direct-chat-lifecycle.js";
 import { nextBotRoutineFire } from "../routine-schedule.js";
 const id = (prefix: string) => `${prefix}_${randomBytes(12).toString("hex")}`;
 const MAX_ROUTINES = 32;
@@ -209,8 +209,12 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
     async due(now: string) {
       return (await db.selectFrom("bot_routines").selectAll().where("status", "=", "active").where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).orderBy("next_fire_at").limit(32).execute()).map(routine);
     },
-    async listOwner(ownerId: string, input: { before?: string; beforeId?: string; archived?: "true" | "false" }) {
+    async listOwner(ownerId: string, input: { before?: string; beforeId?: string; archived?: "true" | "false" },
+      options: { includeDirect?: boolean } = {}) {
       let query = db.selectFrom("bot_routines").selectAll().where("owner_id", "=", ownerId);
+      if (options.includeDirect === false) {
+        query = query.where(sql<boolean>`NOT ${isDirectRoutineTargetSql({ botId: sql.ref("bot_routines.bot_id"), chatId: sql.ref("bot_routines.chat_id") })}`);
+      }
       query = input.archived === "true" ? query.where("status", "=", "archived") : query.where("status", "!=", "archived");
       if (input.before && input.beforeId) query = query.where(eb => eb.or([eb("created_at", "<", input.before!),
         eb.and([eb("created_at", "=", input.before!), eb("routine_id", "<", input.beforeId!)])]));

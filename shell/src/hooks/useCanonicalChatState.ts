@@ -46,7 +46,7 @@ import {
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitShellChatTurn } from "./canonical-chat-turn-admission";
+import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -508,6 +508,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         if (failedUpload?.status === "rejected") throw failedUpload.reason;
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
+        record = advanceChatRecordForRoutineReceipts(record, detailRef.current);
         admissionAttempted = true;
         const parts: CanonicalChatMessagePart[] = [
           ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),

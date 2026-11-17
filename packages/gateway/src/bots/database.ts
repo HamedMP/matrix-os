@@ -5,7 +5,7 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "../chat/database.js";
 import { hasHistoricalThreadSchema } from "./v9-compatibility.js";
-import { canReadRetainedRoutinePreview, RETAINED_ROUTINE_PREVIEW_VERSIONS } from "./retained-routine-preview.js";
+import { canReadRetainedRoutinePreview, hasRetainedRoutinePreviewSchema, RETAINED_ROUTINE_PREVIEW_VERSIONS } from "./retained-routine-preview.js";
 import { BOT_MIGRATIONS, type BotMigration } from "./database-migrations.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
@@ -360,9 +360,9 @@ export async function bootstrapBotDatabase(
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
     await assertCompatibleSchema(trx, migrations);
-    // The additive migrations can adopt the preview ledger, but this runtime
-    // still requires the retained shape and dormant work before startup.
-    if (migrations === BOT_MIGRATIONS && !await canReadRetainedRoutinePreview(trx)) {
+    // This runtime can reconcile live origin work, but it still requires the exact
+    // additive schema. The v15 fallback retains its separate dormancy check.
+    if (migrations === BOT_MIGRATIONS && !await hasRetainedRoutinePreviewSchema(trx)) {
       throw new BotSchemaError("newer_schema");
     }
   });

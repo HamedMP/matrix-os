@@ -955,3 +955,19 @@ it.each(["completed", "failed"] as const)("preserves recovered uncertain status 
   });
   expect((await repo.getFire(OWNER, f.fireId))?.status).toBe("uncertain");
 });
+
+it("refuses a scheduler execution binding with no claimed source Chat proposal", async () => {
+  const { service, repo } = setup();
+  const botId = `bot_routine${"c".repeat(32)}`;
+  const chatId = `chat_routine_${"d".repeat(32)}`;
+  await insertChat(data.db, chatId);
+  await createBotBindingsRepository(data.db).bindDirect({ ownerId: OWNER, botId, chatId, now: NOW });
+  const tasks = createBotTasksRepository(data.db);
+  const task = await tasks.create({ ownerId: OWNER, botId, chatId, now: NOW });
+  const runId = "run_unclaimed_scheduler_proposal";
+  await tasks.transition({ ownerId: OWNER, taskId: task.taskId, baseRevision: task.revision, to: "running", runId, now: NOW });
+  await expect(service.propose({ ...binding, botId, chatId, taskId: task.taskId, runId }, proposal))
+    .rejects.toMatchObject({ code: "not_found" });
+  expect(await repo.list(OWNER, botId)).toEqual([]);
+  expect(await data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+});

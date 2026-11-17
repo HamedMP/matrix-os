@@ -84,6 +84,20 @@ describe("remembered routine target with current source authority", () => {
   it("requires an owner choice and never selects the first available Bot", async () => {
     await expect(service().resolve(source(), "read")).rejects.toMatchObject({ code: "target_required" });
   });
+  it.each(["target_required", "target_unavailable"] as const)("treats %s as an absent list supplement and logs only its safe code", async code => {
+    const svc = service();
+    if (code === "target_unavailable") {
+      await svc.remember(principal, target);
+      access = false;
+    }
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(db.transaction().execute(trx => svc.resolveListSupplementWithin(trx, source(), {
+        ...scope, botId: BOT, chatId: target.chatId, sourceChatId: "chat_source", bindingCreatedAt: NOW, purpose: "direct_chat",
+      }))).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledExactlyOnceWith("[routine-cli-targets] Remembered list supplement unavailable", code);
+    } finally { warn.mockRestore(); }
+  });
   it.each(["missing", "expired", "future", "revoked", "read", "control", "foreign owner", "foreign computer"])("rejects %s source authority despite a saved default", async problem => {
     const svc = service(); await svc.remember(principal, target);
     const src = source();
@@ -168,5 +182,39 @@ describe("remembered routine target with current source authority", () => {
     await expect(missing.resolve(source(), "read")).rejects.toMatchObject({ code: "unavailable" });
     revalidateSource.mockRejectedValueOnce(new Error("postgres://private-provider-credential"));
     await expect(service().resolve(source(), "read")).rejects.toMatchObject({ code: "unavailable", message: "Routine request unavailable" });
+  });
+});
+
+describe("ordinary Chat routine execution target", () => {
+  it("uses its own exact private binding without a saved destination and never transfers it to another source", async () => {
+    const sourceChatId = "chat_source";
+    await insertChat(db, sourceChatId);
+    const getWithin = vi.fn(async (_trx: Transaction<OwnerBotDatabase>, request: { ownerId: string; computerId: string; sourceChatId: string }) =>
+      request.ownerId === OWNER && request.computerId === scope.computerId && request.sourceChatId === sourceChatId
+        ? { botId: BOT, chatId: target.chatId } : null);
+    const svc = createRoutineCliTargetService({ db, scope, agents, now: () => new Date(clock), revalidateSource, canAccessTarget,
+      directChatContexts: { getWithin, ensure: async () => {} } });
+    const chat = source("pi");
+    chat.identity = { kind: "chat_run", route: "managed", chatId: sourceChatId, runId: "run_source" };
+    expect(await svc.getStoredPreference(principal)).toMatchObject({ target: null, revision: 0 });
+    const pinned = await svc.resolve(chat, "propose");
+    expect(pinned).toEqual({ ...scope, botId: BOT, chatId: target.chatId, bindingCreatedAt: NOW, purpose: "direct_chat", sourceChatId });
+    const legacyBotId = "bot_abcdefgh", legacyChatId = "chat_legacy";
+    await insertChat(db, legacyChatId);
+    await agents.createRecipeBot({ type: "personal", ownerId: OWNER }, { id: legacyBotId, createHash: "b".repeat(64),
+      fields: { name: "Legacy Bot", description: "", instructions: "Read", selection: { instanceId: "matrix_pi_default", model: "auto" } },
+      recipeRef: { recipeId: "report", version: "1" } });
+    await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: legacyBotId, chatId: legacyChatId, now: NOW });
+    await svc.remember(principal, { botId: legacyBotId, chatId: legacyChatId, baseRevision: 0 });
+    await expect(svc.resolve(chat, "propose")).resolves.toEqual(pinned);
+    await expect(svc.resolve({ ...chat, identity: { kind: "terminal_launch", sessionId: "session_one", incarnationId: "incarnation_one", launchId: "launch_one" } }, "propose"))
+      .resolves.toMatchObject({ botId: legacyBotId, chatId: legacyChatId, preferenceRevision: 1 });
+    const other = { ...chat, identity: { ...chat.identity, chatId: "chat_other" } } satisfies RoutineCliSourceContext;
+    await expect(db.transaction().execute(trx => svc.validatePinnedWithin(trx, other, "read", pinned)))
+      .rejects.toMatchObject({ code: "permission_denied" });
+    await expect(db.transaction().execute(trx => svc.validatePinnedWithin(trx, chat, "read", pinned))).resolves.toEqual(pinned);
+    await createBotBindingsRepository(db).remove({ ownerId: OWNER, botId: BOT, chatId: target.chatId, now: at(1) });
+    await expect(db.transaction().execute(trx => svc.validatePinnedWithin(trx, chat, "read", pinned)))
+      .rejects.toMatchObject({ code: "target_unavailable" });
   });
 });
