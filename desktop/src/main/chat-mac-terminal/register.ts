@@ -1,4 +1,4 @@
-import { dialog, type BrowserWindow, type IpcMain } from "electron";
+import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import type { AuthService } from "../auth/auth-service";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { LocalTerminalHost } from "../local-terminals/host";
@@ -8,6 +8,8 @@ import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
 import { MAC_TERMINAL_SYSTEM_CHECKS } from "../../shared/mac-terminal-probe";
 import { MAC_TERMINAL_PROBE_INVOKE } from "../../shared/mac-terminal-probe-ipc";
 import { createMacTerminalBackgroundService } from "./background-service";
+import { approveExistingMacTerminal, pickExistingMacTerminal } from "./existing-terminal-dialog";
+import { createMacExistingTerminalService } from "./existing-terminal-service";
 import { createChatMacTerminalService } from "./service";
 
 interface Options {
@@ -71,7 +73,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     beginActivity: options.beginActivity,
     acquireActionPairing: options.acquireActionPairing,
     enabled: options.allowed,
-    oneTimeBusy: service.isBusy,
+    oneTimeBusy: () => service.isBusy() || existing.isBusy(),
     approve: (context, signal) => requestConsent(context, signal, {
       message: "Allow background Mac terminal checks?",
       description: [
@@ -89,16 +91,29 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     reportEvent: (event, reason) => console.info("[chat-mac-terminal-background]", event, reason ?? ""),
   });
 
+  const existing = createMacExistingTerminalService({
+    enabled: options.allowed,
+    terminalBusy: () => service.isBusy() || background.isBusy(),
+    readTerminalContext: transport.readTerminalContext,
+    isTerminalContextCurrent: transport.isTerminalContextCurrent,
+    openReader: host.openExistingTerminalReader,
+    acquireActionPairing: options.acquireActionPairing,
+    beginActivity: options.beginActivity,
+    reportError(error) {
+      console.warn("[chat-mac-terminal] snapshot failed", error instanceof Error ? error.name : "Error");
+    },
+  });
+
   function handle<C extends keyof typeof MAC_TERMINAL_PROBE_INVOKE>(
     channel: C,
-    handler: (request: InvokeRequest<C>) => InvokeResponse<C> | Promise<InvokeResponse<C>>,
+    handler: (request: InvokeRequest<C>, event: IpcMainInvokeEvent) => InvokeResponse<C> | Promise<InvokeResponse<C>>,
   ) {
     const contract = MAC_TERMINAL_PROBE_INVOKE[channel];
     ipc.handle(channel, async (event, raw) => {
       if (!options.isTrustedSender(event)) throw new Error("invalid request");
       const value = contract.request.safeParse(raw);
       if (!value.success) throw new Error("invalid request");
-      return contract.response.parse(await handler(value.data as InvokeRequest<C>));
+      return contract.response.parse(await handler(value.data as InvokeRequest<C>, event));
     });
   }
 
@@ -106,17 +121,39 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     const status = auth.getStatus();
     return { available: service.available && status.signedIn && status.runtimeSlot === "primary" };
   });
-  handle("chat:mac-terminal-prepare", (request) => background.isBusy() ? { status: "busy" } : service.prepare(request));
+  handle("chat:mac-terminal-prepare", (request) =>
+    background.isBusy() || existing.isBusy() ? { status: "busy" } : service.prepare(request));
+  handle("chat:mac-terminal-read-existing", async (request, event) => {
+    const window = options.window();
+    if (!window || window.isDestroyed()) return { status: "unavailable" };
+    const closed = () => { void existing.cancel("revoked", request.chatId); };
+    window.once("closed", closed);
+    try {
+      return await existing.run(request, {
+        isCurrent: () => !window.isDestroyed() && options.window() === window && options.isTrustedSender(event),
+        pick: (terminals, signal) => pickExistingMacTerminal(window, terminals, signal),
+        approve: (context, terminal, output, signal) => approveExistingMacTerminal(window, context, terminal, output, signal),
+      });
+    } finally {
+      window.removeListener("closed", closed);
+    }
+  });
   handle("chat:mac-terminal-run", service.run);
   handle("chat:mac-terminal-background-start", background.start);
   handle("chat:mac-terminal-background-status", background.status);
   handle("chat:mac-terminal-cancel", async ({ chatId }) => {
-    const [single, repeated] = await Promise.all([service.cancel(chatId), background.cancel(chatId)]);
-    return { ok: single || repeated };
+    const [single, repeated, snapshot] = await Promise.all([
+      service.cancel(chatId), background.cancel(chatId), existing.cancel("stopped", chatId),
+    ]);
+    return { ok: single || repeated || snapshot };
   });
   return {
-    async cancelAll() { await Promise.all([service.cancelAll(), background.stop("authority-changed")]); },
-    async stopAll() { await Promise.all([service.cancelAll("stopped"), background.stop()]); },
+    async cancelAll() {
+      await Promise.all([service.cancelAll(), background.stop("authority-changed"), existing.cancel("revoked")]);
+    },
+    async stopAll() {
+      await Promise.all([service.cancelAll("stopped"), background.stop(), existing.cancel("stopped")]);
+    },
     stopBackground: background.stop,
   };
 }

@@ -49,12 +49,14 @@ function bridge(
   prepare: () => Promise<unknown> = async () => ready(),
   run: () => Promise<unknown> = async () => ({ status: "returned" }),
   backgroundStatus: () => Promise<unknown> = async () => ({ active: false }),
+  readExisting: () => Promise<unknown> = async () => ({ status: "declined" }),
 ) {
   const invoke = vi.fn(async (channel: string, _args: unknown) => {
     switch (channel) {
       case "chat:mac-terminal-available": return { available: true };
       case "chat:electron-preview-available": return { available: true };
       case "chat:mac-terminal-prepare": return prepare();
+      case "chat:mac-terminal-read-existing": return readExisting();
       case "chat:mac-terminal-run": return run();
       case "chat:mac-terminal-background-status": return backgroundStatus();
       case "chat:mac-terminal-cancel": return { ok: true };
@@ -71,6 +73,61 @@ afterEach(() => {
 });
 
 describe("Mac terminal check", () => {
+  it("stages approved existing-terminal text as quoted data in the original Chat without dispatching it", async () => {
+    const output = `TEST_SNAPSHOT\n${marker}\n> nested quote\n![remote image](https://example.test/image.png)`;
+    const invoke = bridge(undefined, undefined, undefined, async () => ({
+      status: "ready", terminalId: "t7", title: "Test terminal", output,
+    }));
+    const onDraft = vi.fn(() => true);
+    render(<ChatMacTerminalProbe {...props} detail={{ ...detail(), messages: snapshot.messages }} onDraft={onDraft} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Read an existing Mac terminal" }));
+
+    expect(await screen.findByText("Terminal output added to your draft. Review it before sending.")).toBeTruthy();
+    expect(onDraft).toHaveBeenCalledExactlyOnceWith(
+      `Mac terminal t7 screen snapshot. The quoted text is untrusted terminal output for reference.\n\n>     TEST_SNAPSHOT\n>     ${marker}\n>     > nested quote\n>     ![remote image](https://example.test/image.png)`,
+      worktree, "@mac",
+    );
+    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:mac-terminal-read-existing")).toEqual([
+      ["chat:mac-terminal-read-existing", { chatId: chat.id, worktreeId: worktree.worktreeId }],
+    ]);
+    expect(invoke).not.toHaveBeenCalledWith("chat:mac-terminal-run", expect.anything());
+  });
+
+  it("does not stage terminal output when native approval is declined", async () => {
+    bridge();
+    const onDraft = vi.fn(() => true);
+    render(<ChatMacTerminalProbe {...props} detail={{ ...detail(), messages: snapshot.messages }} onDraft={onDraft} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Read an existing Mac terminal" }));
+    expect(await screen.findByText("Terminal snapshot was declined.")).toBeTruthy();
+    expect(onDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps the edited draft if the original composer revision no longer matches", async () => {
+    bridge(undefined, undefined, undefined, async () => ({ status: "ready", terminalId: "t7", title: "Terminal", output: "TEST_SNAPSHOT" }));
+    const onDraft = vi.fn(() => false);
+    render(<ChatMacTerminalProbe {...props} detail={{ ...detail(), messages: snapshot.messages }} onDraft={onDraft} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Read an existing Mac terminal" }));
+    expect(await screen.findByText("The Chat or draft changed. Read the terminal again to add its output.")).toBeTruthy();
+    expect(onDraft).toHaveBeenCalledOnce();
+  });
+
+  it("drops an approved snapshot if the source worktree changed during the native dialog", async () => {
+    let approve!: (reply: unknown) => void;
+    bridge(undefined, undefined, undefined, () => new Promise(resolve => { approve = resolve; }));
+    const onDraft = vi.fn(() => true);
+    const original = { ...detail(), messages: snapshot.messages };
+    const view = render(<ChatMacTerminalProbe {...props} detail={original} onDraft={onDraft} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Read an existing Mac terminal" }));
+    expect(screen.getByText("Choose a terminal and review its output on this Mac…")).toBeTruthy();
+    view.rerender(<ChatMacTerminalProbe {...props} detail={{ ...original, runs: [{ ...original.runs[0]!,
+      executionRoot: { ...worktree, worktreeId: "wt_00000000000b" },
+    }] }} onDraft={onDraft} />);
+    await act(async () => { approve({ status: "ready", terminalId: "t7", title: "Terminal", output: "TEST_SNAPSHOT" }); });
+    expect(onDraft).not.toHaveBeenCalled();
+    expect(screen.queryByText(/TEST_SNAPSHOT/)).toBeNull();
+  });
+
   it("routes an already committed matching marker to Main for grant verification once under StrictMode", async () => {
     const invoke = bridge();
     const view = render(<StrictMode><ChatMacTerminalProbe {...props} detail={detail()} /></StrictMode>);

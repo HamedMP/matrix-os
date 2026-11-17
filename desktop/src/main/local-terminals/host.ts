@@ -11,6 +11,7 @@ import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
 import { createAttachmentSlots, createHcSessions, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import { prepareChatTerminalProbe } from "./chat-terminal-probe";
+import { openExistingTerminalReader } from "./existing-terminal";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -217,6 +218,11 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     prepareChatTerminalProbe: (action: MacTerminalProbeAction = "uname") => prepareChatTerminalProbe({
       action, cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
     }),
+
+    async openExistingTerminalReader() {
+      const core = await ensure();
+      return openExistingTerminalReader(core, () => connection === core);
+    },
 
     kill: sessions.kill,
     rename: sessions.rename,
