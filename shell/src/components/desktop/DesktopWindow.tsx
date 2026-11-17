@@ -166,7 +166,7 @@ export function DesktopWindow({
       style={windowStyle}
       onMouseDown={() => !isFullscreen && onFocusWindow(win.id)}
     >
-      <CardHeader
+      {!(isFullscreen && desktopParity && win.path === "__chat__") ? <CardHeader
         className={cn(
           "relative flex shrink-0 flex-row items-center gap-0 space-y-0 px-4 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
           usesTerminalChrome ? "border-b-0" : "bg-card/85",
@@ -199,7 +199,7 @@ export function DesktopWindow({
             </div>
           ) : null}
         </div>
-      </CardHeader>
+      </CardHeader> : null}
 
       <CardContent className="relative flex-1 p-0 min-h-0">
         {win.path.startsWith("__terminal__") ? (

@@ -241,5 +241,5 @@ export function WebChatFileTree({
         Loading project files…
       </p>
     );
-  return <FileTree gatewayUrl={gatewayUrl} rootPath={root} onOpenFile={onOpenFile} />;
+  return <FileTree gatewayUrl={gatewayUrl} rootPath={root} onOpenFile={path => onOpenFile(path.slice(root.length + 1))} />;
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { createContext, useContext, type ComponentProps } from "react";
+import { FileText } from "lucide-react";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { parseContentSegments, type UICardData, type UIOptionData } from "@/lib/ui-blocks";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -67,10 +69,23 @@ function splitLocalMarkdownImages(content: string, enabled: boolean): MarkdownPa
   return parts.length ? parts : [{ type: "markdown", content }];
 }
 
+const ChatFileOpenContext = createContext<RichContentProps["openFile"]>(undefined);
+function ChatInlineCode({ children, className, node: _node, ...props }: ComponentProps<"code"> & { node?: unknown }) {
+  const openFile=useContext(ChatFileOpenContext);
+  const value=String(children);
+  const target=/[\\/]/.test(value) ? resolveChatMessageLink(value) : null;
+  if(openFile && target?.kind === "file") return <button type="button" aria-label={`Open ${target.path.split("/").at(-1)}`}
+    title={value} onClick={()=>openFile(value)} className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 align-middle font-mono text-xs hover:bg-accent">
+    <FileText size={13} aria-hidden/><span className="truncate">{target.path.split("/").at(-1)}</span>
+  </button>;
+  return <code {...props} className={className ?? "rounded bg-muted px-1.5 py-0.5 font-mono text-sm"}>{children}</code>;
+}
+const chatMarkdownComponents={inlineCode:ChatInlineCode};
+
 function MarkdownWithLocalImages({ content, openFile }: { content: string; openFile?: RichContentProps["openFile"] }) {
   const parts = splitLocalMarkdownImages(content, Boolean(openFile));
   return parts.map((part, index) => part.type === "markdown" ? (
-    <MessageResponse key={`markdown:${index}`}>{part.content}</MessageResponse>
+    <ChatFileOpenContext.Provider key={`markdown:${index}`} value={openFile}><MessageResponse components={chatMarkdownComponents}>{part.content}</MessageResponse></ChatFileOpenContext.Provider>
   ) : (
     <button
       key={`image:${index}:${part.source}`}

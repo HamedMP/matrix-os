@@ -43,8 +43,8 @@ export async function loadChatFile(path: string, signal?: AbortSignal): Promise<
   return readBoundedFileBlob(await fetchPreview(filePreviewContentUrl(resource), signal), CHAT_FILE_LIMIT_BYTES);
 }
 
-async function loadDescriptor(path: string, signal?: AbortSignal, gatewayUrl?: string): Promise<FilePreviewDescriptor> {
-  const resource = resourceForChatPath(path);
+async function loadDescriptor(path: string, signal?: AbortSignal, gatewayUrl?: string, explicitResource?: FileResourceRef): Promise<FilePreviewDescriptor> {
+  const resource = explicitResource ? FileResourceRefSchema.parse(explicitResource) : resourceForChatPath(path);
   const response = await fetchPreview(filePreviewMetadataUrl(resource), signal, gatewayUrl);
   if (!response.ok) throw new Error("ChatFileUnavailable");
   return FilePreviewDescriptorSchema.parse(await response.json());
@@ -58,12 +58,13 @@ async function loadPreviewText(url: string, maxBytes: number, gatewayUrl?: strin
   return (await loadPreviewBlob(url, maxBytes, gatewayUrl)).text();
 }
 
-export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onExpand }: { path: string; onClose: () => void; embedded?: boolean; gatewayUrl?: string; onExpand?(): void }) {
+export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onExpand, resource }: { resource?: FileResourceRef; path: string; onClose: () => void; embedded?: boolean; gatewayUrl?: string; onExpand?(): void }) {
   // These identities control FilePreviewContent's fetch/object-URL lifetime.
   const loadBlob = useCallback((url: string, maxBytes: number) => loadPreviewBlob(url, maxBytes, gatewayUrl), [gatewayUrl]);
   const loadText = useCallback((url: string, maxBytes: number) => loadPreviewText(url, maxBytes, gatewayUrl), [gatewayUrl]);
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, [path]);
+  const resourceKey = resource ? JSON.stringify(resource) : "";
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<(
     { status: "ready"; descriptor: FilePreviewDescriptor } | { status: "failed" }
@@ -71,7 +72,7 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onE
   const state = result?.path === path && result.attempt === attempt ? result : { status: "loading" as const };
   useEffect(() => {
     const controller = new AbortController();
-    void loadDescriptor(path, controller.signal, gatewayUrl).then((descriptor) => {
+    void loadDescriptor(path, controller.signal, gatewayUrl, resourceKey ? JSON.parse(resourceKey) : undefined).then((descriptor) => {
       if (!controller.signal.aborted) setResult({ status: "ready", descriptor, path, attempt });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -79,7 +80,7 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onE
       setResult({ status: "failed", path, attempt });
     });
     return () => controller.abort();
-  }, [attempt, path, gatewayUrl]);
+  }, [attempt, path, gatewayUrl, resourceKey]);
   const retry = () => setAttempt((value) => value + 1);
   return <aside aria-label="Chat file preview" className={embedded ? "flex min-h-0 w-full flex-1 flex-col bg-background" : "absolute inset-y-0 right-0 z-30 flex w-[min(100%,520px)] flex-col border-l bg-background shadow-xl"} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
     {embedded ? <ChatInspectorFileHeader name={path.split("/").at(-1) ?? path} path={path} onCopy={() => navigator.clipboard.writeText(path)} onExpand={onExpand}/> : <header className="flex items-center justify-between gap-2 border-b p-3"><span className="truncate text-sm">{path.split("/").at(-1)}</span><button ref={closeButton} type="button" onClick={onClose} className="rounded px-2 py-1 hover:bg-muted">Close preview</button></header>}

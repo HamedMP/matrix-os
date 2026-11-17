@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import type { FileResourceRef } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { InspectorTool, SideChatClient } from "@matrix-os/ui";
 import {
@@ -22,7 +23,9 @@ export interface WebChatInspectorProps {
   rootWidth: number;
   railWidth: number;
   project?: { id: string; slug: string };
+  projectLoading?: boolean;
   filePath: string | null;
+  fileResource?: FileResourceRef;
   onFilePathChange(path: string | null): void;
   terminalSessionIds: readonly string[];
   sideChatClient: SideChatClient;
