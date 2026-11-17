@@ -12,6 +12,30 @@ servers:
   - url: https://matrix.page
     description: Public Matrix.page edge
 paths:
+  /api/apps/{appSlug}/site/email-invitation-capabilities:
+    parameters:
+      - $ref: '#/components/parameters/AppSlug'
+    get:
+      operationId: getSiteEmailInvitationCapabilities
+      summary: Read readiness before the first publication without creating a site
+      security:
+        - ownerSession: []
+      responses:
+        '200':
+          description: Server readiness; false keeps invitation controls disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [privateEmailInvitations]
+                properties:
+                  privateEmailInvitations:
+                    type: boolean
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /api/apps/{appSlug}/site/invitations:
     parameters:
       - $ref: '#/components/parameters/AppSlug'
