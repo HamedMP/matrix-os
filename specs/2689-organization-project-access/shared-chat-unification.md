@@ -36,6 +36,9 @@ queue. Shared/private views reuse the existing composer and message primitives.
    refresh cannot clear the draft or disable otherwise allowed submission.
    Explicit membership denial remains read-only; POST still reauthorizes.
 4. Use the existing ChatPromptInput and shared message presentation primitives.
+   Extract the existing private Conversation scroller into the UI package so
+   both views share width, scroll following, history anchoring and row layout.
+   Show the configured agent/model without another provider discovery request.
    Display ordinary pending/running/retry status, without owner-approval wording.
 5. Repair isolated transport with localhost-only IP allowance **inside**
    PrivateNetwork. Keep IPAddressDeny=any, credential path isolation and broker

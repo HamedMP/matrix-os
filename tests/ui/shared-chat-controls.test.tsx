@@ -154,6 +154,7 @@ describe("shared Chat AI controls", () => {
     expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
     expect(screen.getByText("Project members see this Chat · AI uses the project’s files")).toBeVisible();
     expect(container.querySelector('[data-slot="prompt-input-toolbar"]')).not.toBeNull();
+    expect(await screen.findByLabelText("Configured agent")).toHaveTextContent("Claude · claude-opus-4-6");
     expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("data-slot", "prompt-input-send");
   });
 

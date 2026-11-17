@@ -4,9 +4,11 @@ import {
   type CollaborationApproval,
   type CollaborationAiRequest,
   type CollaborationScope,
+  type CanonicalChatModelSelection,
 } from "@matrix-os/contracts";
 import { Users } from "lucide-react";
 import { ChatPromptInput } from "../chat/composer/ChatPromptInput.js";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../chat/ChatConversation.js";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
@@ -19,6 +21,7 @@ type SharedAiState = {
   approvals: CollaborationApproval[];
   pendingAction: string | null;
   error: SharedAiError;
+  selection?: CanonicalChatModelSelection;
 };
 type SharedAiAction =
   | { type: "loaded"; response: ReturnType<typeof CollaborationAiRequestsResponseSchema.parse> }
@@ -62,8 +65,8 @@ export function SharedChatControls({
   const { state, submitAi, control, decide } = controller;
   const presentation = sharedComposerPresentation(scope, state);
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
-  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6">
-    <div className="mx-auto max-w-3xl">
+  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6 lg:px-8">
+    <div className={`mx-auto ${CHAT_CONTENT_WIDTH_CLASS}`}>
       <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
         actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
       <SharedAiErrors discussionError={false} error={state.error} />
@@ -91,6 +94,7 @@ type SharedComposerPresentation = {
   inputLabel: string;
   placeholder: string;
   submitLabel: string;
+  modelLabel?: string;
 };
 
 function sharedComposerPresentation(
@@ -119,6 +123,8 @@ function sharedComposerPresentation(
     inputLabel: "Message Chat",
     placeholder: !writableRole ? "Read-only access" : canRequestAi ? "Message Chat…" : "AI is unavailable",
     submitLabel: sending ? "Sending…" : "Send",
+    ...(state.selection ? { modelLabel: `${state.selection.instanceId === "codex_default" ? "Codex"
+      : ["claude_shared", "claude_code_default"].includes(state.selection.instanceId) ? "Claude" : "AI"} · ${state.selection.model}` } : {}),
   };
 }
 
@@ -137,6 +143,7 @@ function SharedComposerInput({ presentation, draft, updateDraft, submit }: {
       onSubmit={() => void submit()} busy={presentation.sending}
       disabled={!presentation.canCompose || presentation.sending}
       ariaLabel={presentation.inputLabel} placeholder={presentation.placeholder}
+      controls={presentation.modelLabel ? <span aria-label="Configured agent" className="px-2 py-1 text-xs text-muted-foreground">{presentation.modelLabel}</span> : null}
       sendLabel={presentation.submitLabel} />
   </div>;
 }
@@ -255,6 +262,7 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         availability: sharedAiAvailability(action.response.capability.status),
         requests: action.response.requests,
         approvals: action.response.approvals,
+        selection: action.response.capability.effectiveSelection,
         error: null,
       };
     case "unavailable":

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { createPortal } from "react-dom";
 import { CanonicalPartView, keyedCanonicalParts } from "./CanonicalPartView.js";
 import { ChatHumanMessageBubble } from "../chat/ChatHumanMessageBubble.js";
+import { Conversation, ConversationContent, ConversationItem } from "../chat/ChatConversation.js";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
@@ -761,7 +762,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       </button>
       <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} zIndex={layers?.popover} />
     </div>;
-  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
+  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full flex-col overflow-hidden">
     {headerContainer
       ? createPortal(collaborationChrome, headerContainer)
       : <div data-slot="collaboration-session-subheader" className="flex min-h-11 items-center justify-end border-b px-3">
@@ -819,18 +820,19 @@ function SharedChatHistory({ state, actorId, loadMoreMessages }: {
   loadMoreMessages: () => Promise<void>;
 }) {
   const timeline = projectSharedChatTimeline(state.messages);
-  return <section aria-label="Chat history" className="flex-1 space-y-6 overflow-y-auto px-4 py-6 sm:px-6">
+  return <Conversation><ConversationContent className="justify-start gap-6 pt-8 sm:pt-12">
     {timeline.length === 0 ? <div className="py-12 text-center">
       <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start a conversation</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Everyone here collaborates with the same Matrix AI session.</p>
-    </div> : timeline.map((message) => <NativeSharedMessageView key={message.id} message={message}
-      actorId={actorId} ownerId={state.scope?.ownerId} />)}
+    </div> : timeline.map((message) => <ConversationItem key={message.id} messageId={message.id} scrollAnchor={message.side === "human"}>
+      <NativeSharedMessageView message={message} actorId={actorId} ownerId={state.scope?.ownerId} />
+    </ConversationItem>)}
     {state.historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
     {state.hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
       disabled={state.loadingMoreMessages} onClick={() => void loadMoreMessages()}>
       {state.loadingMoreMessages ? "Loading…" : "Load more messages"}
     </button></div> : null}
-  </section>;
+  </ConversationContent></Conversation>;
 }
 
 function NativeSharedMessageView({ message, actorId, ownerId }: {
