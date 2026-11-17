@@ -307,7 +307,10 @@ export function createSitesService(options: {
             const row = await ownership(trx, owner).forUpdate().executeTakeFirst();
             if (!row) throw new SiteError('not_found');
             const imageOptions = await socialImageOptions(trx, row.id, row.active_version);
-            if (request.imagePath !== null && !imageOptions.includes(request.imagePath)) throw new SiteError('invalid_request');
+            // Keeping the already-saved image is allowed even if a redeploy dropped it;
+            // renders omit it until a build restores the file.
+            if (request.imagePath !== null && request.imagePath !== row.social_image_path
+                && !imageOptions.includes(request.imagePath)) throw new SiteError('invalid_request');
             const next = await trx.executor.updateTable('public_sites').set({ social_title: request.title,
                 social_description: request.description, social_image_path: request.imagePath })
                 .where('id', '=', row.id).returningAll().executeTakeFirstOrThrow();

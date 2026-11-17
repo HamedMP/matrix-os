@@ -73,6 +73,32 @@ describe("SocialPreviewSection", () => {
     expect(await screen.findByText(/add a png, jpeg or webp file/i)).toBeTruthy();
   });
 
+  it("keeps a saved image a redeploy removed selectable and still saves other edits", async () => {
+    const api = client({ social: vi.fn(async () => ({ ...defaults, imagePath: "old.png", imageOptions: [] })) });
+    render(<SocialPreviewSection appSlug="launch" client={api} site={site} />);
+    open();
+    expect(await screen.findByText(/isn’t in the latest build/i)).toBeTruthy();
+    expect(screen.getByLabelText("Preview image").textContent).toContain("old.png (not in the current build)");
+    expect(screen.getByRole("figure", { name: "Link preview" }).querySelector("img")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Preview title"), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    await waitFor(() => expect(api.updateSocial).toHaveBeenCalledWith("launch", { title: "Renamed", description: null, imagePath: "old.png" }, expect.any(AbortSignal)));
+  });
+
+  it("locks the fields while a save is in flight so the response cannot overwrite newer edits", async () => {
+    let finish: (value: SiteSocialSettings) => void = () => {};
+    const api = client({ updateSocial: vi.fn(() => new Promise<SiteSocialSettings>((resolve) => { finish = resolve; })) });
+    render(<SocialPreviewSection appSlug="launch" client={api} site={site} />);
+    open();
+    fireEvent.change(await screen.findByLabelText("Preview title"), { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save preview" }));
+    await waitFor(() => expect((screen.getByLabelText("Preview title") as HTMLInputElement).matches(":disabled")).toBe(true));
+    expect((screen.getByLabelText("Preview description") as HTMLTextAreaElement).matches(":disabled")).toBe(true);
+    finish({ ...defaults, title: "First" });
+    await waitFor(() => expect((screen.getByLabelText("Preview title") as HTMLInputElement).matches(":disabled")).toBe(false));
+    expect((screen.getByLabelText("Preview title") as HTMLInputElement).value).toBe("First");
+  });
+
   it("renders nothing for link-gated or unpublished sites", () => {
     const { container, rerender } = render(<SocialPreviewSection appSlug="launch" client={client()} site={{ ...site, accessMode: "private_link" }} />);
     expect(container.innerHTML).toBe("");

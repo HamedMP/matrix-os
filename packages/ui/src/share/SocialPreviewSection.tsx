@@ -77,8 +77,10 @@ function SocialEditor({ appSlug, client, site, initial }: { appSlug: string; cli
       setResult({ ok: false, message: shareErrorMessage(error, "Couldn’t save the link preview. Try again.") });
     } finally { setSaving(false); }
   }
-  return <div className="flex flex-col gap-2.5 pl-[22px]">
-    <PreviewCard title={update.title ?? site.title} description={update.description ?? site.description} imageUrl={previewImageUrl(site, update.imagePath)} />
+  const imageAvailable = update.imagePath !== null && initial.imageOptions.includes(update.imagePath);
+  // Disabled while saving so the server response cannot overwrite newer edits.
+  return <fieldset disabled={saving} className="m-0 flex min-w-0 flex-col gap-2.5 border-0 p-0 pl-[22px]">
+    <PreviewCard title={update.title ?? site.title} description={update.description ?? site.description} imageUrl={imageAvailable ? previewImageUrl(site, update.imagePath) : null} />
     <div className="flex flex-col gap-1.5">
       <label htmlFor={titleId} className="text-xs font-medium">Preview title</label>
       <ShareInput id={titleId} value={draft.title} maxLength={SHARE_TITLE_MAX} placeholder={site.title} onChange={(event) => edit({ title: event.target.value })} />
@@ -87,10 +89,10 @@ function SocialEditor({ appSlug, client, site, initial }: { appSlug: string; cli
       <label htmlFor={descriptionId} className="text-xs font-medium">Preview description</label>
       <ShareTextarea id={descriptionId} rows={2} value={draft.description} maxLength={SHARE_DESCRIPTION_MAX} placeholder={site.description || "Uses the app description"} onChange={(event) => edit({ description: event.target.value })} />
     </div>
-    <ImagePicker options={initial.imageOptions} value={draft.imagePath} onChange={(imagePath) => edit({ imagePath })} />
+    <ImagePicker options={initial.imageOptions} value={draft.imagePath} disabled={saving} onChange={(imagePath) => edit({ imagePath })} />
     <ShareButton variant="primary" size="sm" className="self-start" disabled={saving} onClick={() => void save()}>{saving ? <Spinner /> : null}Save preview</ShareButton>
     <SaveMessage result={result} />
-  </div>;
+  </fieldset>;
 }
 
 function previewImageUrl(site: SiteRecord, imagePath: string | null): string | null {
@@ -102,17 +104,25 @@ function SaveMessage({ result }: { result: SaveResult }) {
   return result.ok ? <p role="status" className="m-0 text-xs font-medium text-[var(--share-success-fg)]">Preview saved.</p> : <InlineError>{result.message}</InlineError>;
 }
 
-function ImagePicker({ options, value, onChange }: { options: string[]; value: string | null; onChange: (value: string | null) => void }) {
+/**
+ * A saved image a redeploy removed stays selectable (labelled), so the owner can
+ * keep it for a later build or clear it; saving other fields never fails on it.
+ */
+function ImagePicker({ options, value, disabled, onChange }: { options: string[]; value: string | null; disabled: boolean; onChange: (value: string | null) => void }) {
   const imageId = useId();
+  const stale = value !== null && !options.includes(value) ? value : null;
   return <div className="flex flex-col gap-1.5">
     <label htmlFor={imageId} className="text-xs font-medium">Preview image</label>
-    {options.length ? <Select value={value ?? NO_IMAGE} onValueChange={(next) => onChange(next === NO_IMAGE ? null : next)}>
+    {options.length || stale ? <Select value={value ?? NO_IMAGE} disabled={disabled} onValueChange={(next) => onChange(next === NO_IMAGE ? null : next)}>
       <SelectTrigger id={imageId} size="sm" className="w-full border-[var(--share-input)] bg-[var(--share-bg)] text-[13px] text-[var(--share-fg)]"><SelectValue /></SelectTrigger>
       <SelectContent position="popper" sideOffset={4} className="matrix-share w-[var(--radix-select-trigger-width)] rounded-lg">
         <SelectItem value={NO_IMAGE}>No image</SelectItem>
+        {stale ? <SelectItem value={stale}>{stale} (not in the current build)</SelectItem> : null}
         {options.map((path) => <SelectItem key={path} value={path}>{path}</SelectItem>)}
       </SelectContent>
-    </Select> : <p id={imageId} className="m-0 text-xs leading-4 text-[var(--share-subtle-fg)]">To show an image, add a PNG, JPEG or WebP file to the app’s build and publish the latest version.</p>}
+    </Select> : null}
+    {stale ? <p className="m-0 text-xs leading-4 text-[var(--share-subtle-fg)]">This image isn’t in the latest build, so links show no image until you restore the file or pick another.</p> : null}
+    {!options.length && !stale ? <p id={imageId} className="m-0 text-xs leading-4 text-[var(--share-subtle-fg)]">To show an image, add a PNG, JPEG or WebP file to the app’s build and publish the latest version.</p> : null}
   </div>;
 }
 
