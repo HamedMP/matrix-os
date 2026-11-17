@@ -141,6 +141,25 @@ describe("public site visitor data at the owner gateway", () => {
     expect(new Date(row.updated_at).toISOString()).toBe("2020-01-01T00:00:00.000Z");
   });
 
+  it("clamps an explicit zero limit to one row like the owner bridge", async () => {
+    await call(db({ action: "bulkInsert", table: "tasks", rows: [{ title: "A" }, { title: "B" }] }));
+    expect((await call(db({ action: "find", table: "tasks", limit: 0 }))).body.result).toHaveLength(1);
+    expect((await call(db({ action: "find", table: "tasks" }))).body.result).toHaveLength(2);
+  });
+
+  it("logs the owner value a visitor key write replaces, and null for a new key", async () => {
+    await created.db.raw(`INSERT INTO public._kv (app, key, value) VALUES ('tasks-lab', 'theme', 'owner-light')`);
+    await call(capability({ kind: "kvWrite", key: "theme", value: "dark" }));
+    await call(capability({ kind: "kvWrite", key: "fresh", value: "one" }));
+    expect((await log()).map((entry) => [entry.row_id, entry.before, entry.after])).toEqual([
+      ["theme", { value: "owner-light" }, { value: "dark" }],
+      ["fresh", null, { value: "one" }],
+    ]);
+    expect((await created.db.raw(`SELECT key, value FROM public._kv WHERE app = 'tasks-lab' ORDER BY key`)).rows).toEqual([
+      { key: "fresh", value: "one" }, { key: "theme", value: "dark" },
+    ]);
+  });
+
   it("returns appInfo and the app's own schema without exposing other apps", async () => {
     expect((await call(db({ action: "schema" }))).body.result).toEqual({ tasks: expect.any(Object) });
     expect((await call(db({ action: "appInfo" }))).body.result).toEqual({ installedVersion: "1.0.0" });
@@ -191,6 +210,20 @@ describe("public data admission", () => {
     expect(limiter.check("a", 60_001)).toBe(true);
     for (const key of ["b", "c", "d", "e"]) limiter.check(key, 0);
     expect(limiter.size).toBe(3);
+  });
+
+  it("gives signed data requests their own pre-signature budget, separate from the webhook quota", async () => {
+    const app = new Hono();
+    app.use("*", authMiddleware("bearer-secret"));
+    app.post("/api/internal/sites/:siteId/:kind", (c) => c.json({ error: "Unauthorized" }, 401));
+    const send = (kind: string) => app.request(`/api/internal/sites/${siteId}/${kind}`, { method: "POST", headers: {
+      "x-real-ip": "198.18.77.4", "x-matrix-site-signature": "forged", "x-matrix-site-timestamp": String(Date.now()) } });
+    const data: number[] = [];
+    for (let i = 0; i < 130; i++) data.push((await send("data")).status);
+    expect(data.every((status) => status === 401)).toBe(true);
+    const submit: number[] = [];
+    for (let i = 0; i < 121; i++) submit.push((await send("submit")).status);
+    expect(submit[120]).toBe(429);
   });
 
   it("exempts only the exact signed data path from bearer auth", async () => {

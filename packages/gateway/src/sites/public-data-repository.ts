@@ -121,10 +121,8 @@ export class SitePublicDataRepository {
           const row = await sql<{ value: string | null }>`SELECT value FROM public._kv WHERE app = ${appSlug} AND key = ${request.key}`.execute(trx);
           return { result: { value: row.rows[0]?.value ?? null }, changed: null };
         }
-        const before = await sql<{ value: string | null }>`SELECT value FROM public._kv WHERE app = ${appSlug} AND key = ${request.key} FOR UPDATE`.execute(trx);
-        await sql`INSERT INTO public._kv (app, key, value, updated_at) VALUES (${appSlug}, ${request.key}, ${request.value}, now())
- ON CONFLICT (app, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`.execute(trx);
-        log.push({ table: "_kv", rowId: request.key, op: "kv_write", before: before.rows[0] ? { value: before.rows[0].value } : null, after: { value: request.value } });
+        const before = await this.writeKv(trx, appSlug, request.key, request.value);
+        log.push({ table: "_kv", rowId: request.key, op: "kv_write", before, after: { value: request.value } });
         return { result: { ok: true }, changed: { app: appSlug, key: request.key } };
       });
     }
@@ -143,7 +141,7 @@ export class SitePublicDataRepository {
       };
       switch (action.action) {
         case "find": {
-          const limit = Math.max(1, Math.min(action.limit || SITE_PUBLIC_DATA_MAX_ROWS, SITE_PUBLIC_DATA_MAX_ROWS));
+          const limit = Math.max(1, Math.min(action.limit ?? SITE_PUBLIC_DATA_MAX_ROWS, SITE_PUBLIC_DATA_MAX_ROWS));
           const rows = await sql<Row>`SELECT * FROM ${target}${whereClause(action.filter)}${orderClause(action.orderBy)} LIMIT ${limit} OFFSET ${action.offset ?? 0}`.execute(trx);
           return { result: rows.rows, changed: null };
         }
@@ -201,6 +199,25 @@ export class SitePublicDataRepository {
         }
       }
     });
+  }
+
+  /**
+   * Captures the value a visitor write replaces. A missing key is created with ON CONFLICT DO NOTHING;
+   * if another writer created it first, the row is then locked and read, so the log never records
+   * `before: null` for a value that was overwritten.
+   */
+  private async writeKv(trx: Transaction<any>, app: string, key: string, value: string): Promise<{ value: string | null } | null> {
+    const select = () => sql<{ value: string | null }>`SELECT value FROM public._kv WHERE app = ${app} AND key = ${key} FOR UPDATE`.execute(trx);
+    let existing = (await select()).rows[0];
+    if (!existing) {
+      const created = await sql`INSERT INTO public._kv (app, key, value, updated_at) VALUES (${app}, ${key}, ${value}, now())
+ ON CONFLICT (app, key) DO NOTHING RETURNING key`.execute(trx);
+      if (created.rows.length > 0) return null;
+      existing = (await select()).rows[0];
+      if (!existing) throw new SitePublicDataError("unavailable");
+    }
+    await sql`UPDATE public._kv SET value = ${value}, updated_at = now() WHERE app = ${app} AND key = ${key}`.execute(trx);
+    return { value: existing.value };
   }
 
   private async transaction(capability: SitePublicDataCapability, work: (trx: Transaction<any>, log: LogEntry[]) => Promise<SitePublicDataResult>): Promise<SitePublicDataResult> {
