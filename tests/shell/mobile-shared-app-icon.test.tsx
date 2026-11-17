@@ -44,6 +44,13 @@ describe("Web Mobile shared app icons", () => {
     expect(screen.getByTestId("mobile-app-icon-initial").textContent).toBe("T");
   });
 
+  // Fault: a shared app with no owner icon loaded the member's own /icons/<slug> artwork.
+  it("starts with the initial tile when a shared app has no owner icon", () => {
+    const { container } = render(<MobileAppIcon slug="apps" size={48} fallbackName="Team Tracker" />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByTestId("mobile-app-icon-initial").textContent).toBe("T");
+  });
+
   // Fault: failure state outlived the selected URL, so returning to a once-failed icon never retried it.
   it("retries a previously failed icon when the selected URL changes back to it", () => {
     const iconA = sharedTarget.iconUrl;
