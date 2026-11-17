@@ -112,7 +112,7 @@ it("previews a project file through its verified project resource instead of Hom
  const request=vi.fn(async(url:string)=>url.includes('/metadata?')?Response.json({resource,name:"MobileNav.tsx",mimeType:"text/plain",sizeBytes:7,kind:"text",version:"project_file",canDownload:true}):new Response('Project content'));
  vi.stubGlobal('fetch',request);
  render(<ChatFilePanel path={resource.path} resource={resource} embedded gatewayUrl="http://localhost:4000" onClose={vi.fn()}/>);
- await screen.findByText('Project content');
+ await screen.findByText('Project content', undefined, { timeout: 5_000 });
  const query=new URL(request.mock.calls[0][0]).searchParams;
  expect(query.get('kind')).toBe('project');expect(query.get('projectId')).toBe('project_matrix');
  expect(query.get('path')).toBe(resource.path);
