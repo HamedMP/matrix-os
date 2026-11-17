@@ -112,16 +112,20 @@ export function deriveAgentInbox(input: {
     seenThreads.add(thread.id);
     const placed = threadPlacement(thread);
     if (!placed) continue;
-    const expired = serverNow > 0 && serverNow - timeOf(thread.updatedAt) > AGENT_INBOX_NEEDS_MAX_AGE_MS;
-    // A day-old failure or stall is history; a "running" run silent for a day is stuck.
-    const placement: NonNullable<ThreadPlacement> = !expired ? placed
-      : placed.pill === "Failed" || placed.pill === "Stalled" ? { ...placed, group: "done" }
-        : placed.group === "running" ? { group: "done", pill: "Stalled" } : placed;
-    const provider = providers.get(thread.providerId);
-    const providerName = provider?.displayName ?? thread.providerId;
     const terminalKey = thread.terminalRef ? terminalFactsKey(thread.terminalRef) : undefined;
     const facts = terminalKey ? tabs[terminalKey] : undefined;
     if (terminalKey) claimedTabs.add(terminalKey);
+    // A "running" thread whose live tab is asking for something needs the owner now;
+    // explicit approval, question and failure states on the thread still win.
+    const blocked = placed.group === "running" && facts?.state === "live" && facts.agentStatus === "blocked";
+    const expired = serverNow > 0 && serverNow - timeOf(thread.updatedAt) > AGENT_INBOX_NEEDS_MAX_AGE_MS;
+    // A day-old failure or stall is history; a "running" run silent for a day is stuck.
+    const placement: NonNullable<ThreadPlacement> = blocked ? { group: "needs", pill: "Needs you" }
+      : !expired ? placed
+        : placed.pill === "Failed" || placed.pill === "Stalled" ? { ...placed, group: "done" }
+          : placed.group === "running" ? { group: "done", pill: "Stalled" } : placed;
+    const provider = providers.get(thread.providerId);
+    const providerName = provider?.displayName ?? thread.providerId;
     const tabName = facts?.name ?? (terminalKey ? tabNames.get(terminalKey) : undefined);
     const project = projectLabel(thread.projectId);
     const ownTitle = thread.title.trim();

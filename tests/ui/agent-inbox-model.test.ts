@@ -118,6 +118,27 @@ describe("agent inbox model", () => {
     });
   });
 
+  it("moves a running thread to Needs you when its live tab is blocked, without a second row", () => {
+    const model = deriveAgentInbox({
+      summary: summary({
+        activeThreads: { items: [thread("thread_blocked", { title: "Ship release notes", terminalRef: { workspaceId: WS, tabId: TAB_A } })], hasMore: false, limit: 20 },
+        attentionThreads: { items: [thread("thread_approval", { status: "waiting_for_approval", attention: "approval_required", terminalRef: { workspaceId: WS, tabId: TAB_B } })], hasMore: false, limit: 20 },
+      }),
+      terminalTabs: {
+        [`${WS}:${TAB_A}`]: tab(TAB_A, { agentStatus: "blocked", statusMessage: "Allow git push?", statusAt: at(0) }),
+        [`${WS}:${TAB_B}`]: tab(TAB_B, { agentStatus: "blocked", statusMessage: "Run tests?", statusAt: at(0) }),
+      },
+    });
+    expect(model.items).toHaveLength(2);
+    expect(model.items.find((item) => item.key === "thread:thread_blocked")).toMatchObject({
+      group: "needs", pill: "Needs you", message: "Allow git push?",
+      target: { kind: "thread", threadId: "thread_blocked", terminalKey: `${WS}:${TAB_A}` },
+    });
+    // An explicit approval on the thread still wins over the tab's word.
+    expect(model.items.find((item) => item.key === "thread:thread_approval")).toMatchObject({ group: "needs", pill: "Approval" });
+    expect(model.counts).toMatchObject({ needs: 2, running: 0 });
+  });
+
   it("shows Herdr terminal agents by status and opens their exact tab", () => {
     const model = deriveAgentInbox({
       summary: summary(),
