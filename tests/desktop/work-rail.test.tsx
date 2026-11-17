@@ -11,8 +11,10 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { renderRailFixture as render } from "./work-rail-client-fixture";
+import { clientFixture as agentClientFixture } from "./chat-agents-fixture";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
-import { ChatAgentsWorkspace, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import { ChatAgentsWorkspace, ChatAgentsContent, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import { WorkArchiveProvider, WorkArchiveOutlet } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import { PinOffIcon } from "lucide-react";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -434,6 +436,35 @@ describe("WorkRail", () => {
     fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
     await waitFor(() => expect(updateLifecycle).toHaveBeenCalledWith(recent.chat.id, { baseRevision: 1, lifecycle: "archived" }));
     expect(screen.getByRole("button", { name: "View archived" })).toBeTruthy();
+  });
+  it.each(["search", "toast"])("opens the archive above Agents from %s", async (entry) => {
+    const client = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      search: vi.fn(async () => ({ items: [] })),
+      updateLifecycle: vi.fn(async () => ({ ...recent, chat: { ...recent.chat, lifecycle: "archived", revision: 2 } })),
+      agents: { ...agentClientFixture(),
+        bots: { recipes: vi.fn(async () => []), directChat: vi.fn(async () => null), directBot: vi.fn(async () => null), interactions: vi.fn(async () => []) } },
+    } as unknown as CanonicalChatClient;
+    render(<WorkArchiveProvider><ChatAgentsWorkspace>
+      <WorkRail client={client} projects={[]} active activeChatId={recent.chat.id}
+        onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>
+      <ChatAgentsContent client={client.agents} scopeKey="archive-regression">
+        <WorkArchiveOutlet client={client} projects={[]}><p>Main chat</p></WorkArchiveOutlet>
+      </ChatAgentsContent>
+    </ChatAgentsWorkspace></WorkArchiveProvider>);
+    await screen.findByRole("button", { name: "Recent global" });
+    if (entry === "toast") {
+      fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+      await screen.findByRole("button", { name: "View archived" });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Agents", exact: true }));
+    await waitFor(() => expect(screen.getByText("Main chat").closest("[inert]")).toBeTruthy());
+    if (entry === "search") {
+      fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+      fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
+    } else fireEvent.click(screen.getByRole("button", { name: "View archived" }));
+    expect(await screen.findByRole("heading", { name: "Archived chats" })).toBeTruthy();
   });
   it("uses the Chat rail typography and contained section headings", async () => {
     const css = await readFile(resolve(__dirname, "../../desktop/src/renderer/src/features/work/work-rail/work-rail.css"), "utf8");

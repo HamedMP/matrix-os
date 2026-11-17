@@ -359,6 +359,7 @@ function WorkInspectorContent({
       setClosedSessionIds((current) => current.includes(tab.sessionId) ? current : [...current, tab.sessionId]);
       setCreatedSessions((current) => current.filter((candidate) => candidate.id !== tab.sessionId));
       removeTab(id);
+      setTerminalCloseTarget((current) => current === id ? null : current);
       void refreshSummary().catch((error: unknown) => {
         console.warn("[work] terminal refresh after close failed:", error instanceof Error ? error.name : "UnknownError");
       });
@@ -367,7 +368,6 @@ function WorkInspectorContent({
       setTerminalCloseError(true);
     } finally {
       setClosingSessionIds((current) => current.filter((sessionId) => sessionId !== tab.sessionId));
-      setTerminalCloseTarget(null);
     }
   };
   const closeTab = (id: string) => {
