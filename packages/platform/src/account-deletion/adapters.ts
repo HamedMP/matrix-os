@@ -319,7 +319,8 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if (!options.objectStore) throw new Error('Storage cleanup configuration unavailable');
       await eraseOwnerStorage(options.objectStore, context.clerkUserId, options.r2PrefixRoot);
     },
-    async data(context) { await eraseOwnerPlatformData(db, context.clerkUserId, options.ownerHash); },
+    async data(context) { await eraseOwnerPlatformData(db, context.clerkUserId,
+      options.ownerHash, options.credentialSecret); },
     async clerk(context) {
       await assertClerkOwnershipSafe(context.clerkUserId,true);
       await clerk(`/users/${encodeURIComponent(context.clerkUserId)}`, 'DELETE', true);

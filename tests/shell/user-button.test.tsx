@@ -14,6 +14,7 @@ const clerkState = vi.hoisted(() => ({
     primaryEmailAddress: { emailAddress: "kongfupanda13@example.com" },
   },
   signOut: vi.fn(async () => undefined),
+  getToken: vi.fn(async () => "fresh-clerk-proof"),
   openUserProfile: vi.fn(),
   organization: null as { id: string } | null,
   organizationsLoaded: true,
@@ -32,6 +33,7 @@ vi.mock("@clerk/nextjs", () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
     signOut: clerkState.signOut,
+    getToken: clerkState.getToken,
   }),
   useUser: () => ({
     user: clerkState.user,
@@ -63,6 +65,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 describe("UserButton", () => {
   beforeEach(() => {
     vi.resetModules();
+    clerkState.getToken.mockReset().mockResolvedValue("fresh-clerk-proof");
     vi.restoreAllMocks();
     vi.useRealTimers();
     clerkState.isLoaded = true;
@@ -400,7 +403,25 @@ describe("UserButton", () => {
     });
   });
 
-  it("logs non-OK Matrix app-session cleanup responses before Clerk sign-out", async () => {
+  it.each(["settings", "win11"])("uses fresh Clerk proof for %s account sign-out", async surface => {
+    if (surface === "settings") {
+      const { UserButton } = await import("../../shell/src/components/UserButton.js");
+      render(<UserButton variant="settings" />);
+      fireEvent.click(await openAccountMenu());
+    } else {
+      const { Win11ManagedAccountActions } = await import("../../shell/src/components/taskbar/Win11ManagedAccountActions.js");
+      render(<Win11ManagedAccountActions onClose={vi.fn()} />);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    }
+    await waitFor(() => expect(clerkState.signOut).toHaveBeenCalled());
+    expect(clerkState.getToken).toHaveBeenCalledWith({ skipCache: true });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/app-session", expect.objectContaining({
+      method: "DELETE", headers: { Authorization: "Bearer fresh-clerk-proof" },
+    }));
+  });
+
+  it("keeps the Clerk session active when shared viewer revocation cannot complete", async () => {
+    clerkState.signOut.mockClear();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "Session unavailable" }), {
@@ -415,12 +436,11 @@ describe("UserButton", () => {
     fireEvent.click(await openAccountMenu());
 
     await waitFor(() => {
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[auth] Matrix app session clear returned non-OK status",
-        503,
-      );
-      expect(clerkState.signOut).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalled();
+      expect(screen.getByRole("alert").textContent).toContain("Sign-out is temporarily unavailable");
     });
+    expect(clerkState.signOut).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
   it("redirects after platform cleanup when Clerk sign-out does not settle", async () => {
