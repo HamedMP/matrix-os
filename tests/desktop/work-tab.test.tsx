@@ -3,6 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CanonicalChatNavigationResponseSchema, FUNDED_AI_READINESS_TIMEOUTS, type CanonicalChatRecord } from "@matrix-os/contracts";
+import { effectiveNarrowPane } from "@desktop/renderer/src/features/work/work-responsive-layout";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { desktopProviderCatalogCache, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
@@ -1389,4 +1390,8 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByText("Chat center")).toBeTruthy();
     expect(inspectorProps.active.at(-1)).toBe(false);
   });
+});
+
+it("keeps narrow archive navigation available when the page has no inspector", () => {
+ expect(effectiveNarrowPane({layout:"narrow",navigationOpen:true,inspectorOpen:false,narrowPane:"rail",narrowPaneRouteKey:"archive"},"archive",false)).toBe("rail");
 });

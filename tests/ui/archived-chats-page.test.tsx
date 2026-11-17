@@ -156,3 +156,16 @@ it.each(["restore", "delete"] as const)("does not reinsert a %s result from a st
   expect((screen.getByRole("checkbox", { name: "Select Retained archive" }) as HTMLInputElement).checked).toBe(true);
   expect(api.list).toHaveBeenLastCalledWith({ lifecycle: "archived", limit: 50, cursor: "older_cursor" });
 });
+
+it("reloads conflicted revisions while preserving the failed restore selection", async () => {
+ const api=client();api.updateLifecycle.mockRejectedValueOnce(new Error("RevisionConflict"));
+ api.list.mockResolvedValueOnce({items:[archived]}).mockResolvedValue({items:[{...archived,chat:{...archived.chat,revision:9}}]});
+ render(<ArchivedChatsPage client={api as unknown as ChatArchiveClient} projects={[]}/>);
+ fireEvent.click(await screen.findByRole("checkbox",{name:"Select Archived design"}));
+ fireEvent.click(screen.getByRole("button",{name:"Restore",exact:true}));
+ fireEvent.click(await screen.findByRole("button",{name:"Reload archives"}));
+ await waitFor(()=>expect(api.list).toHaveBeenCalledTimes(2));
+ expect((await screen.findByRole("checkbox",{name:"Select Archived design"}) as HTMLInputElement).checked).toBe(true);
+ fireEvent.click(screen.getByRole("button",{name:"Restore",exact:true}));
+ await waitFor(()=>expect(api.updateLifecycle).toHaveBeenLastCalledWith("chat_archive",{baseRevision:9,lifecycle:"active"}));
+});

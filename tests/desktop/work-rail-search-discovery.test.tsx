@@ -37,6 +37,10 @@ const acceptedProject = (withOverview: boolean) => ({
   },
 });
 describe("Work search discovery", () => {
+  it("keeps Search inside a smaller window even when the main-pane center is offset", () => {
+    render(<WorkRailSearchDialog open centerX={490} bounds={{left:0,right:740}} records={[]} projects={[]} status="ready" client={null} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    expect(screen.getByRole("dialog",{name:"Search chats"}).style.left).toBe("424px");
+  });
   it("centers Search in its supplied main pane while keeping delete confirmation viewport-centered", async () => {
     const archived = { chat: { id: "chat_position", title: "Positioned chat", lifecycle: "archived", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
     const client = { list: vi.fn(async () => ({ items: [archived] })) } as unknown as CanonicalChatClient;

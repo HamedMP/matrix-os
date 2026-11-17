@@ -29,7 +29,7 @@ export function effectiveNarrowPane(
   routeKey: string,
   canInspect: boolean,
 ): NarrowWorkPane {
-  if (!canInspect || state.narrowPaneRouteKey !== routeKey) return "chat";
+  if (state.narrowPaneRouteKey !== routeKey || (!canInspect && state.narrowPane === "inspector")) return "chat";
   return state.narrowPane;
 }
 
