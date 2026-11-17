@@ -3,7 +3,7 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Search01Icon } from "@hugeicons/core-free-icons";
-import { AGENT_INBOX_PILL_STYLE } from "../desktop-agent-inbox.js";
+import { AGENT_INBOX_PILL_STYLE } from "../agent-inbox-pill-style.js";
 import { formatInboxTime, type AgentInboxGroup } from "../agent-inbox-model.js";
 import { AgentLogo } from "../agent-logo.js";
 import type { ChatNavigationRecord } from "../chat-navigation/projection.js";
