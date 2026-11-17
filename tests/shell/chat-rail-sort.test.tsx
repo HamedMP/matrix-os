@@ -159,3 +159,13 @@ it("keeps Search inside a smaller Web window instead of clipping its right edge"
  render(<WebChatSearchDialog centerX={490} bounds={{left:0,right:740}} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
  expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('424px');
 });
+
+it.each(["Projects", "Shared"])("finishes local %s filtering without an unissued chat search", scope => {
+  const search = vi.fn();
+  render(<WebChatSearchDialog search={search} onShared={vi.fn()} recent={[]} projects={[{id:"proj_local",slug:"local",name:"Local project"}]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("tab",{name:scope,exact:true}));
+  fireEvent.change(screen.getByRole("combobox",{name:"Search chats"}),{target:{value:"Local"}});
+  expect(screen.queryByText("Searching all chats…")).toBeNull();
+  expect(search).not.toHaveBeenCalled();
+  if(scope==="Projects") expect(screen.getByRole("option",{name:/Local project/})).toBeTruthy();
+});

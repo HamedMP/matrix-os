@@ -92,12 +92,13 @@ export function WebChatSearchDialog({
     setIndex(0);
     setDeletion(null);
     setError(false);
+    const requestsChats = scope !== "Projects" && scope !== "Shared" && Boolean(phrase || scope === "Archived");
     setPage({
       rows: [],
-      loading: Boolean(phrase || scope === "Archived"),
+      loading: requestsChats,
       error: false,
     });
-    if (scope === "Projects" || scope === "Shared" || (!phrase && scope !== "Archived")) return;
+    if (!requestsChats) return;
     const timer = window.setTimeout(
       () => {
         const request =
