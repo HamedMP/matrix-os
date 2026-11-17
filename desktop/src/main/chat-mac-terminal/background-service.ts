@@ -3,6 +3,7 @@ import type { InvokeResponse } from "../../shared/ipc-contract";
 import type { PrepareMacTerminalCheck } from "../../shared/mac-terminal-probe-ipc";
 import { MacTerminalDeliveryRejectedError, type MacTerminalContext, type MacTerminalRequest } from "../chat-electron-preview/transport";
 import type { ChatTerminalProbe } from "../local-terminals/chat-terminal-probe";
+import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
 import {
   MacTerminalProbeActionSchema, type MacTerminalProbeAction, type MacTerminalProbeOutput,
 } from "../../shared/mac-terminal-probe";
@@ -35,6 +36,7 @@ interface Dependencies {
   prepareTerminal(action: MacTerminalProbeAction): Promise<ChatTerminalProbe>;
   reportEvent(event: Event, reason?: ResetReason | FailureReason): void;
   onActiveChange(active: boolean): void;
+  beginActivity?: BeginMacActivity;
 }
 
 interface Grant {
@@ -43,6 +45,7 @@ interface Grant {
   approvedAt: number;
   expiresAt: number;
   operation: AbortController;
+  activity?: MacActivityHandle;
   used: Set<string>;
   phase: "waiting" | "running" | "returning";
   transportFailureReported: boolean;
@@ -61,8 +64,18 @@ const POLL_MS = 3_000;
 const RETRY_MS = 5_000;
 const INSPECTION_MS = 30_000;
 
+function revokePhase(reason: ResetReason): MacActivityPhase {
+  switch (reason) {
+    case "stopped": return "stopped";
+    case "expired":
+    case "exhausted": return "expired";
+    case "authority-changed": return "revoked";
+    case "unexpected-failure": return "failed";
+  }
+}
+
 export function createMacTerminalBackgroundService(deps: Dependencies) {
-  let preparing: { chatId: string; operation: AbortController } | null = null;
+  let preparing: { chatId: string; operation: AbortController; result: Promise<StartReply> } | null = null;
   let active: Grant | null = null;
   let inFlight: Promise<void> | null = null;
   let stopping: Promise<void> | null = null;
@@ -107,7 +120,9 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     clearTimeout(grant.expiryTimer);
     clearTimeout(grant.pollTimer);
     grant.pending = undefined;
-    grant.operation.abort();
+    const phase = revokePhase(reason);
+    grant.operation.abort(phase);
+    grant.activity?.finish(phase);
     const drain = closeTerminal(grant);
     stopping = drain;
     deps.onActiveChange(false);
@@ -147,6 +162,8 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     if (!matches(grant, pending.request)) {
       grant.pending = undefined;
       grant.phase = "waiting";
+      grant.activity?.update(Date.now() >= pending.request.expiresAt ? "expired" : "revoked");
+      grant.activity?.update("ready");
       deps.reportEvent("failed", "delivery-expired");
       return;
     }
@@ -162,6 +179,8 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     if (!isCurrent(grant)) return;
     grant.pending = undefined;
     grant.phase = "waiting";
+    grant.activity?.update(rejected ? "failed" : "returned");
+    grant.activity?.update("ready");
     if (rejected) deps.reportEvent("failed", "delivery-rejected");
     else deps.reportEvent("returned");
   }
@@ -171,6 +190,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     // contain at most MAX_CHECKS elements for the session.
     grant.used.add(request.runId);
     grant.phase = "running";
+    grant.activity?.update("running");
     try {
       await closeTerminal(grant);
       if (!isCurrent(grant) || !matches(grant, request)) return;
@@ -186,13 +206,18 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       if (!isCurrent(grant) || !matches(grant, request)) return;
       grant.pending = { request, result: { terminalId: terminal.id, output } };
       grant.phase = "returning";
+      grant.activity?.update("returning");
       inspect(grant);
     } catch (error: unknown) {
-      if (isCurrent(grant)) reportFailure("terminal-failed", error);
+      if (isCurrent(grant)) {
+        grant.activity?.update("failed");
+        reportFailure("terminal-failed", error);
+      }
     } finally {
       if (!grant.pending) {
         grant.phase = "waiting";
         await closeTerminal(grant);
+        if (isCurrent(grant)) grant.activity?.update("ready");
       }
     }
   }
@@ -258,39 +283,63 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     grant.pollTimer.unref();
   }
 
-  async function start(target: PrepareMacTerminalCheck): Promise<StartReply> {
-    if (!deps.enabled) return { status: "unavailable" };
-    if (isBusy() || deps.oneTimeBusy()) return { status: "busy" };
-    const operation = new AbortController();
-    preparing = { chatId: target.chatId, operation };
+  async function startGrant(target: PrepareMacTerminalCheck, operation: AbortController): Promise<StartReply> {
+    let activity: MacActivityHandle | undefined;
+    let signal = operation.signal;
+    let completion: MacActivityPhase = "failed";
     try {
       const context = await deps.readTerminalContext(target, operation.signal);
       if (!context || context.chatId !== target.chatId || context.worktreeId !== target.worktreeId
         || operation.signal.aborted || !deps.isTerminalContextCurrent(context)) return { status: "unavailable" };
-      const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(CONSENT_MS)]);
+      signal = AbortSignal.any([operation.signal, AbortSignal.timeout(CONSENT_MS)]);
+      activity = deps.beginActivity?.("background-checks", context.worktreeId);
+      activity?.update("awaiting-approval");
       const approved = await deps.approve(context, signal);
-      if (signal.aborted || !deps.isTerminalContextCurrent(context)) return { status: "unavailable" };
-      if (!approved) return { status: "declined" };
+      if (signal.aborted || !deps.isTerminalContextCurrent(context)) {
+        completion = "revoked";
+        return { status: "unavailable" };
+      }
+      if (!approved) {
+        completion = "declined";
+        return { status: "declined" };
+      }
 
       const approvedAt = Date.now();
       const grant: Grant = {
-        context, approvedAt, expiresAt: approvedAt + GRANT_MS, operation, targetId: randomUUID(),
+        context, approvedAt, expiresAt: approvedAt + GRANT_MS, operation, activity, targetId: randomUUID(),
         used: new Set(), phase: "waiting", transportFailureReported: false,
         expiryTimer: setTimeout(() => { void revoke(grant, "expired"); }, GRANT_MS),
       };
       grant.expiryTimer.unref();
       active = grant;
+      activity?.update("ready");
+      activity = undefined;
       deps.onActiveChange(true);
       deps.reportEvent("approved");
       schedule(grant, 0);
       return { status: "ready", targetId: grant.targetId, expiresAt: grant.expiresAt, remaining: MAX_CHECKS };
     } catch (error: unknown) {
-      if (operation.signal.aborted) return { status: "unavailable" };
+      if (signal.aborted) return { status: "unavailable" };
       reportFailure("approval-failed", error);
       return { status: "failed" };
     } finally {
-      preparing = null;
+      if (activity) {
+        if (signal.aborted) {
+          const reason = operation.signal.aborted ? operation.signal.reason : "expired";
+          completion = reason === "stopped" ? "stopped" : reason === "expired" ? "expired" : "revoked";
+        }
+        activity.finish(completion);
+      }
     }
+  }
+
+  async function start(target: PrepareMacTerminalCheck): Promise<StartReply> {
+    if (!deps.enabled) return { status: "unavailable" };
+    if (isBusy() || deps.oneTimeBusy()) return { status: "busy" };
+    const operation = new AbortController();
+    const result = startGrant(target, operation).finally(() => { preparing = null; });
+    preparing = { chatId: target.chatId, operation, result };
+    return result;
   }
 
   function status(target: PrepareMacTerminalCheck): StatusReply {
@@ -301,11 +350,11 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       remaining: MAX_CHECKS - grant.used.size, phase: grant.phase };
   }
 
-  async function stop() {
-    preparing?.operation.abort();
+  async function stop(reason: "stopped" | "authority-changed" = "stopped") {
+    const pending = preparing;
     const work = inFlight;
-    if (active) await revoke(active, "stopped");
-    await work;
+    pending?.operation.abort(revokePhase(reason));
+    await Promise.all([pending?.result, work, active ? revoke(active, reason) : stopping]);
   }
 
   async function cancel(chatId: string) {

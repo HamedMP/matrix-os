@@ -26,6 +26,7 @@ function deferred<T>() {
 function fixture() {
   const first = { id: "t1", run: vi.fn(async (): Promise<MacTerminalProbeOutput> => "Darwin"), dispose: vi.fn(async () => {}) };
   const second = { id: "t2", run: vi.fn(async (): Promise<MacTerminalProbeOutput> => "Darwin"), dispose: vi.fn(async () => {}) };
+  const activity = { update: vi.fn(), finish: vi.fn() };
   const deps = {
     enabled: true,
     oneTimeBusy: vi.fn(() => false),
@@ -50,6 +51,7 @@ function fixture() {
     >(async () => {}),
     reportEvent: vi.fn(),
     onActiveChange: vi.fn(),
+    beginActivity: vi.fn(() => activity),
   };
   const service = createMacTerminalBackgroundService(deps);
   async function approve() {
@@ -60,7 +62,7 @@ function fixture() {
   function request(targetId: string, runId: string, overrides: Partial<MacTerminalRequest> = {}) {
     return { ...context, runId, targetId, action: "uname" as const, expiresAt: Date.now() + 60_000, ...overrides };
   }
-  return { deps, first, second, service, approve, request };
+  return { deps, activity, first, second, service, approve, request };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -93,8 +95,10 @@ describe("approved background Mac terminal checks", () => {
 
   it("passes a cancelable approval scope to preview discovery while no terminal work is pending", async () => {
     const { deps, service, approve } = fixture();
+    const cleanup = deferred<void>();
     deps.tryBackgroundPreview.mockImplementationOnce(async (_context, _grant, signal) => {
       await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      await cleanup.promise;
     });
     const { targetId } = await approve();
     await vi.advanceTimersByTimeAsync(10_000);
@@ -103,8 +107,13 @@ describe("approved background Mac terminal checks", () => {
     }, expect.any(AbortSignal), expect.any(Function));
     expect(deps.prepareTerminal).not.toHaveBeenCalled();
     expect(service.status(ref)).toMatchObject({ active: true, remaining: 3 });
-    await service.stop();
+    const settled = vi.fn();
+    const stopped = service.stop().then(settled);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(deps.tryBackgroundPreview.mock.calls[0]?.[2].aborted).toBe(true);
+    expect(settled).not.toHaveBeenCalled();
+    cleanup.resolve();
+    await stopped;
   });
 
   it.each(["returns the result", "fails to return the result"])(
@@ -143,22 +152,29 @@ describe("approved background Mac terminal checks", () => {
   );
 
   it("does not overlap a one-time approval or a second background request", async () => {
-    const { deps, service } = fixture();
+    const { deps, activity, service } = fixture();
     deps.oneTimeBusy.mockReturnValueOnce(true);
     expect(await service.start(ref)).toEqual({ status: "busy" });
     expect(deps.approve).not.toHaveBeenCalled();
+    expect(deps.beginActivity).not.toHaveBeenCalled();
     const consent = deferred<boolean>();
     deps.approve.mockReturnValueOnce(consent.promise);
     const pending = service.start(ref);
     expect(await service.start(ref)).toEqual({ status: "busy" });
     await vi.advanceTimersByTimeAsync(1000);
     expect(deps.approve).toHaveBeenCalledOnce();
-    await service.stop();
+    expect(activity.update).toHaveBeenCalledExactlyOnceWith("awaiting-approval");
+    const settled = vi.fn();
+    const stopped = service.stop().then(settled);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(settled).not.toHaveBeenCalled();
     expect(deps.approve.mock.calls[0]?.[1].aborted).toBe(true);
     consent.resolve(true);
+    await stopped;
     expect(await pending).toEqual({ status: "unavailable" });
     expect(deps.readBackgroundTerminalRequest).not.toHaveBeenCalled();
     expect(deps.prepareTerminal).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("stopped");
   });
 
   it("records a bounded diagnostic for approval errors without leaking their messages", async () => {
@@ -179,7 +195,7 @@ describe("approved background Mac terminal checks", () => {
   });
 
   it("polls and returns two distinct checks after one approval without a renderer dispatch", async () => {
-    const { deps, first, second, service, approve, request } = fixture();
+    const { deps, activity, first, second, service, approve, request } = fixture();
     const grant = await approve();
     const one = request(grant.targetId, "run_1");
     deps.readBackgroundTerminalRequest.mockResolvedValue(one);
@@ -202,6 +218,12 @@ describe("approved background Mac terminal checks", () => {
     await service.stop();
     expect(second.dispose).toHaveBeenCalledOnce();
     expect(deps.onActiveChange.mock.calls).toEqual([[true], [false]]);
+    expect(deps.beginActivity).toHaveBeenCalledExactlyOnceWith("background-checks", context.worktreeId);
+    expect(activity.update.mock.calls.flat()).toEqual([
+      "awaiting-approval", "ready", "running", "returning", "returned", "ready",
+      "running", "returning", "returned", "ready",
+    ]);
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("stopped");
   });
 
   it("reports one diagnostic per discovery failure episode and recovers within the same grant", async () => {

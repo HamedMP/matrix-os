@@ -51,6 +51,27 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
+  it("opens local Mac activity history from the native menu without a renderer action", () => {
+    const openMacActivity = vi.fn();
+    const send = vi.fn();
+    const options = {
+      appName: "Matrix OS", isPackaged: false, platform: "darwin" as const,
+      openExternal: vi.fn(), send, adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn(),
+      openMacActivity,
+    };
+    function historyItem(template: ReturnType<typeof createAppMenuTemplate>) {
+      const menu = template.find(item => item.label === "Matrix OS");
+      return Array.isArray(menu?.submenu) ? menu.submenu.find(item => item.label === "Recent Mac Activity…") : undefined;
+    }
+    const item = historyItem(createAppMenuTemplate(options));
+    if (!item?.click) throw new Error("missing native activity history");
+    item.click({} as never, {} as never, {} as never);
+    expect(openMacActivity).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(historyItem(createAppMenuTemplate({ ...options, openMacActivity: undefined }))).toBeUndefined();
+    expect(historyItem(createAppMenuTemplate({ ...options, platform: "linux" }))).toBeUndefined();
+  });
+
   it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
     const stopBackgroundMacChecks = vi.fn();
     const menuOptions = options({ isPackaged: false, stopBackgroundMacChecks });
