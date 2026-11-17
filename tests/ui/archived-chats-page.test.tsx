@@ -67,7 +67,7 @@ it("retries only the remaining chat after a partial permanent-delete failure", a
   expect(api.delete.mock.calls.map(call => call[0])).toEqual(["chat_archive", "chat_second", "chat_second"]);
 });
 
-it("filters project rows whose canonical project reference is the slug", async () => {
+it("shows project context for both canonical IDs and legacy slugs", async () => {
   const api = client();
   api.list.mockResolvedValue({ items: [
     { ...archived, projectId: "alpha" },
@@ -76,9 +76,10 @@ it("filters project rows whose canonical project reference is the slug", async (
   render(<ArchivedChatsPage client={api as unknown as ChatArchiveClient} projects={[
     { id: "project_alpha", slug: "alpha", name: "Alpha" }, { id: "project_beta", slug: "beta", name: "Beta" },
   ]}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "Alpha", exact: true }));
-  expect(screen.getByRole("checkbox", { name: "Select Archived design" })).toBeTruthy();
-  expect(screen.queryByRole("checkbox", { name: "Select Beta archive" })).toBeNull();
+  expect(await screen.findByRole("checkbox", { name: "Select Archived design" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Select Beta archive" })).toBeTruthy();
+  expect(screen.getByText(/· Alpha/)).toBeTruthy();
+  expect(screen.getByText(/· Beta/)).toBeTruthy();
 });
 
 it("keeps restore Undo available while searching other archives", async () => {
@@ -105,7 +106,7 @@ it("lets the user retry a failed archived-history read", async () => {
   expect(await screen.findByRole("checkbox", { name: "Select Archived design" })).toBeTruthy();
 });
 
-it("keeps the project-filter reset accessible when search returns a different project", async () => {
+it("searches across project boundaries without hiding matching archives", async () => {
   const beta = { ...archived, chat: { ...archived.chat, id: "chat_beta", title: "Beta archive" }, projectId: "project_beta" };
   const api = client();
   api.list.mockResolvedValue({ items: [archived, beta] });
@@ -113,11 +114,10 @@ it("keeps the project-filter reset accessible when search returns a different pr
   render(<ArchivedChatsPage client={api as unknown as ChatArchiveClient} projects={[
     { id: "project_alpha", slug: "alpha", name: "Alpha" }, { id: "project_beta", slug: "beta", name: "Beta" },
   ]}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "Alpha", exact: true }));
+  await screen.findByRole("checkbox", { name: "Select Archived design" });
   fireEvent.change(screen.getByRole("searchbox", { name: "Search archived chats" }), { target: { value: "Beta archive" } });
-  await screen.findByText("No archived chats match your search.");
-  fireEvent.click(screen.getByRole("button", { name: "All projects" }));
-  expect(screen.getByRole("checkbox", { name: "Select Beta archive" })).toBeTruthy();
+  expect(await screen.findByRole("checkbox", { name: "Select Beta archive" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "All projects" })).toBeNull();
 });
 
 it("retries a failed next page with the same cursor and keeps loaded selections", async () => {

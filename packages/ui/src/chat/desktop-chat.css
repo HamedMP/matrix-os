@@ -25,8 +25,8 @@
 .side-chat-composer { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--chat-input); border-radius: 12px; flex-shrink: 0; }
 .side-chat-composer textarea { flex: 1; min-width: 0; resize: none; background: transparent; border: 0; padding: 0; color: inherit; font: inherit; outline: none; max-height: 120px; }
 .desktop-chat-design .side-chat-send { width: 40px; height: 32px; border-radius: 8px; padding: 0; background: var(--chat-fg); color: var(--chat-bg); }
-.chat-archive-page { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; position: relative; padding: 56px max(24px, calc((100% - 1000px) / 2)) 32px; }
-.chat-archive-content { display: flex; flex-direction: column; gap: 28px; width: 100%; }
+.chat-archive-page { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; position: relative; padding: 56px 24px 32px; box-sizing: border-box; }
+.chat-archive-content { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: 1000px; margin: 0 auto; }
 .chat-archive-header { display: flex; align-items: center; gap: 24px; justify-content: space-between; }
 .chat-archive-header h1 { font-family: inherit; font-size: 17px; font-weight: 600; line-height: 24px; margin: 0 0 4px; }
 .chat-archive-header p, .chat-archive-title span { color: var(--chat-muted); }
@@ -51,7 +51,7 @@
 .chat-archive-selection { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-weight: 500; }
 .chat-archive-selection > div, .chat-archive-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .desktop-chat-design .chat-archive-delete { color: var(--chat-danger)!important; }
-.chat-archive-confirm h2 { font: 600 16px/24px Geist, sans-serif; margin: 0 0 8px; }
+.chat-archive-confirm h2 { font: 600 14px/20px Geist, sans-serif; margin: 0 0 8px; }
 .chat-archive-confirm > div:last-child { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .chat-lifecycle-toast { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; align-items: center; gap: 16px; background: var(--chat-fg, var(--text-primary, var(--foreground))); color: var(--chat-bg, var(--bg-surface, var(--background))); border-radius: 12px; padding: 12px 16px; box-shadow: 0 8px 16px rgb(0 0 0 / 12%); font-size: 14px; }
 .chat-lifecycle-toast .matrix-btn, .chat-lifecycle-toast button { color: inherit; padding: 0; background: transparent; font-size: inherit; font-weight: 400; }

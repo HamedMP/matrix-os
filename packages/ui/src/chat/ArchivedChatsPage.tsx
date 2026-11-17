@@ -206,19 +206,13 @@ function ArchiveGroups({ groups, projectByRef, selectedIds, selecting, busy, onT
   </div></div> : null);
 }
 function ArchiveDeleteConfirmation({ rows, busy, error, onClose, onConfirm }: { rows: Row[] | null; busy: boolean; error: string | null; onClose(): void; onConfirm(): void }) {
-  return <Dialog open={Boolean(rows)} onClose={() => { if (!busy) onClose(); }} aria-label="Delete archived chats?" className="desktop-chat-design chat-archive-confirm">
-    <h2>Delete {rows?.length === 1 ? `“${rows[0]?.chat.title}”` : `${rows?.length ?? 0} chats`} forever?</h2><p>This permanently deletes the selected chats and their messages. This cannot be undone.</p>
+  return <Dialog open={Boolean(rows)} onClose={() => { if (!busy) onClose(); }} aria-label="Delete archived chats?" style={{ maxWidth: 420, borderRadius: 12 }} className="desktop-chat-design chat-archive-confirm">
+    <h2>Delete {rows?.length === 1 ? "this chat" : `${rows?.length ?? 0} chats`} forever?</h2><p>{rows?.length === 1 ? "This permanently deletes the chat and its messages. This can’t be undone." : "This permanently deletes the selected chats and their messages. This can’t be undone."}</p>
     {error ? <p role="alert">{error}</p> : null}
     <div><Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="destructive" size="sm" disabled={busy} onClick={onConfirm}>Delete forever</Button></div>
   </Dialog>;
 }
 
-function ArchiveProjectFilters({ projects, projectId, onChange }: { projects: readonly Project[]; projectId: string | null; onChange(id: string | null): void }) {
-  return <div className="chat-archive-filters" aria-label="Filter by project">
-    <Button variant="ghost" size="sm" aria-pressed={!projectId} onClick={() => onChange(null)}>All projects</Button>
-    {projects.map(project => <Button key={project.id ?? project.slug} variant="ghost" size="sm" aria-pressed={projectId === (project.id ?? project.slug)} onClick={() => onChange(project.id ?? project.slug)}>{project.name}</Button>)}
-  </div>;
-}
 function ArchivePageStatus({ status, hasRows, error, query, cursor, capped, busy, onMore, onSearch, onRetry }: {
   status: ArchiveRowsState["status"]; hasRows: boolean; error: string | null; query: string; cursor?: string; capped: boolean; busy: boolean;
   onMore(): void; onSearch(): void; onRetry(): void;
@@ -243,16 +237,13 @@ export function ArchivedChatsPage({ client, projects, onChanged }: {
   client: ChatArchiveClient; projects: readonly Project[]; onChanged?(): void;
 }) {
   const [query, setQuery] = useState("");
-  const [projectId, setProjectId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const page = useArchivedChatRows(client, query.trim());
   const actions = useArchivedChatActions(client, page.removeRows, page.reload, onChanged);
   const projectByRef = useMemo(() => indexProjects(projects), [projects]);
-  const availableProjectRefs = indexedIds(page.rows.flatMap(row => row.projectId ? [row.projectId] : []));
-  const availableProjects = projects.filter(project => availableProjectRefs[project.id ?? ""] || availableProjectRefs[project.slug]);
   const selectedIds = indexedIds(actions.selected);
   const selectedRows = page.rows.filter(row => selectedIds[row.chat.id]);
-  const visibleRows = page.rows.filter(row => !projectId || row.projectId === projectId || (row.projectId && projectByRef[row.projectId]?.id === projectId));
+  const visibleRows = page.rows;
   const groups = [{ label: "This week", rows: visibleRows.filter(recent) }, { label: "Earlier", rows: visibleRows.filter(row => !recent(row)) }];
   const error = actions.error ?? page.error;
   return <section aria-label="Archived chats" className="desktop-chat-design chat-archive-page" onKeyDown={event => {
@@ -264,7 +255,6 @@ export function ArchivedChatsPage({ client, projects, onChanged }: {
       </header>
       {actions.selected.length ? <ArchiveSelection count={actions.selected.length} busy={actions.busy} onRestore={() => { void actions.apply(selectedRows, "restore"); }} onDelete={() => actions.setDeleting(selectedRows)} onClear={() => actions.setSelected([])}/> : null}
       {error && !actions.deleting ? <p role="alert">{error}</p> : null}
-      {!actions.selected.length && (availableProjects.length > 1 || projectId) ? <ArchiveProjectFilters projects={availableProjects} projectId={projectId} onChange={setProjectId}/> : null}
       <ArchiveGroups groups={groups} projectByRef={projectByRef} selectedIds={selectedIds} selecting={actions.selected.length > 0} busy={actions.busy}
         onToggle={actions.toggle} onRestore={row => { void actions.apply([row], "restore"); }} onDelete={row => actions.setDeleting([row])}/>
       <ArchivePageStatus status={page.status} hasRows={visibleRows.length > 0} error={error} query={query.trim()} cursor={page.cursor} capped={page.rows.length >= MAX_ROWS} busy={actions.busy}
