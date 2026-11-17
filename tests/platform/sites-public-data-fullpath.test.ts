@@ -76,7 +76,7 @@ it('carries a visitor write from the Worker through platform and gateway into ow
 
   await sql`ALTER TABLE public._site_visitor_writes ADD CONSTRAINT reject_all CHECK (false) NOT VALID`.execute(ownerDb.kysely);
   const failed = await visit({ kind: 'db', action: { action: 'insert', table: 'tasks', data: { title: 'Rolled back' } } });
-  expect(failed.status).toBe(400);
-  expect(await failed.json()).toEqual({ error: 'Invalid change' });
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toEqual({ error: 'Shared data is unavailable' });
   expect((await ownerDb.db.raw('SELECT count(*)::int AS count FROM "tasks-lab".tasks')).rows).toEqual([{ count: 1 }]);
 });
