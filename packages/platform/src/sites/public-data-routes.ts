@@ -53,13 +53,9 @@ export function registerSitePublicDataRoute(app: Hono, options: {
             if (!site || site.accessMode !== 'public' || !site.activeVersion) return c.json({ error: 'Site unavailable' }, 404);
             if (!perSite.check(site.id)) return c.json({ error: 'Try again later' }, 429);
             const visitor = options.transport.visitorHash(site.id, source);
-            // Writes hold the publication row lock through forwarding (551 R7), so unpublish or a
-            // switch to private link either precedes the write or waits for it.
+            // Writes re-check the publication under a row share lock held through forwarding.
             const outcome = write
-                ? await options.service.admitted(reference.data, async (locked, trx) => {
-                    if (locked.id !== site.id || locked.accessMode !== 'public' || !locked.activeVersion) throw new SiteError('not_found');
-                    return options.transport.forward(locked, visitor, input.data, trx);
-                })
+                ? await options.transport.forwardWrite(site, visitor, input.data)
                 : await options.transport.forward(site, visitor, input.data);
             return respond(c, outcome);
         } catch (error: unknown) {

@@ -78,6 +78,34 @@ describe('platform public site data route', () => {
     expect((await post(routes(), `/${publicSite.id}/data`, find)).status).toBe(503);
   });
 
+  it('runs one owner\'s visitor writes concurrently instead of through the single publish admission', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const forward = vi.fn(async () => { await gate; return Response.json({ result: { id: 'row' } }); });
+    vi.stubGlobal('fetch', forward);
+    const app = routes();
+    const first = post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': '192.0.2.10' });
+    const second = post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': '192.0.2.11' });
+    await vi.waitFor(() => expect(forward).toHaveBeenCalledTimes(2));
+    release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+  });
+
+  it('re-checks the publication under the row lock before forwarding a write', async () => {
+    const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
+    vi.stubGlobal('fetch', forward);
+    const transport = createSiteDataTransport({ db, platformSecret: secret });
+    const site = (await service.resolve(publicSite.id))!;
+    await db.executor.updateTable('public_sites').set({ access_mode: 'private_link' }).where('id', '=', publicSite.id).execute();
+    try {
+      await expect(transport.forwardWrite(site, 'a'.repeat(64), insert as never)).rejects.toMatchObject({ code: 'not_found' });
+      expect(forward).not.toHaveBeenCalled();
+    } finally {
+      await db.executor.updateTable('public_sites').set({ access_mode: 'public' }).where('id', '=', publicSite.id).execute();
+    }
+  });
+
   it('refuses private-link sites, unknown references and requests without the same-origin edge marker', async () => {
     const forward = vi.fn(async () => Response.json({ result: [] }));
     vi.stubGlobal('fetch', forward);
