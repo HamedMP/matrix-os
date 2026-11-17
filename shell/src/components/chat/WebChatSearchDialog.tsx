@@ -41,6 +41,7 @@ export function WebChatSearchDialog({
   recent,
   projects,
   centerX,
+  bounds,
   onClose,
   onSelect,
   onProject,
@@ -53,6 +54,7 @@ export function WebChatSearchDialog({
   recent: readonly ChatNavigationRecord[];
   projects: readonly WebProject[];
   centerX?: number;
+  bounds?: {left:number;right:number};
   onClose(): void;
   onSelect(id: string): void;
   onProject(project: WebProject): void;
@@ -205,7 +207,7 @@ export function WebChatSearchDialog({
       });
   };
   const more = () => {
-    if (!page.cursor || page.loading || page.rows.length >= 500) return;
+    if (!page.cursor || page.loading) return;
     const current = generation.current;
     setPage((value) => ({ ...value, loading: true, error: false }));
     const input = {
@@ -229,7 +231,7 @@ export function WebChatSearchDialog({
               (row) =>
                 !previous.rows.some((item) => item.chat.id === row.chat.id) && !removed.current.includes(row.chat.id),
             ),
-          ].slice(0, 500),
+          ].slice(-500),
           cursor: value.nextCursor,
           loading: false,
         }));
@@ -239,6 +241,8 @@ export function WebChatSearchDialog({
         if (current === generation.current) setPage((value) => ({ ...value, loading: false, error: true }));
       });
   };
+  const dialogWidth = bounds ? Math.max(0, Math.min(600, bounds.right - bounds.left - 32)) : 600;
+  const fittedCenter = bounds && centerX !== undefined ? Math.max(bounds.left + 16 + dialogWidth / 2, Math.min(bounds.right - 16 - dialogWidth / 2, centerX)) : centerX;
   return (
     <>
       <Dialog
@@ -254,7 +258,8 @@ export function WebChatSearchDialog({
           style={{
             zIndex: SHELL_Z_INDEX.appDialog,
             top: "12vh",
-            left: centerX === undefined ? "50%" : centerX,
+            left: fittedCenter === undefined ? "50%" : fittedCenter,
+            width: dialogWidth,
             transform: "translateX(-50%)",
           }}
           overlayStyle={{ zIndex: SHELL_Z_INDEX.appDialog }}
@@ -414,7 +419,7 @@ export function WebChatSearchDialog({
               <button
                 type="button"
                 className="w-full p-2 text-xs text-muted-foreground"
-                disabled={page.loading || page.rows.length >= 500}
+                disabled={page.loading}
                 onClick={() => {
                   void more();
                 }}

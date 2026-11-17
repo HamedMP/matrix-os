@@ -88,7 +88,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
   refreshVersion: number;
 }) {
-  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage, refreshVersion);
+  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"));
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
