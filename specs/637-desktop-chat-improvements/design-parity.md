@@ -14,6 +14,8 @@ The November 16 side-by-side audit supersedes the previous visual-readiness asse
 
 WorkTab already exceeds the entrypoint size guideline. Extract responsive layout/resize primitives before adding archive navigation. Archive state and its page outlet live in WorkSurfaceRuntime. Extract the inspector tab strip and picker to packages/ui rather than extending the large WorkFilesInspector with a second tab implementation. Web consumes these same implementations.
 
+The existing WorkTab integration harness also exceeds 1,000 lines. Its follow-up extraction should move shared client/ResizeObserver fixtures into one test helper and move hosted-window chrome cases into a focused suite, retaining the real WorkTab-to-SurfaceChrome boundary. The narrow toolbar regression extends the existing hosted-window case so it does not duplicate those fixtures.
+
 ## Behavior checks
 
 - Main/side transcripts remain server-separated; Copy cannot submit a main-chat turn.
@@ -61,3 +63,5 @@ Both desktops use the compact project-root label with an on-demand file filter a
 The follow-up qualification keeps unsent side questions mounted across tab switches on both desktops and uses the existing Web code editor in read-only mode for numbered file previews. Opened files reveal their parent folders and selection; large directory views retain 1,000 rows at a time and filter before windowing, with Previous/Next access through the existing directory endpoint. Project-resource conversion is shared by desktop and mobile preview paths. Search centers over the conversation when the inspector is open, and shared controls explicitly consume the desktop color tokens in dark mode. Manual reordering preserves saved positions outside the moved subset, respects the displayed page order, and rejects stale targets.
 
 Final review regressions additionally preserve explicit selection when the startup chat is reselected, snapshot the displayed server group's order before its first manual move, and reveal each ancestor's correct directory window. The file filter uses the existing bounded Gateway search within the verified file root, including unopened folders; it retains at most 200 matches and asks for a narrower filter when truncated. Phone headers omit desktop inspector controls while retaining their existing file-preview fallback. The New tab picker includes the current file and saved Side chat alongside terminals.
+
+The final narrow Electron capture found that an exclusive Files inspector could cover the floating window's still-active title/share controls. Hosted narrow inspectors now begin below the shared OS window gesture height; docked inspectors retain the Figma-aligned tab row. The production WorkTab integration regression fails without that offset and checks that closing the inspector still returns to Chat.
