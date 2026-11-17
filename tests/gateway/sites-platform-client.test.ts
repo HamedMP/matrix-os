@@ -85,3 +85,14 @@ it('bounds deployment by the remaining budget while retaining management timeout
  fetch.mockResolvedValueOnce(new Response('missing',{status:404}));expect(await client().request('event','GET')).toBeNull();expect(AbortSignal.timeout).toHaveBeenLastCalledWith(10000);
  fetch.mockResolvedValueOnce(new Response('{}',{status:409}));await expect(client().request('event','POST',{},'/rollback')).rejects.toMatchObject({status:409});expect(AbortSignal.timeout).toHaveBeenLastCalledWith(30000);
 });
+
+it('uses the machine-bound readiness endpoint and rejects a malformed capability response',async()=>{
+ const fetch=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({privateEmailInvitations:false})))
+  .mockResolvedValueOnce(new Response(JSON.stringify({privateEmailInvitations:'true'})));
+ vi.stubGlobal('fetch',fetch);
+ const api=client();
+ await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:false});
+ expect(String(fetch.mock.calls[0][0])).toBe('https://platform.example/internal/containers/owner/sites/event/email-invitation-capabilities?runtimeSlot=main');
+ expect(fetch.mock.calls[0][1]).toMatchObject({redirect:'error',headers:{authorization:'Bearer machine-token'}});
+ await expect(api.emailInvitationCapabilities!('event')).rejects.toMatchObject({status:503});
+});

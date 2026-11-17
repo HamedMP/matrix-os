@@ -40,6 +40,30 @@ describe('owner publishing authentication',()=>{
   expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4,token:'forbidden'})})).status).toBe(400);
   expect((await app.request('/api/apps/event/site/access-links/not-a-uuid',{method:'DELETE'})).status).toBe(400);
  });
+ it('validates and forwards only bounded owner email invitation operations',async()=>{
+  const invitationId=randomUUID();
+  const platform={request:vi.fn(),listEmailInvitations:vi.fn().mockResolvedValue({invitations:[],nextCursor:null,siteRevision:1}),
+   createEmailInvitations:vi.fn().mockResolvedValue({results:[],siteRevision:2}),
+   resendEmailInvitation:vi.fn().mockResolvedValue({invitation:{id:invitationId},siteRevision:3}),
+   revokeEmailInvitation:vi.fn().mockResolvedValue({invitation:{id:invitationId},siteRevision:4}),
+   emailInvitationAudit:vi.fn().mockResolvedValue({events:[],nextCursor:null})};
+  const app=ownerApp('owner',platform);
+  const base='/api/apps/event/site/invitations';
+  expect((await app.request(base+'?limit=20')).status).toBe(200);
+  expect((await app.request(base+'?limit=101')).status).toBe(400);
+  expect((await app.request(base,{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:1,emailAddresses:['ada@example.com']})})).status).toBe(200);
+  expect(platform.createEmailInvitations).toHaveBeenCalledWith('event',{baseRevision:1,emailAddresses:['ada@example.com']});
+  expect((await app.request(base,{method:'POST',body:'x'.repeat(33*1024)})).status).toBe(413);
+  expect((await app.request(base+'/audit')).status).toBe(200);
+  expect((await app.request(base+'/'+invitationId+'/resend',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:2,invitationRevision:0})})).status).toBe(200);
+  expect((await app.request(base+'/'+invitationId,{method:'DELETE',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:3,invitationRevision:1})})).status).toBe(200);
+  expect(platform.revokeEmailInvitation).toHaveBeenCalledWith('event',invitationId,{baseRevision:3,invitationRevision:1});
+  expect((await ownerApp('collaborator',platform).request(base)).status).toBe(403);
+  expect((await app.request(base+'/invalid-id',{method:'DELETE',body:'{}'})).status).toBe(400);
+ });
 });
 describe('scoped platform submission route',()=>{
  function app() { const submit=vi.fn().mockResolvedValue(undefined); const app=new Hono();app.route('/',createSiteSubmitRoutes({serviceSecret:'token',submissions:{submit} as any}));return {app,submit}; }
@@ -103,4 +127,19 @@ describe('owner friendly-path availability', () => {
   expect(failed.status).toBe(503);
   expect(await failed.json()).toEqual({ error: 'Site unavailable' });
  });
+});
+
+it('reads uncached invitation readiness only for the owner before any publication',async()=>{
+ const capability=vi.fn(async()=>({privateEmailInvitations:false}));
+ const platform={request:vi.fn(),emailInvitationCapabilities:capability};
+ const path='/api/apps/event/site/email-invitation-capabilities';
+ expect((await ownerApp('collaborator',platform).request(path)).status).toBe(403);
+ expect(capability).not.toHaveBeenCalled();
+ const response=await ownerApp('owner',platform).request(path);
+ expect(response.status).toBe(200);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+ expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(platform.request).not.toHaveBeenCalled();
+ expect((await ownerApp('owner',platform).request(path+'?enabled=true')).status).toBe(400);
+ expect(await (await ownerApp().request(path)).json()).toEqual({privateEmailInvitations:false});
 });

@@ -45,7 +45,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     const env = options.env ?? process.env;
     const service = createSitesService({ ...options, emailCapability,
         emailSessionSecret: env.ACCOUNT_DELETION_SECRET });
-    app.route('/internal/containers/:handle/sites', createSiteManagementRoutes({ ...options, service }));
+    app.route('/internal/containers/:handle/sites', createSiteManagementRoutes({ ...options, service, emailEnabled: emailCapability }));
     const email = options.clerkAuth && env.CLERK_SECRET_KEY && env.ACCOUNT_DELETION_SECRET
         ? { db: options.db, enabled: emailCapability, secret: env.ACCOUNT_DELETION_SECRET,
             clerkSecretKey: env.CLERK_SECRET_KEY, publishableKey: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
