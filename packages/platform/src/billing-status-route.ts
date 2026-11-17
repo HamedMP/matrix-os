@@ -18,6 +18,7 @@ import {
 import type { StripeBillingClient } from './billing-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { projectCardTrialOffer } from './billing/trial-policy.js';
+import { freeEntitlementForSlot } from './free-tier/free-entitlement.js';
 
 const BillingStatusQuerySchema = z.object({
   runtimeSlot: RuntimeSlotSchema.optional(),
@@ -72,14 +73,20 @@ export function createBillingStatusHandler(options: {
             runtimeCatalog: loadRuntimeCatalog(env),
             now: currentTime,
           })
-          : null;
+          : freeEntitlementForSlot(stripeEntitlement, runtimeSlot);
       }
       const entitlement = computeEffectiveEntitlement({
         stripeEntitlement,
         override: parseBillingOverrideRecord(state.override),
         now: currentTime,
       });
-      const access = getRuntimeAccessDecision(entitlement, currentTime);
+      const machine = await getActiveUserMachineByClerkId(
+        options.db,
+        clerkUserId,
+        runtimeSlot,
+      );
+      // A free entitlement allows only a container runtime, so the decision names the selected runtime's substrate.
+      const access = getRuntimeAccessDecision(entitlement, currentTime, machine?.substrate);
       const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
         && runtimeSlot === 'primary';
       const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
@@ -114,11 +121,6 @@ export function createBillingStatusHandler(options: {
           currentTime,
         )
         : null;
-      const machine = await getActiveUserMachineByClerkId(
-        options.db,
-        clerkUserId,
-        runtimeSlot,
-      );
       const placement = options.resolveRuntimePlacement(machine?.location);
       const response = MatrixBillingStatusSchema.safeParse({
         entitlement: entitlement

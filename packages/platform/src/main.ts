@@ -93,6 +93,9 @@ import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
+import type { FreeTierConfig } from './free-tier/config.js';
+import type { FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import { registerFreeTierOperatorRoutes } from './free-tier/invites.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
@@ -294,6 +297,7 @@ export function createApp(deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -543,6 +547,7 @@ export function createApp(deps: {
     ensureProvisionedPlatformUser,
     resolveAppDomainIdentity,
     getGatewayUrlForHandle,
+    freeRuntimeProvisioner: deps.freeTier?.provisioner,
   }));
 
   const billingStripe=createAccountDeletionGuardedStripeClient(db, appEnv.STRIPE_SECRET_KEY
@@ -694,6 +699,7 @@ export function createApp(deps: {
   if (deps.internalFundedAiOperatorRoutes) {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
+  registerFreeTierOperatorRoutes(app, { db, platformSecret, config: deps.freeTier?.config });
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
