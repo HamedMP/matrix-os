@@ -18,7 +18,7 @@ In a personal Main worktree Chat on an opt-in macOS Electron development build, 
 | Return | Use the existing canonical Chat turn request and idempotency key. On a transient error, keep one pending output under the same grant and retry delivery until its deadline. Execution stays single-use. Record approved, dispatched, returned, failed and revoked transitions in the existing Electron diagnostic logger with event names and whitelisted fields. |
 | Revoke | Local stop, expiry, sign-out, changed authority/Computer, or Electron quit clears the permission, cancels pending work and disposes its PTY. A transient connection loss can recover during a live grant. A client restart clears the grant. |
 
-The regular one-time terminal and Electron preview paths remain available on their original controls. Packaged enrollment, background device discovery, general cross-machine shell verbs, bounded application input, takeover and product audit history are subsequent ENG-495 milestones. Public docs ship when reviewers approve a supported enrollment workflow.
+The original controls belong to the single-command baseline. The following milestone uses the composer menu for the one-time and background paths. Packaged enrollment, background device discovery, general cross-machine shell verbs, bounded application input, takeover and product audit history are subsequent ENG-495 milestones. Public docs ship when reviewers approve a supported enrollment workflow.
 
 ### IPC and failure behavior
 
@@ -36,9 +36,10 @@ The regular one-time terminal and Electron preview paths remain available on the
 ## Background system checks and Electron preview verification
 
 This ENG-495 follow-up uses the same Matrix session and the same Chat/worktree
-grant. On the opt-in macOS Electron development build, **Allow background Mac
-checks** stages a draft for system checks. The owner sends it and can close the
-Chat window. **Draft another Mac check** reuses the live grant. The Mac prepares
+grant. On the opt-in macOS Electron development build, type `@` in the empty
+composer and select **Allow background Mac checks**. Native approval stages a
+draft for system checks. The owner sends it and can close the Chat window.
+The `@` menu's **Draft another Mac check** reuses the live grant. The Mac prepares
 a private PTY and runs these fixed commands for each system check. A successful
 receipt contains each value and exit status in the originating Chat.
 
@@ -46,8 +47,8 @@ receipt contains each value and exit status in the originating Chat.
 - `/usr/bin/uname -m` reports the architecture.
 - `/usr/bin/sw_vers -productVersion` reports the macOS version.
 
-When a trusted local preview checkout is configured, **Draft background
-Electron preview** stages the existing sign-in label change from
+When a trusted local preview checkout is configured, the `@` menu's **Draft
+background Electron preview** stages the existing sign-in label change from
 [the single-run preview](../2694-chat-electron-preview/spec.md). The completed
 assistant turn identifies the active grant, source SHA-256, commit and
 `verify-sign-in-recovery` operation. Electron main can discover this request
@@ -72,6 +73,22 @@ accepted only on the background dispatch path. Successful output contains
 `operation: "verify-sign-in-recovery"`. Missing or stale targets, different
 worktrees, source changes during approval, and unrecognized command or operation
 strings produce no local execution.
+
+### Composer actions
+
+The existing `@` menu groups the preview and terminal actions under **This Mac**
+in an eligible Chat and worktree. The draft must contain only the menu query
+and have no references or attachments. Select an action with the mouse or
+keyboard to replace the query with a worktree-bound draft. Starting a terminal
+grant requires Mac approval before staging. A separate preview approval
+appears when the Mac receives a matching request from the Main agent. The
+owner sends the draft with the normal Chat composer. In-progress status stays
+visible. **Stop background Mac checks** remains available during a live grant.
+
+Acceptance covers mouse and keyboard selection, opening and dismissing the
+menu without issuing a Mac request, preserving a populated draft, rejecting
+an owner or worktree change during approval, and checking the selected
+worktree and grant at send time.
 
 This adds no public endpoints. It uses the existing authenticated owner Chat,
 project/worktree, source verification and receipt endpoints. Validation covers

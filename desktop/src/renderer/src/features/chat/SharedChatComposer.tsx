@@ -13,6 +13,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Reac
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ResourceRows } from "./ComposerResourceRows";
+import { ComposerMentionActions, type ComposerMentionAction } from "./ComposerMentionActions";
 import {
   listCanonicalSlashEntries,
   updateCanonicalComposerOption,
@@ -104,6 +105,7 @@ export function SharedChatComposer({
   referenceTokens = [],
   onReferenceTokensChange,
   onAgentMention,
+  mentionActions,
   onSubmit,
   onAbort,
   busy,
@@ -145,6 +147,7 @@ export function SharedChatComposer({
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
   onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
+  mentionActions?: readonly ComposerMentionAction[];
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
@@ -248,10 +251,15 @@ export function SharedChatComposer({
     .filter((resource) => !isChatMention(resource) || canAddChatMention(referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []), resource));
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
+  const queryToken = resourceQuery === null ? null : `@${resourceMatch?.[1] ?? ""}`;
+  const filteredMentionActions = resourceQuery !== null && value.trim() === queryToken
+    && !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length
+    ? (mentionActions ?? []).filter(action => `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
+    : [];
   const suggestionCount = slashMenuOpen
     ? filteredSlashEntries.length
     : resourceMenuOpen
-      ? filteredResources.length + (canAttach ? 1 : 0)
+      ? filteredMentionActions.length + filteredResources.length + (canAttach ? 1 : 0)
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const activeSuggestionIndex = Math.min(suggestionIndex, Math.max(0, suggestionCount - 1));
@@ -294,12 +302,21 @@ export function SharedChatComposer({
       }
       return;
     }
-    if (resourceQuery !== null && canAttach && index === 0) {
+    const action = filteredMentionActions[index];
+    if (resourceMenuOpen && action) {
+      const current = editorRef.current?.readValue();
+      if (!current || current.value !== value || current.tokens.length) return;
+      setDismissedSuggestionKey(suggestionKey);
+      action.select(current.value);
+      return;
+    }
+    const resourceIndex = index - filteredMentionActions.length;
+    if (resourceQuery !== null && canAttach && resourceIndex === 0) {
       setDismissedSuggestionKey(suggestionKey);
       onAttach?.();
       return;
     }
-    const resource = filteredResources[index - (canAttach ? 1 : 0)];
+    const resource = filteredResources[resourceIndex - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
       // Keep keyboard behavior deterministic after mouse or Enter selection:
       // the next Enter belongs to the composer, not the stale resource menu.
@@ -375,7 +392,7 @@ export function SharedChatComposer({
       onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
     },
   ] : [];
-  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
+  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0 || filteredMentionActions.length > 0);
   const suggestionMenuOpen = slashMenuOpen || showResourceSuggestions;
   const suggestionSessionOpen = slashMenuOpen || resourceMenuOpen;
   const dismissSuggestion = useEffectEvent(() => setDismissedSuggestionKey(suggestionKey));
@@ -439,11 +456,12 @@ export function SharedChatComposer({
       ) : showResourceSuggestions ? (
         <SuggestionMenu label="Add" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
+          <ComposerMentionActions actions={filteredMentionActions} selectedIndex={activeSuggestionIndex} onSelect={applySuggestion} />
           <ResourceRows
             role="option"
             canAttach={canAttach}
             resources={filteredResources}
-            selectedIndex={activeSuggestionIndex}
+            selectedIndex={activeSuggestionIndex - filteredMentionActions.length}
             onAttach={() => onAttach?.()}
             onResource={insertResource}
           />

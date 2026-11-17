@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import React, { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { ChatMacTerminalProbe } from "@desktop/renderer/src/features/chat/ChatMacTerminalProbe";
+import { useChatMacTerminalProbe } from "@desktop/renderer/src/features/chat/ChatMacTerminalProbe";
 import { MAC_TERMINAL_PROBE_MAX_AGE_MS, MAC_TERMINAL_PROBE_PREFIX } from "@desktop/shared/mac-terminal-probe";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
@@ -16,6 +16,13 @@ const marker = MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "u
 const batch = MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "system-checks" });
 const props = { active: true, actorId: chat.ownerScope.ownerId };
 const ready = () => ({ status: "ready", targetId, terminalId: "t7", expiresAt: Date.now() + 60_000 });
+
+function ChatMacTerminalProbe(props: Parameters<typeof useChatMacTerminalProbe>[0]) {
+  const { actions, feedback } = useChatMacTerminalProbe(props);
+  return <>{feedback}{actions.map(action => (
+    <button type="button" key={action.label} onClick={() => action.select("@mac")}>{action.label}</button>
+  ))}</>;
+}
 
 function detail(): CanonicalChatDetailResponse {
   const run = { ...snapshot.runs[0]!, executionRoot: worktree, completedAt: new Date().toISOString() };
@@ -107,7 +114,7 @@ describe("Mac terminal check", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Draft another Mac check" }));
     expect(onDraft).toHaveBeenCalledOnce();
-    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(batch), worktree, expiresAt, targetId);
+    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(batch), worktree, "@mac", expiresAt, targetId);
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run"
       || channel === "chat:mac-terminal-background-start")).toBe(false);
   });
@@ -116,11 +123,11 @@ describe("Mac terminal check", () => {
     const expiresAt = Date.now() + 60_000;
     const invoke = bridge(undefined, undefined, async () => ({ active: true, expiresAt, targetId, remaining: 2, phase: "waiting" }));
     const onDraft = vi.fn(() => true);
-    render(<ChatMacTerminalProbe {...props} detail={detail()} onDraft={onDraft} />);
+    render(<ChatMacTerminalProbe {...props} detail={detail()} onDraft={onDraft} previewAvailable />);
     fireEvent.click(await screen.findByRole("button", { name: "Draft background Electron preview" }));
     expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(
       `"operation":"verify-sign-in-recovery","backgroundTargetId":"${targetId}"`,
-    ), worktree, expiresAt, targetId);
+    ), worktree, "@mac", expiresAt, targetId);
     expect(invoke).not.toHaveBeenCalledWith("chat:electron-preview-run", expect.anything());
   });
 
