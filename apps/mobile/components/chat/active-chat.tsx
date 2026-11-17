@@ -1,5 +1,11 @@
-import { canonicalChatExecutionControls, MATRIX_BOT_SELECTION, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { createContext, use, useEffect, type ReactNode } from "react";
+import {
+  canonicalChatExecutionControls,
+  MATRIX_BOT_SELECTION,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatModelSelection,
+  type CanonicalProviderCatalog,
+} from "@matrix-os/contracts";
+import { createContext, use, useCallback, useEffect, type ReactNode } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
@@ -11,15 +17,47 @@ import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail"
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import {
+  composerChoiceScope,
+  useRememberedComposerChoice,
+  type RememberedComposerChoice,
+} from "@/lib/remembered-composer-choice";
 import { useChatComposer } from "@/lib/use-chat-composer";
 
 import { activeChatRun } from "./chat-screen-state";
+import { newChatSelection } from "./new-chat-selection";
 
 function savedChatExecutionControls(detail: CanonicalChatDetailResponse | null, chatId: string | null) {
   if (!detail || detail.record.chat.id !== chatId) return undefined;
   return canonicalChatExecutionControls({
     chatId: detail.record.chat.id, currentSelection: detail.record.chat.currentSelection, runs: detail.runs,
   });
+}
+
+interface ChatScreenSelectionSources {
+  directBot: boolean;
+  activeChatId: string | null;
+  selectionOverride: CanonicalChatModelSelection | null;
+  /** The model the open chat was last sent with. */
+  saved: CanonicalChatModelSelection | undefined;
+  catalog: CanonicalProviderCatalog | null;
+  remembered: { ready: boolean; choice: RememberedComposerChoice | null };
+}
+
+/**
+ * The model of the chat on screen, and whether it waits for the choice saved
+ * on this phone: a new chat starts on the model last chosen here, so its model
+ * is not known, and nothing is sent, until the phone's storage has been read.
+ */
+function chatScreenSelection({
+  directBot, activeChatId, selectionOverride, saved, catalog, remembered,
+}: ChatScreenSelectionSources): { selection: CanonicalChatModelSelection | null; rememberedPending: boolean } {
+  if (directBot) return { selection: MATRIX_BOT_SELECTION, rememberedPending: false };
+  const chosen = selectionOverride ?? saved;
+  if (chosen) return { selection: chosen, rememberedPending: false };
+  if (activeChatId !== null) return { selection: defaultCatalogSelection(catalog), rememberedPending: false };
+  if (!remembered.ready) return { selection: null, rememberedPending: true };
+  return { selection: newChatSelection(catalog, { remembered: remembered.choice?.selection }), rememberedPending: false };
 }
 
 function useActiveChatState() {
@@ -39,6 +77,7 @@ function useActiveChatState() {
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
+  const remembered = useRememberedComposerChoice(composerChoiceScope(userId, computer));
 
   // An agent's chat is read and answered in the Agents tab. One opened here
   // all the same keeps its fixed model, so a message can still be sent.
@@ -47,11 +86,16 @@ function useActiveChatState() {
   // Sending only waits when there is no catalog to choose a model from yet:
   // one that is merely being re-checked already gives the selection, and the
   // computer validates that selection when it admits the turn.
-  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
-  const providerCatalogLoading = !directBot && catalogPending;
-  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
-    ?? detail?.record.chat.currentSelection
-    ?? defaultCatalogSelection(catalog);
+  const { selection, rememberedPending } = chatScreenSelection({
+    directBot, activeChatId, selectionOverride, saved: detail?.record.chat.currentSelection, catalog, remembered,
+  });
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending);
+  const providerCatalogLoading = !directBot && (catalogPending || rememberedPending);
+  const { remember } = remembered;
+  const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
+    setSelectionOverride(chosen);
+    remember({ selection: chosen });
+  }, [setSelectionOverride, remember]);
   const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection,
     savedChatExecutionControls(detail, activeChatId));
 
@@ -96,7 +140,8 @@ function useActiveChatState() {
     directBot,
     providerCatalogChecking,
     selection,
-    setSelectionOverride,
+    /** Chooses the model of the chat on screen, and remembers it on this phone for the next new chat. */
+    chooseSelection,
     attachmentKinds,
     composer,
   };

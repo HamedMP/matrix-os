@@ -14,13 +14,16 @@ import { useBackOr } from "@/components/projects/use-back-or";
 import { useProjectComposer } from "@/components/projects/use-project-composer";
 import { useProjectList } from "@/components/projects/use-project-list";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { newChatSelection } from "@/components/chat/new-chat-selection";
+import { defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
+import { useActiveGateway } from "@/lib/queries/use-active-gateway";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjectChats } from "@/lib/queries/use-project-chats";
 import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
 import type { ProjectSummary } from "@/lib/requests/projects";
+import { composerChoiceScope, useRememberedComposerChoice } from "@/lib/remembered-composer-choice";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { showToast } from "@/lib/toast";
 
@@ -37,6 +40,8 @@ export default function ProjectRoute() {
   const rename = useRenameProject();
   const archive = useArchiveProject();
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
+  const gateway = useActiveGateway();
+  const remembered = useRememberedComposerChoice(composerChoiceScope(gateway.userId, gateway.computer));
   const [page, setPage] = useState<ProjectOptionsPage | null>(null);
   // The project being archived: it stays on screen once the list has dropped
   // it, until this screen has gone back.
@@ -68,7 +73,14 @@ export default function ProjectRoute() {
     navigation.setParams({ newChat: undefined } as never);
   }, [newChatRequested, composerShown, navigation]);
 
-  const selection = chosenModel ?? defaultCatalogSelection(catalog);
+  // Until the project's chats and this phone's last choice are known, the
+  // model a new chat would start on is not either.
+  const choiceUnknown = chats.isPending || !remembered.ready;
+  const startingSelection = choiceUnknown ? null : newChatSelection(catalog, {
+    projectChats: chats.chats,
+    remembered: remembered.choice?.selection,
+  });
+  const selection = chosenModel ?? startingSelection;
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const composer = useProjectComposer({
     projectId: project?.id ?? null,
@@ -77,11 +89,13 @@ export default function ProjectRoute() {
     turnModes: defaultTurnModes(catalog, selection),
     attachmentKinds,
     // There is no model to send to until the provider catalog has loaded.
-    disabled: catalogPending,
+    disabled: catalogPending || (chosenModel === null && choiceUnknown),
     onChatStarted: (chatId, startedWith) => {
       // The send made the new chat the open one. The model it was started
-      // with stays chosen there.
+      // with stays chosen there; the next new chat here starts from the
+      // project's latest chat again.
       setSelectionOverride(startedWith);
+      setChosenModel(null);
       if (navigation.isFocused()) showChat(chatId);
     },
   });
@@ -184,9 +198,12 @@ export default function ProjectRoute() {
           modelControl: (
             <ModelPicker
               catalog={catalog}
-              catalogLoading={catalogPending || catalogFetching}
+              catalogLoading={catalogPending || catalogFetching || (chosenModel === null && choiceUnknown)}
               selection={selection}
-              onSelectionChange={setChosenModel}
+              onSelectionChange={(chosen) => {
+                setChosenModel(chosen);
+                remembered.remember({ selection: chosen });
+              }}
             />
           ),
         }}
