@@ -533,3 +533,11 @@
 .matrix-drive-rail-item:hover .matrix-drive-rail-disclosure, .matrix-drive-rail-item:focus-within .matrix-drive-rail-disclosure { opacity: 1; pointer-events: auto; }
 .matrix-drive-rail-chat[aria-current="page"] { background: var(--matrix-chat-rail-current, var(--bg-surface, var(--background))); border: 1px solid var(--matrix-chat-rail-current-border, var(--border-default, var(--border))); box-shadow: var(--matrix-chat-rail-current-shadow, 0 1px 2px rgba(0,0,0,.04)); }
 @media (hover: none) { .matrix-drive-rail-disclosure { opacity: 1; pointer-events: auto; } }
+
+.matrix-web-project-actions { margin-left: auto; opacity: 0; pointer-events: none; }
+.matrix-web-project:hover .matrix-web-project-actions, .matrix-web-project:focus-within .matrix-web-project-actions { opacity: 1; pointer-events: auto; }
+.matrix-chat-rail-section[data-projects] .matrix-chat-rail-section-heading { text-transform: none; font-size: 14px; letter-spacing: 0; font-weight: 400; }
+
+.matrix-chat-rail-section[data-projects] .matrix-chat-rail-section-heading { gap: 10px; color: var(--matrix-chat-rail-text, var(--foreground)); }
+
+.chat-web-design .desktop-chat-design { --chat-bg: var(--background); --chat-fill: var(--accent); --chat-fg: var(--foreground); --chat-muted: var(--muted-foreground); --chat-line: var(--border); --chat-input: var(--input); --chat-danger: var(--destructive); }

@@ -55,8 +55,8 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
           {project.name}
         </button>
       ) : <h2 title={project.name}>{project.name}</h2>}
-    </div>
     {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
+    </div>
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
         filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />

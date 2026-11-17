@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
+import { FocusedWebProject } from "../../shell/src/components/chat/FocusedWebProject";
 import { WebProjectsNav } from "../../shell/src/components/chat/WebProjectsNav";
 import { useWebProjects } from "../../shell/src/components/chat/web-projects";
 import { usePagedProjectChats } from "../../shell/src/components/chat/usePagedProjectChats";
@@ -50,7 +51,8 @@ it("archives both the project ID and legacy slug chats", async () => {
     authorityKey="user_owner/runtime/main" onArchiveProjectChats={archive}/></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
-  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Actions for Local project" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Archive chats in Local project" }));
   fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
   await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
   expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
@@ -64,7 +66,8 @@ it("reports running chats skipped when a project archive changes no chats", asyn
     onRestoreConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
-  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Actions for Local project" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Archive chats in Local project" }));
   fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
   expect(await screen.findByText("Archived 0 chats in Local project; 3 running skipped")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
@@ -81,19 +84,23 @@ it("restores an older archived chat into an expanded project without reopening i
     messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     authorityKey="user_owner/runtime/main" loadNavigationPage={load as never}
     onArchiveProjectChats={vi.fn(async () => { active = false; return { archived: [{ chatId: "chat_old", revision: 3 }], archivedCount: 1, skippedCount: 0 }; })}
-    onListArchivedConversations={vi.fn(async () => ({ items: active ? [] : [{ chat: { ...item.chat, lifecycle: "archived", revision: 3 } }] })) as never}
+    archiveClient={{ list: vi.fn(async () => ({ items: active ? [] : [{ ...item, chat: { ...item.chat, lifecycle: "archived", revision: 3 } }] })) as never,
+      search: vi.fn(), updateLifecycle: vi.fn(async () => { active = true; return { ...item, chat: { ...item.chat, revision: 4 } }; }) as never, delete: vi.fn() }}
     onRestoreConversation={vi.fn(async () => { active = true; return true; })} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
   expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
-  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Actions for Local project" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Archive chats in Local project" }));
   fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
   await within(nav).findByText("No chats in this project yet.");
-  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Older project chat" }));
-  fireEvent.click(screen.getByRole("button", { name: "Restore selected" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   await screen.findByText("No archived chats.");
-  fireEvent.click(within(screen.getByRole("dialog", { name: "Archived chats" })).getAllByRole("button", { name: "Close", exact: true })[0]!);
+  fireEvent.click(screen.getByRole("button", { name: "New chat", exact: true }));
   expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
   expect(within(nav).getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
 });
@@ -109,7 +116,8 @@ it("keeps only failed project chats in bulk Undo after a partial restore", async
     onRestoreConversation={restoreSingle} onRestoreArchivedChats={restore}/></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
-  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Actions for Local project" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Archive chats in Local project" }));
   fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
   fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
   await waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
@@ -225,25 +233,21 @@ it("refreshes expanded project rows after a bulk archive even beyond the exclusi
 
 it("searches committed history beyond loaded Web Desktop rail rows", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], nextCursor: null })));
-  const searchConversations = vi.fn().mockResolvedValueOnce({ items: [{ chat: {
-    id: "chat_older", title: "Older planning chat", messageCount: 1,
-    activityAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
-  } }], nextCursor: "chatcur_more" }).mockResolvedValueOnce({ items: [{ chat: {
-    id: "chat_oldest", title: "Oldest planning chat", messageCount: 1,
-    activityAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z",
-  } }] });
+  const row = (id: string,title: string) => ({chat:{id,title,messageCount:1,activityAt:"2026-11-12T00:00:00Z",updatedAt:"2026-11-12T00:00:00Z"}});
+  const searchConversations = vi.fn(async (_query: string,input?:{cursor?:string}) => input?.cursor
+    ? {items:[row("chat_oldest","Oldest planning chat")]}
+    : {items:[row("chat_older","Older planning chat")],nextCursor:"chatcur_more"});
   const open = vi.fn();
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
     messages={[]} busy={false} connected conversations={[]} sessionId="chat_current"
-    onNewChat={vi.fn()} onSwitchConversation={open} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main"
-    searchConversations={searchConversations as never}/></OrganizationStateProvider>);
-  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "planning" } });
-  fireEvent.click(await screen.findByRole("button", { name: "Older planning chat" }));
-  fireEvent.click(within(screen.getByRole("region", { name: "Chat search results" })).getByRole("button", { name: "Show more" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Oldest planning chat" }));
-  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50 });
-  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50, cursor: "chatcur_more" });
-  expect(open).toHaveBeenCalledWith("chat_older");
+    onNewChat={vi.fn()} onSwitchConversation={open} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" searchConversations={searchConversations as never}/></OrganizationStateProvider>);
+  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
+  fireEvent.change(screen.getByRole("combobox",{name:"Search chats"}),{target:{value:"planning"}});
+  await screen.findByRole("option",{name:/Older planning chat/});
+  fireEvent.click(screen.getByRole("button",{name:"Show more"}));
+  fireEvent.click(await screen.findByRole("option",{name:/Oldest planning chat/}));
+  expect(searchConversations).toHaveBeenCalledWith("planning",{lifecycle:"active",limit:50});
+  expect(searchConversations).toHaveBeenCalledWith("planning",{lifecycle:"active",limit:50,cursor:"chatcur_more"});
   expect(open).toHaveBeenCalledWith("chat_oldest");
 });
 
@@ -252,9 +256,11 @@ it("opens archive management from Chat and searches the full archived history", 
   const search = vi.fn(async () => ({ items: [{ chat: { id: "chat_archived", title: "Older planning", revision: 2, archivedAt: "2026-11-12T00:00:00Z" } }] }));
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
     messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
-    authorityKey="user_owner/runtime/main" onListArchivedConversations={vi.fn(async () => ({ items: [] })) as never}
+    authorityKey="user_owner/runtime/main" archiveClient={{list:vi.fn(async()=>({items:[]})),search:search as never,updateLifecycle:vi.fn(),delete:vi.fn()}}
     searchConversations={search as never} onRestoreConversation={vi.fn(async () => true)} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
-  fireEvent.click(screen.getByRole("button", { name: "Archived chats" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
   fireEvent.change(screen.getByRole("searchbox", { name: "Search archived chats" }), { target: { value: "planning" } });
   expect(await screen.findByRole("checkbox", { name: "Select Older planning" })).toBeTruthy();
   expect(search).toHaveBeenCalledWith("planning", { lifecycle: "archived", limit: 50 });
@@ -385,8 +391,9 @@ it("shows project Chats five at a time, with start times and the open Chat alway
   const started = within(within(projectsNav).getByRole("button", { name: "Chat 2" })).getByText("2h");
   expect(started.tagName).toBe("TIME");
   expect(started.getAttribute("title")).toMatch(/^Started /);
+  await waitFor(() => expect(within(projectsNav).getByRole("button", { name: "Show more France chats" }).hasAttribute("disabled")).toBe(false));
   fireEvent.click(within(projectsNav).getByRole("button", { name: "Show more France chats" }));
-  expect(shown()).toHaveLength(14);
+  await waitFor(() => expect(shown()).toHaveLength(14));
   expect(within(projectsNav).queryByRole("button", { name: "Show more France chats" })).toBeNull();
 });
 
@@ -534,7 +541,7 @@ it("pages past known chats and retries a failed older-chat page", async () => {
   render(<Nav gatewayUrl="https://example.test/vm/main" scopeKey="owner/main" chats={[projectConversation(1)]} onSelectChat={select} />);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "Expand France chats" }));
-  fireEvent.click(await within(nav).findByRole("button", { name: "Load more chats" }));
+  fireEvent.click(await within(nav).findByRole("button", { name: /Show more .* chats/ }));
   expect(await within(nav).findByRole("alert")).toHaveProperty("textContent", "Project chats could not be loaded.");
   fireEvent.click(within(nav).getByRole("button", { name: "Retry chats" }));
   fireEvent.click(await within(nav).findByRole("button", { name: "Older chat" }));
@@ -663,15 +670,11 @@ function renderFocusable(request: (url: string) => Response, extra: { mobile?: b
     authorityKey="owner/main" {...extra} /></OrganizationStateProvider>);
 }
 
-it("keeps Load more available in a focused project when nothing on the first page matches", async () => {
-  renderFocusable(url => !url.includes("projectId=proj_france") ? Response.json({ items: [], nextCursor: null })
-    : url.includes("cursor=") ? Response.json({ items: [{ chat: { id: "chat_needle", title: "Needle chat" } }], nextCursor: null })
-      : Response.json({ items: [{ chat: { id: "chat_other", title: "Other chat" } }], nextCursor: "chatcur_page2" }));
-  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
-  await screen.findByRole("button", { name: "Other chat" });
-  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "Needle" } });
-  fireEvent.click(await screen.findByRole("button", { name: "Load more chats" }));
-  expect(await screen.findByRole("button", { name: "Needle chat" })).toBeTruthy();
+it("keeps Show more available in a focused project when nothing on the first page matches", async () => {
+  vi.stubGlobal("fetch",vi.fn(async(url:string)=>!url.includes("projectId=proj_france")?Response.json({items:[],nextCursor:null}):url.includes("cursor=")?Response.json({items:[{chat:{id:"chat_needle",title:"Needle chat"}}],nextCursor:null}):Response.json({items:[{chat:{id:"chat_other",title:"Other chat"}}],nextCursor:"chatcur_page2"})));
+  render(<FocusedWebProject project={{id:"proj_france",slug:"france",name:"France"}} gatewayUrl="https://example.test" chats={[]} listedChatIds={new Set()} onSelectChat={vi.fn()} renamedTitles={{}} onBack={vi.fn()} mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="Needle" renderRow={chat=><button>{chat.title}</button>}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Show more France chats"}));
+  expect(await screen.findByRole("button",{name:"Needle chat"})).toBeTruthy();
 });
 
 it("reloads a focused project's older chats when the Unread filter changes", async () => {

@@ -95,8 +95,11 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   // Paged rows only fill in older Chats; a listed (or pinned, filtered, deleted) Chat keeps its normal placement.
   const unknownChats = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
-  const allRows: ProjectRow[] = [...chats.map(chat => ({ kind: "known", chat } as const)),
-    ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
+  const allRows: ProjectRow[] = loadNavigationPage
+    ? filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles), sourceFilter, chat => chat.importSource)
+      .filter(chat => (!listedChatIds.has(chat.id) || chats.some(item => item.id === chat.id)) && (!search || chat.title.toLowerCase().includes(search)))
+      .map(chat => { const known = chats.find(item => item.id === chat.id); return known ? {kind: "known" as const, chat: known} : {kind: "fetched" as const, chat}; })
+    : [...chats.map(chat => ({ kind: "known", chat } as const)), ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
   // Never hide the open Chat behind Show more.
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
@@ -111,9 +114,10 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
         className="matrix-web-project-disclosure" onClick={toggleExpanded}>
         <ChevronRight aria-hidden="true" size={12} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
       </button>
+      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
     </div>
     {expanded ? <div className="matrix-web-project-chats">
-      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
+
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} />
@@ -172,9 +176,9 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
 }) {
   return <>
     {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
-      data-mobile={mobile || undefined} onClick={showMore}>Show more</button> : null}
+      data-mobile={mobile || undefined} disabled={loading} onClick={() => { showMore(); if (hasMore) loadMore(); }}>Show more</button> : null}
     {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
-      data-mobile={mobile || undefined} onClick={loadMore}>Load more chats</button> : null}
+      data-mobile={mobile || undefined} aria-label={`Show more ${projectName} chats`} onClick={() => { showMore(); loadMore(); }}>Show more</button> : null}
     {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">More chats can be found through search.</p> : null}
   </>;
 }

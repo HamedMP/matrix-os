@@ -27,6 +27,8 @@ import {
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalUpdateChatTitleRequestSchema,
+  CanonicalUpdateChatUserStateRequestSchema,
+  type CanonicalUpdateChatUserStateRequest,
   CanonicalUpdateChatProjectRequestSchema,
   CanonicalUpdateChatLifecycleRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
@@ -71,6 +73,7 @@ export interface CanonicalShellChatClient {
   detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   updateLifecycle(chatId: string, input: CanonicalUpdateChatLifecycleRequest): Promise<CanonicalChatRecord>;
   archiveProjectChats(projectId: string): Promise<{ archivedIds: string[]; archived: Array<{ chatId: string; revision: number }>; skippedIds: string[]; archivedCount: number; skippedCount: number }>;
@@ -317,6 +320,13 @@ export function createCanonicalShellChatClient(options: {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+      }));
+    },
+    async updateUserState(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatUserStateRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/user-state`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }));
     },
     async updateLifecycle(chatId, input) {
