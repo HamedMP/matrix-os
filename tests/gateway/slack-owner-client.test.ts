@@ -57,7 +57,7 @@ describe("Slack owner client",()=>{
     const app = createSlackAppRoutes({ config, repository, api, resolveActor: async () => "user_employee",
       resolveDestination: async () => ({ ownerId: "user_employee", runtimeId: "runtime_original" }),
       requireOrgAdmin: async () => true, isCurrentMember: async () => true, authorizeChannelBinding: async () => true,
-      authenticateRuntime: async () => ({ ownerId: "user_employee" }), authorizeReply,
+      authenticateRuntime: async () => ({ ownerId: "user_employee", runtimeId: "runtime_original" }), authorizeReply,
       dispatch: async () => ({ ownerId: "user_employee" }), now: () => clock });
     try {
       await repository.saveInstallation({ appId: "A123", teamId: "T123", organizationId: "org_company", installedBy: "user_admin", botUserId: "UBOT",

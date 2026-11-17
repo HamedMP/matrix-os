@@ -250,7 +250,7 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?:
     history: async () => ({ messages: [], hasMore: false }), addReaction: async () => undefined },
     resolveActor: async () => actors.owner, requireOrgAdmin: async () => true, isCurrentMember: async () => true,
     authorizeChannelBinding: async input => (await homeRpc(home, "authorize", { ownerId: actors.owner, organizationId: ORG, actorId: input.actorId, scopeId: input.scopeId, action: "manage_members" })).allowed === true,
-    authenticateRuntime: async c => c.req.header("authorization") === `Bearer ${TOKEN}` && c.req.header("x-matrix-handle") === "company-owner" ? { ownerId: actors.owner } : null,
+    authenticateRuntime: async c => c.req.header("authorization") === `Bearer ${TOKEN}` && c.req.header("x-matrix-handle") === "company-owner" ? { ownerId: actors.owner, runtimeId: "company-runtime" } : null,
     authorizeReply: async ({ destination, ownerId, publication }) => ownerId === actors.owner && (await homeRpc(home, "authorize", {
       ownerId, organizationId: ORG, actorId: destination.actorId, scopeId: destination.scopeId,
       ...(publication ? { action: "publish_reply", appId: destination.appId, teamId: destination.teamId, eventId: destination.eventId, textDigest: publication.textDigest } : { action: "discuss" }),

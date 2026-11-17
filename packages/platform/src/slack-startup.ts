@@ -69,13 +69,15 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       if(!handle || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(handle))return null;
       const machine=await getRunningUserMachineByHandle(options.db,handle);
       const bearer=c.req.header("authorization")?.replace(/^Bearer /,"");
-      return isSlackMachineAvailable(machine,previewHandle) && timingSafeTokenEquals(bearer,buildPlatformVerificationToken(machine.handle,options.platformSecret))?{ownerId:machine.clerkUserId}:null;
+      if (!isSlackMachineAvailable(machine, previewHandle)
+        || !timingSafeTokenEquals(bearer, buildPlatformVerificationToken(machine.handle, options.platformSecret))) return null;
+      return { ownerId: machine.clerkUserId, runtimeId: machine.machineId };
     },
     authorizeReply:async({destination,ownerId,publication})=>{
       if(destination.ownerId!==ownerId || !await organizations.projection.isCurrentMember({actorId:destination.actorId,organizationId:destination.organizationId}))return false;
       if(!destination.scopeId)return ownerId===destination.actorId && destination.channelId.startsWith("D");
       const home=await homeFor(destination.actorId,destination.scopeId,destination.organizationId);
-      if(home.ownerId!==ownerId)return false;
+      if(home.ownerId!==ownerId || home.runtimeId!==destination.runtimeId)return false;
       return (await rpc(home,"authorize",{ownerId,organizationId:destination.organizationId,actorId:destination.actorId,scopeId:destination.scopeId,
         ...(publication?{action:"publish_reply",appId:destination.appId,teamId:destination.teamId,eventId:destination.eventId,textDigest:publication.textDigest}:{action:"discuss"})})).allowed===true;
     },

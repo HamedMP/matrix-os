@@ -33,6 +33,7 @@ export interface SlackApi {
   addReaction(input: { token: string; channelId: string; ts: string; name: string; signal?: AbortSignal }): Promise<void>;
 }
 export interface SlackMessagePage { messages: Array<{ user?: string; text?: string; ts: string; thread_ts?: string }>; nextCursor?: string; hasMore: boolean }
+export interface SlackRuntimeIdentity { ownerId: string; runtimeId: string }
 export interface SlackAuthorityDependencies {
   resolveActor(c: Context): Promise<string | null>;
   /** Must independently fetch/validate fresh membership AND administrator authority. */
@@ -44,7 +45,7 @@ export interface SlackAuthorityDependencies {
   resolveDestination(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent }): Promise<{ ownerId: string; runtimeId: string }>;
   /** Must durably commit to the selected owner home; dedup by app/team/eventId. A resolved promise acknowledges that commit. */
   dispatch(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent; destination: SlackReplyDestination; signal: AbortSignal }): Promise<{ ownerId: string }>;
-  authenticateRuntime?(c: Context): Promise<{ ownerId: string } | null>;
+  authenticateRuntime?(c: Context): Promise<SlackRuntimeIdentity | null>;
   authorizeReply?(input: { installation: SlackInstallation; destination: SlackReplyDestination; ownerId: string; publication?: { textDigest: string } }): Promise<boolean>;
 }
 

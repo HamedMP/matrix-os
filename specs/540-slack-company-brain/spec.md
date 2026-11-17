@@ -62,9 +62,11 @@ This parity does not make the transports or conversation stores interchangeable.
 | `POST /api/company-brain/scopes/:scopeId/sources` | Trusted Matrix principal | Host owner + scope publication authority |
 | Brain `GET` source/search under `/scopes/:scopeId` | Trusted Matrix principal | Current actor/source scope authority |
 | Brain scope/source `DELETE`, `GET /export` | Trusted Matrix principal | Host owner + scope authority; source deletion requires expected revision |
-| `POST /internal/slack/context` on platform | Exact registered home runtime credential | Fixed original receipt, current membership/scope/install; bounded untrusted page |
-| `POST /internal/slack/reactions` on platform | Exact registered home runtime credential | Fixed `eyes` reaction to the original invoking message; exact receipt and current publication authority |
-| `POST /internal/slack/replies` on platform | Exact registered home runtime credential | Fixed original receipt/destination, current publication approval/membership/scope/install |
+| `POST /internal/slack/context` on platform | Registered home credential + matching receipt owner and runtime ID | Fixed original receipt, current membership/scope/install; bounded untrusted page |
+| `POST /internal/slack/reactions` on platform | Registered home credential + matching receipt owner and runtime ID | Fixed `eyes` reaction to the original invoking message; exact receipt and current publication authority |
+| `POST /internal/slack/replies` on platform | Registered home credential + matching receipt owner and runtime ID | Fixed original receipt/destination, current publication approval/membership/scope/install |
+
+The platform derives the runtime ID from the registered machine after validating its handle credential. A pending reply hint requires the same owner and runtime match. Legacy receipts without a runtime ID cannot authorize broker operations. Company Project authorization also checks that the current directory still resolves to the receipt's runtime before contacting the owner home.
 
 ## Resource/failure bounds
 
