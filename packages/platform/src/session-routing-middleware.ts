@@ -34,11 +34,8 @@ import {
 } from './db.js';
 import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleFromHost } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
-import {
-  buildCustomerVpsProxyUrl,
-  isCustomerVpsProxyMachineRoutable,
-  type EntitlementAccessDecision,
-} from './profile-routing.js';
+import type { EntitlementAccessDecision } from './profile-routing.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -167,6 +164,12 @@ interface CreateSessionRoutingMiddlewareOpts {
   ) => Promise<EntitlementAccessDecision>;
   getGatewayUrlForHandle: (handle: string) => string;
   logRouteError: (context: string, err: unknown) => void;
+  substrates: SubstrateRegistry;
+}
+
+function runtimeSubstrateUnavailableResponse(c: Context, applyNoStoreHeaders: (c: Context) => void): Response {
+  applyNoStoreHeaders(c);
+  return c.text('Matrix OS computer unavailable', 503);
 }
 
 
@@ -255,6 +258,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError,
+    substrates,
   } = opts;
   const browserProofOptions = {
     browserApprovalsEnabled: browserApprovals.policy.kind === 'global',
@@ -511,10 +515,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, reqPath, qs);
-      if (!targetUrl) {
+      const resolution = substrates.resolveUpstream(runningMachine, { path: reqPath, queryString: qs });
+      if (resolution.kind !== 'upstream') {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
+      const targetUrl = resolution.upstream.url;
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
@@ -755,7 +760,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
-      if (!isCustomerVpsProxyMachineRoutable(machine)) {
+      const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
+      const resolution = substrates.resolveUpstream(machine, { path: explicitVmRoute.upstreamPath, queryString: qs });
+      if (resolution.kind === 'substrate_unavailable') {
+        return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
+      }
+      if (resolution.kind === 'not_routable') {
         if (isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -773,11 +783,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           runtimeSlot: machine.runtimeSlot,
         });
       }
-      const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
-      const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
-      if (!targetUrl) {
-        return c.json({ error: 'VPS unreachable' }, 502);
-      }
+      const { url: targetUrl, hostHeader } = resolution.upstream;
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
         identity, platformSecret, machine, clerkAuth, ...browserProofOptions });
@@ -797,7 +803,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           .join('; ');
         if (forwarded) headers.set('cookie', forwarded);
       }
-      headers.set('host', `${machine.handle}.matrix-os.com`);
+      headers.set('host', hostHeader);
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
@@ -882,7 +888,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (requestedActiveMachine && isCustomerVpsProxyMachineRoutable(requestedActiveMachine)) {
+      if (requestedActiveMachine
+        && substrates.resolveUpstream(requestedActiveMachine, { path }).kind === 'upstream') {
         runningMachine = requestedActiveMachine;
       } else if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
@@ -939,10 +946,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
-      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
-      if (!targetUrl) {
+      const resolution = substrates.resolveUpstream(runningMachine, { path, queryString: qs });
+      if (resolution.kind === 'substrate_unavailable') {
+        return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
+      }
+      if (resolution.kind === 'not_routable') {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
+      const { url: targetUrl, hostHeader } = resolution.upstream;
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
         method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, ...browserProofOptions });
       if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
@@ -969,7 +980,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             .join('; ');
           if (forwarded) headers.set('cookie', forwarded);
         }
-        headers.set('host', `${runningMachine.handle}.matrix-os.com`);
+        headers.set('host', hostHeader);
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
         headers.set('accept-encoding', 'identity');

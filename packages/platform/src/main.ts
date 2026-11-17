@@ -135,6 +135,8 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
+import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -291,6 +293,7 @@ export function createApp(deps: {
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  substrateRegistry?: SubstrateRegistry;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -727,6 +730,7 @@ export function createApp(deps: {
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError: logPlatformRouteError,
+    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db),
   }));
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
