@@ -42,6 +42,8 @@ describe("Conversation", () => {
       await Promise.resolve();
     });
 
-    expect(observe).toHaveBeenCalledTimes(1);
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe).toHaveBeenCalledWith(document.querySelector("[data-slot='message-scroller-content']"));
+    expect(observe).toHaveBeenCalledWith(document.querySelector("[data-slot='message-scroller-viewport']"));
   });
 });

@@ -44,7 +44,11 @@ function maximumScrollTop(viewport: Pick<HTMLElement, "scrollHeight" | "clientHe
   return Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 }
 
-export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref<ConversationHandle> }) {
+export function Conversation({ children, ref, viewportRef: externalViewportRef }: {
+  children: ReactNode;
+  ref?: Ref<ConversationHandle>;
+  viewportRef?: Ref<HTMLDivElement>;
+}) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   // Mirror in a ref so the ResizeObserver reads the live value without
@@ -54,14 +58,22 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   // arriving above the visible area keep the reader's place.
   const contentHeightRef = useRef(0);
   const firstRowRef = useRef<Element | null>(null);
+  const lastScrollTopRef = useRef<number | undefined>(undefined);
+
+  useImperativeHandle(externalViewportRef, () => viewportRef.current!, []);
 
   const onScroll = useCallback(() => {
     const el = viewportRef.current;
     if (!el) return;
-    const bottom = maximumScrollTop(el) - el.scrollTop < 48;
+    // A composer/banner resize may emit scroll before ResizeObserver runs.
+    // An unchanged offset is not the reader moving away from the live edge.
+    const unchangedOffset = lastScrollTopRef.current === el.scrollTop;
+    const bottom = (atBottomRef.current && unchangedOffset)
+      || maximumScrollTop(el) - el.scrollTop < 48;
     atBottomRef.current = bottom;
     setAtBottom(bottom);
     contentHeightRef.current = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
   }, []);
 
   const scrollToEnd = useCallback((options?: { behavior?: ScrollBehavior }) => {
@@ -97,8 +109,8 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   useImperativeHandle(ref, () => ({ scrollToEnd, scrollToStart, scrollToMessage }), [scrollToEnd, scrollToStart, scrollToMessage]);
 
   // Stick to the bottom while content grows (new message, streaming tokens),
-  // but only if the user hasn't scrolled away. Observing the content element
-  // catches every growth without depending on a render tick. A second
+  // but only if the user hasn't scrolled away. Observe content and viewport:
+  // composer/banner changes can resize the latter without changing the former. A
   // MutationObserver on the content watches the first row: when it changes
   // (history prepended above) while the reader is away from the live edge,
   // the viewport shifts by the prepended height so the visible row stays put.
@@ -115,6 +127,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
     const pinToLiveEdge = () => {
       if (!viewport) return;
       viewport.scrollTop = maximumScrollTop(viewport);
+      if (viewport.clientHeight > 0) lastScrollTopRef.current = viewport.scrollTop;
       updateBottomState(true);
     };
 
@@ -127,14 +140,18 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
         // ResizeObserver can run before Chromium finishes a nested Markdown or
         // flex reflow. Re-assert the exact clamped edge on the next frame so a
         // terminal work collapse cannot leave stale space below the transcript.
+        const pinnedOffset = viewport.scrollTop;
         settleFrame = window.requestAnimationFrame(() => {
           settleFrame = undefined;
-          if (atBottomRef.current) pinToLiveEdge();
+          // Review or a reader may move the viewport before its native scroll
+          // event updates atBottomRef. Do not overwrite that newer position.
+          if (atBottomRef.current && viewport.scrollTop === pinnedOffset) pinToLiveEdge();
         });
         return;
       }
       const maximum = maximumScrollTop(viewport);
       if (viewport.scrollTop > maximum) viewport.scrollTop = maximum;
+      lastScrollTopRef.current = viewport.scrollTop;
       updateBottomState(maximum - viewport.scrollTop < 48);
     };
 
@@ -169,6 +186,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
       observedContent = content;
       firstRowRef.current = content.firstElementChild;
       resizeObserver.observe(content);
+      resizeObserver.observe(viewport);
       prependObserver.observe(content, { childList: true });
       scrollIfPinned();
     };

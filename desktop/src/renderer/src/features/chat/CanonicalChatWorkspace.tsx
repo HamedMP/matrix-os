@@ -43,7 +43,7 @@ import type {
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
-import { SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { SupervisedToolApprovalBar, revealChatApproval } from "@matrix-os/ui";
 import { pendingSupervisedTool, supervisedToolCallbacks } from "./supervised-tool-approval-wiring";
 import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ComponentProps } from "react";
@@ -172,6 +172,7 @@ function CanonicalChatWorkspaceContent({
   const frameDetailsContainer = useContext(BotDetailsContext);
   const reportBotHeaderBinding = useContext(BotHeaderBindingContext);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
+  const transcriptViewport = useRef<HTMLDivElement>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -1017,7 +1018,7 @@ function CanonicalChatWorkspaceContent({
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
-            <ConversationTranscript turns={transcript} callbacks={{
+            <ConversationTranscript viewportRef={transcriptViewport} turns={transcript} callbacks={{
               browserChatId: controller.detail.record.chat.id,
               browserPermissions: client.browserPermissions,
               openPermissionMode: () => setPermissionModeRequest(value => value + 1),
@@ -1062,7 +1063,7 @@ function CanonicalChatWorkspaceContent({
               {pendingTool ? (
                 <SupervisedToolApprovalBar
                   label={`Waiting for you · ${pendingTool.bar}`}
-                  onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
+                  onReview={() => { revealChatApproval(transcriptViewport.current, pendingTool.id); }}
                 />
               ) : null}
               {composer}

@@ -5,7 +5,7 @@ import { UserMessage } from "./user-message";
 import {
   ChevronRight,
 } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -401,9 +401,11 @@ function ScheduledTurnContent({turn,callbacks,visibility,occurrences,initialFina
 export function ConversationTranscript({
   turns,
   callbacks,
+  viewportRef,
 }: {
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
+  viewportRef?: Ref<HTMLDivElement>;
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -430,7 +432,7 @@ export function ConversationTranscript({
     nested[index]!.push(row.occurrence);return false;
   });
   return (
-    <Conversation>
+    <Conversation viewportRef={viewportRef}>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
         {rows.map(row => row.kind==="occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <ConversationTurn

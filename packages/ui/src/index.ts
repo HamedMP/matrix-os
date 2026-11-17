@@ -302,6 +302,7 @@ export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
 export { ChatRailSection } from "./chat/ChatRailSection.js";
+export { revealChatApproval } from "./chat/approval-scroll.js";
 export { SupervisedToolApprovalBar, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard.js";
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
