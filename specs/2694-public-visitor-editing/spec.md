@@ -122,7 +122,7 @@ When a limit is exceeded the response is `429 Try again later`. The kill switch 
 
 ## Audit, history and vandalism undo
 
-- `public_app_write_log(id, site_id, app_id, table, row_id, op, before jsonb, after jsonb, row_version, source_hash, client_request_id, created_at)` stores only declared columns in `before`/`after`. Retention is 30 days or 50,000 rows per site, whichever comes first, purged by the gateway's recurring cleanup job. It is included in owner export and erasure.
+- `public_app_write_log(id, site_id, app_id, table, row_id, op, before jsonb, after jsonb, row_version_before, row_version_after, source_hash, client_request_id, created_at)` stores only declared columns in `before`/`after`. Retention is 30 days or 50,000 rows per site, whichever comes first, purged by the gateway's recurring cleanup job. It is included in owner export and erasure.
 - **Deletes keep an owner-only full before-image.** A declared-column log cannot restore a deleted row's private fields. For `delete`, the same transaction stores the complete row in `public_app_delete_images(write_log_id PK → write_log ON DELETE CASCADE, row jsonb)` in owner Postgres. It is readable only by the owner revert path, never returned by visitor routes or the activity list, and shares the log's retention, export and erasure. If the image cannot be written, the delete fails.
 - `source_hash = HMAC(per-owner rotating key, cf-connecting-ip)`, rotated every 30 days. Raw IPs are never stored on the owner VPS or in platform logs.
 - **Owner Visitor activity view** (inside the Public tab, progressive disclosure) lists recent visitor changes with three actions:
@@ -130,7 +130,7 @@ When a limit is exceeded the response is `429 Try again later`. The kill switch 
   - **Undo all from this visitor** (same `source_hash`, chosen window).
   - **Undo since time T.**
 
-  A revert runs in one transaction. It applies only where the row's `row_version` still equals the logged one (otherwise it is skipped and reported); an undone delete re-inserts the full before-image, skipped if the `id` exists. It advances revisions through `recordAppDataChange`.
+  A revert runs in one transaction and works per row, never per log entry. It groups the selected entries by `(table, id)` and orders each group by `row_version`, newest first. Each group must form an unbroken chain: every selected entry's `row_version_before` equals the next older one's `row_version_after`, and the newest entry's `row_version_after` equals the row's current `row_version`. When that holds, the row is restored once to the oldest selected entry's before-image, with an `UPDATE … WHERE id = :id AND row_version = :current`. A broken chain means someone outside the selection edited the row in between, so the whole row is skipped and reported. Selected edits are never partly undone around another person's change. An undone delete re-inserts the full before-image, and is skipped if the `id` already exists. A revert advances revisions once through `recordAppDataChange`.
 - Audit events: grant changes, kill switch use, reverts, quota trips and denied write classes. Telemetry stays coarse (`access_mode`, `visitor_access`, outcome), with no row content.
 
 ## Stored XSS and content safety
@@ -198,7 +198,7 @@ Deploy surfaces: the Cloudflare Worker (edge-router), platform Cloud Run (routes
 - Republishing with a migrated schema causes an old open tab's writes to return `Reload to continue`, with no write landing.
 - Turning editing off denies the next write within one request. Unpublish closes reads and writes. Stopping the org share leaves public access unchanged, and vice versa.
 - With the owner VPS stopped, visitors see the unavailable state and unsaved edits stay marked. After restart, the same data returns.
-- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else. Undoing a visitor delete restores the full row, including undeclared columns.
+- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else. Two edits by one visitor to the same row undo to the value before the first edit. Undoing a visitor delete restores the full row, including undeclared columns.
 - Quota or rate breaches return 429 and the maps stay at their caps under a load test. A visitor `<img onerror>` title renders as text in the owner app. Errors never include Postgres, path or provider text.
 - Integration test: the real Worker handler → platform routes → HMAC → gateway → Postgres (551 harness), with fault injection for timeout, digest drift and revoke races.
 
