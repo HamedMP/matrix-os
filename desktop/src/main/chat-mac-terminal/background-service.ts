@@ -3,10 +3,14 @@ import type { InvokeResponse } from "../../shared/ipc-contract";
 import type { PrepareMacTerminalCheck } from "../../shared/mac-terminal-probe-ipc";
 import { MacTerminalDeliveryRejectedError, type MacTerminalContext, type MacTerminalRequest } from "../chat-electron-preview/transport";
 import type { ChatTerminalProbe } from "../local-terminals/chat-terminal-probe";
+import {
+  MacTerminalProbeActionSchema, type MacTerminalProbeAction, type MacTerminalProbeOutput,
+} from "../../shared/mac-terminal-probe";
 
 type StartReply = InvokeResponse<"chat:mac-terminal-background-start">;
 type StatusReply = InvokeResponse<"chat:mac-terminal-background-status">;
-type Result = { terminalId: string; output: "Darwin" };
+type Result = { terminalId: string; output: MacTerminalProbeOutput };
+type DiscoveryGrant = { targetId: string; approvedAt: number };
 type Event = "approved" | "dispatched" | "returned" | "failed" | "revoked";
 type ResetReason = "expired" | "exhausted" | "authority-changed" | "stopped" | "unexpected-failure";
 type FailureReason = "terminal-failed" | "terminal-cleanup-failed" | "delivery-expired" | "delivery-rejected"
@@ -20,12 +24,13 @@ interface Dependencies {
   isTerminalContextCurrent(context: MacTerminalContext): boolean;
   readBackgroundTerminalRequest(
     context: MacTerminalContext,
-    grant: { targetId: string; approvedAt: number },
+    grant: DiscoveryGrant,
     signal: AbortSignal,
   ): Promise<MacTerminalRequest | null>;
+  tryBackgroundPreview?(context: MacTerminalContext, grant: DiscoveryGrant, signal: AbortSignal): Promise<void>;
   isTerminalRequestCurrent(request: MacTerminalRequest): boolean;
   returnTerminalResult(request: MacTerminalRequest, result: Result, signal: AbortSignal): Promise<void>;
-  prepareTerminal(): Promise<ChatTerminalProbe>;
+  prepareTerminal(action: MacTerminalProbeAction): Promise<ChatTerminalProbe>;
   reportEvent(event: Event, reason?: ResetReason | FailureReason): void;
   onActiveChange(active: boolean): void;
 }
@@ -125,7 +130,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     const { context } = grant;
     return request.chatId === context.chatId && request.worktreeId === context.worktreeId
       && request.projectId === context.projectId && request.scopeKey === context.scopeKey
-      && request.targetId === grant.targetId && request.action === "uname"
+      && request.targetId === grant.targetId && MacTerminalProbeActionSchema.safeParse(request.action).success
       && Date.now() < request.expiresAt && deps.isTerminalRequestCurrent(request);
   }
 
@@ -167,7 +172,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
     try {
       await closeTerminal(grant);
       if (!isCurrent(grant) || !matches(grant, request)) return;
-      const terminal = await deps.prepareTerminal();
+      const terminal = await deps.prepareTerminal(request.action);
       if (!isCurrent(grant)) {
         await dispose(terminal);
         return;
@@ -196,12 +201,14 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       return;
     }
     if (!grant.pending && grant.used.size < MAX_CHECKS) {
-      const request = await deps.readBackgroundTerminalRequest(grant.context, {
-        targetId: grant.targetId, approvedAt: grant.approvedAt,
-      }, grant.operation.signal);
+      const discovery = { targetId: grant.targetId, approvedAt: grant.approvedAt };
+      const { signal } = grant.operation;
+      const request = await deps.readBackgroundTerminalRequest(grant.context, discovery, signal);
       if (!isCurrent(grant)) return;
       if (request && !grant.used.has(request.runId) && matches(grant, request)) {
         await dispatch(grant, request);
+      } else if (!request) {
+        await deps.tryBackgroundPreview?.(grant.context, discovery, signal);
       }
     }
     if (isCurrent(grant)) await deliver(grant);

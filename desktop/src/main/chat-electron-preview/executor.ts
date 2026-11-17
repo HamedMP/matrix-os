@@ -7,6 +7,7 @@ import {
   CHAT_ELECTRON_PREVIEW_BASE_LABEL,
   CHAT_ELECTRON_PREVIEW_SOURCE,
   ChatElectronPreviewMarkerSchema,
+  type ChatElectronPreviewMarker,
 } from "../../shared/chat-electron-preview";
 import { capturePreviewScript } from "./executor-capture";
 
@@ -21,6 +22,7 @@ export interface ChatElectronPreviewExecution {
   baseSha: string;
   sourceSha256: string;
   label: string;
+  operation?: ChatElectronPreviewMarker["operation"];
   signal: AbortSignal;
 }
 
@@ -180,7 +182,9 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal) {
 }
 
 async function capturePreview(
-  source: string, root: string, electronPath: string, label: string, signal: AbortSignal,
+  source: string,
+  root: string,
+  { electronPath, label, operation, signal }: ChatElectronPreviewExecution,
 ): Promise<Buffer> {
   const profile = join(root, "profile");
   const isolatedHome = join(root, "home");
@@ -190,17 +194,20 @@ async function capturePreview(
   ]);
   const destination = join(root, "preview.png");
   await runLocal("node", [
-    "--input-type=module", "--eval", capturePreviewScript, electronPath, profile, destination, label,
-  ], { cwd: source, stage: "capture", timeout: 80_000, signal, env: localEnvironment(isolatedHome, root) });
+    "--input-type=module", "--eval", capturePreviewScript, electronPath, profile, destination, label, operation ?? "",
+  ], { cwd: source, stage: "capture", timeout: 95_000, signal, env: localEnvironment(isolatedHome, root) });
   const png = await readBoundedFile(destination, maxPngBytes, "preview screenshot");
   if (png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("Invalid preview screenshot");
   return png;
 }
 
 export async function runChatElectronPreview(request: ChatElectronPreviewExecution): Promise<{ png: Buffer; testSummary: string }> {
-  const { baseSha, sourceSha256, label, electronPath, signal } = request;
+  const { baseSha, sourceSha256, label, operation, electronPath, signal } = request;
   signal.throwIfAborted();
   assertLabel(label);
+  if (!ChatElectronPreviewMarkerSchema.shape.operation.safeParse(operation).success) {
+    throw new Error("Unsupported Electron preview interaction");
+  }
   if (!ChatElectronPreviewMarkerSchema.shape.baseSha.safeParse(baseSha).success || !isAbsolute(request.checkout) || !isAbsolute(electronPath)) {
     throw new Error("Invalid local preview configuration");
   }
@@ -227,8 +234,13 @@ export async function runChatElectronPreview(request: ChatElectronPreviewExecuti
     if (!(await readBoundedFile(source, maxSourceBytes, "preview source")).equals(candidate)) {
       throw new Error("Preview source changed during build");
     }
-    const png = await capturePreview(worktree, root, electronPath, label, signal);
-    return { png, testSummary };
+    const png = await capturePreview(worktree, root, request);
+    return {
+      png,
+      testSummary: operation === "verify-sign-in-recovery"
+        ? `${testSummary} Sign in showed a recoverable connection error and re-enabled retry.`
+        : testSummary,
+    };
   } finally {
     try {
       const marker = await lstat(join(worktree, ".git")).catch((error: unknown) => {

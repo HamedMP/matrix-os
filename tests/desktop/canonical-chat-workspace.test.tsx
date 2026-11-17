@@ -130,10 +130,18 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
   });
 
-  it("sends the Electron preview draft in the selected Chat's isolated worktree", async () => {
+  it.each(["foreground", "background", "edited background"] as const)(
+    "checks the %s Electron preview draft against its isolated worktree", async (mode) => {
     useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: true } : { ok: true });
+    const background = mode !== "foreground";
+    const targetId = "32f5b7fd-1d7d-4672-9636-f0033c5e1a68";
+    const ipc = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available" || channel === "chat:mac-terminal-available") return { available: true };
+      if (channel === "chat:mac-terminal-background-status") return background
+        ? { active: true, targetId, expiresAt: Date.now() + 60_000, remaining: 2, phase: "waiting" }
+        : { active: false };
+      return { ok: true };
+    });
     window.operator = { ...window.operator, invoke: ipc };
     const routeClient = client();
     const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_preview" } as const;
@@ -148,10 +156,19 @@ describe("CanonicalChatWorkspace", () => {
     render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
       initialView="conversation" active catalog={providerCatalog} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Request Electron preview" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent)
-      .toContain("MATRIX_ELECTRON_PREVIEW_V1"));
+    fireEvent.click(await screen.findByRole("button", { name: background ? "Draft background Electron preview" : "Request Electron preview" }));
+    const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+    await waitFor(() => expect(editor.textContent).toContain("MATRIX_ELECTRON_PREVIEW_V1"));
     expect(routeClient.admitTurn).not.toHaveBeenCalled();
+    if (mode === "edited background") {
+      await setSharedComposerText(editor, "MATRIX_ELECTRON_PREVIEW_V1 " + JSON.stringify({
+        operation: "verify-sign-in-recovery", backgroundTargetId: targetId,
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText(/The worktree selection changed/)).toBeTruthy();
+      expect(routeClient.admitTurn).not.toHaveBeenCalled();
+      return;
+    }
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
       expect.objectContaining({ executionRoot: worktree }), { chatScope: "project" }));
@@ -203,7 +220,10 @@ describe("CanonicalChatWorkspace", () => {
       name: mode === "background" ? "Allow background Mac checks" : "Request Mac terminal check",
     }));
     const editor = screen.getByRole("textbox", { name: "Reply to chat" });
-    const marker = "MATRIX_MAC_TERMINAL_V1 " + JSON.stringify({ targetId, action: "uname" });
+    const marker = "MATRIX_MAC_TERMINAL_V1 " + JSON.stringify({
+      targetId,
+      action: mode === "background" ? "system-checks" : "uname",
+    });
     await waitFor(() => expect(editor.textContent).toContain(marker));
     expect(ipc).toHaveBeenCalledWith(
       mode === "background" ? "chat:mac-terminal-background-start" : "chat:mac-terminal-prepare",

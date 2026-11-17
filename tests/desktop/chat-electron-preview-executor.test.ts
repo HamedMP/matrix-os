@@ -1,9 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { capturePreviewScript } from "../../desktop/src/main/chat-electron-preview/executor-capture";
 import { runChatElectronPreview, verifiedSignInSource } from "../../desktop/src/main/chat-electron-preview/executor";
 
 const sourcePath = "desktop/src/renderer/src/features/signin/SignIn.tsx";
@@ -49,6 +50,13 @@ describe("one-shot Electron preview source", () => {
 });
 
 describe("one-shot Electron preview execution", () => {
+  it("rejects an unsupported interaction before opening the checkout", async () => {
+    const { options } = await fixture();
+    await expect(runChatElectronPreview({
+      ...options, checkout: "/missing/trusted-checkout", operation: "open-external" as never,
+    })).rejects.toThrow("Unsupported Electron preview interaction");
+  });
+
   it("requires the local checkout to be at the requested trusted revision", async () => {
     const { options, git, file } = await fixture();
     await writeFile(file, `${original}\n`);
@@ -74,5 +82,74 @@ describe("one-shot Electron preview execution", () => {
     const { options, git } = await fixture();
     await expect(runChatElectronPreview({ ...options, signal: AbortSignal.abort() })).rejects.toThrow();
     expect(git("worktree", "list", "--porcelain").split("\n").filter(line => line.startsWith("worktree "))).toHaveLength(1);
+  });
+});
+
+describe("Electron preview capture driver", () => {
+  it.each([true, false])("only captures after the UI recovers (retry enabled: %s)", async retryEnabled => {
+    const checkout = await mkdtemp(join(tmpdir(), "chat-preview-driver-"));
+    directories.add(checkout);
+    const driver = join(checkout, "node_modules", "playwright", "index.js");
+    const profile = join(checkout, "profile");
+    const screenshot = join(checkout, "preview.png");
+    await mkdir(dirname(driver), { recursive: true });
+    await writeFile(driver, `
+const assert = require("node:assert/strict");
+const { writeFile } = require("node:fs/promises");
+const { pathToFileURL } = require("node:url");
+let clicked = false;
+let errorObserved = false;
+const signIn = {
+  click: async () => { clicked = true; },
+  and: selector => {
+    assert.equal(selector, ":enabled");
+    return { waitFor: async () => {
+      assert.equal(errorObserved, true);
+      assert.equal(${retryEnabled}, true, "Sign in retry is disabled");
+    } };
+  },
+};
+const page = {
+  url: () => pathToFileURL(process.cwd() + "/desktop/out/renderer/index.html").href,
+  getByRole: (role, options) => {
+    if (role === "heading") return { waitFor: async () => {} };
+    if (role === "button") {
+      assert.deepEqual(options, { name: "Sign in", exact: true });
+      return signIn;
+    }
+    assert.equal(role, "alert");
+    return { filter: ({ hasText }) => ({ waitFor: async () => {
+      assert.equal(clicked, true);
+      assert.match("Couldn't connect. Check your connection and try again.", hasText);
+      errorObserved = true;
+    } }) };
+  },
+  locator: selector => selector === ":enabled" ? selector : { innerText: async () => ${JSON.stringify(label)} },
+  evaluate: async () => {},
+  screenshot: async ({ path }) => {
+    assert.equal(errorObserved, true);
+    await writeFile(path, "capture fixture");
+  },
+  waitForEvent: async () => {},
+};
+exports._electron = { launch: async ({ env }) => ({
+  firstWindow: async () => page,
+  evaluate: async () => ({ dataDirectory: env.OPERATOR_USER_DATA_DIR, visible: true }),
+  process: () => ({ exitCode: 0 }),
+}) };
+`);
+    const capture = spawnSync(process.execPath, [
+      "--input-type=module", "--eval", capturePreviewScript, "/fake/electron", profile, screenshot,
+      label, "verify-sign-in-recovery",
+    ], { cwd: checkout, encoding: "utf8", timeout: 5_000 });
+    if (retryEnabled) {
+      expect(capture.stderr).toBe("");
+      expect(capture.status).toBe(0);
+      expect(await readFile(screenshot, "utf8")).toBe("capture fixture");
+    } else {
+      expect(capture.status).toBe(1);
+      expect(capture.stderr).toContain("Sign in retry is disabled");
+      await expect(readFile(screenshot)).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 });
