@@ -45,7 +45,7 @@ app frame (opaque origin, sandboxed, connect-src 'none')
 | Route | Auth | Public |
 | --- | --- | --- |
 | Worker `POST matrix.page/:ref/data` | Path allowlist regex. `Origin` must equal `url.origin`. No query string. Body streamed ≤ 64 KiB. Sets the edge proof, `x-matrix-sites-origin: same-origin` and `x-matrix-sites-source` (`cf-connecting-ip`). Only the target site's viewer cookie passes, as today | Yes |
-| Platform `POST /public/sites/:ref/data` | Edge proof (timing-safe, current or previous secret), `x-matrix-sites-origin: same-origin`, operator kill switch, published site in `accessMode = 'public'` with an active version, rate limits. Writes run inside the 551 publication admission (row lock held through forwarding) | Yes |
+| Platform `POST /public/sites/:ref/data` | Edge proof (timing-safe, current or previous secret), `x-matrix-sites-origin: same-origin`, operator kill switch, published site in `accessMode = 'public'` with an active version, rate limits. Writes re-check the publication under a `FOR SHARE` row lock held through forwarding (not the single-flight owner publish admission, so one owner's visitors write concurrently) | Yes |
 | Gateway `POST /api/internal/sites/:siteId/data` | HMAC over `timestamp.body` with the runtime token (`verifySiteSignature`, ±30 s), same as `/submit`. Bearer auth is bypassed only for this exact path with both signature headers, behind the existing webhook rate limiter | No |
 
 ## Input validation
@@ -83,7 +83,7 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 Exceeding a limit returns `429 Try again later`.
 
 - **Operator kill switch**: platform `SITES_PUBLIC_DATA=off` (read per request; changing it needs only a Cloud Run env update, no code deploy) and gateway `MATRIX_SITES_PUBLIC_DATA=off` return a generic `503 Shared data is unavailable`. Pages and forms keep working.
-- **Per site**: switching to Private link or unpublishing stops data access through the existing 551 resolution; writes admitted before the lock may commit (551 R7 boundary).
+- **Per site**: switching to Private link or unpublishing stops data access through the existing 551 resolution; a write already holding the row share lock finishes first (551 R7 boundary).
 - **Fail closed**: any missing dependency (owner database, registry, secret, running machine) returns 503.
 
 ## Errors and SSRF
@@ -96,7 +96,7 @@ Exceeding a limit returns `429 Try again later`.
 - **Owner VPS stopped or unhealthy**: 503, the frame bridge rejects and the app shows its own unavailable state. Writes are never queued (551 R8).
 - **Timeout after commit**: the visitor sees an error although the write landed; there is no idempotent replay in v1 (apps reread, as on the owner path).
 - **Concurrent edits**: last write wins, as for the owner bridge; `compareAndSwap` keeps its predicate in the write statement.
-- **Unpublish race**: writes hold the publication row lock through forwarding, so a write either commits before the unpublish or is rejected.
+- **Unpublish race**: writes hold a `FOR SHARE` lock on the publication row through forwarding; unpublish and access-mode changes take `FOR UPDATE`, so a write either commits before them or is rejected.
 - **Gateway setup failure**: if the write-log table cannot be created at startup, the data route returns 503 and pages, forms and the owner app keep working.
 - **Shutdown**: rate maps are in-memory and bounded; no timers or pools are owned by the new routes. The setup connection is owned and closed by the bootstrap.
 
