@@ -58,6 +58,36 @@ describe("the composer choice remembered on this phone", () => {
     expect(store.choice("user_a:alice:primary")).toEqual({ selection: CLAUDE, laterField: "kept" });
   });
 
+  it("remembers the permission mode beside the model, each kept when the other changes, across a restart", async () => {
+    const storage = memoryStorage();
+    const store = createComposerChoiceStore(storage);
+    await store.load();
+
+    store.remember("user_a:alice:primary", { selection: GPT_HIGH });
+    store.remember("user_a:alice:primary", { permissionMode: "full_access" });
+    store.remember("user_a:alice:primary", { selection: CLAUDE });
+    await flush();
+
+    const restarted = createComposerChoiceStore(storage);
+    await restarted.load();
+    expect(restarted.choice("user_a:alice:primary")).toEqual({ selection: CLAUDE, permissionMode: "full_access" });
+  });
+
+  it("drops a saved permission mode it cannot read, keeping the model saved with it", async () => {
+    const storage = memoryStorage({
+      [STORAGE_KEY]: JSON.stringify({ entries: [
+        { scope: "user_a:alice:primary", choice: { selection: CLAUDE, permissionMode: 42 } },
+        { scope: "user_a:bob:primary", choice: { selection: CLAUDE, permissionMode: "x".repeat(81) } },
+      ] }),
+    });
+    const store = createComposerChoiceStore(storage);
+    await store.load();
+
+    expect(store.choice("user_a:alice:primary")).toEqual({ selection: CLAUDE });
+    expect(store.choice("user_a:alice:primary")?.permissionMode).toBeUndefined();
+    expect(store.choice("user_a:bob:primary")?.permissionMode).toBeUndefined();
+  });
+
   it("waits for the saved choices before saving one made while they were still being read", async () => {
     const storage = memoryStorage({
       [STORAGE_KEY]: JSON.stringify({ entries: [{ scope: "user_a:bob:primary", choice: { selection: CLAUDE } }] }),
