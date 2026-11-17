@@ -75,6 +75,7 @@ interface AppMenuTemplateOptions {
   openTerminalWindow?(): void;
   stopBackgroundMacChecks?(): void;
   openMacActivity?(): void;
+  openMacPairing?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
   /** Each registry action shows its first binding as its accelerator. */
@@ -101,6 +102,7 @@ export function createAppMenuTemplate({
   openTerminalWindow,
   stopBackgroundMacChecks,
   openMacActivity,
+  openMacPairing,
   openThirdPartyNotices,
   shortcuts,
   runShortcut,
@@ -179,6 +181,7 @@ export function createAppMenuTemplate({
             updateItem,
             { type: "separator" },
             ...settingsItems,
+            ...(openMacPairing ? [{ label: "Mac Pairing…", click: openMacPairing }] : []),
             ...(openMacActivity ? [{
               id: RECENT_MAC_ACTIVITY_MENU_ID, label: "Recent Mac Activity…", enabled: false, click: openMacActivity,
             }] : []),
