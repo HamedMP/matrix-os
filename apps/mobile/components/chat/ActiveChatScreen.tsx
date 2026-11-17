@@ -37,8 +37,9 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const openSidePanel = useOpenSidePanel();
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
+    routineOriginEligible,
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, routineOriginEligible, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
   } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
