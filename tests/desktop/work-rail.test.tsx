@@ -71,7 +71,7 @@ const recent = record("chat_recent", "Recent global", { updatedAt: "2026-08-28T1
 const chatRowIn = (name: string, placement: string) => screen.queryAllByRole("button", { name })
   .find(button => button.closest("[data-placement]")?.getAttribute("data-placement") === placement);
 
-function setup() {
+function setup(withInspector = false) {
   const records = [pinned, projectChat, recent];
   const client = {
     list: vi.fn(async () => ({ items: records })),
@@ -106,7 +106,8 @@ function setup() {
     onSelectChat: vi.fn(),
     onCollapse: vi.fn(),
   };
-  render(<WorkRail client={client} projects={[alpha]} active {...actions} />);
+  const rail = <WorkRail client={client} projects={[alpha]} active {...actions} />;
+  render(withInspector ? <div data-surface-mode="maximized">{rail}<aside aria-label="Chat inspector"/></div> : rail);
   return { client, actions };
 }
 
@@ -1638,4 +1639,14 @@ describe("WorkRail", () => {
 
     expect(await screen.findByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
   });
+});
+
+it('centers native Search over the conversation while an inspector is open',()=>{
+ const measure=vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(){
+  if(this.hasAttribute('data-surface-mode'))return new DOMRect(0,0,1512,982);
+  if(this.getAttribute('aria-label')==='Chat navigation')return new DOMRect(0,0,240,982);
+  if(this.getAttribute('aria-label')==='Chat inspector')return new DOMRect(1112,0,400,982);
+  return new DOMRect();
+ });
+ try{setup(true);fireEvent.click(screen.getByRole('button',{name:'Search chats'}));expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('676px');}finally{measure.mockRestore();}
 });

@@ -199,10 +199,13 @@ export function WorkRail({
   const openSearch = useCallback(() => {
     if (!authorityCurrent()) return;
     const rail = railRef.current?.getBoundingClientRect();
-    const frame = railRef.current?.closest("[data-surface-mode]")?.getBoundingClientRect();
+    const frameElement = railRef.current?.closest("[data-surface-mode]");
+    const frame = frameElement?.getBoundingClientRect();
+    const inspector = frameElement?.querySelector('[aria-label="Chat inspector"]')?.getBoundingClientRect();
     const start = rail?.width ? rail.right : frame?.left ?? 0;
     setSearchBounds(frame?.width ? { left: frame.left, right: frame.right } : { left: 0, right: window.innerWidth });
-    setSearchCenterX((start + (frame?.right ?? window.innerWidth)) / 2);
+    const end = inspector?.width && inspector.left > start ? inspector.left : frame?.right ?? window.innerWidth;
+    setSearchCenterX((start + end) / 2);
     setSearchOpen(true);
   }, [authorityCurrent]);
   const openArchivedList = () => {
@@ -704,7 +707,7 @@ export function WorkRail({
         />
       ) : null}
       <Dialog open={archiveProjectTarget !== null} onClose={() => { if (!bulkArchivePending) setArchiveProjectTarget(null); }} title={`Archive chats in ${archiveProjectTarget?.name ?? "project"}?`} width={420}>
-        <div className="p-4 text-sm">
+        <div className="desktop-chat-design p-4 text-sm">
           <p>Archive all idle chats in this project? Running chats will be skipped.</p>
           {bulkArchiveError ? <p role="alert" className="mt-2" style={{ color: "var(--danger-text)" }}>{bulkArchiveError}</p> : null}
           <div className="mt-4 flex justify-end gap-3"><Button variant="ghost" size="sm" disabled={bulkArchivePending} onClick={() => setArchiveProjectTarget(null)}>Cancel</Button>

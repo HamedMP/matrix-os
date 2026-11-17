@@ -79,13 +79,19 @@ it("ignores a saved terminal binding after its runtime tab was deleted", async (
 });
 
 it("opens a folder with more than 1,000 files using a bounded visible window", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index}`, type: "file" })) })));
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index.toString().padStart(4,"0")}`, type: "file" })) })));
   render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
     filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
     sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
-  expect(await screen.findByRole("treeitem", { name: "file_0" })).toBeTruthy();
+  expect(await screen.findByRole("treeitem", { name: "file_0000" })).toBeTruthy();
   expect(screen.getAllByRole("treeitem")).toHaveLength(1000);
-  expect(screen.getByText("Showing the first 1,000 files.")).toBeTruthy();
+  expect(screen.getByRole("button",{name:"Next files in Home"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Next files in Home"}));
+  await screen.findByRole("treeitem",{name:"file_1001"});
+  expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button",{name:"Filter files"}));
+  fireEvent.change(screen.getByRole("searchbox",{name:"Filter files"}),{target:{value:"file_0000"}});
+  expect(await screen.findByRole("treeitem",{name:"file_0000"})).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -204,7 +210,7 @@ it.each(['failed','missing'])('shows a retryable project-file error when the pro
  await waitFor(()=>expect(request.mock.calls.some(([url])=>url.includes('/files/list?path=projects%2Fmatrix-os%2Frepo'))).toBe(true));
 });
 
-it('opens a canonical project chat file through the actual slug-based Gateway preview boundary',async()=>{
+it.each([false,true])('opens a canonical project chat file through the actual slug-based Gateway preview boundary (mobile=%s)',async mobile=>{
  vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
  const homePath=await realpath(await mkdtemp(join(tmpdir(),'eng461-preview-boundary-')));
  try{
@@ -221,17 +227,23 @@ it('opens a canonical project chat file through the actual slug-based Gateway pr
    if(parsed.pathname.startsWith('/api/file-previews/'))return app.request(parsed.pathname+parsed.search);
    if(parsed.pathname.endsWith('/workspace/projects'))return Response.json({projects:[project]});
    if(parsed.pathname.endsWith('/files-location'))return Response.json({path:'projects/preview-project/repo'});
+   if(parsed.pathname.endsWith('/files/list'))return Response.json({entries:parsed.searchParams.get('path')?.endsWith('/src')?[{name:'preview.txt',type:'file'}]:[{name:'src',type:'directory'}]});
    return Response.json({entries:[]});
   });vi.stubGlobal('fetch',request);
-  render(<ChatApp messages={[{id:'message_file',role:'assistant',content:'Changed `src/preview.txt`.',timestamp:1}]} sessionId="chat_preview" chatProjectId={project.id} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+  render(<ChatApp mobile={mobile} messages={[{id:'message_file',role:'assistant',content:'Changed `src/preview.txt`.',timestamp:1}]} sessionId="chat_preview" chatProjectId={project.id} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+  if(mobile)fireEvent.click(screen.getByRole('button',{name:'Open Chat sidebar'}));
   await screen.findByRole('button',{name:'Expand Preview project chats'});
+  if(mobile)fireEvent.click(screen.getByRole('button',{name:'Close Chat sidebar'}));
   fireEvent.click(screen.getByRole('button',{name:'Open preview.txt'}));
   expect(await screen.findByText('Verified project content')).toBeTruthy();
+  if (!mobile) expect((await screen.findByRole('treeitem',{name:'preview.txt'})).getAttribute('aria-selected')).toBe('true');
+  if (!mobile) {
   expect(screen.queryByRole('group',{name:'Suggested messages'})).toBeNull();
   fireEvent.keyDown(window,{key:'s',metaKey:true,altKey:true});
   expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
   fireEvent.click(screen.getByRole('button',{name:'Open preview.txt'}));
   expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
+  }
   expect(request.mock.calls.filter(([url])=>url.includes('/file-previews/')).every(([url])=>new URL(url,window.location.origin).searchParams.get('projectId')===project.slug)).toBe(true);
  }finally{cleanup();await rm(homePath,{recursive:true,force:true});}
 });
@@ -246,7 +258,7 @@ it('keeps file filtering behind the project-root action and clears it when close
  expect(screen.queryByRole('treeitem',{name:'beta.txt'})).toBeNull();
  fireEvent.click(screen.getByRole('button',{name:'Close file filter'}));
  expect(screen.queryByRole('searchbox',{name:'Filter files'})).toBeNull();
- expect(screen.getByRole('treeitem',{name:'beta.txt'})).toBeTruthy();
+ expect(await screen.findByRole('treeitem',{name:'beta.txt'})).toBeTruthy();
 });
 
 it.each([undefined,{id:'project_matrix',slug:'matrix-os'}])('ensures the terminal workspace in the verified project scope (%o)',async project=>{
@@ -254,4 +266,14 @@ it.each([undefined,{id:'project_matrix',slug:'matrix-os'}])('ensures the termina
  const hook=renderHook(()=>useWebChatInspector(inspectorProps({project})));
  await act(async()=>{await hook.result.current.createTerminal();});
  expect(api.request).toHaveBeenCalledWith('http://localhost:4000/api/terminal/workspaces/ensure',expect.objectContaining({body:JSON.stringify(project?{projectId:project.slug}:{})}));
+});
+
+it('retains an unsent side question through inspector tab switches',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[]})));
+ render(<WebChatInspector {...inspectorProps()}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Add inspector tab'}));fireEvent.click(screen.getByRole('button',{name:/Side chat/}));
+ await screen.findByText(/Ask about this chat/);
+ fireEvent.change(screen.getByRole('textbox',{name:'Ask side chat'}),{target:{value:'Unsent question'}});
+ fireEvent.click(screen.getByRole('tab',{name:'Files'}));fireEvent.click(screen.getByRole('tab',{name:'Side chat'}));
+ expect((screen.getByRole('textbox',{name:'Ask side chat'}) as HTMLTextAreaElement).value).toBe('Unsent question');
 });

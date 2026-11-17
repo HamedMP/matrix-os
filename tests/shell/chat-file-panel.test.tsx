@@ -117,3 +117,13 @@ it("previews a project file through its verified project resource instead of Hom
  expect(query.get('kind')).toBe('project');expect(query.get('projectId')).toBe('project_matrix');
  expect(query.get('path')).toBe(resource.path);
 });
+
+it('shows an embedded code preview with line numbers and prevents editing',async()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>url.includes('/metadata?')?Response.json({resource:{kind:'home',path:'preview.ts'},name:'preview.ts',mimeType:'text/typescript',sizeBytes:17,kind:'text',version:'code_preview',canDownload:true}):new Response('const value = 1;')));
+ render(<ChatFilePanel path="preview.ts" embedded onClose={vi.fn()}/>);
+ const editor=await screen.findByRole('textbox',{name:'Preview preview.ts'});
+ expect(editor.getAttribute('contenteditable')).toBe('false');
+ expect(editor.getAttribute('aria-readonly')).toBe('true');
+ expect(document.querySelector('.cm-lineNumbers')?.textContent).toContain('1');
+});

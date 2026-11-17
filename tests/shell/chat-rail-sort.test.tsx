@@ -273,3 +273,16 @@ it.each(["Chats", "All"])("finds restored chats in %s first and subsequent searc
   fireEvent.click(screen.getByRole("button",{name:"Show more"}));
   expect(await screen.findByText("Restored answer")).toBeTruthy();
 });
+
+it('centers Web Search over the conversation while an inspector is open',()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({projects:[]})));
+ const measure=vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(){
+  if(this.classList.contains('chat-web-design'))return new DOMRect(0,0,1512,982);
+  if(this.tagName==='MAIN')return new DOMRect(240,0,872,982);
+  return new DOMRect();
+ });
+ try{render(<ChatApp messages={[]} sessionId="chat_center" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={{getSideChat:vi.fn(),createSideChat:vi.fn(),askSideChat:vi.fn()}}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));fireEvent.click(screen.getByRole('button',{name:'Search chats'}));expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('676px');
+ }finally{measure.mockRestore();}
+});

@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWebChatInspector, type WebChatInspectorProps } from "./useWebChatInspector";
+import { toGatewayProjectFileResource } from "./web-projects";
 import { NEW } from "./web-chat-inspector-state";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
@@ -51,10 +52,7 @@ function InspectorContent({
   onClose,
 }: WebChatInspectorProps) {
   const theme = useTheme();
-  // The existing Gateway file API resolves the verified project slug, while chats retain canonical IDs.
-  const previewResource = fileResource?.kind === "project" && project
-    && (fileResource.projectId === project.id || fileResource.projectId === project.slug)
-    ? { ...fileResource, projectId: project.slug } : fileResource;
+  const previewResource = toGatewayProjectFileResource(fileResource, project);
   const {
     layout,
     setLayout,
@@ -237,6 +235,8 @@ function InspectorContent({
                   key={JSON.stringify([gatewayUrl, project?.id, project?.slug])}
                   gatewayUrl={gatewayUrl}
                   project={project}
+                  selectedPath={filePath ?? undefined}
+                  revealKey={fileOpenRequest}
                   onOpenFile={onFilePathChange}
                 />}
               </div>
@@ -289,12 +289,13 @@ function InspectorContent({
             ) : null}
           </div>
         ) : null}
-        {selected.kind === "side-chat" ? (
+        {layout.tabs.some(tab => tab.kind === "side-chat") ? (
           <div
             role="tabpanel"
             aria-label="Side chat"
+            hidden={selected.kind !== "side-chat"}
             id="work-inspector-panel-side-chat"
-            className="flex min-h-0 flex-1 flex-col"
+            className={selected.kind === "side-chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
           >
             <SideChatPanel chatId={chatId} chatTitle={chatTitle} client={sideChatClient} onSendToMain={onSendToMain} />
           </div>

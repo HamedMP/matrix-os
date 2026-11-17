@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 import { readBoundedFileBlob } from "@/lib/read-bounded-file-blob";
 import {
@@ -15,6 +15,8 @@ import {
   filePreviewContentUrl,
   filePreviewMetadataUrl,
 } from "@matrix-os/ui";
+
+const CodeEditor = lazy(() => import("../preview-window/CodeEditor").then(module => ({ default: module.CodeEditor })));
 
 const CHAT_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
 
@@ -94,6 +96,7 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onE
               loadBlob={loadBlob}
               loadText={loadText}
               showImageDownload
+              renderText={embedded ? text => <Suspense fallback={<p role="status">Loading preview…</p>}><CodeEditor filename={path} content={text} readOnly/></Suspense> : undefined}
               retry={retry}
             />}
     </div>

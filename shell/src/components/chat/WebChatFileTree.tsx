@@ -24,6 +24,8 @@ function FileBranch({
   toggle,
   query,
   onOpenFile,
+  selectedPath,
+  revealKey,
 }: {
   gatewayUrl: string;
   path: string;
@@ -31,11 +33,15 @@ function FileBranch({
   expanded: readonly string[];
   toggle(path: string): void;
   query: string;
+  selectedPath?: string;
+  revealKey?: object;
   onOpenFile(path: string): void;
 }) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [truncated, setTruncated] = useState(false);
+  const [range, setRange] = useState({ start: 0, total: 0 });
+  const [page, setPage] = useState<{ query: string; start: number; selection?: string; request?: object }>({ query: "", start: 0 });
+  const offset = page.query === query && page.selection === selectedPath && page.request === revealKey ? page.start : undefined;
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
@@ -51,12 +57,14 @@ function FileBranch({
       .then((data) => {
         if (controller.signal.aborted) return;
         const all = Array.isArray(data) ? data : data.entries;
-        setEntries(
-          all
-            .slice(0, 1000)
-            .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1)),
-        );
-        setTruncated(all.length > 1000);
+        // The existing endpoint returns the directory. Retain only one window, filtering before slicing.
+        const matching = all.filter(entry => entry.type === "directory" || entry.name.toLowerCase().includes(query.toLowerCase()))
+          .sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1);
+        const selected = !query && offset === undefined ? matching.findIndex(entry => (path ? `${path}/${entry.name}` : entry.name) === selectedPath) : -1;
+        const requested = offset ?? (selected < 0 ? 0 : Math.floor(selected / 1000) * 1000);
+        const start = Math.min(requested, Math.floor(Math.max(0, matching.length - 1) / 1000) * 1000);
+        setEntries(matching.slice(start, start + 1000));
+        setRange({ start, total: matching.length });
         setStatus("ready");
       })
       .catch((cause: unknown) => {
@@ -66,7 +74,7 @@ function FileBranch({
         }
       });
     return () => controller.abort();
-  }, [gatewayUrl, path, retry]);
+  }, [gatewayUrl, path, retry, query, offset, selectedPath, revealKey]);
   return (
     <div role={depth ? "group" : "tree"} aria-label={depth ? undefined : "Chat files"} className="min-w-0">
       {status === "loading" ? (
@@ -82,7 +90,11 @@ function FileBranch({
           </button>
         </p>
       ) : null}
-      {truncated ? <p className="px-3 text-xs text-muted-foreground">Showing the first 1,000 files.</p> : null}
+      {range.total > 1000 ? <div role="group" aria-label={`File pages in ${path || "Home"}`} className="flex flex-wrap items-center gap-2 px-3 py-1 text-xs text-muted-foreground">
+        <span>Showing {range.start + 1}–{Math.min(range.start + 1000, range.total)} of {range.total} files.</span>
+        {range.start > 0 ? <button type="button" disabled={status === "loading"} aria-label={`Previous files in ${path || "Home"}`} onClick={() => setPage({ query, start: Math.max(0, range.start - 1000), selection: selectedPath, request: revealKey })}>Previous</button> : null}
+        {range.start + 1000 < range.total ? <button type="button" disabled={status === "loading"} aria-label={`Next files in ${path || "Home"}`} onClick={() => setPage({ query, start: range.start + 1000, selection: selectedPath, request: revealKey })}>Next</button> : null}
+      </div> : null}
       {entries
         .filter((entry) => entry.type === "directory" || entry.name.toLowerCase().includes(query.toLowerCase()))
         .map((entry) => {
@@ -96,7 +108,8 @@ function FileBranch({
                 role="treeitem"
                 aria-label={entry.name}
                 aria-expanded={directory ? open : undefined}
-                className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md pr-3 text-left text-xs hover:bg-accent"
+                aria-selected={!directory ? selectedPath === fullPath : undefined}
+                className="flex h-7 w-full min-w-0 items-center gap-2 rounded-md pr-3 text-left text-sm hover:bg-accent aria-selected:bg-accent"
                 style={{ paddingLeft: 12 + depth * 16 }}
                 onClick={() => (directory ? toggle(fullPath) : onOpenFile(fullPath))}
               >
@@ -124,6 +137,8 @@ function FileBranch({
                   expanded={expanded}
                   toggle={toggle}
                   query={query}
+                  selectedPath={selectedPath}
+                  revealKey={revealKey}
                   onOpenFile={onOpenFile}
                 />
               ) : null}
@@ -137,14 +152,28 @@ function FileTree({
   gatewayUrl,
   rootPath = "",
   rootLabel = "Matrix Home",
+  selectedPath,
+  revealKey,
   onOpenFile,
 }: {
   gatewayUrl: string;
   rootPath?: string;
   rootLabel?: string;
+  selectedPath?: string;
+  revealKey?: object;
   onOpenFile(path: string): void;
 }) {
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const parents = () => {
+    const parts = selectedPath?.split("/") ?? [];
+    return parts.slice(0,-1).map((_, index) => [rootPath, ...parts.slice(0,index+1)].filter(Boolean).join("/")).slice(-20);
+  };
+  const [expanded, setExpanded] = useState<string[]>(parents);
+  useEffect(() => {
+    const reveal = parents();
+    if (reveal.length) setExpanded(current => [...current.filter(path => !reveal.includes(path)), ...reveal].slice(-20));
+    // Each file-open request reveals its ancestors, including reopening the same path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath, selectedPath, revealKey]);
   const [query, setQuery] = useState("");
   const toggle = (path: string) =>
     setExpanded((current) =>
@@ -164,6 +193,8 @@ function FileTree({
           expanded={expanded}
           toggle={toggle}
           query={query}
+          selectedPath={selectedPath ? [rootPath, selectedPath].filter(Boolean).join("/") : undefined}
+          revealKey={revealKey}
           onOpenFile={onOpenFile}
         />
       </div>
@@ -174,10 +205,14 @@ function FileTree({
 export function WebChatFileTree({
   gatewayUrl,
   project,
+  selectedPath,
+  revealKey,
   onOpenFile,
 }: {
   gatewayUrl: string;
   project?: { id: string; slug: string };
+  selectedPath?: string;
+  revealKey?: object;
   onOpenFile(path: string): void;
 }) {
   const [root, setRoot] = useState<string | null>(null),
@@ -213,7 +248,7 @@ export function WebChatFileTree({
       });
     return () => controller.abort();
   }, [gatewayUrl, project, attempt]);
-  if (!project) return <FileTree gatewayUrl={gatewayUrl} onOpenFile={onOpenFile} />;
+  if (!project) return <FileTree gatewayUrl={gatewayUrl} selectedPath={selectedPath} revealKey={revealKey} onOpenFile={onOpenFile} />;
   if (error)
     return (
       <p role="alert" className="p-3 text-sm">
@@ -235,5 +270,5 @@ export function WebChatFileTree({
         Loading project files…
       </p>
     );
-  return <FileTree gatewayUrl={gatewayUrl} rootLabel={project.slug} rootPath={root} onOpenFile={path => onOpenFile(path.slice(root.length + 1))} />;
+  return <FileTree gatewayUrl={gatewayUrl} rootLabel={project.slug} rootPath={root} selectedPath={selectedPath} revealKey={revealKey} onOpenFile={path => onOpenFile(path.slice(root.length + 1))} />;
 }

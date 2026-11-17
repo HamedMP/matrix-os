@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { FileResourceRef } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { RenameableConversation } from "./ChatTitleRename";
 
@@ -70,4 +71,10 @@ export function projectChats<T extends RenameableConversation>(chats: readonly T
     const projectId = chat.canonicalRecord?.projectId;
     return projectId !== undefined && (projectId === project.id || projectId === project.slug);
   });
+}
+
+/** Existing Gateway file endpoints resolve verified slugs; canonical chats retain immutable IDs. */
+export function toGatewayProjectFileResource(resource: FileResourceRef | undefined, project?: Pick<WebProject, "id" | "slug">): FileResourceRef | undefined {
+  return resource?.kind === "project" && project && (resource.projectId === project.id || resource.projectId === project.slug)
+    ? { ...resource, projectId: project.slug } : resource;
 }
