@@ -584,6 +584,23 @@ describe("coding agent thread lifecycle", () => {
     ]);
   });
 
+  it("keeps the summary shape for older strict clients unless recent threads are requested", async () => {
+    const { app } = await createHarness();
+    // Released Electron Desktop and Native Mobile builds parse this strict
+    // schema, which has no recentThreads field.
+    const LegacyRuntimeSummarySchema = RuntimeSummarySchema.omit({ recentThreads: true }).strict();
+
+    const legacy = await (await app.request("/api/coding-agents/summary")).json();
+    expect(legacy).not.toHaveProperty("recentThreads");
+    expect(LegacyRuntimeSummarySchema.safeParse(legacy).success).toBe(true);
+
+    const current = await (await app.request("/api/coding-agents/summary?include=recentThreads")).json();
+    expect(RuntimeSummarySchema.parse(current).recentThreads).toEqual(expect.objectContaining({ items: [] }));
+    expect(current).toHaveProperty("recentThreads");
+
+    expect((await app.request("/api/coding-agents/summary?include=everything")).status).toBe(400);
+  });
+
   it("rejects stale cursors instead of replaying from the beginning", async () => {
     const { app } = await createHarness();
     const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));

@@ -506,9 +506,23 @@ describe("coding agent runtime summary", () => {
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
     });
 
-    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal, { includeRecentThreads: true }));
 
     expect(summary.recentThreads.items.map((thread) => thread.id)).toEqual(["thread_done"]);
+  });
+
+  it("does not read recent threads unless the client asks for them", async () => {
+    const listRecentThreads = vi.fn(async () => ({ items: [], hasMore: false, limit: 10 }));
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: { listThreads: async () => ({ items: [], hasMore: false, limit: 50 }), listRecentThreads },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    await service.getSummary(testPrincipal);
+
+    expect(listRecentThreads).not.toHaveBeenCalled();
   });
 
   it("keeps the summary available when the recent thread read fails", async () => {
@@ -523,7 +537,7 @@ describe("coding agent runtime summary", () => {
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
     });
 
-    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal, { includeRecentThreads: true }));
 
     expect(summary.recentThreads).toEqual({ items: [], hasMore: false, limit: 10 });
     expect(JSON.stringify(summary)).not.toContain("/home/matrix/home/private");

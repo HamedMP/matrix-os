@@ -42,6 +42,7 @@ describe("Web Desktop agent inbox", () => {
     try {
       render(<WebDesktopControls onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} />);
       expect(retain).toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/coding-agents/summary?include=recentThreads"), expect.anything());
       fireEvent.click(await screen.findByRole("button", { name: "Inbox, 1 agent needs you" }));
       fireEvent.click(await screen.findByRole("button", { name: /Herdr parity/ }));
       expect(opened).toEqual([`${WS}:${TAB}`]);

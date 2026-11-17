@@ -40,6 +40,11 @@ export interface CodingAgentRuntimeSummaryService {
 
 export interface CodingAgentRuntimeSummaryRequestOptions {
   projectId?: string;
+  /**
+   * Only clients that ask get recently finished threads: released Electron
+   * Desktop and Native Mobile builds parse a strict schema without them.
+   */
+  includeRecentThreads?: boolean;
 }
 
 export interface CodingAgentThreadSummaryStore {
@@ -323,7 +328,9 @@ export function createCodingAgentRuntimeSummaryService(
       }));
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
-      const recentThreads = await readRecentThreads(options.threads, principal);
+      const recentThreads = summaryOptions.includeRecentThreads
+        ? await readRecentThreads(options.threads, principal)
+        : { items: [], hasMore: false, limit: RECENT_THREAD_SUMMARY_LIMIT };
       const projectSummaryTimeoutMs = Math.min(
         Math.max(options.projectSummaryTimeoutMs ?? DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS, 10),
         MAX_PROJECT_SUMMARY_TIMEOUT_MS,

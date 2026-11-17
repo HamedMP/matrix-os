@@ -23,7 +23,7 @@ interface WebDesktopControlsProps {
 }
 
 async function loadActivity(): Promise<unknown> {
-  const response = await fetch(`${getGatewayUrl()}/api/coding-agents/summary`, { signal: AbortSignal.timeout(10_000), headers: { Accept: "application/json" } });
+  const response = await fetch(`${getGatewayUrl()}/api/coding-agents/summary?include=recentThreads`, { signal: AbortSignal.timeout(10_000), headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error("Activity unavailable");
   return response.json();
 }
