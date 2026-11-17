@@ -89,7 +89,7 @@ import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
-import { CHAT_ELECTRON_PREVIEW_DRAFT, ChatElectronPreview, chatElectronPreviewWorktree } from "./ChatElectronPreview";
+import { ChatElectronPreview, chatElectronPreviewWorktree, isChatElectronPreviewDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, ChatMacTerminalProbe, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -570,6 +570,7 @@ function CanonicalChatWorkspaceContent({
       || uploadingAttachments
     ) return;
     const terminalRequest = isMacTerminalProbeDraft(submission.text);
+    const previewRequest = isChatElectronPreviewDraft(submission.text);
     if (terminalRequest && (attachments.items.length || referenceTokens.length)) {
       setSubmissionError("Remove attachments and references before sending a Mac terminal check.");
       return;
@@ -596,7 +597,7 @@ function CanonicalChatWorkspaceContent({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const worktreeRequest = terminalRequest || submission.text === CHAT_ELECTRON_PREVIEW_DRAFT;
+      const worktreeRequest = terminalRequest || previewRequest;
       const requestedRoot = worktreeRequest ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
       if (worktreeRequest && (!requestedRoot || staged?.text !== submission.text || staged.scope !== draftScope
@@ -607,12 +608,14 @@ function CanonicalChatWorkspaceContent({
           : "The worktree selection changed. Clear the draft and request a new Electron preview.");
         return;
       }
-      if (terminalRequest && staged?.backgroundTargetId) {
+      if (worktreeRequest && staged?.backgroundTargetId) {
         const authorized = requestedRoot && routedComposerChatId
           && await canSendBackgroundMacCheck(routedComposerChatId, requestedRoot.worktreeId, staged.backgroundTargetId);
         if (!isCurrentSubmission() || worktreeDraft.current !== staged) return;
         if (!authorized) {
-          setSubmissionError("The background Mac check approval changed. Clear the draft and start a new check.");
+          setSubmissionError(terminalRequest
+            ? "The background Mac check approval changed. Clear the draft and start a new check."
+            : "The background Mac approval changed. Clear the draft and request a new approval.");
           return;
         }
       }

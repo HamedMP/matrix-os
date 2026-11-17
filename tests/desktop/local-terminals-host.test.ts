@@ -444,6 +444,36 @@ describe("local terminal host against a scripted core", () => {
     await probe.dispose();
   });
 
+  it("returns only verified fixed system checks from the dedicated terminal", async () => {
+    const { host, core, input, output, attached } = probing();
+    const probe = await host.prepareChatTerminalProbe("system-checks");
+    const argv = core().sent.calls.find(call => call.method === "terminal.run")!.params.argv as string[];
+    const tag = argv.at(-1);
+    expect(argv[6]).toContain("/usr/bin/uname -s");
+    expect(argv[6]).toContain("/usr/bin/uname -m");
+    expect(argv[6]).toContain("/usr/bin/sw_vers -productVersion");
+    const run = probe.run(new AbortController().signal);
+    try {
+      await attached();
+      output(`MATRIX_MAC_PROBE_READY:${tag}:\r\n`);
+      await vi.waitFor(() => expect(input()).toHaveLength(1));
+      const complete = vi.fn();
+      void run.then(complete, complete);
+      output(`MATRIX_MAC_CHECKS:${tag}:Darwin,arm64,USER_VALUE:\r\n`);
+      output(`MATRIX_MAC_PROBE_RESULT:${tag}:Darwin:\r\n`);
+      output("MATRIX_MAC_CHECKS:wrong:Darwin,arm64,15.7.2:\r\n");
+      await new Promise(resolve => setImmediate(resolve));
+      expect(complete).not.toHaveBeenCalled();
+      output(`MATRIX_MAC_CHECKS:${tag}:Darwin,arm`);
+      output("64,15.7.2:\r\n");
+      await expect(run).resolves.toEqual({ kernel: "Darwin", architecture: "arm64", macOSVersion: "15.7.2" });
+      expect(input()).toHaveLength(1);
+    } finally {
+      void run.catch(() => undefined);
+      await probe.dispose();
+    }
+  });
+
   it("rejects an oversized output instead of waiting indefinitely for a frame", async () => {
     const { host, output, attached } = probing();
     const probe = await host.prepareChatTerminalProbe();
@@ -576,6 +606,23 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
       await probe.dispose();
     }
     expect((await host.list()).map((terminal) => terminal.id)).toEqual([terminalId]);
+  }, 30_000);
+
+  it.skipIf(process.platform !== "darwin")("runs all three approved commands in a fresh Mac PTY", async () => {
+    const probe = await host.prepareChatTerminalProbe("system-checks");
+    try {
+      const attachId = await host.attach(probe.id, { cols: 100, rows: 30 });
+      await until(() => (outputs.get(attachId) ?? "").includes("Mac terminal check ready"));
+      const result = await probe.run(new AbortController().signal);
+      expect(result).toEqual({ kernel: "Darwin", architecture: expect.stringMatching(/^(arm64|x86_64)$/),
+        macOSVersion: expect.stringMatching(/^\d+\.\d+(?:\.\d+)?$/) });
+      await until(() => (outputs.get(attachId) ?? "").includes("/usr/bin/sw_vers -productVersion\r\n"));
+      expect(outputs.get(attachId)).toContain("/usr/bin/uname -s\r\nDarwin\r\n/usr/bin/uname -m\r\n");
+      host.detach(attachId);
+    } finally {
+      await probe.dispose();
+    }
+    expect((await host.list()).map(terminal => terminal.id)).toEqual([terminalId]);
   }, 30_000);
 
   it("ends a terminal on request and reports its stream closed", async () => {

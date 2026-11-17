@@ -5,6 +5,7 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import type { LocalTerminalAgent } from "../../shared/local-terminals";
+import type { MacTerminalProbeAction } from "../../shared/mac-terminal-probe";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
@@ -213,8 +214,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     // Main-process only. Do not expose this method as renderer terminal IPC.
-    prepareChatTerminalProbe: () => prepareChatTerminalProbe({
-      cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
+    prepareChatTerminalProbe: (action: MacTerminalProbeAction = "uname") => prepareChatTerminalProbe({
+      action, cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
     }),
 
     kill: sessions.kill,

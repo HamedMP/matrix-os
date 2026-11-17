@@ -11,7 +11,9 @@ export const ChatElectronPreviewMarkerSchema = z.strictObject({
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   label: z.string().regex(/^[A-Z0-9][A-Z0-9 .!?-]{2,54}$/).refine(label => label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL),
   mainChecksPassed: z.literal(true),
-});
+  operation: z.literal("verify-sign-in-recovery").optional(),
+  backgroundTargetId: z.uuid().optional(),
+}).refine(marker => !marker.backgroundTargetId || marker.operation === "verify-sign-in-recovery");
 
 export type ChatElectronPreviewMarker = z.infer<typeof ChatElectronPreviewMarkerSchema>;
 

@@ -150,6 +150,34 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(JSON.stringify(request)).not.toContain("test-auth");
   });
 
+  it("discovers a background preview only for the approved target and binds the exact operation", async () => {
+    const { detail, service, fetchFn } = mockTransport();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    const targetId = "d5739cf6-cb60-4b79-99a1-d95c23949a5c";
+    const grant = { targetId, approvedAt: now - 120_000 };
+    const signal = new AbortController().signal;
+    const ref = { chatId, runId };
+    const binding = { context, grant, signal };
+    detail.messages[0]!.parts[0]!.text = "MATRIX_ELECTRON_PREVIEW_V1 " + JSON.stringify({
+      baseSha, sourceSha256, label, mainChecksPassed: true, operation: "verify-sign-in-recovery",
+      backgroundTargetId: targetId,
+    });
+
+    await expect(service.read(ref)).resolves.toBeNull();
+    await expect(service.readBackgroundPreviewTarget(context, grant, signal)).resolves.toEqual(ref);
+    await expect(service.read(ref, binding)).resolves.toMatchObject({
+      ...ref, worktreeId, operation: "verify-sign-in-recovery", backgroundTargetId: targetId,
+    });
+    fetchFn.mockClear();
+    await expect(service.read(ref, { ...binding, context: { ...context } })).resolves.toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+    await expect(service.readBackgroundPreviewTarget(context, { ...grant, approvedAt: now }, signal)).resolves.toBeNull();
+    await expect(service.read(ref, { ...binding, grant: {
+      ...grant, targetId: "ea1aa370-5a08-4f21-9e05-69f8fc547c7e",
+    } })).resolves.toBeNull();
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
   it.each([
     ["wrong owner", (detail: ReturnType<typeof fixture>) => { detail.record.chat.ownerScope.ownerId = "other"; }],
     ["user-authored marker", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.role = "user"; }],
@@ -377,6 +405,26 @@ describe("authenticated Chat Mac terminal probe transport", () => {
       "/api/projects/matrix-os/worktrees",
     ]);
     expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("returns the fixed multi-command check only for a background request and only once", async () => {
+    const { service, detail, storeResult, fetchFn } = terminalFixture();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    detail.messages[0]!.parts[0]!.text = terminalMarker.replace("uname", "system-checks");
+    await expect(service.readTerminalRequest(ref)).resolves.toBeNull();
+    const request = (await service.readBackgroundTerminalRequest(context, grant, new AbortController().signal))!;
+    expect(request.action).toBe("system-checks");
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" })).rejects.toThrow();
+    storeResult();
+    const result = { terminalId: targetId, output: { kernel: "Darwin", architecture: "arm64", macOSVersion: "15.7.2" } } as const;
+    await service.returnTerminalResult(request, result);
+    await service.returnTerminalResult(request, result);
+    const writes = resultWrites(fetchFn);
+    expect(writes).toHaveLength(1);
+    const text = JSON.parse(String(writes[0]![1]?.body)).parts[0].text;
+    expect(text).toContain("/usr/bin/uname -s: Darwin (exit 0)");
+    expect(text).toContain("/usr/bin/uname -m: arm64 (exit 0)");
+    expect(text).toContain("/usr/bin/sw_vers -productVersion: 15.7.2 (exit 0)");
   });
 
   it.each(["another target", "another owner", "another Chat", "another worktree", "a run completed before approval"] as const)(

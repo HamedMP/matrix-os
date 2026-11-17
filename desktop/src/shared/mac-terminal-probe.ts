@@ -4,7 +4,24 @@ import { z } from "zod/v4";
 export const MAC_TERMINAL_PROBE_PREFIX = "MATRIX_MAC_TERMINAL_V1 ";
 export const MAC_TERMINAL_PROBE_MAX_AGE_MS = 5 * 60 * 1_000;
 
-const Marker = z.strictObject({ targetId: z.uuid(), action: z.literal("uname") });
+export const MAC_TERMINAL_SYSTEM_CHECKS = [
+  "/usr/bin/uname -s",
+  "/usr/bin/uname -m",
+  "/usr/bin/sw_vers -productVersion",
+] as const;
+
+export const MacTerminalProbeActionSchema = z.enum(["uname", "system-checks"]);
+export type MacTerminalProbeAction = z.infer<typeof MacTerminalProbeActionSchema>;
+
+export const MacTerminalSystemCheckOutputSchema = z.strictObject({
+  kernel: z.literal("Darwin"),
+  architecture: z.enum(["arm64", "x86_64"]),
+  macOSVersion: z.string().regex(/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/),
+});
+export const MacTerminalProbeOutputSchema = z.union([z.literal("Darwin"), MacTerminalSystemCheckOutputSchema]);
+export type MacTerminalProbeOutput = z.infer<typeof MacTerminalProbeOutputSchema>;
+
+const Marker = z.strictObject({ targetId: z.uuid(), action: MacTerminalProbeActionSchema });
 export type MacTerminalProbeMarker = z.infer<typeof Marker>;
 
 export function isCurrentMacTerminalProbeRun(run: CanonicalChatRun, now = Date.now()): boolean {

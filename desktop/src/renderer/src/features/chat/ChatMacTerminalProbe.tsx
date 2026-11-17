@@ -4,11 +4,13 @@ import {
   getLatestCompletedMacTerminalRun,
   getMacTerminalProbeMarkerForRun,
   isCurrentMacTerminalProbeRun,
+  MAC_TERMINAL_SYSTEM_CHECKS,
   MAC_TERMINAL_PROBE_PREFIX,
+  type MacTerminalProbeAction,
 } from "../../../../shared/mac-terminal-probe";
 import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { invoke } from "../../lib/operator";
-import { chatElectronPreviewWorktree } from "./ChatElectronPreview";
+import { backgroundElectronPreviewDraft, chatElectronPreviewWorktree } from "./ChatElectronPreview";
 
 type Preparation = InvokeResponse<"chat:mac-terminal-prepare">;
 type RunStatus = InvokeResponse<"chat:mac-terminal-run">["status"];
@@ -36,11 +38,13 @@ const RUN_STATUS: Record<RunStatus, string> = {
 const BUTTON_CLASS = "rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]";
 const BACKGROUND_STATUS_POLL_MS = 2_000;
 
-function makeDraft(targetId: string): string {
+function makeDraft(targetId: string, mode: PreparationMode): string {
+  const action: MacTerminalProbeAction = mode === "background" ? "system-checks" : "uname";
   return [
     DRAFT_INTRO,
-    "Do not run this command on Main or use a shell tool. Emit exactly this standalone unquoted line, without a code fence, and finish this turn so Matrix can deliver the Mac result to this Chat:",
-    MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "uname" }),
+    ...(action === "system-checks" ? [`Check the kernel, architecture, and macOS version using ${MAC_TERMINAL_SYSTEM_CHECKS.join(", ")}.`] : []),
+    "Do not run these checks on Main or use a shell tool. Emit the line below exactly as written. Keep it outside any quotes or code fence. Finish the turn so Matrix can deliver the Mac result to this Chat.",
+    MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action }),
   ].join("\n\n");
 }
 
@@ -94,6 +98,19 @@ function logFailure(error: unknown) {
   console.warn("[mac-terminal-check] request unavailable", error instanceof Error ? error.name : "UnknownError");
 }
 
+function DraftBackgroundPreview({ onClick }: { onClick(): void }) {
+  const [available, setAvailable] = useState(false);
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Reads the opt-in native preview capability.
+  useEffect(() => {
+    let current = true;
+    void invoke("chat:electron-preview-available", {}).then(reply => {
+      if (current) setAvailable(reply.available);
+    }).catch(logFailure);
+    return () => { current = false; };
+  }, []);
+  return available ? <button type="button" className={BUTTON_CLASS} onClick={onClick}>Draft background Electron preview</button> : null;
+}
+
 export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDiscardDraft }: ChatMacTerminalProbeProps) {
   const { chat, activeRun, providerBinding } = detail.record;
   const root = chatElectronPreviewWorktree(detail);
@@ -101,10 +118,11 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId
     && providerBinding?.driverKind === "codex";
   const latestRun = getLatestCompletedMacTerminalRun(detail);
+  const terminalMarker = latestRun && getMacTerminalProbeMarkerForRun(detail, latestRun.id);
   const runId = readyToCheck && !activeRun && latestRun?.driverKind === "codex"
     && latestRun.executionRoot?.kind === "worktree" && latestRun.executionRoot.projectId === root.projectId
     && latestRun.executionRoot.worktreeId === root.worktreeId
-    && isCurrentMacTerminalProbeRun(latestRun) && getMacTerminalProbeMarkerForRun(detail, latestRun.id)
+    && isCurrentMacTerminalProbeRun(latestRun) && terminalMarker?.action === "uname"
     ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
   const [preparation, setPreparation] = useState<PreparationState | null>(null);
@@ -169,7 +187,8 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
   useEffect(() => {
     const previous = previousBackground.current;
     if (backgroundStatus && previous?.scope === scope && previous.targetId !== backgroundTarget) {
-      onDiscardDraft?.(makeDraft(previous.targetId));
+      onDiscardDraft?.(makeDraft(previous.targetId, "background"));
+      onDiscardDraft?.(backgroundElectronPreviewDraft(previous.targetId));
     }
     previousBackground.current = backgroundTarget ? { scope, targetId: backgroundTarget } : null;
   }, [backgroundStatus, backgroundTarget, onDiscardDraft, scope]);
@@ -216,7 +235,7 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
         setPreparation({ status: "expired" });
         return;
       }
-      const draft = makeDraft(reply.targetId);
+      const draft = makeDraft(reply.targetId, mode);
       const staged = "terminalId" in reply
         ? stageDraft.current?.(draft, root, reply.expiresAt)
         : stageDraft.current?.(draft, root, reply.expiresAt, reply.targetId);
@@ -240,10 +259,11 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
     }
   }
 
-  function stageAnother() {
+  function stageAnother(kind: "terminal" | "preview") {
     if (!root || !activeBackground || activeBackground.expiresAt <= Date.now() || changingGrant.current) return;
     const { targetId, expiresAt } = activeBackground;
-    stageDraft.current?.(makeDraft(targetId), root, expiresAt, targetId);
+    const draft = kind === "preview" ? backgroundElectronPreviewDraft(targetId) : makeDraft(targetId, "background");
+    stageDraft.current?.(draft, root, expiresAt, targetId);
   }
 
   async function stopBackground() {
@@ -285,7 +305,10 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
         <div className="flex flex-wrap gap-2">
           {onDraft && !activeRun && activeBackground.phase === "waiting" && activeBackground.remaining > 0
             && preparationStatus !== "stopping" ? (
-              <button type="button" className={BUTTON_CLASS} onClick={stageAnother}>Draft another Mac check</button>
+              <>
+                <button type="button" className={BUTTON_CLASS} onClick={() => stageAnother("terminal")}>Draft another Mac check</button>
+                <DraftBackgroundPreview onClick={() => stageAnother("preview")} />
+              </>
             ) : null}
           <button type="button" className={BUTTON_CLASS} disabled={preparationStatus === "stopping"}
             onClick={() => { void stopBackground(); }}>Stop background Mac checks</button>

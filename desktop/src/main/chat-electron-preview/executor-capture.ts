@@ -8,7 +8,7 @@ const { join } = await import("node:path");
 const { pathToFileURL } = await import("node:url");
 
 const source = process.cwd();
-const [electronPath, profile, destination, label] = process.argv.slice(1);
+const [electronPath, profile, destination, label, operation] = process.argv.slice(1);
 const loadModule = createRequire(join(source, "package.json"));
 const { _electron } = loadModule("playwright");
 const child = await _electron.launch({
@@ -46,6 +46,15 @@ try {
   }
   const caption = window.locator(".signin-eyebrow");
   if (await caption.innerText({ timeout: 5_000 }) !== label) throw new Error("Unexpected Electron preview label");
+  if (operation === "verify-sign-in-recovery") {
+    const signIn = window.getByRole("button", { name: "Sign in", exact: true });
+    const connectionError = window.getByRole("alert").filter({
+      hasText: /^Couldn't connect\. Check your connection and try again\.$/,
+    });
+    await signIn.click({ timeout: 5_000 });
+    await connectionError.waitFor({ timeout: 12_000 });
+    await signIn.and(window.locator(":enabled")).waitFor({ timeout: 5_000 });
+  }
   await window.evaluate(() => document.fonts.ready);
   await window.screenshot({ path: destination, animations: "disabled", scale: "css", timeout: 5_000 });
   await window.waitForEvent("close", { timeout: 30_000 }).catch((error) => {

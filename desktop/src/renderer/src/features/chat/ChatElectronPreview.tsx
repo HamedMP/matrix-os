@@ -20,14 +20,28 @@ const PREVIEW_STATUS: Record<PreviewStatus, string> = {
   "already-handled": "This Electron preview request was already handled.",
 };
 
-export const CHAT_ELECTRON_PREVIEW_DRAFT = [
-  "Prepare an Electron preview of the Matrix OS sign-in page in this Chat's isolated worktree.",
+const PREVIEW_DRAFT_INTRO = "Prepare an Electron preview of the Matrix OS sign-in page in this Chat's isolated worktree.";
+
+const CHAT_ELECTRON_PREVIEW_DRAFT = [
+  PREVIEW_DRAFT_INTRO,
   "Confirm the selected run is bound to an isolated Matrix OS worktree and tracked Git status is clean. Stop if either check fails.",
   `In ${CHAT_ELECTRON_PREVIEW_SOURCE}, replace the single ${CHAT_ELECTRON_PREVIEW_BASE_LABEL} literal with YOUR SPACE TO BUILD. Leave other source untouched.`,
   "Keep the change uncommitted. Run git diff --check and verify the full source matches git show HEAD:<path> with exactly that label replacement.",
   "Report the actual check results. Only if both checks pass, emit exactly one standalone unquoted line in this format, using the full actual HEAD and SHA-256 of the complete changed file:",
   `${CHAT_ELECTRON_PREVIEW_PREFIX}{"baseSha":"<40 lowercase hex>","sourceSha256":"<64 lowercase hex>","label":"YOUR SPACE TO BUILD","mainChecksPassed":true}`,
 ].join("\n\n");
+
+export function isChatElectronPreviewDraft(text: string) {
+  return text.startsWith(PREVIEW_DRAFT_INTRO)
+    || text.split("\n").some(line => line.startsWith(CHAT_ELECTRON_PREVIEW_PREFIX));
+}
+
+export function backgroundElectronPreviewDraft(targetId: string) {
+  return CHAT_ELECTRON_PREVIEW_DRAFT.replace(
+    '"mainChecksPassed":true}',
+    `"mainChecksPassed":true,"operation":"verify-sign-in-recovery","backgroundTargetId":${JSON.stringify(targetId)}}`,
+  );
+}
 
 export function chatElectronPreviewWorktree(detail: CanonicalChatDetailResponse) {
   const latestRun = detail.runs.at(-1);
@@ -55,8 +69,9 @@ export function ChatElectronPreview({ active, actorId, detail, onDraft }: ChatEl
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId;
   const latestRun = detail.runs.at(-1);
   const hasWorktree = chatElectronPreviewWorktree(detail) !== null;
+  const marker = latestRun && getChatElectronPreviewMarkerForRun(detail, latestRun.id);
   const runId = eligible && !activeRun && hasWorktree && latestRun && isCurrentChatElectronPreviewRun(latestRun)
-    && getChatElectronPreviewMarkerForRun(detail, latestRun.id) ? latestRun.id : null;
+    && marker && !marker.backgroundTargetId ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ key: string; status: PreviewStatus } | null>(null);
