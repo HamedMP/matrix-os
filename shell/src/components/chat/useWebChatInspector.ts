@@ -28,6 +28,7 @@ export interface WebChatInspectorProps {
   projectError?: boolean;
   onRetryProject?(): void;
   filePath: string | null;
+  fileOpenRequest?: object;
   fileResource?: FileResourceRef;
   onFilePathChange(path: string | null): void;
   terminalSessionIds: readonly string[];
@@ -44,7 +45,10 @@ export function useWebChatInspector({
   rootWidth,
   railWidth,
   project,
+  projectLoading,
+  projectError,
   filePath,
+  fileOpenRequest,
   onFilePathChange,
   terminalSessionIds,
   sideChatClient,
@@ -180,7 +184,7 @@ export function useWebChatInspector({
           : [...current.tabs, FILES].slice(-MAX_TABS),
       }));
     }
-  }, [filePath]);
+  }, [filePath, fileOpenRequest]);
   const selected = layout.tabs.find((tab) => tab.id === layout.selected) ?? layout.tabs[0]!;
   const overlay = rootWidth > 0 && rootWidth - railWidth < 600;
   const maxWidth = Math.max(240, Math.min(820, rootWidth - railWidth - 360));
@@ -196,10 +200,11 @@ export function useWebChatInspector({
     });
   const createTerminal = () => {
     if (lock.current) return;
+    if (projectLoading || projectError) { setError(true); return; }
     lock.current = true;
     setPending(true);
     setError(false);
-    return createChatTerminal(gatewayUrl, chatId, signal())
+    return createChatTerminal(gatewayUrl, chatId, signal(), project?.slug)
       .then((session) => {
         if (lifetime.current!.signal.aborted) return;
         registryMutation.current++;

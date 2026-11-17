@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { ChatInspectorFileRoot } from "@matrix-os/ui";
 import { ChevronDown, ChevronRight, Folder, Search } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
 import { EMPTY_INSPECTOR_FILE_VIEW, useInspectorFileViews } from "../../stores/files-navigation";
@@ -19,7 +20,9 @@ export function ExpandableFileTree({
   draggableResource,
   fileActionLabel = "Open file",
   attachmentPicker = false,
+  rootLabel,
 }: {
+  rootLabel?: string;
   viewKey?: string;
   loadDirectory: (path: string) => Promise<InspectorTreeEntry[]>;
   onOpenFile: (path: string) => void;
@@ -222,7 +225,7 @@ export function ExpandableFileTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="files-listing" style={{ background: "var(--bg-surface)" }}>
-      {searchEntries ? <div data-file-tree-search className="shrink-0 border-b p-2" style={{ borderColor: "var(--border-subtle)" }}>
+      {searchEntries && rootLabel && !attachmentPicker ? <ChatInspectorFileRoot label={rootLabel} value={query} onChange={setQuery}/> : searchEntries ? <div data-file-tree-search className="shrink-0 border-b p-2" style={{ borderColor: "var(--border-subtle)" }}>
         <div data-file-tree-search-field>
           {attachmentPicker ? <Search size={15} aria-hidden className="shrink-0" /> : null}
           <input type="search" aria-label="Filter files" placeholder={attachmentPicker ? "Search files…" : "Filter files…"} maxLength={80} value={query}

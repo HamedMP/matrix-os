@@ -105,3 +105,13 @@
 .chat-inspector-terminal-header small { color: var(--chat-muted); font-size: 12px; }
 .chat-inspector-terminal-header button { display: flex; align-items: center; gap: 6px; font: inherit; padding: 4px 8px; margin-left: 20px; border-radius: 6px; }
 .chat-inspector-terminal-header button:hover { background: var(--chat-fill); }
+
+.chat-inspector-root { flex-shrink: 0; }
+.chat-inspector-root-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 0 12px 0 16px; color: var(--chat-muted); font-size: 12px; line-height: 16px; }
+.chat-inspector-root-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-inspector-root-heading .desktop-chat-icon { opacity: 0; }
+.chat-inspector-root-heading:hover .desktop-chat-icon, .chat-inspector-root:focus-within .desktop-chat-icon, .chat-inspector-root-heading .desktop-chat-icon[aria-expanded=true] { opacity: 1; }
+.chat-inspector-root-search { margin: 0 12px 8px; }
+.chat-inspector-root-search input { padding: 6px 10px!important; font-family: inherit!important; background: var(--chat-bg)!important; border-color: var(--chat-input)!important; }
+.chat-message-file-link:hover { background: var(--chat-fill)!important; }
+@media (hover: none) { .chat-inspector-root-heading .desktop-chat-icon { opacity: 1; } }

@@ -66,11 +66,11 @@ export function readLayout(key: string | null, refs: readonly string[]): SavedLa
   }
 }
 
-export async function createChatTerminal(gatewayUrl: string, chatId: string, signal: AbortSignal): Promise<Session> {
+export async function createChatTerminal(gatewayUrl: string, chatId: string, signal: AbortSignal, projectId?: string): Promise<Session> {
   const ensured = await fetch(`${gatewayUrl}/api/terminal/workspaces/ensure`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify(projectId ? { projectId } : {}),
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
   if (!ensured.ok) throw new Error("TerminalUnavailable");

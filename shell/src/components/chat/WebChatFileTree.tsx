@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronRight, FileCode2, Folder, FolderOpen, Search } from "lucide-react";
+import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
+import { ChatInspectorFileRoot } from "@matrix-os/ui";
 import { z } from "zod/v4";
 
 const FileEntrySchema = z
@@ -135,10 +136,12 @@ function FileBranch({
 function FileTree({
   gatewayUrl,
   rootPath = "",
+  rootLabel = "Matrix Home",
   onOpenFile,
 }: {
   gatewayUrl: string;
   rootPath?: string;
+  rootLabel?: string;
   onOpenFile(path: string): void;
 }) {
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -151,16 +154,7 @@ function FileTree({
     );
   return (
     <>
-      <label className="m-3 flex h-8 shrink-0 items-center gap-2 rounded-md border px-2 text-xs text-muted-foreground">
-        <Search size={14} aria-hidden />
-        <input
-          aria-label="Filter files"
-          placeholder="Filter files"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          className="min-w-0 flex-1 bg-transparent outline-none"
-        />
-      </label>
+      <ChatInspectorFileRoot label={rootLabel} value={query} onChange={setQuery}/>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         <FileBranch
           key={rootPath}
@@ -241,5 +235,5 @@ export function WebChatFileTree({
         Loading project files…
       </p>
     );
-  return <FileTree gatewayUrl={gatewayUrl} rootPath={root} onOpenFile={path => onOpenFile(path.slice(root.length + 1))} />;
+  return <FileTree gatewayUrl={gatewayUrl} rootLabel={project.slug} rootPath={root} onOpenFile={path => onOpenFile(path.slice(root.length + 1))} />;
 }
