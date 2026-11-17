@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { iconUrlForSlug } from "@/lib/app-launch";
 
+const FAILED_ICON_SRC = "";
+
 /**
  * `fallbackName` opts out of the Matrix-logo fallback: when the icon cannot load, the tile shows the
  * name's initial instead, matching the Web Desktop and Electron Desktop launchers. Shared apps use it
@@ -12,8 +14,6 @@ export function MobileAppIcon({ slug, iconUrl, size, fallbackName }: {
   slug: string; iconUrl?: string; size: number; fallbackName?: string;
 }) {
   const [src, setSrc] = useState(() => iconUrl ?? iconUrlForSlug(slug) ?? "/icon-192.png");
-  // Keyed by the URL that failed, so a new selection retries without a reset in the effect below.
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const triedSvg = useRef(false);
   const selection = iconUrl ?? slug;
   const prevSelection = useRef(selection);
@@ -27,7 +27,8 @@ export function MobileAppIcon({ slug, iconUrl, size, fallbackName }: {
   }, [slug, iconUrl, selection]);
 
   const radius = Math.round(size * 0.22);
-  if (fallbackName && failedSrc === src) {
+  // A failed shared-app icon parks `src` at the empty sentinel; a new selection resets it and retries.
+  if (fallbackName && src === FAILED_ICON_SRC) {
     return (
       <span
         data-testid="mobile-app-icon-initial"
@@ -66,7 +67,7 @@ export function MobileAppIcon({ slug, iconUrl, size, fallbackName }: {
       }}
       onError={() => {
         if (fallbackName) {
-          setFailedSrc(src);
+          setSrc(FAILED_ICON_SRC);
           return;
         }
         const svgUrl = src.replace(/\.[^.]+$/, ".svg");

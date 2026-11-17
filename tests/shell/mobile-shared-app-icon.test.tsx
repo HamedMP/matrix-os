@@ -2,6 +2,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { MobileAppIcon } from "../../shell/src/components/mobile/MobileAppIcon";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher";
 import type { MobileApp } from "../../shell/src/components/mobile/mobile-app";
 
@@ -41,6 +42,19 @@ describe("Web Mobile shared app icons", () => {
     expect(tile.querySelector("img")).toBeNull();
     expect(tile.innerHTML).not.toContain("/icon-192.png");
     expect(screen.getByTestId("mobile-app-icon-initial").textContent).toBe("T");
+  });
+
+  // Fault: failure state outlived the selected URL, so returning to a once-failed icon never retried it.
+  it("retries a previously failed icon when the selected URL changes back to it", () => {
+    const iconA = sharedTarget.iconUrl;
+    const iconB = `/api/collaboration/shared-apps/${scopeId}/icon?v=${"d".repeat(64)}`;
+    const { container, rerender } = render(<MobileAppIcon slug="apps" iconUrl={iconA} size={48} fallbackName="Team Tracker" />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelector("img")).toBeNull();
+    rerender(<MobileAppIcon slug="apps" iconUrl={iconB} size={48} fallbackName="Team Tracker" />);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(iconB);
+    rerender(<MobileAppIcon slug="apps" iconUrl={iconA} size={48} fallbackName="Team Tracker" />);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(iconA);
   });
 
   it("keeps the Matrix logo as the last fallback for ordinary apps", () => {
