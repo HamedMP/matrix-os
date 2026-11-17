@@ -20,11 +20,13 @@ const base: SiteRecord = {
 };
 
 function client(overrides: Partial<ShareSiteClient> = {}): ShareSiteClient & Record<string, ReturnType<typeof vi.fn>> {
+  let stored: SiteRecord | null = null;
+  const save = (site: SiteRecord) => { stored = site; return site; };
   return {
-    get: vi.fn(async () => null),
-    deploy: vi.fn(async (_app, metadata) => ({ ...base, revision: 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
-    update: vi.fn(async (_app, metadata) => ({ ...base, revision: (metadata.baseRevision ?? 0) + 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
-    unpublish: vi.fn(async (_app, revision) => ({ ...base, revision: revision + 1, status: "unpublished" as const })),
+    get: vi.fn(async () => stored),
+    deploy: vi.fn(async (_app, metadata) => save({ ...base, revision: 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
+    update: vi.fn(async (_app, metadata) => save({ ...base, revision: (metadata.baseRevision ?? 0) + 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
+    unpublish: vi.fn(async (_app, revision) => save({ ...base, revision: revision + 1, status: "unpublished" as const })),
     getConfig: vi.fn(async () => ({ data: {}, forms: [] })),
     slugAvailability: vi.fn(async () => ({ status: "available" as const, suggestions: [] })),
     ...overrides,
@@ -106,7 +108,7 @@ describe("Share popover shell", () => {
 });
 
 describe("Private tab · email invitations (stubbed adapter)", () => {
-  it("enables Invite only for a valid email, submits on Enter, and lists people with status icons, owner badge and remove", async () => {
+  it("enables Invite only for a valid email, submits on Enter, and lists people with status, owner badge and revoke", async () => {
     const emailInvites = createInMemoryEmailInvitations();
     renderPanel(client(), { emailInvites });
     await loaded();
@@ -119,7 +121,7 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     expect(invite).toHaveProperty("disabled", false);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("sara@finna.ai")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "Pending" })).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "People with access" })).getByText("Pending")).toBeTruthy();
     expect(screen.getByText("You")).toBeTruthy();
     expect(screen.getByText("Owner")).toBeTruthy();
     // No Matrix.page record exists yet, so there is no permanent URL to copy.
@@ -128,7 +130,7 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     expect(screen.queryByRole("button", { name: "Stop sharing privately" })).toBeNull();
     expect(within(screen.getByRole("tab", { name: /Private/ })).getByRole("img", { name: "on" })).toBeTruthy();
     expect(emailInvites.active("sales-crm")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Remove sara@finna.ai" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@finna.ai" }));
     await waitFor(() => expect(screen.queryByText("sara@finna.ai")).toBeNull());
   });
 
@@ -145,7 +147,7 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     selectTab(/Private/);
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@finna.ai" } });
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Resend invite to sara@finna.ai" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resend invitation to sara@finna.ai" }));
     await waitFor(() => expect(resend).toHaveBeenCalledWith("sales-crm", expect.any(String), expect.anything(), expect.any(AbortSignal)));
   });
 });

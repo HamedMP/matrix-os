@@ -2,16 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
 import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
 import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
-import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import { useDesktopShareOrganization } from "./use-desktop-share-organization";
-
-// TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
-const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(import.meta.env.VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
 
 export function DesktopAppSiteButton({
   appSlug,
@@ -37,6 +34,7 @@ export function DesktopAppSiteButton({
     if (!api) return null;
     return createDesktopSiteClient(api, runtimeSlot);
   }, [api, runtimeSlot, authGeneration]);
+  const emailInvites = useMemo(() => client ? createSiteEmailInvitationAdapter(client) : null, [client]);
   const collaborationApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null,
     [api, runtimeSlot, authGeneration]);
   const name = appDisplayName(appSlug, appName);

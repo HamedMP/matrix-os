@@ -1,3 +1,5 @@
+import { clerkSatelliteReturnTarget } from "./clerk-satellite-return";
+
 const MAX_AUTH_REDIRECT_LENGTH = 2_048;
 const MAX_AUTH_REDIRECT_SEARCH_LENGTH = 4_096;
 
@@ -16,13 +18,16 @@ function isAuthShellPath(pathname: string): boolean {
 /**
  * Resolve Clerk's client-controlled post-signup destination without allowing
  * cross-origin redirects or loops back into an auth route. The path is kept
- * relative so callers choose the configured public origin explicitly.
+ * relative so callers choose the configured public origin explicitly; the only
+ * absolute result is an exact allowlisted Clerk satellite return address.
  */
 export function resolveCompletedSignupRedirect(search: string, appOrigin: string): string {
   if (search.length > MAX_AUTH_REDIRECT_SEARCH_LENGTH) return "/";
   const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const requested = searchParams.get("redirect_url");
   if (!requested || requested.length > MAX_AUTH_REDIRECT_LENGTH) return "/";
+  const satelliteReturn = clerkSatelliteReturnTarget(requested);
+  if (satelliteReturn) return satelliteReturn;
 
   if (!URL.canParse(appOrigin)) return "/";
   const canonical = new URL(appOrigin);

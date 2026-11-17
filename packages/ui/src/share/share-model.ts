@@ -39,9 +39,9 @@ const MODE_CTA: Record<PageModeTarget, string> = { public: "Make public", privat
 
 export interface ModeSwitchCopy { title: string; body: string; cta: string }
 
-export function modeSwitchCopy(current: ActivePageMode, target: PageModeTarget, invitedCount: number): ModeSwitchCopy {
+export function modeSwitchCopy(current: ActivePageMode, target: PageModeTarget, invitedCount: number | null): ModeSwitchCopy {
   const loss = current === "private_email"
-    ? `${invitedCount} invited ${invitedCount === 1 ? "person loses" : "people lose"} access, and their invites can’t be restored.`
+    ? invitedCount === null ? "Invited people lose access, and their invites can’t be restored." : `${invitedCount} invited ${invitedCount === 1 ? "person loses" : "people lose"} access, and their invites can’t be restored.`
     : current === "private_link"
       ? "Existing one-time links stop working."
       : "The public link stops working for visitors.";
@@ -53,7 +53,7 @@ export function modeSwitchCopy(current: ActivePageMode, target: PageModeTarget, 
 }
 
 /**
- * The Private tab exists for email invites (preview flag) and for legacy
+ * The Private tab exists for email invites, invite-only sites, and legacy
  * one-time-link sites, whose owner still needs a way to stop sharing.
  */
 export function privateTabVisible(pageMode: PageMode, emailInvitesAvailable: boolean): boolean {

@@ -1,9 +1,18 @@
 # 2690: One-Time Private Links for Matrix.page
 
-Status: implementation
+Status: retired (creation disabled by [ENG-490](https://linear.app/matrix-os/issue/ENG-490); existing links drain)
 Issue: https://linear.app/matrix-os/issue/ENG-437/featsites-add-one-time-private-access-links
 Related: [ENG-231](https://linear.app/matrix-os/issue/ENG-231), [ENG-29](https://linear.app/matrix-os/issue/ENG-29), [Public App Sites](../551-public-app-sites/spec.md)
 Baseline: `origin/main` at `bc52a37f6841fd2a341e04f5b9722b6bd5c96af7`
+
+## Retired (ENG-490)
+
+One-time links are being retired in favor of private email invitations (spec 2691). This section overrides the behavior below where they disagree.
+
+- **Creation is disabled.** The platform returns a generic `410 One-time links are no longer available` for `POST .../access-links` and for any publish or settings update that would move a site *into* `private_link`, including a first publication. The VPS gateway relays the same generic copy.
+- **Existing sites and links drain.** A write that repeats `private_link` for a site already in that mode keeps the current mode, so legacy sites stay editable and republishable from older clients. Owners can still list and revoke links; visitors can still claim unexpired links (claims expire within 7 days of creation) and use viewer sessions (at most 30 days after claim). Switching to public or unpublishing still deletes all link and session rows.
+- **No destructive data change.** `public_sites.access_mode`, `public_site_access_links`, the contracts' readable `private_link` value, `privateFrame`, `private-package.ts`, and `PRIVATE_APP_CSP` stay; 2691 reuses the private frame path.
+- **Follow-up removal** of the `private_link` value, link table, and claim routes needs a separately reviewed data-lifecycle migration after 2691 merges and all sessions have expired.
 
 ## Goal and scope
 

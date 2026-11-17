@@ -25,6 +25,12 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
+  /**
+   * The model and modes it was sent with. The computer may have it already,
+   * and answers a retry under its request ids only as the same request.
+   */
+  selection: CanonicalChatModelSelection;
+  turnModes: { interactionMode: string; permissionMode: string };
 }
 
 interface ProjectComposerOptions {
@@ -40,8 +46,8 @@ interface ProjectComposerOptions {
   attachmentKinds?: readonly ChatAttachmentKind[];
   /** Holds sends back, as while there is no model to send to yet. */
   disabled?: boolean;
-  /** Called once the new chat's first message is admitted, with the model it was started with. */
-  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection) => void;
+  /** Called once the new chat's first message is admitted, with the model and permission mode it was started with. */
+  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection, permissionMode: string) => void;
 }
 
 /**
@@ -99,16 +105,19 @@ export function useProjectComposer({
     // would create a second chat and run the prompt again.
     const attempt = failedSends.current.find((failed) => (
       failed.projectId === projectId && failed.text === text && sameAttachments(failed.attachments, attachments)
-    )) ?? { projectId, text, attachments, chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId() };
+    )) ?? {
+      projectId, text, attachments, selection, turnModes,
+      chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId(),
+    };
 
     sendMessage.mutate({
       chatId: null,
       baseRevision: 0,
       text,
       attachments,
-      selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
+      selection: attempt.selection,
+      interactionMode: attempt.turnModes.interactionMode,
+      permissionMode: attempt.turnModes.permissionMode,
       projectId,
       chatRequestId: attempt.chatRequestId,
       turnRequestId: attempt.turnRequestId,
@@ -118,7 +127,7 @@ export function useProjectComposer({
         // newer text and attachments by now. Only what was sent is cleared.
         setDraftValue((current) => (current.trim() === text ? "" : current));
         setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
-        onChatStarted(chatId, selection);
+        onChatStarted(chatId, attempt.selection, attempt.turnModes.permissionMode);
       },
     }, {
       onError: () => {

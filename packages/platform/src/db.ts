@@ -840,6 +840,13 @@ export interface PlatformDatabase {
   public_site_versions: import('./sites/types.js').SiteVersionsTable;
   public_site_aliases: import('./sites/types.js').SiteAliasesTable;
   public_site_access_links: import('./sites/types.js').SiteAccessLinksTable;
+  public_site_email_invitations: import('./sites/types.js').SiteEmailInvitationsTable;
+  public_site_viewer_grants: import('./sites/types.js').SiteViewerGrantsTable;
+  public_site_viewer_sessions: import('./sites/types.js').SiteViewerSessionsTable;
+  public_site_invitation_deliveries: import('./sites/types.js').SiteInvitationDeliveriesTable;
+  public_site_access_audit_events: import('./sites/types.js').SiteAccessAuditEventsTable;
+  public_site_recipient_lifecycle: import('./sites/types.js').SiteRecipientLifecycleTable;
+  public_site_clerk_session_terminations: import('./sites/types.js').SiteClerkSessionTerminationsTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;

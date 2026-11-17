@@ -4,6 +4,8 @@ import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lo
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createPreviewPairRoutes, type PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
+import { recordSiteRecipientLifecycle } from './sites/account-lifecycle.js';
+import { terminateEmailClerkSessionForMatrixSignOut } from './sites/email-viewer-sessions.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
@@ -18,6 +20,7 @@ import {
 } from '@matrix-os/observability';
 import type Dockerode from 'dockerode';
 import { Agent } from 'undici';
+import { createCustomerVpsProxyDispatcher } from './customer-vps-dispatcher.js';
 import { z } from 'zod/v4';
 import {
   type PlatformDB,
@@ -77,7 +80,7 @@ import {
   createUnavailableStripeBillingClient,
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
-import { registerSiteRoutes } from './sites/registration.js';
+import { registerSiteRoutesIfConfigured } from './sites/registration.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -184,15 +187,9 @@ const containerProxyDispatcher = new Agent({
   connections: 64,
 });
 
-const customerVpsProxyDispatcher = new Agent({
-  pipelining: 0,
-  keepAliveTimeout: 1,
-  keepAliveMaxTimeout: 1,
-  connections: 64,
-  connect: {
-    rejectUnauthorized: shouldVerifyCustomerVpsTls(),
-  },
-});
+// Customer VPS origins are stable per machine, so this pool keeps warm TLS
+// connections; see customer-vps-dispatcher.ts for the stale-socket policy.
+const customerVpsProxyDispatcher = createCustomerVpsProxyDispatcher({ verifyTls: shouldVerifyCustomerVpsTls() });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 
 const SocialSendBodySchema = z.object({
@@ -409,6 +406,12 @@ export function createApp(deps: {
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
     registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization,
+    recordRecipientLifecycle: appEnv.ACCOUNT_DELETION_SECRET
+      ? event => recordSiteRecipientLifecycle(db, { ...event, secret: appEnv.ACCOUNT_DELETION_SECRET })
+      : undefined,
+    recordSessionTermination: appEnv.ACCOUNT_DELETION_SECRET
+      ? sessionId => terminateEmailClerkSessionForMatrixSignOut(db, sessionId,
+        appEnv.ACCOUNT_DELETION_SECRET!) : undefined,
     newRequestsEnabled:appEnv.ACCOUNT_DELETION_ENABLED==='true'}));
 
   // Health check (unauthenticated)
@@ -697,9 +700,10 @@ export function createApp(deps: {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
 
-  registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
+  registerSiteRoutesIfConfigured(app, { db, platformSecret, storage: deps.sitesObjectStore,
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
-    dispatcher: customerVpsProxyDispatcher, env: appEnv, captureEvent: capturePlatformEvent });
+    dispatcher: customerVpsProxyDispatcher, env: appEnv, captureEvent: capturePlatformEvent,
+    clerkAuth: clerkAuth ?? undefined });
 
   // Sync object uploads authenticate with their own machine credential and
   // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy

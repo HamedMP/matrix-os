@@ -2,7 +2,7 @@
 
 Status: implementation (phases 1–5 complete; pending review and live evidence)
 Design: https://claude.ai/artifact/ER7AzhxZ6n46gVazELsZ3B (Prototype, SharePopover component, per-state artboards)
-Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (unmerged stack #3233–#3340)
+Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (#3332, #3335)
 Linear: ENG-490 (Share popover redesign).
 
 ## Goal
@@ -12,7 +12,7 @@ Replace the "Publish app" panel with one **Share** popover. It covers two indepe
 - **Organization sharing** (2689): the live app, hosted by its creator, which members of one org open from their launcher.
 - **Matrix.page publication** (551/2690/2691): exactly one access mode at a time: `private_email` or `public`. `private_link` (one-time links) is retired from the UI (phase 5) but stays readable so an existing site can be turned off.
 
-The tabs (Private · Organization · Public) are navigation only. Private shows only with the email-invite preview or for a legacy `private_link` site; Organization only when the owner is in an org. A green dot marks each tab whose sharing is on. Switching between Matrix.page modes revokes the previous access, so the popover confirms the switch inline first.
+The tabs (Private · Organization · Public) are navigation only. Private shows only when the server reports the email-invitation capability, or for a `private_email` or legacy `private_link` site; Organization only when the owner is in an org. A green dot marks each tab whose sharing is on. Switching between Matrix.page modes revokes the previous access, so the popover confirms the switch inline first.
 
 ## Surfaces
 
@@ -28,14 +28,12 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 ## Behavior (phase 1, as revised by phase 5)
 
 - **Trigger:** the label reads `Share`, `Shared` (org-shared, phase 2) or `Live` (public). The header host owns the controller, so the trigger and the popover read the same server state.
-- **Private tab** (hidden unless email invites are enabled or the site is legacy `private_link`):
-  - **Invite by email.** Invite stays disabled until the address is valid, and Enter submits. The list shows "You" with a muted Owner badge first, then each invitee with a status icon (Clock pending, Check accepted; the word is the icon's accessible name), a Resend icon button for expired invites (`Resend invite to {email}`) and a remove button. In email mode a Link2 "Copy link" button copies the app link.
+- **Private tab** (hidden unless email invites are available or the site is `private_email` or legacy `private_link`):
+  - **Invite by email.** Invite stays disabled until the address is valid (≤254 chars, masked from replay), and Enter submits. The list shows "You" with a muted Owner badge first, then each invitee with a status line (`Pending · Email sent`, `Accepted`, …), a RotateCw icon button `Resend invitation to {email}` when the server would allow a resend, and an X `Revoke invitation for {email}` for pending/accepted invites. "Load more invitations" / "Show newest invitations" page the list. In email mode a Link2 "Copy link" button copies the app link, and a published invite-only site offers "Stop sharing privately" (unpublishes). With the capability off, an invite-only site's controls stay visible but disabled.
   - **Legacy one-time-link site.** One line, "Uses retired one-time links", plus "Stop sharing privately" (unpublishes). No create, list, copy or revoke controls.
-- **Email invitations are stubbed.**
-  - `EmailInvitationAdapter` mirrors 2691's `invitations` list/create/resend/revoke contract.
-  - An in-memory fake exists only behind `NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW=1` (Web) or `VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW=1` (Electron).
-  - With the flag off, the Private tab is hidden (unless the site is legacy `private_link`).
-  - Until 2691 lands, entering invite-only unpublishes the site. This keeps the confirm copy true ("public link stops working"). It is marked TODO(2691).
+- **Email invitations are live (2691).**
+  - Web and Electron use `createSiteEmailInvitationAdapter(siteClient)`; availability comes from the server capability, and entering invite-only is one revision-checked `update`/`deploy` with `accessMode: "private_email"`.
+  - The in-memory fake remains for previews and tests only; it still unpublishes before activating so its confirm copy stays true.
 - **Public tab:**
   - **Path.** The field has a fixed `matrix.page/` prefix and uses the permanent ID as its placeholder. Empty, invalid, reserved and current paths are resolved locally from `classifySiteSlug` and the platform's `SITE_RESERVED_SLUGS`. Any other path gets a debounced platform check (spinner, accessible name "Checking") that answers Available, or "Taken." with up to two free suggestion chips. Short messages: "2–63 lowercase letters, numbers, hyphens.", "Reserved", "Couldn’t check".
   - **Publish** is disabled only when the path is invalid, reserved or taken. A lost alias race at publish time (409) shows as Taken.

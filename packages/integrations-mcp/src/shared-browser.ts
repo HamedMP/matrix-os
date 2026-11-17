@@ -1,6 +1,6 @@
 /** Dedicated native harness boundary: one run bearer, one trusted loopback route, no owner auth fallback. */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SharedBrowserActionSchema, SharedBrowserMcpActionInputSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES } from "@matrix-os/contracts";
+import { SharedBrowserActionSchema, SharedBrowserMcpActionInputSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE } from "@matrix-os/contracts";
 const MAX_BYTES = 192 * 1024;
 export const SHARED_BROWSER_DESCRIPTION = SHARED_BROWSER_TOOL_DESCRIPTION;
 export function createSharedBrowserMcpServer(options: { gatewayPort: number; token: string; fetcher?: typeof fetch }) {
@@ -30,7 +30,7 @@ export function createSharedBrowserMcpServer(options: { gatewayPort: number; tok
         isError: true,
         content: [{
           type: "text" as const,
-          text: "Browser action unavailable. Its effect is uncertain. Check the current Browser state and verify the outcome before continuing. Never replay an uncertain action.",
+          text: SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE,
         }],
       };
     }

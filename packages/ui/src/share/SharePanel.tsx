@@ -81,7 +81,7 @@ export function SharePanel({ share, appSlug, appName, client, ownerInitial, onCl
           onSaveDetails={() => void share.saveDetails(metadata)} submissions={submissions} />
       </ShareTabsContent>
       {share.pendingSwitch && share.pageMode !== "none" ? <ModeSwitchConfirm
-        current={share.pageMode} target={share.pendingSwitch.to} invitedCount={share.invitations.length}
+        current={share.pageMode} target={share.pendingSwitch.to} invitedCount={share.invitationsNextCursor || share.invitationsPaged || !share.emailInvitesAvailable ? null : share.invitations.filter((invitation) => invitation.state === "pending" || invitation.state === "accepted").length}
         pending={share.operation === "switch"} error={share.error?.operation === "switch" ? share.error.message : null}
         onConfirm={() => void confirm()} onCancel={share.cancelSwitch} /> : null}
     </ShareTabs>

@@ -4,6 +4,10 @@ import {
   SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema,
   SiteAccessModeSchema, SiteDeploymentSchema, SitePublishingSchema, SiteSlugSchema,
   SiteSubmissionCursorSchema, SiteSubmissionsQuerySchema, validateSiteForm, SiteOwnerMutationSchema, SiteSubmitCapabilitySchema, SiteRecordSchema,
+  SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema,
+  SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema,
+  SiteEmailInvitationPageSchema, SiteEmailInvitationListQuerySchema,
+  SiteEmailViewerExchangeSchema, SiteEmailInvitationsCapabilitySchema,
 } from "../../packages/contracts/src/sites.js";
 
 describe("public site contracts", () => {
@@ -111,4 +115,58 @@ describe("public site contracts", () => {
     expect(SiteSubmissionsQuerySchema.safeParse({limit:101}).success).toBe(false);
   });
 
+});
+
+describe("email invitation production contracts", () => {
+  const siteId = "550e8400-e29b-41d4-a716-446655440000";
+  const invitation = {
+    id: siteId, emailAddress: "recipient@example.com", state: "pending", deliveryState: "queued",
+    generation: 1, revision: 0, issuedAt: "2026-11-12T00:00:00.000Z",
+    expiresAt: "2026-11-19T00:00:00.000Z", updatedAt: "2026-11-12T00:00:00.000Z",
+  };
+
+  it("admits exactly three modes while old publications still default to public", () => {
+    expect(SiteAccessModeSchema.options).toEqual(["public", "private_link", "private_email"]);
+    expect(SiteRecordSchema.parse({
+      id: siteId, appSlug: "launch", title: "Launch", description: "", slug: null,
+      url: `https://matrix.page/${siteId}`, revision: 0, status: "published",
+      activeVersion: null, versions: [], config: {},
+    }).accessMode).toBe("public");
+  });
+
+  it("bounds owner invitation input and denies extra authority fields", () => {
+    expect(SiteEmailInvitationCreateRequestSchema.parse({ emailAddresses: ["recipient@example.com"], baseRevision: 0 })).toEqual({ emailAddresses: ["recipient@example.com"], baseRevision: 0 });
+    for (const emailAddresses of [[], Array.from({ length: 101 }, () => "r@example.com"), ["x".repeat(321)]]) {
+      expect(SiteEmailInvitationCreateRequestSchema.safeParse({ emailAddresses, baseRevision: 0 }).success).toBe(false);
+    }
+    expect(SiteEmailInvitationCreateRequestSchema.safeParse({ emailAddresses: ["r@example.com"], baseRevision: 0, ownerId: "other" }).success).toBe(false);
+    expect(SiteEmailInvitationMutationRequestSchema.parse({ baseRevision: 1, invitationRevision: 0 })).toEqual({ baseRevision: 1, invitationRevision: 0 });
+    expect(SiteEmailInvitationMutationRequestSchema.safeParse({ baseRevision: 1, invitationRevision: -1 }).success).toBe(false);
+  });
+
+  it("returns one explicit outcome per input without disclosing rejected invitations", () => {
+    const valid = { results: [
+      { inputIndex: 0, outcome: "queued", invitation },
+      { inputIndex: 1, outcome: "existing", invitation: { ...invitation, state: "accepted", deliveryState: "sent", acceptedAt: "2026-11-12T01:00:00.000Z" } },
+      { inputIndex: 2, outcome: "invalid" },
+      { inputIndex: 3, outcome: "duplicate_in_batch" },
+      { inputIndex: 4, outcome: "policy_rejected" },
+    ], siteRevision: 2 };
+    expect(SiteEmailInvitationCreateResponseSchema.safeParse(valid).success).toBe(true);
+    expect(SiteEmailInvitationCreateResponseSchema.safeParse({ results: [{ inputIndex: 0, outcome: "queued" }], siteRevision: 2 }).success).toBe(false);
+    expect(SiteEmailInvitationCreateResponseSchema.safeParse({ results: [{ inputIndex: 0, outcome: "invalid", invitation }], siteRevision: 2 }).success).toBe(false);
+    expect(SiteEmailInvitationCreateResponseSchema.safeParse({ results: valid.results, siteRevision: 2, providerError: "private" }).success).toBe(false);
+    expect(SiteEmailInvitationMutationResponseSchema.safeParse({ invitation, siteRevision: 3 }).success).toBe(true);
+  });
+
+  it("keeps inventory and exchange bounded with a coarse capability", () => {
+    expect(SiteEmailInvitationPageSchema.safeParse({ invitations: [invitation], nextCursor: null, siteRevision: 2 }).success).toBe(true);
+    expect(SiteEmailInvitationPageSchema.safeParse({ invitations: Array.from({ length: 101 }, () => invitation), nextCursor: null, siteRevision: 2 }).success).toBe(false);
+    expect(SiteEmailInvitationListQuerySchema.parse({})).toMatchObject({ limit: 50 });
+    expect(SiteEmailInvitationListQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+    expect(SiteEmailViewerExchangeSchema.safeParse({}).success).toBe(true);
+    expect(SiteEmailViewerExchangeSchema.safeParse({ emailAddress: "recipient@example.com" }).success).toBe(false);
+    expect(SiteEmailInvitationsCapabilitySchema.safeParse({ privateEmailInvitations: false }).success).toBe(true);
+    expect(SiteEmailInvitationsCapabilitySchema.safeParse({ privateEmailInvitations: true, provider: "secret" }).success).toBe(false);
+  });
 });
