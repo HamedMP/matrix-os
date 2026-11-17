@@ -1,3 +1,5 @@
+import { createSharedProviderAuthorityResolver, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
+export { canonicalChatSelectionForOwnerAuthority, catalogChatSelectionForOwnerAuthority, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
 import {
   CanonicalChatModelSelectionSchema,
   type CanonicalChatModelSelection,
@@ -18,7 +20,6 @@ import type { ScopeRuntimeSandboxManifest, ScopeRuntimeWorkload } from "@matrix-
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import {
-  validateChatProviderSelection,
   type ChatProviderCatalogService,
 } from "../chat/provider-catalog.js";
 import { SharedChatRunPreparationError } from "../chat/shared-execution-coordinator.js";
@@ -41,7 +42,6 @@ import {
 } from "./chat-execution-adapter.js";
 import {
   parseCollaborationAiEligibility,
-  CODEX_SHARED_INSTANCE_ID,
   sharedAiAdapterFor,
   sharedAiEligibilitySupportsDriver,
   SHARED_MATRIX_BOT_ELIGIBILITY,
@@ -77,16 +77,14 @@ import {
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
-import { SHARED_RUN_SELECTION_REQUIREMENTS, resolveSharedProviderReadiness, sharedNativeSelectionReady } from "./shared-provider-readiness.js";
+import { resolveSharedProviderReadiness, sharedNativeSelectionReady } from "./shared-provider-readiness.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 import { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
-import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "../bots/selection.js";
 export { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
-const CLAUDE_CHAT_INSTANCE_ID = "claude_code_default";
 /**
  * S07: the production profile pins the sandbox policy, so a supervisor that
  * does not advertise exactly this policy is an unsupported profile and no
@@ -449,49 +447,7 @@ export async function createSharedAiRuntime(options: {
     );
   };
 
-  const resolveCanonicalProviderAuthority = async (
-    scopeId: string,
-    ownerId: string,
-    selection: CanonicalChatModelSelection | null,
-    boundDriverKind: CanonicalProviderDriverKind | null,
-  ) => {
-    const decision = await options.ownerSource.authority({ scopeId, ownerId });
-    if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
-      if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
-      if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
-        || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
-        || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
-      return { driverKind: "matrix_bot" as const, selection };
-    }
-    const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
-    if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
-    const currentSelection = canonicalChatSelectionForOwnerAuthority(decision, selection);
-    if (!currentSelection) return null;
-    if (!options.providerCatalog) return null;
-    const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-    const validated = validateChatProviderSelection({
-      catalog,
-      selection: catalogChatSelectionForOwnerAuthority(decision, currentSelection),
-      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
-    });
-    if (!validated.ok || (validated.instance.driverKind !== driverKind
-      && !(driverKind === "claude_code" && validated.instance.driverKind === "kernel"))) return null;
-    // The owner's first binding may only name a driver this runtime can
-    // execute in isolation; the queue re-verifies the signed eligibility.
-    const adapterId = sharedAiAdapterFor(driverKind, currentSelection.instanceId);
-    if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
-      return null;
-    }
-    return {
-      driverKind,
-      selection: currentSelection,
-      ...(decision.authorityKind === "provider_settings_active" ? {
-        currentOwnerRoute: true as const,
-        providerAccessSourceId: decision.providerAccessSourceId,
-        routeGeneration: decision.routeGeneration,
-      } : {}),
-    };
-  };
+  const resolveCanonicalProviderAuthority = createSharedProviderAuthorityResolver({ ...options, eligibility });
   options.repository.setSharedProviderAuthorityResolver(
     ({ scopeId, ownerId, selection, driverKind }) =>
       resolveCanonicalProviderAuthority(scopeId, ownerId, selection, driverKind),
@@ -827,46 +783,6 @@ function sharedAdapterFor(
 ): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
   const adapterId = sharedAiAdapterFor(driverKind, instanceId);
   return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
-}
-
-/**
- * Provider Settings instance IDs identify saved route provenance, while the
- * Chat catalog identifies executable harness instances. Keep the former on
- * the immutable run binding and translate only the dispatch selection.
- */
-export function executableChatSelectionForOwnerRoute(
-  decision: Pick<SharedRunOwnerSourceDecision, "harness" | "modelId">,
-): CanonicalChatModelSelection {
-  return CanonicalChatModelSelectionSchema.parse({
-    instanceId: decision.harness === "codex" ? CODEX_SHARED_INSTANCE_ID : CLAUDE_CHAT_INSTANCE_ID,
-    model: decision.modelId,
-  });
-}
-
-export function canonicalChatSelectionForOwnerAuthority(
-  decision: SharedRunOwnerSourceDecision,
-  selection: CanonicalChatModelSelection | null,
-): CanonicalChatModelSelection | null {
-  return decision.authorityKind === "provider_settings_active"
-    ? executableChatSelectionForOwnerRoute(decision)
-    : selection === null
-      ? null
-      : CanonicalChatModelSelectionSchema.parse({ ...selection, model: decision.modelId });
-}
-
-/**
- * Standalone Chats retain their immutable shared-run binding, whose instance
- * ID identifies the isolated adapter rather than a provider-catalog entry.
- * Translate only the catalog lookup; the caller still returns and persists the
- * original binding selection.
- */
-export function catalogChatSelectionForOwnerAuthority(
-  decision: SharedRunOwnerSourceDecision,
-  selection: CanonicalChatModelSelection,
-): CanonicalChatModelSelection {
-  return decision.authorityKind === "standalone_policy"
-    ? executableChatSelectionForOwnerRoute(decision)
-    : selection;
 }
 
 export function sharedDispatchFenceMatches(

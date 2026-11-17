@@ -17,7 +17,8 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
-import { parseTerminalRefKey } from "../../lib/terminal-workspaces";
+import { LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
+import { putTerminalPasteFile } from "./terminal-paste-transport";
 import { getAttachManager } from "./terminal-runtime";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
@@ -33,7 +34,6 @@ import {
   bracketTerminalPaths,
   MAX_TERMINAL_PASTE_FILE_BYTES,
   readTerminalClipboardFiles,
-  safeTerminalUploadFilename,
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
@@ -155,6 +155,7 @@ export default function TerminalView({
   controlsHost,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
+  const pasteApi = sessionName.startsWith("local:") ? null : api;
   const terminalThemeId = useTerminalAppearance((state) => state.themeId);
   const terminalTheme = getDesktopTerminalXtermTheme(terminalThemeId);
   const latestTerminalThemeIdRef = useRef(terminalThemeId);
@@ -644,43 +645,26 @@ export default function TerminalView({
         }
         return;
       }
-      if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
+      const pasteLimit = sessionName.startsWith("local:") ? LOCAL_TERMINAL_PUT_MAX_BYTES : MAX_TERMINAL_PASTE_FILE_BYTES;
+      if (files.some(({ file }) => file.size > pasteLimit)) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          reportClipboardFailure(feedbackSequence, kind === "file" ? "Files are limited to 10 MB." : "Images are limited to 10 MB.");
+          reportClipboardFailure(feedbackSequence, `${kind === "file" ? "Files" : "Images"} are limited to ${pasteLimit / (1024 * 1024)} MB.`);
         }
         return;
       }
-      if (!api || !initiatingAttachment) {
+      if (!initiatingAttachment) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
           reportClipboardFailure(feedbackSequence, kind === "file" ? "File upload is unavailable. Reconnect and try again." : "Image paste is unavailable. Reconnect and try again.");
         }
         return;
       }
       try {
-        const terminalRef = parseTerminalRefKey(sessionName);
-        if (!terminalRef) throw new Error("invalid terminal reference");
-        const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
-          const response = await api.post<{ assets?: Array<{ terminalPath?: unknown }> }>(
-            `/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`,
-            { ...(kind === "file" ? { kind } : {}), assets: [{
-              name: safeTerminalUploadFilename(file.name),
-              mimeType,
-              dataBase64: await terminalPasteFileBase64(file),
-            }] },
-            { timeoutMs: 30_000 },
-          );
-          const terminalPath = response.assets?.[0]?.terminalPath;
-          if (
-            typeof terminalPath !== "string"
-            || !terminalPath.startsWith("/home/matrix/home/")
-            || /[\u0000\r\n]/.test(terminalPath)
-          ) {
-            throw new Error("invalid terminal paste response");
-          }
-          return terminalPath;
-        }));
+        const paths = await Promise.all(files.map(async ({ file, mimeType }) => putTerminalPasteFile({
+          sessionName, api: pasteApi, name: file.name, mimeType, size: file.size, kind,
+          dataBase64: await terminalPasteFileBase64(file),
+        })));
         if (paths.length === 0 || !isCurrentOperation(operation, initiatingAttachment)) return;
-        const payload = bracketTerminalPaths(paths);
+        const payload = bracketTerminalPaths(paths, sessionName.startsWith("local:") ? "local" : "cloud");
         if (payload === "\x1b[200~\x1b[201~") throw new Error("invalid terminal paste paths");
         initiatingAttachment.write(payload);
         reportClipboardSuccess(feedbackSequence);
@@ -804,7 +788,7 @@ export default function TerminalView({
       host.removeEventListener("dragover", onDrag, { capture: true });
       host.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
+  }, [active, pasteApi, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
     if (liveOwnership === "observer") {

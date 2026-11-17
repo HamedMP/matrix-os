@@ -29,6 +29,10 @@ manual git worktree flow for isolated PR publication.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
+- Approval is risk-tiered (`docs/dev/review-pipeline.md#risk-tiered-merge-approval`):
+  a `5/5` with Greptile's own approval (Low/Medium risk) can merge; a `5/5`
+  without it (High/Critical) needs a human approval. Report which applies;
+  never self-approve or use admin bypass, even when asked to merge.
 - For dependent PRs, always use GitHub native stacks and the official `gh stack`
   extension under `docs/dev/stacked-prs.md`. Publish with `gh stack submit` rather
   than the standalone push recipe below; link the shared ENG ticket and native
@@ -120,6 +124,7 @@ manual git worktree flow for isolated PR publication.
      - latest commit SHA
      - checks run and result
      - latest Greptile status, explicitly `5/5`
+     - approval: Greptile-approved, or needs human approval
      - ready-for-review status and CI result
      - skipped checks or residual risk
    - If blocked, reply with the exact blocker and the next action needed.

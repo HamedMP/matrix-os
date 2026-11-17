@@ -480,6 +480,14 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         cookie: "matrix_app_route=alice; matrix_app_session__calculator=session-cookie",
+        // An edge sending `Connection: close` must not make nginx drop the pooled upstream socket.
+        connection: "close, x-edge-hop",
+        "x-edge-hop": "edge-only",
+        "keep-alive": "timeout=5",
+        "proxy-connection": "close",
+        te: "trailers",
+        trailer: "x-checksum",
+        upgrade: "h2c",
       },
     });
 
@@ -489,6 +497,11 @@ describe("platform proxy routing", () => {
     const assetHeaders = assetInit?.headers as Headers;
     expect(assetHeaders.get("cookie")).toBe("matrix_app_session__calculator=session-cookie");
     expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    // The VPS pool keeps warm connections; `connection: close` would force a new TLS handshake per request.
+    expect(assetHeaders.get("connection")).toBeNull();
+    for (const hopHeader of ["x-edge-hop", "keep-alive", "proxy-connection", "te", "trailer", "upgrade"]) {
+      expect(assetHeaders.get(hopHeader)).toBeNull();
+    }
     expect(assetHeaders.get("x-platform-user-id")).toBeNull();
     expect(assetRes.headers.get("content-encoding")).toBeNull();
     expect(assetRes.headers.get("content-length")).toBeNull();

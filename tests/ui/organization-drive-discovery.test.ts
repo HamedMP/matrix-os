@@ -1,10 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadOrganizationDriveOptions } from "@matrix-os/ui";
+import { createCollaborationDirectApi } from "../../packages/ui/src/collaboration/direct-api.js";
+import { CLIENT_ORIGIN, PLATFORM, fakeDirectWorld, runtimeId, scopeId } from "../helpers/collaboration-direct-world.js";
 
 const SCOPE = "00000000-0000-4000-8000-000000000001";
 const ORGANIZATION = "org_example";
 
 describe("organization drive discovery", () => {
+  it("does not hydrate unrelated shared Chats during repeated drive refreshes", async () => {
+    const world = fakeDirectWorld();
+    world.home.offline = true;
+    world.platform.shared = [{ scopeId, runtimeId, ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted" }, { scopeId: SCOPE, runtimeId, ownerId: "user_owner", kind: "chat", authorityGeneration: 3,
+      status: "accepted", organizationId: "org_direct_1" }];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) =>
+      new URL(String(input)).pathname === "/api/organizations"
+        ? Response.json({ organizations: [] }) : world.fetchImpl(input, init));
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl,
+      clientOrigin: CLIENT_ORIGIN, now: world.now });
+    try {
+      for (let refresh = 0; refresh < 3; refresh++) {
+        expect(await loadOrganizationDriveOptions(api, {})).toEqual([]);
+        world.advance(30_000);
+      }
+      expect(fetchImpl.mock.calls.some(([url]) => new URL(String(url)).pathname === "/api/collaboration/connections")).toBe(false);
+      expect(world.home.requests).toEqual([]);
+      expect(fetchImpl).toHaveBeenCalledTimes(9);
+    } finally { api.direct.close(); }
+  });
+
   it("loads an accepted folder share and its drive snapshot", async () => {
     const get = vi.fn(async (path: string): Promise<unknown> => {
       if (path.startsWith("/api/collaboration/inbox")) return { items: [] };
@@ -24,7 +48,7 @@ describe("organization drive discovery", () => {
         usedBytes: 0, reservedBytes: 0, quotaBytes: 1_000_000_000_000, files: [] };
       throw new Error("Unexpected path");
     });
-    const options = await loadOrganizationDriveOptions({ get, direct: { request } } as never, {});
+    const options = await loadOrganizationDriveOptions({ get, getDiscovery: get, direct: { request } } as never, {});
     expect(options).toEqual([{ scopeId: SCOPE, organizationId: ORGANIZATION, name: "Authority",
       state: "ready", canManage: false, canUpload: false, snapshot: expect.objectContaining({ files: [] }), pages: 1 }]);
   });

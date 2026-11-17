@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
-    SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_PUBLISH_TIMEOUT_MS,
-    SITE_VIEWER_SESSION_TTL_MS, SiteAccessClaimSchema, SiteAccessLinkCreateRequestSchema,
-    SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
+    SITE_PUBLISH_TIMEOUT_MS,
+    SITE_VIEWER_SESSION_TTL_MS, SiteAccessClaimSchema,
+    SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
     SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
     SiteSlugAvailabilityQuerySchema, SiteSlugAvailabilitySchema, classifySiteSlug, siteSlugSuggestionCandidates,
@@ -50,6 +50,16 @@ function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now =
         claimedAt: row.claimed_at,
         sessionExpiresAt: row.session_expires_at,
     });
+}
+/**
+ * One-time links (spec 2690) are retired: existing links drain until their
+ * claim/session expiry, but no site may newly enter `private_link`. A write that
+ * repeats `private_link` for a site already in that mode keeps the current mode,
+ * so legacy sites stay editable from older clients during the drain.
+ */
+function assertNoNewPrivateLink(requested: SiteRecord['accessMode'] | undefined, current: SiteRecord['accessMode'] | undefined) {
+    if (requested === 'private_link' && current !== 'private_link')
+        throw new SiteError('gone');
 }
 async function claimAlias(db: PlatformDB, siteId: string, slug: string | null | undefined) {
     if (!slug)
@@ -109,6 +119,12 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
+        if (request.accessMode === 'private_link') {
+            // Cheap pre-check so a refused first publication reserves no inventory and
+            // uploads no bytes; the locked check below remains authoritative.
+            await db.ready;
+            assertNoNewPrivateLink(request.accessMode, (await ownership(db, owner).select('access_mode').executeTakeFirst())?.access_mode);
+        }
         const version = randomUUID();
         const uploaded: string[] = [];
         let activationCompleted = false;
@@ -122,7 +138,7 @@ export function createSitesService(options: {
             await assertCurrentPublishingRuntime(trx, owner);
             await trx.executor.insertInto('public_sites').values({ id: randomUUID(), owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
                 title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished',
-                access_mode: request.accessMode ?? 'public', active_version: null, created_at: new Date().toISOString(),
+                access_mode: 'public', active_version: null, created_at: new Date().toISOString(),
             }).onConflict(oc => oc.columns(['owner_id', 'machine_id', 'app_slug']).doNothing()).execute();
             check();
         }, env);
@@ -143,6 +159,7 @@ export function createSitesService(options: {
                 check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
                     throw new SiteError('conflict');
+                assertNoNewPrivateLink(request.accessMode, row.access_mode);
                 await claimAlias(trx, row.id, request.slug);
                 if (await trx.executor.selectFrom('public_site_versions').select('id').where('site_id', '=', row.id).limit(50).execute().then(v => v.length >= 50))
                     throw new SiteError('conflict');
@@ -221,6 +238,7 @@ export function createSitesService(options: {
         let previousAccessMode: SiteRecord['accessMode'] | undefined;
         const result = await mutate(owner, request.baseRevision, async (trx, row) => {
             previousAccessMode = row.access_mode;
+            assertNoNewPrivateLink(request.accessMode, row.access_mode);
             await claimAlias(trx, row.id, request.slug);
             if (request.accessMode === 'public' && row.access_mode === 'private_link')
                 await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
@@ -373,31 +391,13 @@ export function createSitesService(options: {
             nextCursor: rows.length > parsed.data.limit && last ? `${last.created_at}|${last.id}` : null,
         });
     }
-    async function createAccessLink(owner: SiteOwner, input: unknown) {
-        const parsed = SiteAccessLinkCreateRequestSchema.safeParse(input);
-        if (!parsed.success) throw new SiteError('invalid_request');
-        const result = await managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
-            await assertCurrentPublishingRuntime(trx, owner);
-            const site = await ownership(trx, owner).forUpdate().executeTakeFirst();
-            if (!site || site.status !== 'published' || site.access_mode !== 'private_link') throw new SiteError('not_found');
-            if (site.revision !== parsed.data.baseRevision) throw new SiteError('conflict');
-            const now = new Date();
-            const id = randomUUID();
-            const token = createSiteAccessSecret();
-            const row = {
-                id, site_id: site.id, claim_token_hash: hashSiteAccessSecret(token), session_token_hash: null,
-                created_at: now.toISOString(), claim_expires_at: new Date(now.getTime() + SITE_ACCESS_LINK_CLAIM_TTL_MS).toISOString(),
-                claimed_at: null, session_expires_at: null,
-            };
-            await trx.executor.insertInto('public_site_access_links').values(row).execute();
-            return SiteAccessLinkCreateResponseSchema.parse({
-                link: accessLinkSummary(row),
-                url: `https://matrix.page/${site.id}#access=${id}.${token}`,
-            });
-        }, env));
-        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CREATED,
-            { access_mode: 'private_link' }, owner.ownerId);
-        return result;
+    /**
+     * Retired (ENG-490): new one-time links can no longer be minted. The route and
+     * client surface stay so older gateways receive a clean, generic 410 instead of
+     * a crash; listing, revocation and claims of existing links keep working.
+     */
+    async function createAccessLink(_owner: SiteOwner, _input: unknown): Promise<never> {
+        throw new SiteError('gone');
     }
     async function revokeAccessLink(owner: SiteOwner, linkId: string) {
         const id = SiteIdSchema.safeParse(linkId);

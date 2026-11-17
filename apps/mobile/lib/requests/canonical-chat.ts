@@ -1,5 +1,6 @@
 import {
   chatMessageVersionUrl,
+  chatReadStateVersionUrl,
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -15,6 +16,7 @@ import {
   CanonicalCreateChatTurnRequestSchema,
   CanonicalProviderCatalogSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatReadStateRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
@@ -25,10 +27,11 @@ import {
   type CanonicalCreateChatTurnRequest,
   type CanonicalProviderCatalog,
   type CanonicalRetryChatTurnRequest,
+  type CanonicalUpdateChatReadStateRequest,
 } from "@matrix-os/contracts";
 
 import { gatewayRequestUrl } from "@/lib/requests/answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
 
 const CHATS_UNAVAILABLE_ERROR = "Chats unavailable. Try again.";
 const CHAT_CREATE_ERROR = "Could not start a new chat. Try again.";
@@ -37,6 +40,7 @@ const CHAT_TURN_ERROR = "Could not send message. Try again.";
 const CHAT_SEARCH_ERROR = "Search unavailable. Try again.";
 const RUN_CANCEL_ERROR = "Could not stop the run. Try again.";
 const TURN_RETRY_ERROR = "Could not retry. Try again.";
+const READ_STATE_ERROR = "Could not update the chat.";
 const PROVIDER_CATALOG_ERROR = "Models unavailable. Try again.";
 const CHAT_DETAIL_LIMIT = 200;
 // The most the list and search routes return for one request.
@@ -237,6 +241,36 @@ export function isChatUnread(record: CanonicalChatRecord): boolean {
   return record.readState?.unread ?? false;
 }
 
+/**
+ * Marks the chat read (through the given message) or unread, as Desktop does
+ * when a chat is open on screen. The server refuses a `mark_read` whose
+ * `baseVersion` is not the chat's current read version.
+ */
+export async function updateChatReadState(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  chatId: string,
+  request: CanonicalUpdateChatReadStateRequest,
+): Promise<CanonicalChatRecord> {
+  const chat = CanonicalChatIdSchema.safeParse(chatId);
+  const body = CanonicalUpdateChatReadStateRequestSchema.safeParse(request);
+  const url = chat.success && body.success
+    ? gatewayRequestUrl(computerGatewayUrl, `/api/chats/${encodeURIComponent(chat.data)}/read-state`, {
+      readStateVersion: READ_STATE_VERSION,
+    })
+    : null;
+  if (!url || !body.success) throw new Error(READ_STATE_ERROR);
+  return fetchAuthenticatedJson({
+    url,
+    token: clerkToken,
+    schema: CanonicalChatRecordSchema,
+    errorMessage: READ_STATE_ERROR,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body.data),
+  });
+}
+
 export async function createChat(
   clerkToken: string,
   computerGatewayUrl: string,
@@ -268,11 +302,13 @@ export function fetchChatDetail(
 ): Promise<CanonicalChatDetailResponse> {
   let url: string;
   try {
-    url = chatMessageVersionUrl(buildGatewayRequestUrl(
+    // Without readStateVersion the gateway leaves the read state out, and the
+    // chat screen could not mark the chat read.
+    url = chatReadStateVersionUrl(chatMessageVersionUrl(buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
       { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
-    ));
+    )));
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
@@ -283,6 +319,34 @@ export function fetchChatDetail(
     errorMessage: CHAT_DETAIL_ERROR,
     timeoutMs,
   });
+}
+
+/**
+ * Whether a chat is on the computer. Resolves false only when the computer
+ * answers that it has no such chat; any other failure rejects.
+ */
+export function chatExists(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  chatId: string,
+  timeoutMs?: number,
+): Promise<boolean> {
+  const parsedChatId = CanonicalChatIdSchema.safeParse(chatId);
+  if (!parsedChatId.success) return Promise.reject(new Error(CHAT_DETAIL_ERROR));
+  let url: string;
+  try {
+    url = chatMessageVersionUrl(buildGatewayRequestUrl(
+      computerGatewayUrl,
+      `/api/chats/${encodeURIComponent(parsedChatId.data)}`,
+      { limit: "1" },
+    ));
+  } catch (err: unknown) {
+    return Promise.reject(err instanceof Error ? err : new Error(CHAT_DETAIL_ERROR));
+  }
+  return fetchAuthenticatedResponse(
+    { url, token: clerkToken, errorMessage: CHAT_DETAIL_ERROR, timeoutMs, expectedStatuses: [404] },
+    async (response) => response.status !== 404,
+  );
 }
 
 export async function admitChatTurn(

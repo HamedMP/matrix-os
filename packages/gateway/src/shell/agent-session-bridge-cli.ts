@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { AgentKindSchema, AgentSessionStateStore, type AgentKind } from "./agent-session-state.js";
 import { normalizeAgentBridgeEvents } from "./agent-session-bridges.js";
+import { agentStatusForHookEvent, writeTerminalPaneStatus } from "@matrix-os/terminal-runtime";
 
 const MAX_BRIDGE_STDIN_BYTES = 65_536;
 const BRIDGE_LOCK_RETRIES = 50;
@@ -16,13 +17,22 @@ export interface IngestAgentBridgePayloadOptions {
   occurredAt: string;
   payload: Record<string, unknown>;
   store: AgentSessionStateStore;
+  /** Zellij pane number of the hooked agent (`ZELLIJ_PANE_ID`), for per-tab status. */
+  paneId?: string;
+  homePath?: string;
 }
 
 export async function ingestAgentBridgePayload(options: IngestAgentBridgePayloadOptions): Promise<void> {
-  const { store, ...bridgeInput } = options;
+  const { store, paneId, homePath, ...bridgeInput } = options;
   const events = normalizeAgentBridgeEvents(bridgeInput);
   for (const event of events) {
     await store.apply(event);
+  }
+  // Canonical workspaces hold many tabs in one zellij session, so the
+  // session-keyed store above cannot say which tab is working; the pane can.
+  const status = events.map((event) => agentStatusForHookEvent(event.type)).filter((word) => word !== undefined).at(-1);
+  if (status && paneId && homePath && /^[0-9]{1,9}$/.test(paneId) && /^matrix-(?:w-|rt_)[0-9a-f]{32}$/.test(options.sessionName)) {
+    await writeTerminalPaneStatus({ homePath, sessionName: options.sessionName, paneId, status, source: "hook" });
   }
 }
 
@@ -99,6 +109,7 @@ async function main(): Promise<void> {
       occurredAt: new Date().toISOString(),
       payload,
       store,
+      ...(process.env.ZELLIJ_PANE_ID ? { paneId: process.env.ZELLIJ_PANE_ID, homePath } : {}),
     }));
   } catch (err: unknown) {
     void err;

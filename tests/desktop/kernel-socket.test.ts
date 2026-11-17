@@ -400,4 +400,36 @@ describe("KernelSocket: dispose", () => {
     h.socket.connect();
     expect(h.sockets).toHaveLength(1);
   });
+
+  // Closing a CONNECTING browser WebSocket logs "WebSocket is closed before the
+  // connection is established" on every runtime switch and effect remount.
+  it("defers closing a still-connecting socket until it opens", () => {
+    const h = createHarness();
+    const states: KernelConnectionState[] = [];
+    h.socket.onStateChange((s) => states.push(s));
+    h.socket.connect();
+    const ws = h.last();
+    const close = vi.spyOn(ws, "close");
+    h.socket.dispose();
+    expect(close).not.toHaveBeenCalled();
+    ws.open();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toEqual([]);
+    expect(h.timers.pending()).toHaveLength(0);
+    expect(states.at(-1)).toBe("offline");
+  });
+
+  it("does not close a still-connecting socket that fails on its own", () => {
+    const h = createHarness();
+    h.socket.connect();
+    const ws = h.last();
+    h.socket.dispose();
+    const close = vi.spyOn(ws, "close");
+    ws.readyState = 3;
+    ws.onerror?.();
+    ws.onclose?.();
+    expect(close).not.toHaveBeenCalled();
+    expect(h.timers.pending()).toHaveLength(0);
+    expect(h.sockets).toHaveLength(1);
+  });
 });

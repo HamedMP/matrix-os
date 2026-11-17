@@ -31,14 +31,19 @@ function json(body: unknown, status = 200): Response {
 describe("shell CLI command", () => {
   it("exports the project-scoped shell namespace", () => {
     expect(shellCommand.meta).toMatchObject({ name: "shell" });
-    expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual(["connect", "list", "ls", "new", "rm"]);
+    expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
+      "connect", "get", "interrupt", "keys", "label", "list", "ls", "new", "read", "report", "rm", "run", "send",
+      "templates", "wait", "wait-children",
+    ]);
   });
 
   it("prints current usage for the bare shell command", async () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
     await shellCommand.run?.({ args: {}, rawArgs: [] } as never);
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm [--project <project>] [--tab <tab>]"]);
+    expect(logs).toEqual([
+      "Usage: matrix shell list|new|connect|rm|run|get|read|send|keys|interrupt|wait|wait-children|label|report|templates [--project <project>] [--tab <tab>]",
+    ]);
   });
 
   it("fails before fetch when profile auth is missing", async () => {

@@ -477,7 +477,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Merge stacks through GitHub's atomic stack operation:**
   `gh stack merge <stack-number> --yes --squash`. Verify the stack targets `main`,
   its bottom-to-top membership and exact head SHAs, and current-head Greptile
-  `5/5` (or a carried-over `5/5`, see below), zero unresolved review blockers, ready for review (not a draft), and passing CI for every
+  `5/5` (or a carried-over `5/5`, see below), the risk-tiered approval below, zero unresolved review blockers, ready for review (not a draft), and passing CI for every
   included PR. Native stack merge lands the included layers into the stack base
   together; child PR bases correctly remain their preceding layer.
 - **Use `gh pr merge` only for a standalone PR targeting `main`.** Verify
@@ -501,6 +501,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
 - **Keep native PR stacks bounded** -- plan for about 5-6 PRs per stack; 10 is the hard maximum, including setup, docs, and rollout layers. Count before planning or adding layers. Consolidate closely related work within per-PR size limits or use sequential follow-on stacks after the previous stack merges. See `docs/dev/stacked-prs.md`.
 - **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
+- **Merge approval is risk-tiered.** A trusted `5/5` (current head or accepted by the carry-over check) with Greptile's own `APPROVED` review on that same reviewed commit (Low/Medium risk) satisfies the required approval; restacks keep it without a fresh review. A `5/5` without Greptile's approval is High/Critical risk: report "needs human approval" and wait for a repository writer to approve. Agents never self-approve, never use admin bypass to skip approval, and never treat a merge request as approval of a High/Critical PR. Risk definitions and settings: `docs/dev/review-pipeline.md#risk-tiered-merge-approval`.
 - **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
 
@@ -545,6 +546,7 @@ Read these on demand, not every session:
 - `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/agent-plugins.md` -- shared developer agent plugins (pstack) for Claude Code and Codex
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues

@@ -1,6 +1,7 @@
-// A minimal client for the bundled herdr-core over its private Unix socket.
-// Only the Electron main process uses it. The first exchange is the version
-// handshake; nothing else is spoken to a core of another version (spec 651).
+// A minimal herdr-core client. Only the Electron main process uses it: over
+// the bundled core's private Unix socket, and over the byte stream of
+// `herdr-core connect` on a Matrix computer (spec 651 J6). The first exchange
+// is the handshake; nothing else is spoken to a core that is not accepted.
 import { z } from "zod/v4";
 import { encodeCredit, encodeFrame, encodeResize, HC_FRAME, HcFrameDecoder } from "./hc-protocol";
 
@@ -14,7 +15,15 @@ const HelloSchema = z.object({
   generation: z.number().int(),
   framed: z.literal(true),
   features: z.array(z.string().max(64)).max(64),
+  methods: z.array(z.string().max(64)).max(256).optional(),
 });
+/** What a core says about itself in the handshake. */
+export interface HcHello { version: string; generation: number; features: string[]; methods: string[] }
+/**
+ * Which core is accepted: the app's own core by its exact version, a core the
+ * app did not start by a rule. Protocol generation 1 is required either way.
+ */
+export type HcAcceptance = { expectedVersion: string } | { accepts(hello: HcHello): boolean };
 const ReplySchema = z.object({
   id: z.number().int().optional(),
   result: z.unknown().optional(),
@@ -74,11 +83,16 @@ export interface HcConnection {
   close(): void;
 }
 
-export function connectHc(options: {
-  open(): HcSocket;
-  expectedVersion: string;
-  timeoutMs?: number;
-}): Promise<HcConnection> {
+/** What the other end sends is untrusted: unreadable JSON is a protocol error. */
+function parseJson(bytes: Buffer): unknown {
+  try { return JSON.parse(bytes.toString("utf8")); }
+  catch (error: unknown) {
+    if (error instanceof SyntaxError) throw new HcProtocolError();
+    throw error;
+  }
+}
+
+export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & HcAcceptance): Promise<HcConnection> {
   const timeoutMs = options.timeoutMs ?? CALL_TIMEOUT_MS;
   return new Promise<HcConnection>((resolve, reject) => {
     const socket = options.open();
@@ -157,14 +171,16 @@ export function connectHc(options: {
           },
         };
       },
-      onDisconnect: (listener) => { disconnectListeners.push(listener); },
+      // A connection can end in the same read as its handshake, before anyone
+      // listens: a late listener is told at once, so no caller keeps a dead one.
+      onDisconnect: (listener) => { if (closed) listener(); else disconnectListeners.push(listener); },
       close: () => teardown(new Error("local terminal runtime closed")),
     };
 
     const onFrame = (channel: number, kind: number, payload: Buffer) => {
       if (channel === 0) {
         if (kind !== HC_FRAME.DATA) return;
-        const reply = ReplySchema.safeParse(JSON.parse(payload.toString("utf8")));
+        const reply = ReplySchema.safeParse(parseJson(payload));
         if (!reply.success || reply.data.id === undefined) return;
         const waiting = pending.get(reply.data.id);
         if (!waiting) {
@@ -213,14 +229,16 @@ export function connectHc(options: {
             if (hello.length > MAX_HELLO_BYTES) throw new Error("handshake too large");
             return;
           }
-          const reply = ReplySchema.safeParse(JSON.parse(hello.subarray(0, newline).toString("utf8")));
+          const reply = ReplySchema.safeParse(parseJson(hello.subarray(0, newline)));
           const parsed = reply.success ? HelloSchema.safeParse(reply.data.result) : null;
           // Whatever answered is not a core this client can talk to; that is
           // different from a healthy core of another version.
           if (!parsed?.success) throw new HcProtocolError();
-          if (parsed.data.generation !== 1 || parsed.data.version !== options.expectedVersion) {
-            throw new HcVersionMismatchError(parsed.data.version);
-          }
+          const { version: found, generation, features, methods = [] } = parsed.data;
+          const accepted = "accepts" in options
+            ? options.accepts({ version: found, generation, features, methods })
+            : found === options.expectedVersion;
+          if (generation !== 1 || !accepted) throw new HcVersionMismatchError(found);
           framed = true;
           clearTimeout(handshakeTimer);
           version = parsed.data.version;

@@ -180,6 +180,35 @@ describe("project screen", () => {
     expect(flat(within(row).getByText("2h"))).toMatchObject({ fontSize: 12, lineHeight: 17, color: "#8A8686" });
   });
 
+  it("shows a chat's status in place of its last message, with its dot right of the time, as on Desktop", () => {
+    renderScreen({ chats: { rows: [
+      { id: "chat_ask", title: "Release notes", preview: "Run echo hello?", time: "2m",
+        status: { state: "approval_required", label: "Approval required", tone: "waiting" } },
+      { id: "chat_run", title: "Landing page copy", preview: "Reading files", time: "now",
+        status: { state: "running", label: "Working…", tone: "active" } },
+      { id: "chat_idle", title: "Case study", preview: "Draft ready to review", time: "2h" },
+    ] } });
+
+    const asking = screen.getByTestId("project-chat-chat_ask");
+    expect(within(asking).getAllByText(/./).map((node) => node.props.children)).toEqual([
+      "Release notes", "Approval required", "2m",
+    ]);
+    // As on Desktop, the dot sits right of the time, not after the title.
+    const askingMeta = screen.getByTestId("project-chat-chat_ask-meta");
+    expect(within(askingMeta).getAllByText(/./).map((node) => node.props.children)).toEqual(["2m"]);
+    const askingDot = within(askingMeta).getByTestId("project-chat-status-dot");
+    expect(flat(askingDot)).toMatchObject({ width: 8, height: 8, backgroundColor: "#E0AA52" });
+    expect(within(screen.getByTestId("project-chat-chat_ask-title-line")).queryByTestId("project-chat-status-dot")).toBeNull();
+    expect(asking.props.accessibilityLabel).toBe("Release notes, Approval required, Run echo hello?, 2m");
+
+    const working = screen.getByTestId("project-chat-chat_run");
+    expect(within(working).getByText("Working…")).toBeTruthy();
+    expect(flat(within(working).getByTestId("project-chat-status-dot")).backgroundColor).toBe("#288A5B");
+
+    expect(within(screen.getByTestId("project-chat-chat_idle")).queryByTestId("project-chat-status-dot")).toBeNull();
+    expect(screen.getAllByTestId("project-chat-status-dot")).toHaveLength(2);
+  });
+
   it("shows only the title of a chat with no last message and no time", () => {
     renderScreen();
 
