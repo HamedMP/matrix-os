@@ -30,6 +30,8 @@ export interface ChatState {
   navigationFresh?:boolean;
   /** The global navigation window was cut off, so older Chats may be missing from it. */
   navigationTruncated?:boolean;
+  /** Changes on every Chat change except streamed run text. */
+  chatChangeRevision?:number;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;

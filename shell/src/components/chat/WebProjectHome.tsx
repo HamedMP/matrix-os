@@ -11,7 +11,7 @@ import type { WebProject } from "./web-projects";
 const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
 
 /** Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat. */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, botClient, onSelectChat, active = true }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, knownChatIds, botClient, onSelectChat, active = true }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -20,6 +20,10 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   conversations?: readonly RenameableConversation[];
   /** The shared navigation window was cut off, so this project's own history is read too. */
   historyIncomplete?: boolean;
+  /** Changes on every Chat change, so this project's history is read again. */
+  historyRefreshKey?: number;
+  /** Chats the shared list knows anywhere (or deleted here); their history copies are dropped. */
+  knownChatIds?: ReadonlySet<string>;
   /** Classifies history-only Chats so Bot Chats stay out of the project list. */
   botClient?: ChatAgentClient;
   onSelectChat?: (chatId: string) => void;
@@ -27,8 +31,9 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
 }) {
   const nowMs = useMinuteClock(active);
   const listed = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
-  const history = useWebProjectHistory({ project, gatewayUrl, listed, enabled: historyIncomplete && active, botClient });
-  const status = history.records.length > 0 ? "ready" : history.error ? "error" : history.loading ? "loading" : "ready";
+  const history = useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds, refreshKey: historyRefreshKey, enabled: historyIncomplete && active, botClient });
+  // An error wins so the list keeps its rows but still offers Try again.
+  const status = history.error ? "error" : history.records.length > 0 ? "ready" : history.loading ? "loading" : "ready";
   return (
     <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-slot="chat-project-home">
       <div className="mx-auto w-full max-w-[808px] px-6 pb-4 pt-5">

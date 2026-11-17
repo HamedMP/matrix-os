@@ -189,6 +189,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     eventSource.connectionState(),
   );
   const [botEventRevision, setBotEventRevision] = useState(0);
+  // Bumps on every Chat change except streamed run text, so scoped reads can refresh.
+  const [chatChangeRevision, setChatChangeRevision] = useState(0);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -327,6 +329,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ));
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
+      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
+        setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
+      }
       admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
@@ -962,6 +967,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
     navigationTruncated:navigation.truncated,
+    chatChangeRevision,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,

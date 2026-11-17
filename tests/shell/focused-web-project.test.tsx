@@ -407,3 +407,58 @@ it("does not read project history while the shared Chat list is complete", () =>
     vi.unstubAllGlobals();
   }
 });
+
+function historyRecord(id: string, title: string) {
+  return {
+    chat: { id, ownerScope: { type: "personal", ownerId: "owner" }, title, lifecycle: "active", attention: "none", revision: 1, messageCount: 2,
+      createdAt: "2026-01-10T10:00:00.000Z", updatedAt: "2026-01-10T10:00:00.000Z" },
+    projectId: "proj_france",
+  };
+}
+const historyBotClient = () => ({ list: vi.fn(async () => ({ enabled: true, agents: [] })),
+  bots: { directBot: vi.fn(async () => null), tasks: vi.fn(async () => []), interactions: vi.fn(async () => []) } }) as never;
+const france = { id: "proj_france", slug: "france", name: "France" };
+
+it("drops a cached history Chat once the shared list places it elsewhere or it is deleted", async () => {
+  let items = [historyRecord("chat_old", "Old itinerary"), historyRecord("chat_gone", "Gone chat")];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    const body = url.searchParams.get("projectId") === "proj_france" ? { items } : { items: [] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }));
+  const botClient = historyBotClient();
+  try {
+    const view = render(<WebProjectHome project={france} gatewayUrl="https://example.test" identity="owner"
+      conversations={[]} historyIncomplete historyRefreshKey={0} botClient={botClient} onSelectChat={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Open Old itinerary, Done" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Gone chat, Done" })).toBeTruthy();
+
+    // Another window moved chat_old to another Project: the shared list now knows it elsewhere.
+    view.rerender(<WebProjectHome project={france} gatewayUrl="https://example.test" identity="owner"
+      conversations={[]} historyIncomplete historyRefreshKey={0} knownChatIds={new Set(["chat_old"])} botClient={botClient} onSelectChat={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Old itinerary, Done" })).toBeNull());
+
+    // chat_gone was deleted elsewhere; the next chat change refreshes the Project's history.
+    items = [];
+    view.rerender(<WebProjectHome project={france} gatewayUrl="https://example.test" identity="owner"
+      conversations={[]} historyIncomplete historyRefreshKey={1} knownChatIds={new Set(["chat_old"])} botClient={botClient} onSelectChat={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Gone chat, Done" })).toBeNull());
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("shows a history error and Try again alongside the Chats it already has", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+  const listed: RenameableConversation[] = [{ id: "chat_a", title: "Plan the trip", preview: "Plan the trip", messageCount: 1, updatedAt: 0,
+    canonicalRecord: historyRecord("chat_a", "Plan the trip") as never }];
+  try {
+    render(<WebProjectHome project={france} gatewayUrl="https://example.test" identity="owner"
+      conversations={listed} historyIncomplete botClient={historyBotClient()} onSelectChat={vi.fn()} />);
+    expect(await screen.findByText("Project chats could not be refreshed.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Plan the trip, Done" })).toBeTruthy();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

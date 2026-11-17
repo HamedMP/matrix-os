@@ -186,6 +186,7 @@ interface ChatAppProps {
   routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   navigationFresh?:boolean;
   navigationTruncated?:boolean;
+  chatChangeRevision?:number;
   navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
@@ -239,7 +240,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject, navigationTruncated,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject, navigationTruncated, chatChangeRevision,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -759,7 +760,7 @@ function ChatAppContent({
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
-              conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} botClient={summaryClient}
+              conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} knownChatIds={listedChatIds} botClient={summaryClient}
               onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
           /></>
         ) : (
