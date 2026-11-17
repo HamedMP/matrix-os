@@ -7,6 +7,7 @@ import {
 import { Agent } from "undici";
 import { createClaudeOwnerIdentityResolver, type ResolveClaudeOwnerIdentity } from "./claude-owner-identity.js";
 import { z } from "zod/v4";
+import { isCompleteCodexResponseStream } from "./codex-response-stream.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
   buildKernelCredentialLaunch,
@@ -370,30 +371,37 @@ export function createScopeRuntimeBroker(options: {
         if (identity.url === "https://chatgpt.com/backend-api/codex/responses") {
           headers.set("originator", "codex_cli_rs");
         }
-        return fetchImpl(identity.url, {
+        const response = await fetchImpl(identity.url, {
           method: "POST",
           headers,
           body: request.body,
           redirect: "error",
           signal,
         });
+        return { response, url: identity.url };
       };
-      let response = await send();
-      if (response.status === 401) {
-        await discard(response);
-        response = await send(true);
+      let upstream = await send();
+      if (upstream.response.status === 401) {
+        await discard(upstream.response);
+        upstream = await send(true);
       }
+      const response = upstream.response;
       if (!response.ok) {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }
       const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
+      const headers = !response.headers.has("content-type")
+        && upstream.url === "https://chatgpt.com/backend-api/codex/responses"
+        && isCompleteCodexResponseStream(body)
+        ? { "content-type": "text/event-stream" }
+        : safeResponseHeaders(response, "inference");
       return ScopeRuntimeBrokerResponseSchema.parse({
         version: 1,
         requestId: request.requestId,
         ok: true,
         status: response.status,
-        headers: safeResponseHeaders(response, "inference"),
+        headers,
         body,
       });
     }

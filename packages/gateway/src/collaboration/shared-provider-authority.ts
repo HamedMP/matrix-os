@@ -39,7 +39,16 @@ export function createSharedProviderAuthorityResolver(options: {
     selection: CanonicalChatModelSelection | null,
     boundDriverKind: CanonicalProviderDriverKind | null,
   ): Promise<CanonicalSharedProviderAuthority | null> => {
-    const decision = await options.ownerSource.authority({ scopeId, ownerId });
+    // Both observations are independent for a persisted native binding. Do not
+    // spend two sequential discovery budgets before the relay can accept a turn.
+    const prefetchedSelection = selection && (boundDriverKind === "codex" || boundDriverKind === "claude_code")
+      ? selection : null;
+    const [decision, prefetchedCatalog] = await Promise.all([
+      options.ownerSource.authority({ scopeId, ownerId }),
+      prefetchedSelection && options.providerCatalog
+        ? options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" }, prefetchedSelection)
+        : Promise.resolve(null),
+    ]);
     if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
       if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
       if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
@@ -53,7 +62,10 @@ export function createSharedProviderAuthorityResolver(options: {
     if (!currentSelection) return null;
     if (!options.providerCatalog) return null;
     const catalogSelection = catalogChatSelectionForOwnerAuthority(decision, currentSelection);
-    const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" }, catalogSelection);
+    const catalog = prefetchedCatalog && prefetchedSelection?.instanceId === catalogSelection.instanceId
+      && prefetchedSelection.model === catalogSelection.model
+      ? prefetchedCatalog
+      : await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" }, catalogSelection);
     const validated = validateChatProviderSelection({
       catalog,
       selection: catalogSelection,

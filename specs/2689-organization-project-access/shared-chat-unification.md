@@ -29,6 +29,14 @@ queue. Shared/private views reuse the existing composer and message primitives.
   it inaccessible to the different-UID supervisor with no DAC capabilities.
   Apply the bot worker's existing socket publication contract inside the host's
   private runtime directory; retain single-use and runtime/generation checks.
+- A fresh peer send can exceed the relay budget while independent owner-route
+  and native catalog observations run sequentially. Observe a persisted native
+  selection concurrently, and re-observe if fresh authority selects another model.
+- Live Codex inference returns a complete successful Responses SSE body without
+  a Content-Type header. The broker rejects it after reading the answer. Only
+  for the pinned ChatGPT endpoint, validate bounded SSE frames and a terminal
+  Responses event before supplying the canonical internal SSE header. Explicit
+  wrong types, plain JSON/HTML, malformed or incomplete streams remain denied.
 
 ## Implementation boundaries
 

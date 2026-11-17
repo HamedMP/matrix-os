@@ -70,6 +70,31 @@ function fixture(driver: "codex" | "claude_code", probeMs = 0) {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("existing project Chat availability through the relay", () => {
+  it("observes the bound native catalog while the independent owner route is still resolving", async () => {
+    const f = fixture("codex");
+    const decision = await f.authority();
+    let release!: () => void;
+    f.authority.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(decision); }));
+    const operation = f.options.resolveCanonicalProviderAuthority!(context.scopeId, context.ownerId, f.selection, "codex");
+    try {
+      await Promise.resolve();
+      expect(f.getCatalog).toHaveBeenCalledWith({ userId: context.ownerId, source: "jwt" }, f.selection);
+    } finally {
+      release();
+      await operation;
+    }
+  });
+
+  it("re-observes the exact catalog when fresh owner authority changes the model", async () => {
+    const f = fixture("codex");
+    const decision = await f.authority();
+    f.authority.mockResolvedValue({ ...decision, modelId: "gpt-6-astra", allowedModelIds: ["gpt-6-astra"] });
+    await expect(f.options.resolveCanonicalProviderAuthority!(context.scopeId, context.ownerId, f.selection, "codex"))
+      .resolves.toBeNull();
+    expect(f.getCatalog).toHaveBeenNthCalledWith(2, { userId: context.ownerId, source: "jwt" },
+      { instanceId: "codex_default", model: "gpt-6-astra" });
+  });
+
   it("allows composing before the owner's first model binding, which is resolved on submit", async () => {
     const f = fixture("claude_code");
     f.options.repository.getSharedAiCapability = async () => ({ status: "owner_binding_required" });
