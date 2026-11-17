@@ -66,7 +66,7 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 
 `public._site_visitor_writes(id bigint identity PK, site_id uuid, app_slug text, table_name text, row_id text, op text, before jsonb, after jsonb, visitor_hash text, created_at timestamptz)` in owner Postgres, index `(site_id, created_at, id)`.
 
-- Every visitor `insert`, `update`, `delete`, bulk row, successful `compareAndSwap` and `kvWrite` appends one entry per affected row **inside the same transaction** as the write. Updates and deletes lock the row with `SELECT … FOR UPDATE` to read `before`; writes use `RETURNING *` for `after`. KV entries use `table_name = '_kv'` and the key as `row_id`. If the log insert fails, the write rolls back.
+- Every visitor `insert`, `update`, `delete`, bulk row, successful `compareAndSwap` and `kvWrite` appends one entry per affected row **inside the same transaction** as the write. Updates and deletes lock the row with `SELECT … FOR UPDATE` to read `before`; writes use `RETURNING *` for `after`. KV entries use `table_name = '_kv'` and the key as `row_id`. If the log insert fails, the write rolls back and the visitor gets `Shared data is unavailable`.
 - `visitor_hash = HMAC-SHA256(key derived from the platform secret, siteId ‖ source IP)`, computed on the platform. Raw IPs never reach the owner VPS and the hash cannot be joined across sites.
 - A snapshot over 64 KiB serialized is stored as `{"omitted":"too_large"}`.
 - **Retention**: each write transaction deletes up to 100 of the site's entries older than 30 days and up to 100 entries beyond the site's newest 10,000. No route exposes the log in v1; it is part of the owner's database export and erasure.
@@ -138,7 +138,7 @@ Follow-up outside this stack (same ticket): a `FinnaAI/matrix-os-site` PR under 
 
 ## Integration test checkpoint
 
-- Full path (layer 3): the real Worker handler → platform public routes → HMAC capability → gateway route → owner Postgres (PGlite) with a registered app. A visitor insert lands in the app table with one write-log entry; a forced write-log failure rolls the row back and returns `Invalid change`; another app's table stays unreachable.
+- Full path (layer 3): the real Worker handler → platform public routes → HMAC capability → gateway route → owner Postgres (PGlite) with a registered app. A visitor insert lands in the app table with one write-log entry; a forced write-log failure rolls the row back and returns `Shared data is unavailable`; another app's table stays unreachable.
 - Bridge (layer 4): the rendered frame bridge and parent relay exercised in JSDOM against the same request contract.
 - Runtime: on a disposable test VPS, publish a data-backed app to Public, then add, edit and delete a row from a signed-out browser and see it in the owner's open app (requester-captured evidence).
 
