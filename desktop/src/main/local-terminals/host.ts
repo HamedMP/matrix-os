@@ -12,11 +12,12 @@ import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import { createAttachmentSlots, createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
 } from "./hc-events";
+import { prepareChatTerminalProbe } from "./chat-terminal-probe";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -184,7 +185,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     return connecting;
   }
 
-  const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  const slots = options.slots ?? createAttachmentSlots();
+  const sessions = createHcSessions({ ensure, slots, now }, sink);
   const machineSsh = createMachineSshStore(options.dataDir);
   // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
   let watchEpoch = 0;
@@ -362,6 +364,11 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       const core = await ensure();
       await core.call("terminal.rm", { terminal: id });
     },
+
+    // Main-process only. Do not expose this method as renderer terminal IPC.
+    prepareChatTerminalProbe: () => prepareChatTerminalProbe({
+      cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
+    }),
 
     kill: sessions.kill,
     rename: sessions.rename,

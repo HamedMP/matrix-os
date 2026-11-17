@@ -156,6 +156,49 @@ describe("CanonicalChatWorkspace", () => {
     expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
   });
 
+  it.each(["original", "altered"] as const)("checks the %s Mac terminal draft against its approved worktree", async (draftKind) => {
+    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
+    const targetId = "32f5b7fd-1d7d-4672-9636-f0033c5e1a68";
+    const ipc = vi.fn(async (channel: string, _args: unknown) => {
+      if (channel === "chat:mac-terminal-available") return { available: true };
+      if (channel === "chat:mac-terminal-prepare") return {
+        status: "ready", targetId, terminalId: "t7", expiresAt: Date.now() + 60_000,
+      };
+      return { ok: true };
+    });
+    window.operator = { ...window.operator, invoke: ipc };
+    const routeClient = client();
+    const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
+    const run = { ...snapshot.runs[0]!, executionRoot: worktree };
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: snapshot.activities,
+    });
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record, message: snapshot.messages[0]!, turn: snapshot.turns[0]!, run, admission: "accepted",
+    });
+
+    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
+      initialView="conversation" active catalog={providerCatalog} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request Mac terminal check" }));
+    const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+    const marker = "MATRIX_MAC_TERMINAL_V1 " + JSON.stringify({ targetId, action: "uname" });
+    await waitFor(() => expect(editor.textContent).toContain(marker));
+    expect(ipc).toHaveBeenCalledWith("chat:mac-terminal-prepare", { chatId: snapshot.chat.id, worktreeId: worktree.worktreeId });
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+    if (draftKind === "altered") {
+      await setSharedComposerText(editor, marker.replace(targetId, "530f8f66-bcb7-4549-ae29-aebb4543fd60"));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText(/The Mac terminal draft or approval changed/)).toBeTruthy();
+      expect(routeClient.admitTurn).not.toHaveBeenCalled();
+      return;
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
+      expect.objectContaining({ executionRoot: worktree }), { chatScope: "project" }));
+    expect(ipc.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run")).toBe(false);
+  });
+
   it("submits live approval actions from the canonical transcript", async () => {
     const approval = createCanonicalChatFixture("approval_required").snapshot;
     const approvalRecord = {
