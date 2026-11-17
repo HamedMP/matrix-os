@@ -120,17 +120,17 @@ suite("long Chat titles in the built Electron header", () => {
       const title = row.locator("span[title]");
       await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(1);
       const bounds = await row.evaluate(element => {
-        const text = element.querySelector("span[title]")!;
         const viewport = element.querySelector(".matrix-chat-title-viewport")!;
         const unread = element.querySelector('[aria-label^="Unread "]')!;
         const error = element.querySelector('[aria-label^="Agent failed"]')!;
         const actions = element.parentElement!.querySelector('button[title^="Unpin "]')!;
-        return { viewportRight: viewport.getBoundingClientRect().right,
-          unreadLeft: unread.getBoundingClientRect().left, errorLeft: error.getBoundingClientRect().left,
+        return { viewportLeft: viewport.getBoundingClientRect().left, viewportRight: viewport.getBoundingClientRect().right,
+          unreadLeft: unread.getBoundingClientRect().left, errorRight: error.getBoundingClientRect().right,
           clipping: getComputedStyle(viewport).overflowX, actionLeft: actions.getBoundingClientRect().left };
       });
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.unreadLeft);
-      expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.errorLeft);
+      // Figma places agent state before the title; unread and actions remain after it.
+      expect(bounds.errorRight).toBeLessThanOrEqual(bounds.viewportLeft);
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.actionLeft);
       expect(bounds.clipping).toBe("hidden");
       await page.getByRole("button", { name: `Unpin ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
