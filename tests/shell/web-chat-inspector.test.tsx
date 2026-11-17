@@ -261,11 +261,51 @@ it('keeps a newly created terminal when an older discovery response arrives late
 it('creates more terminals than the bounded mounted-tab window without stopping older sessions',async()=>{
  const api=terminalApi();vi.stubGlobal('fetch',api.request);
  const hook=renderHook(()=>useWebChatInspector(inspectorProps()));
- for(let i=0;i<14;i++)await act(async()=>{await hook.result.current.createTerminal();});
+ for(let i=0;i<14;i++){
+  await act(async()=>{await hook.result.current.createTerminal();});
+  for(const tab of hook.result.current.layout.tabs.filter(tab=>tab.kind==='terminal'))
+   expect(hook.result.current.sessions.some(session=>`terminal:${session.ref}`===tab.id)).toBe(true);
+ }
  expect(api.tabs).toHaveLength(14);
  expect(hook.result.current.layout.tabs.length).toBeLessThanOrEqual(12);
  expect(hook.result.current.sessions.length).toBeLessThanOrEqual(12);
  expect(api.request.mock.calls.some(([,init])=>init?.method==='DELETE')).toBe(false);
+});
+it.each([false,true])('keeps mounted terminals attachable beyond the discovery cap (saved=%s)',async saved=>{
+ const api=terminalApi();
+ const refs=Array.from({length:13},(_,index)=>{
+  const id=`tt_${(index+1).toString(16).padStart(32,'0')}`;
+  api.tabs.push({id,name:`Terminal ${index+1}`,cwd:'~/project',status:'running'});
+  return `${api.workspaceId}:${id}`;
+ });
+ const layoutKey=saved?'terminal-cap-layout':null;
+ if(layoutKey)localStorage.setItem(layoutKey,JSON.stringify({width:400,treeHeight:300,selected:`terminal:${refs[0]}`,
+  tabs:refs.slice(0,12).map(ref=>({id:`terminal:${ref}`,kind:'terminal',label:'Terminal'}))}));
+ vi.stubGlobal('fetch',api.request);
+ const hook=renderHook(()=>useWebChatInspector(inspectorProps({layoutKey,terminalSessionIds:refs})));
+ await waitFor(()=>expect(hook.result.current.registryReady).toBe(true));
+ for(const tab of hook.result.current.layout.tabs.filter(tab=>tab.kind==='terminal'))
+  expect(hook.result.current.sessions.some(session=>`terminal:${session.ref}`===tab.id&&session.attachable)).toBe(true);
+ expect(hook.result.current.sessions).toHaveLength(12);
+ act(()=>hook.result.current.closeTab(`terminal:${refs[0]}`));
+ expect(hook.result.current.closeTarget?.id).toBe(`terminal:${refs[0]}`);
+ expect(api.request.mock.calls.some(([,init])=>init?.method==='DELETE')).toBe(false);
+});
+it('retains the currently mounted terminals when delayed discovery finishes',async()=>{
+ const api=terminalApi();
+ const refs=Array.from({length:13},(_,index)=>{
+  const id=`tt_${(index+1).toString(16).padStart(32,'0')}`;
+  api.tabs.push({id,name:`Terminal ${index+1}`,cwd:'~/project',status:'running'});
+  return `${api.workspaceId}:${id}`;
+ });
+ let finish!: (response:Response)=>void;
+ vi.stubGlobal('fetch',vi.fn(()=>new Promise<Response>(resolve=>{finish=resolve;})));
+ const hook=renderHook(()=>useWebChatInspector(inspectorProps({terminalSessionIds:refs})));
+ act(()=>hook.result.current.openTab({id:`terminal:${refs[11]}`,kind:'terminal',label:'Terminal 12'}));
+ await act(async()=>finish(Response.json({workspaces:[{id:api.workspaceId,tabs:api.tabs}]})));
+ for(const tab of hook.result.current.layout.tabs.filter(tab=>tab.kind==='terminal'))
+  expect(hook.result.current.sessions.some(session=>`terminal:${session.ref}`===tab.id)).toBe(true);
+ expect(hook.result.current.sessions).toHaveLength(12);
 });
 it('keeps the file preview visible when a saved split exceeds the resized panel height',()=>{
  let resize!: ResizeObserverCallback;
