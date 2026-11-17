@@ -35,8 +35,11 @@ export async function recordSiteRecipientLifecycle(db: PlatformDB, input: unknow
                  OR (public_site_recipient_lifecycle.last_event_at = ${event.eventAt}
                      AND public_site_recipient_lifecycle.state = 'active' AND ${event.state} = 'inactive'))`))
                 .returning('state').executeTakeFirst();
-            if (!projected || projected.state === 'active') return;
-            const reason = projected.state === 'deleted' ? 'recipient_deleted' : 'recipient_inactive';
+            if (event.state === 'active' || (!projected && event.state === 'deleted')) return;
+            // A delayed inactive event must revoke older access even if a newer active
+            // event already won the projection. Preserve grants created after it.
+            const historicalInactive = !projected;
+            const reason = event.state === 'deleted' ? 'recipient_deleted' : 'recipient_inactive';
             let cursor = '';
             for (;;) {
                 const sites = await admitted.executor.selectFrom('public_site_viewer_grants')
@@ -49,6 +52,7 @@ export async function recordSiteRecipientLifecycle(db: PlatformDB, input: unknow
                     const grantRefs = await admitted.executor.selectFrom('public_site_viewer_grants')
                         .select(['id', 'invitation_id']).where('site_id', '=', siteId)
                         .where('clerk_user_id', '=', event.userId).where('revoked_at', 'is', null)
+                        .$if(historicalInactive, query => query.where('granted_at', '<=', event.eventAt))
                         .orderBy('invitation_id').execute();
                     for (const invitationId of [...new Set(grantRefs.map(grant => grant.invitation_id))]) {
                         await admitted.executor.selectFrom('public_site_email_invitations')
@@ -80,7 +84,7 @@ export async function recordSiteRecipientLifecycle(db: PlatformDB, input: unknow
                 if (sites.length < 100) break;
                 cursor = sites[sites.length - 1]!.site_id;
             }
-            if (projected.state === 'deleted') {
+            if (projected?.state === 'deleted') {
                 const pseudonym = `deleted:${recipientKey}`;
                 await admitted.executor.updateTable('public_site_viewer_grants')
                     .set({ clerk_user_id: pseudonym }).where('clerk_user_id', '=', event.userId).execute();

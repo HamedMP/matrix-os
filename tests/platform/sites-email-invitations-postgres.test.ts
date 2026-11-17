@@ -259,6 +259,37 @@ postgres('site email invitations across independent PostgreSQL connections', () 
       .where('site_id', '=', siteId).where('actor_reference', '=', identity.clerkUserId).execute()).toHaveLength(0);
   });
 
+  it('revokes old grants after a delayed inactive event without undoing reactivation or newer grants', async () => {
+    const oldSite = await seed('before-inactive@example.com');
+    const identity = { clerkUserId: 'user_reordered_lifecycle', clerkSessionId: 'sess_before_inactive',
+      verifiedEmails: ['before-inactive@example.com'] };
+    const old = await acceptSiteEmailInvitation({ db: dbA, siteId: oldSite.siteId, identity, secret });
+    const oldGrant = await dbB.executor.selectFrom('public_site_viewer_grants').select('granted_at')
+      .where('id', '=', old.grantId).executeTakeFirstOrThrow();
+    const inactiveAt = new Date(oldGrant.granted_at.getTime() + 1);
+    const activeAt = new Date(Math.max(Date.now(), inactiveAt.getTime() + 1));
+    await recordSiteRecipientLifecycle(dbB, { userId: identity.clerkUserId, state: 'active',
+      eventId: 'evt_reordered_active', eventAt: activeAt, secret });
+    const freshSite = await seed('after-active@example.com');
+    const fresh = await acceptSiteEmailInvitation({ db: dbA, siteId: freshSite.siteId,
+      identity: { ...identity, clerkSessionId: 'sess_after_active', verifiedEmails: ['after-active@example.com'] }, secret });
+    expect(await authorizeEmailViewerSession(dbB, oldSite.siteId, old.cookie, secret)).toBe(true);
+    for (let delivery = 0; delivery < 2; delivery++) {
+      await recordSiteRecipientLifecycle(dbB, { userId: identity.clerkUserId, state: 'inactive',
+        eventId: 'evt_reordered_inactive', eventAt: inactiveAt, secret });
+      expect(await authorizeEmailViewerSession(dbA, oldSite.siteId, old.cookie, secret)).toBe(false);
+      expect(await authorizeEmailViewerSession(dbA, freshSite.siteId, fresh.cookie, secret)).toBe(true);
+    }
+    expect(await dbA.executor.selectFrom('public_site_recipient_lifecycle').select(['state', 'last_event_id'])
+      .where('recipient_key', '=', siteRecipientKey(identity.clerkUserId, secret)).executeTakeFirstOrThrow())
+      .toMatchObject({ state: 'active', last_event_id: 'evt_reordered_active' });
+    expect(await dbA.executor.selectFrom('public_site_email_invitations').select('state')
+      .where('id', '=', oldSite.invitationId).executeTakeFirstOrThrow()).toMatchObject({ state: 'revoked' });
+    expect(await dbA.executor.selectFrom('public_site_access_audit_events').select('id')
+      .where('invitation_id', '=', oldSite.invitationId).where('event_type', '=', 'grant_revoked').execute())
+      .toHaveLength(1);
+  });
+
   it('serializes signed inactivation against acceptance across independent connections', async () => {
     const { siteId } = await seed('inactive-race@example.com');
     const identity = { clerkUserId: 'user_inactive_race', clerkSessionId: 'sess_inactive_race',
