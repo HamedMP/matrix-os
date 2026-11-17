@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatMessage } from "@matrix-os/contracts";
-import { createChatElectronPreviewTransport } from "@desktop/main/chat-electron-preview/transport";
 import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
+import {
+  createChatElectronPreviewTransport,
+  MacTerminalDeliveryRejectedError,
+} from "@desktop/main/chat-electron-preview/transport";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 
 const chatId = "chat_original";
@@ -336,6 +339,7 @@ describe("authenticated Chat Mac terminal probe transport", () => {
   const targetId = "d5739cf6-cb60-4b79-99a1-d95c23949a5c";
   const terminalMarker = 'MATRIX_MAC_TERMINAL_V1 {"targetId":"' + targetId + '","action":"uname"}';
   const ref = { chatId, runId };
+  const grant = { targetId, approvedAt: now - 120_000 };
 
   function terminalFixture() {
     const mock = mockTransport();
@@ -496,6 +500,39 @@ describe("authenticated Chat Mac terminal probe transport", () => {
       .rejects.toThrow("Mac terminal result receipt mismatch");
   });
 
+  it.each([
+    ["newer completed run", (detail: ReturnType<typeof fixture>) => {
+      detail.runs.push({ ...detail.runs[0]!, id: "run_newer", completedAt: new Date(now - 1).toISOString() });
+    }],
+    ["changed worktree", (detail: ReturnType<typeof fixture>) => {
+      detail.runs[0]!.executionRoot = { ...executionRoot, worktreeId: "wt_abcdef012346" };
+    }],
+  ] as const)("permanently rejects delivery after a %s", async (_name, change) => {
+    const { service, detail, fetchFn } = terminalFixture();
+    const request = (await service.readTerminalRequest(ref))!;
+    change(detail);
+
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" }))
+      .rejects.toBeInstanceOf(MacTerminalDeliveryRejectedError);
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("can deliver the same result once an active-only interruption settles", async () => {
+    const { service, detail, fetchFn } = terminalFixture();
+    const request = (await service.readTerminalRequest(ref))!;
+    const result = { terminalId: targetId, output: "Darwin" as const };
+    Object.assign(detail.record, { activeRun: { runId: "run_newer", turnId: "cturn_newer", status: "running" } });
+
+    const waiting = await service.returnTerminalResult(request, result).catch((error: unknown) => error);
+    expect(waiting).toBeInstanceOf(Error);
+    expect(waiting).not.toBeInstanceOf(MacTerminalDeliveryRejectedError);
+    expect(resultWrites(fetchFn)).toEqual([]);
+
+    Reflect.deleteProperty(detail.record, "activeRun");
+    await service.returnTerminalResult(request, result);
+    expect(resultWrites(fetchFn)).toHaveLength(1);
+  });
+
   it("rejects a mismatched worktree and a replaced session without returning a result", async () => {
     const { service, changeSession, fetchFn } = terminalFixture();
     await expect(service.readTerminalContext({ chatId, worktreeId: "wt_abcdef012346" })).resolves.toBeNull();
@@ -507,5 +544,120 @@ describe("authenticated Chat Mac terminal probe transport", () => {
     expect(service.isTerminalRequestCurrent(request)).toBe(false);
     await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" })).rejects.toThrow();
     expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("discovers the current request from the approved Chat without a renderer-supplied run ID", async () => {
+    const { service, fetchFn } = terminalFixture();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    fetchFn.mockClear();
+
+    const request = await service.readBackgroundTerminalRequest(context, grant, new AbortController().signal);
+    expect(request).toMatchObject({ ...context, ...ref, targetId, action: "uname" });
+    expect(service.isTerminalRequestCurrent(request!)).toBe(true);
+    expect(fetchFn.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/chats/" + chatId,
+      "/api/projects/matrix-os",
+      "/api/projects/matrix-os/worktrees",
+    ]);
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it.each(["another target", "another owner", "another Chat", "another worktree", "a run completed before approval"] as const)(
+    "ignores %s before reading any worktree inventory", async (mismatch) => {
+      const { service, detail, fetchFn } = terminalFixture();
+      const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+      if (mismatch === "another target") {
+        detail.messages[0]!.parts[0]!.text = terminalMarker.replace(targetId, "ea1aa370-5a08-4f21-9e05-69f8fc547c7e");
+      } else if (mismatch === "another owner") {
+        detail.record.chat.ownerScope.ownerId = "other";
+      } else if (mismatch === "another Chat") {
+        detail.record.chat.id = "chat_other";
+      } else if (mismatch === "another worktree") {
+        detail.runs[0]!.executionRoot = { ...executionRoot, worktreeId: "wt_abcdef012346" };
+      } else {
+        detail.runs[0]!.completedAt = new Date(grant.approvedAt - 1).toISOString();
+      }
+      fetchFn.mockClear();
+
+      await expect(service.readBackgroundTerminalRequest(context, grant, new AbortController().signal)).resolves.toBeNull();
+      expect(fetchFn.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(["/api/chats/" + chatId]);
+      expect(resultWrites(fetchFn)).toEqual([]);
+    },
+  );
+
+  it("rejects a copied context or changed account generation without polling", async () => {
+    const { service, changeSession, fetchFn } = terminalFixture();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    const signal = new AbortController().signal;
+    fetchFn.mockClear();
+
+    await expect(service.readBackgroundTerminalRequest({ ...context }, grant, signal)).resolves.toBeNull();
+    changeSession();
+    await expect(service.readBackgroundTerminalRequest(context, grant, signal)).resolves.toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("propagates a stop to an in-flight poll and ignores the late response", async () => {
+    const { service, detail, fetchFn } = terminalFixture();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    const controller = new AbortController();
+    fetchFn.mockClear();
+    fetchFn.mockImplementationOnce(async (_url, init) => {
+      expect(init?.signal?.aborted).toBe(false);
+      controller.abort();
+      expect(init?.signal?.aborted).toBe(true);
+      return Response.json(detail);
+    });
+
+    await expect(service.readBackgroundTerminalRequest(context, grant, controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not contact the Gateway when result delivery has already been stopped", async () => {
+    const { service, fetchFn } = terminalFixture();
+    const request = (await service.readTerminalRequest(ref))!;
+    fetchFn.mockClear();
+
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" }, AbortSignal.abort()))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("propagates a stop while posting the result", async () => {
+    const { service, fetchFn } = terminalFixture();
+    const request = (await service.readTerminalRequest(ref))!;
+    const controller = new AbortController();
+    const transportFetch = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") {
+        controller.abort();
+        expect(init.signal?.aborted).toBe(true);
+      }
+      return transportFetch(input, init);
+    });
+
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" }, controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(resultWrites(fetchFn)).toHaveLength(1);
+  });
+
+  it("recovers a background receipt after losing the response to an accepted result", async () => {
+    const { service, fetchFn, storeResult } = terminalFixture();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    const signal = new AbortController().signal;
+    const request = (await service.readBackgroundTerminalRequest(context, grant, signal))!;
+    const result = { terminalId: targetId, output: "Darwin" as const };
+    const transportFetch = fetchFn.getMockImplementation()!;
+    storeResult();
+    fetchFn.mockImplementation(async (input, init) => {
+      const reply = await transportFetch(input, init);
+      if (init?.method === "POST") throw new Error("connection dropped after admission");
+      return reply;
+    });
+
+    await expect(service.returnTerminalResult(request, result, signal)).rejects.toThrow("connection dropped");
+    await expect(service.returnTerminalResult(request, result, signal)).resolves.toBeUndefined();
+    expect(resultWrites(fetchFn)).toHaveLength(1);
   });
 });

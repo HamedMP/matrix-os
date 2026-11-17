@@ -40,12 +40,14 @@ function detail(): CanonicalChatDetailResponse {
 function bridge(
   prepare: () => Promise<unknown> = async () => ready(),
   run: () => Promise<unknown> = async () => ({ status: "returned" }),
+  backgroundStatus: () => Promise<unknown> = async () => ({ active: false }),
 ) {
   const invoke = vi.fn(async (channel: string, _args: unknown) => {
     switch (channel) {
       case "chat:mac-terminal-available": return { available: true };
       case "chat:mac-terminal-prepare": return prepare();
       case "chat:mac-terminal-run": return run();
+      case "chat:mac-terminal-background-status": return backgroundStatus();
       case "chat:mac-terminal-cancel": return { ok: true };
       default: throw new Error("Unexpected bridge request");
     }
@@ -87,6 +89,25 @@ describe("Mac terminal check", () => {
     }} />);
     await act(async () => { returnResult({ status: "returned" }); });
     expect(screen.getByText("Mac terminal result returned to this Chat.")).toBeTruthy();
+  });
+
+  it("reopens an active background grant and stages another draft without redispatching its saved run", async () => {
+    const expiresAt = Date.now() + 60_000;
+    let readStatus!: (status: unknown) => void;
+    const invoke = bridge(undefined, undefined, () => new Promise(resolve => { readStatus = resolve; }));
+    const onDraft = vi.fn(() => true);
+    render(<ChatMacTerminalProbe {...props} detail={detail()} onDraft={onDraft} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat:mac-terminal-background-status", {
+      chatId: chat.id, worktreeId: worktree.worktreeId,
+    }));
+    expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run")).toBe(false);
+    await act(async () => { readStatus({ active: true, expiresAt, targetId, remaining: 2, phase: "waiting" }); });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Draft another Mac check" }));
+    expect(onDraft).toHaveBeenCalledOnce();
+    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(marker), worktree, expiresAt, targetId);
+    expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run"
+      || channel === "chat:mac-terminal-background-start")).toBe(false);
   });
 
   it.each(["owner", "incomplete", "expired", "non-agent", "other-worktree"] as const)(

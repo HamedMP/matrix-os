@@ -738,14 +738,22 @@ if (!gotLock) {
       });
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
-      cancelChatMacTerminal = registerChatMacTerminal(ipcMain, {
+      const macTerminalChecksAllowed = process.platform === "darwin" && !app.isPackaged && !previewContext
+        && process.env.MATRIX_MAC_TERMINAL_CHECK === "1";
+      let macBackgroundChecksActive = false;
+      let showMacBackgroundStop: ((active: boolean) => void) | undefined;
+      const macTerminalChecks = registerChatMacTerminal(ipcMain, {
         auth,
         host: localTerminalHost,
-        allowed: process.platform === "darwin" && !app.isPackaged && !previewContext
-          && process.env.MATRIX_MAC_TERMINAL_CHECK === "1",
+        allowed: macTerminalChecksAllowed,
         window: () => mainWindow,
         isTrustedSender: (event) => senderRole(windowSenders, event) === "main",
+        onBackgroundActiveChange(active) {
+          macBackgroundChecksActive = active;
+          showMacBackgroundStop?.(active);
+        },
       });
+      cancelChatMacTerminal = macTerminalChecks.cancelAll;
       app.once("before-quit", () => { void cancelChatMacTerminal?.(); });
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
@@ -953,7 +961,12 @@ if (!gotLock) {
           void terminalWindowController.openOrFocus()
             .catch((error: unknown) => logMainError("failed to open Terminal window", error));
         },
+        ...(macTerminalChecksAllowed ? {
+          stopBackgroundMacChecks: () => { void macTerminalChecks.stopBackground(); },
+        } : {}),
       });
+      showMacBackgroundStop = terminalMenu.backgroundMacChecksActive;
+      showMacBackgroundStop(macBackgroundChecksActive);
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
