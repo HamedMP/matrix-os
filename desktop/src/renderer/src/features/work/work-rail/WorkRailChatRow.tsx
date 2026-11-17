@@ -93,7 +93,7 @@ export function WorkRailChatRow({
     { label: "Delete", danger: true, disabled: Boolean(record.activeRun), onSelect: onDelete },
   ];
   return (
-    <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} items={menuItems}>
+    <ChatContextMenu hint={record.activeRun ? "Stop the chat first to move, archive or delete it." : undefined} chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} items={menuItems}>
       <div
         data-chat-title-row
         data-navigation-fresh={fresh || undefined}
@@ -166,7 +166,7 @@ export function WorkRailChatRow({
               ? <PinOffIcon size={13} aria-hidden />
               : <PinIcon size={13} aria-hidden />}
           </button>
-          <WorkRailChatMenu title={record.chat.title} items={menuItems} open={menuOpen} onOpenChange={setMenuOpen} />
+          <WorkRailChatMenu hint={record.activeRun ? "Stop the chat first to move, archive or delete it." : undefined} title={record.chat.title} items={menuItems} open={menuOpen} onOpenChange={setMenuOpen} />
         </div> : null}
       </div>
     </ChatContextMenu>
