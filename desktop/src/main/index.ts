@@ -70,6 +70,7 @@ import {registerAiUsageIpc} from "./ipc/ai-usage";
 import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
+import { registerChatElectronPreview } from "./chat-electron-preview/register";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
@@ -379,6 +380,7 @@ if (!gotLock) {
       }) : null;
 
       let invalidateAppCapabilities: (() => void) | undefined;
+      let cancelChatElectronPreview: (() => void) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
         authRedirectUri: channelIdentity.authRedirectUri,
@@ -389,6 +391,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          cancelChatElectronPreview?.();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -703,6 +706,16 @@ if (!gotLock) {
         terminalUrl: terminalRendererUrl,
       };
       const authorizeSender = createSenderPolicy(windowSenders);
+      cancelChatElectronPreview = registerChatElectronPreview(ipcMain, {
+        allowed: process.platform === "darwin" && !app.isPackaged && !previewContext,
+        checkout: process.env.MATRIX_ELECTRON_PREVIEW_CHECKOUT,
+        userData,
+        electronPath: app.getPath("exe"),
+        auth,
+        window: () => mainWindow,
+        isTrustedSender: (event) => senderRole(windowSenders, event) === "main",
+      });
+      app.once("before-quit", cancelChatElectronPreview);
       const localRuntime = resolveLocalTerminalRuntime({
         isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
       });
@@ -765,6 +778,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          cancelChatElectronPreview?.();
           navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
