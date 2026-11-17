@@ -269,7 +269,7 @@ export async function startBots(options: {
     decideApproval:(tx,interaction,decision)=>(interaction.payload as {tool?:string}).tool==="routine.activate" ? routineApprovals.decide(tx,interaction,decision) : accessHandlers.decideApproval(tx,interaction,decision),
     ...(connections ? {startConnect:connections.startConnect} : {}),
   }});
-  const routineOriginRuntime = createRoutineOriginStartup({ db, transact, repository: options.repository, interactions,
+  const routineOriginRuntime = createRoutineOriginStartup({ db, transact, repository: options.repository, interactions, agents: options.agents,
     computerId: options.computerId ?? undefined, platform: options.routineActionPlatform, now: options.now });
   const authority = createBotAuthority({ resolveProcedure, transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
   // Started connection requests are completed from the inventory; passes never overlap and stop on close.

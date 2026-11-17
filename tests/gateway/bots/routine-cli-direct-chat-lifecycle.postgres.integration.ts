@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BOT_ROUTINE_ORIGIN_ACCEPT, CanonicalChatContentSchema } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { applyCanonicalChatContent } from "../../../packages/ui/src/canonical-chat-content.js";
@@ -41,7 +41,9 @@ async function setup() {
     source: { resolve: async () => ({ route, accessSourceId: "matrix_chatgpt_plan", subscription }) } });
   const interactions = createBotInteractionService({ transact, now: () => new Date(state.clock), handlers: { decideApproval: approvals.decide,
     chooseAccount: async () => { throw new Error("No external account interactions in this fixture"); } } });
-  const origin = createRoutineChatOriginService({ db, chats, transact, interactions, computerId, expectedMachine: machine, now: () => new Date(state.clock) });
+  const getAgent = vi.fn(async () => undefined);
+  const origin = createRoutineChatOriginService({ db, chats, transact, interactions, agents: { get: getAgent },
+    computerId, expectedMachine: machine, now: () => new Date(state.clock) });
   try {
     await admitFixtureRun({ chats, state });
     await insertChat(db, chatId);
@@ -75,7 +77,7 @@ async function setup() {
     const request = { kind: "approval" as const, decision: "approve" as const, baseRevision: 1 };
     const approve = (interactionId: string) => origin.resolve(OWNER, originChatId, interactionId, request, decisionProof({ state }, interactionId));
     const repo = createBotRoutinesRepository(db);
-    return { db, chats, state, approvals, interactions, origin, pend, approve, repo, tasks, target, binding, request,
+    return { db, chats, state, approvals, interactions, origin, getAgent, pend, approve, repo, tasks, target, binding, request,
       close: async () => { await origin.close(); await chats.release(); await destroy(); } };
   } catch (error: unknown) {
     await origin.close();
@@ -117,10 +119,12 @@ it("requires the exact originating Chat for a claimed scheduler proposal and for
 
 it("exposes the original Chat for a direct schedule without exposing internal destinations", async () => {
   const interactionId = await f.pend();
-  const visible = await f.origin.read(OWNER, originChatId, true);
+  const visible = await f.origin.read(OWNER, originChatId, true, true);
   expect(visible.pending).toMatchObject([{ interaction: {
     interactionId, chatId: originChatId, agentId: "bot_matrixschedules",
   } }]);
+  expect(visible.pending[0]).not.toHaveProperty("executorName");
+  expect(f.getAgent).not.toHaveBeenCalled();
   expect(JSON.stringify(visible.pending)).not.toContain(botId);
   expect(JSON.stringify(visible.pending)).not.toContain(chatId);
   await f.approve(interactionId);

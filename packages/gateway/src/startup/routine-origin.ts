@@ -1,3 +1,4 @@
+import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerBotDatabase } from "../bots/database.js";
 import type { BotStateTransactions } from "../bots/events.js";
@@ -22,6 +23,7 @@ export function createRoutineOriginStartup(options: {
   db: Kysely<OwnerBotDatabase>; transact: BotStateTransactions;
   repository: Pick<ChatRepository, "appendRoutineReceipt">;
   interactions: Pick<BotInteractionService, "resolveWithin">;
+  agents: Pick<ChatAgentStore, "get">;
   computerId?: string; platform?: RoutineOriginPlatformConfiguration; now?: () => Date;
 }): RoutineOriginStartup {
   const { computerId, platform } = options;
@@ -34,7 +36,7 @@ export function createRoutineOriginStartup(options: {
   const beforeRoutineCreationAdmission = createRoutineCreationAdmission({ ...routineOriginMachine,
     verifyCreation: routineOriginProofs.verifyCreation });
   const routineOrigin = createRoutineChatOriginService({ db: options.db, transact: options.transact,
-    chats: options.repository, interactions: options.interactions, computerId,
+    chats: options.repository, interactions: options.interactions, agents: options.agents, computerId,
     expectedMachine: routineOriginMachine, now: options.now });
   return { routineOrigin, routineOriginProofs, routineOriginMachine, beforeRoutineCreationAdmission };
 }

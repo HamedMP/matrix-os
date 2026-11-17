@@ -1,13 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { startBots, type BotServices } from "../../../packages/gateway/src/startup/bots.js";
-import { createBotStateDatabase, insertChat, OWNER } from "./bot-state-support.js";
+import { BOT, createBotStateDatabase, insertChat, OWNER } from "./bot-state-support.js";
 import { requestFixture, scope } from "./routine-cli-request-support.js";
+import { proposalFixture } from "./routine-cli-proposal-support.js";
+import { admitFixtureRun } from "./routine-chat-origin-support.js";
 import { Hono } from "hono";
 import { authMiddleware } from "../../../packages/gateway/src/auth.js";
 import { registerCollaborationChatRoutes } from "../../../packages/gateway/src/server/collaboration-chat-routes.js";
 
 let data: Awaited<ReturnType<typeof createBotStateDatabase>> | undefined;
-let fixture: Awaited<ReturnType<typeof requestFixture>> | undefined;
+let fixture: StartupFixture | undefined;
 let services: BotServices | undefined;
 let routes: { close(): Promise<void> } | undefined;
 afterEach(async () => {
@@ -27,12 +29,14 @@ function app() {
   return application;
 }
 
-async function start(configured: boolean) {
-  data = await createBotStateDatabase(); fixture = await requestFixture(data.db);
+type StartupFixture = Pick<Awaited<ReturnType<typeof requestFixture>>, "home" | "chats" | "agents" | "state" | "close">;
+
+async function start(configured: boolean, makeFixture: (db: Awaited<ReturnType<typeof createBotStateDatabase>>["db"]) => Promise<StartupFixture> = requestFixture) {
+  data = await createBotStateDatabase(); fixture = await makeFixture(data.db);
   vi.stubEnv("MATRIX_USER_ID", OWNER); vi.stubEnv("MATRIX_AUTH_TOKEN", "fixture-owner-token");
   services = await startBots({ homePath: fixture.home, repository: fixture.chats, agents: fixture.agents,
     runtimeOwnerId: OWNER, computerId: scope.computerId, configuredOwnerIds: [OWNER],
-    executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() },
+    executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() }, now: () => new Date(fixture!.state.clock),
     ...(configured ? { routineActionPlatform: { platformUrl: "https://platform.example.test", token: "fixture-runtime-transport",
       handle: "computer-one", machineId: "machine_current", runtimeSlot: "primary" } } : {}) });
   if (!services) throw new Error("Actual Bot startup unavailable");
@@ -60,6 +64,24 @@ it("wires real source-origin reads and verified decision dependencies without cr
   expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
   await f.services.routineOrigin!.close(); await f.services.routineOrigin!.close();
   await expect(f.services.routineOrigin!.wake()).resolves.toBeUndefined();
+});
+
+it("resolves the stored Bot name through the real source-origin startup route", async () => {
+  await start(true, async db => {
+    const f = await proposalFixture(db);
+    fixture = f;
+    await admitFixtureRun(f);
+    await f.submit();
+    await f.canonical.drain();
+    return f;
+  });
+  const read = await app().request("/api/chats/chat_source/routine-origin?timeline=2", {
+    headers: { authorization: "Bearer fixture-owner-token" },
+  });
+  expect(read.status).toBe(200);
+  expect(await read.json()).toMatchObject({ sourceChatId: "chat_source", pending: [
+    { executorName: "Report", interaction: { agentId: BOT } },
+  ] });
 });
 
 it("keeps ordinary Bot startup available when trusted Platform source approval is not configured", async () => {
