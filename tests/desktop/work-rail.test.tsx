@@ -1547,6 +1547,37 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
+  it.each(["single", "project"])("keeps a newer chat selection when a delayed %s archive commits", async (kind) => {
+    const target = kind === "project" ? projectChat : recent;
+    let finish!: (value: unknown) => void;
+    const pending = new Promise<unknown>(resolve => { finish = resolve; });
+    const client = { list: vi.fn(async () => ({ items: [target] })),
+      updateLifecycle: vi.fn(() => pending), archiveProjectChats: vi.fn(() => pending),
+    } as unknown as CanonicalChatClient;
+    const onChatDeleted = vi.fn();
+    const props = { client, projects: [alpha], active: true, onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn(), onChatDeleted };
+    const view = render(<WorkRail {...props} activeChatId={target.chat.id}/>);
+    await screen.findAllByRole("button", { name: target.chat.title, exact: true });
+    if (kind === "project") {
+      fireEvent.contextMenu(screen.getByRole("button", { name: "Alpha", exact: true }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Archive project chats" }));
+      fireEvent.click(screen.getByRole("button", { name: "Archive chats", exact: true }));
+      await waitFor(() => expect(client.archiveProjectChats).toHaveBeenCalledTimes(2));
+    } else {
+      fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+      await waitFor(() => expect(client.updateLifecycle).toHaveBeenCalledOnce());
+    }
+    view.rerender(<WorkRail {...props} activeChatId="chat_newer_selection"/>);
+    await act(async () => {
+      finish(kind === "project" ? { archived: [{ chatId: target.chat.id, revision: 2 }], archivedCount: 1, skippedCount: 0 }
+        : { ...target, chat: { ...target.chat, lifecycle: "archived", revision: 2 } });
+      await pending;
+    });
+    expect(onChatDeleted).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Undo", exact: true })).toBeTruthy();
+  });
+
   it("marks a committed cohort without titles and reuses it during selection", async () => {
     const original = globalThis.performance;
     const mark = vi.fn();

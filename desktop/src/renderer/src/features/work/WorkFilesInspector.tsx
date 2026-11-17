@@ -631,7 +631,7 @@ function TerminalTab({ sessionId, sessions, chatId, active, onNewTerminal, creat
   const directory = summary ? runtimeTerminalTabs(summary).find(tab => tab.refKey === sessionId)?.cwd : undefined;
   const session = sessions.find((candidate) => candidate.id === sessionId && candidate.attachable);
   if (!session) return <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>This terminal is unavailable.</p>;
-  return <><header className="desktop-chat-design chat-inspector-terminal-header"><span aria-label="Terminal working directory" title={directory || "Home directory"}>{directory || "~"}</span><button type="button" onClick={onNewTerminal} disabled={creating}><Plus size={14} aria-hidden/>New terminal</button></header>
+  return <><header className="desktop-chat-design chat-inspector-terminal-header"><span aria-label="Terminal working directory" title={directory || "Home directory"}>{directory || "~"}</span><Button variant="ghost" size="sm" onClick={onNewTerminal} disabled={creating}><Plus size={14} aria-hidden/>New terminal</Button></header>
     <TerminalView sessionName={session.id} chatId={chatId} active={active} controlsHost={null} /></>;
 }
 

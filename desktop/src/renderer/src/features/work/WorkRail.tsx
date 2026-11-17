@@ -429,7 +429,7 @@ export function WorkRail({
       if (!isCurrentAuthority(scope)) return;
       setRecords(current => current.filter(item => item.chat.id !== record.chat.id));
       setArchiveUndo({ chats: [{ chatId: record.chat.id, revision: updated.chat.revision }], label: `Archived ${record.chat.title}` });
-      if (record.chat.id === activeChatId) {
+      if (isCurrentScope(scope) && record.chat.id === activeChatId) {
         const project = projectGroups.find(group => group.id === record.projectId || group.slug === record.projectId)?.project;
         onChatDeleted?.(record.chat.id, project);
       }
@@ -495,7 +495,7 @@ export function WorkRail({
       const archivedIds = new Set(archived.map(chat => chat.chatId));
       const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
       setRecords(current => current.filter(record => !archivedIds.has(record.chat.id)));
-      if (activeChatId && archivedIds.has(activeChatId)) onChatDeleted?.(activeChatId, project);
+      if (isCurrentScope(scope) && activeChatId && archivedIds.has(activeChatId)) onChatDeleted?.(activeChatId, project);
       if (archived.length) setArchiveUndo(current => {
         const chats = [...new Map([...(current && current.projectId === project.id ? current.chats : []), ...archived]
           .map(chat => [chat.chatId, chat])).values()];
