@@ -126,6 +126,8 @@ Rollout order is host bundle (gateway) → platform → Worker. Each layer fails
 3. `feat(sites): route public visitor data through platform and Worker`: platform route, transport, kill switch, rate limits, Worker allowlist.
 4. `feat(sites): give public visitors the app data bridge`: frame bridge, parent handler, Public tab copy.
 
+Follow-up outside this stack (same ticket): a `FinnaAI/matrix-os-site` PR under `content/docs/` that explains publishing to Public lets anyone with the link view and edit the app's data, how to stop it (Private link, Unpublish), and that visitor text is untrusted; plus builder skill/knowledge notes (`skills/matrix/app-builder`, `home/agents/knowledge/app-generation.md`).
+
 ## Acceptance checks
 
 - A published public Shared Tasks Lab shows the owner's tasks to an anonymous visitor; the visitor adds, edits and deletes a task, and the owner's open app shows the change. The frame CSP still has `connect-src 'none'` and the frame makes no network requests.
@@ -133,6 +135,12 @@ Rollout order is host bundle (gateway) → platform → Worker. Each layer fails
 - Every visitor write leaves exactly one log entry per row with before/after and a visitor hash and no raw IP; a failed log insert rolls the write back.
 - `SITES_PUBLIC_DATA=off` returns 503 for data while the page still renders.
 - Rate-limit breaches return 429 and the maps stay at their caps. Errors never include Postgres, path or provider text.
+
+## Integration test checkpoint
+
+- Full path (layer 3): the real Worker handler → platform public routes → HMAC capability → gateway route → owner Postgres (PGlite) with a registered app. A visitor insert lands in the app table with one write-log entry; a forced write-log failure rolls the row back and returns `Invalid change`; another app's table stays unreachable.
+- Bridge (layer 4): the rendered frame bridge and parent relay exercised in JSDOM against the same request contract.
+- Runtime: on a disposable test VPS, publish a data-backed app to Public, then add, edit and delete a row from a signed-out browser and see it in the owner's open app (requester-captured evidence).
 
 ## Risks
 
