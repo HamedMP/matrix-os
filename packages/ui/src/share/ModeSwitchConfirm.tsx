@@ -9,7 +9,7 @@ import { InlineError, ShareButton, Spinner } from "./share-controls";
  * revision-checked transition.
  */
 export function ModeSwitchConfirm({ current, target, invitedCount, pending, error, onConfirm, onCancel }: {
-  current: PageModeTarget; target: PageModeTarget; invitedCount: number; pending: boolean; error: string | null;
+  current: PageModeTarget; target: PageModeTarget; invitedCount: number | null; pending: boolean; error: string | null;
   onConfirm: () => void; onCancel: () => void;
 }) {
   const titleId = useId();

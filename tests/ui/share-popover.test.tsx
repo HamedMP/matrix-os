@@ -22,15 +22,18 @@ const link = (status: "unclaimed" | "claimed" | "expired" = "unclaimed", id = LI
 const secretUrl = `https://matrix.page/${SITE_ID}#access=${LINK_ID}.${"a".repeat(43)}`;
 
 function client(overrides: Partial<ShareSiteClient> = {}): ShareSiteClient & Record<string, ReturnType<typeof vi.fn>> {
+  let stored: SiteRecord | null = null;
+  let storedLinks: ReturnType<typeof link>[] = [];
+  const save = (site: SiteRecord) => { stored = site; return site; };
   return {
-    get: vi.fn(async () => null),
-    deploy: vi.fn(async (_app, metadata) => ({ ...base, revision: 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
-    update: vi.fn(async (_app, metadata) => ({ ...base, revision: (metadata.baseRevision ?? 0) + 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
-    unpublish: vi.fn(async (_app, revision) => ({ ...base, revision: revision + 1, status: "unpublished" as const })),
+    get: vi.fn(async () => stored),
+    deploy: vi.fn(async (_app, metadata) => save({ ...base, revision: 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
+    update: vi.fn(async (_app, metadata) => save({ ...base, revision: (metadata.baseRevision ?? 0) + 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
+    unpublish: vi.fn(async (_app, revision) => save({ ...base, revision: revision + 1, status: "unpublished" as const })),
     getConfig: vi.fn(async () => ({ data: {}, forms: [] })),
-    accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })),
-    createAccessLink: vi.fn(async () => ({ link: link(), url: secretUrl })),
-    revokeAccessLink: vi.fn(async () => undefined),
+    accessLinks: vi.fn(async () => ({ links: storedLinks, nextCursor: null })),
+    createAccessLink: vi.fn(async () => { const created = link(); storedLinks = [created, ...storedLinks]; return { link: created, url: secretUrl }; }),
+    revokeAccessLink: vi.fn(async (_app: string, id: string) => { storedLinks = storedLinks.filter(value => value.id !== id); }),
     slugAvailability: vi.fn(async () => ({ status: "available" as const, suggestions: [] })),
     ...overrides,
   } as ShareSiteClient & Record<string, ReturnType<typeof vi.fn>>;
@@ -104,7 +107,7 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     expect(screen.getByText("Email invitations aren’t available yet. Use one-time links for now.")).toBeTruthy();
   });
 
-  it("enables Invite only for a valid email, submits on Enter, and lists people with status and remove", async () => {
+  it("enables Invite only for a valid email, submits on Enter, and lists people with status and revoke", async () => {
     const emailInvites = createInMemoryEmailInvitations();
     renderPanel(client(), { emailInvites });
     await loaded();
@@ -123,7 +126,7 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     expect(screen.queryByText("Invited people sign in to open it")).toBeNull();
     expect(within(screen.getByRole("tab", { name: /Private/ })).getByRole("img", { name: "on" })).toBeTruthy();
     expect(emailInvites.active("sales-crm")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Remove sara@finna.ai" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@finna.ai" }));
     await waitFor(() => expect(screen.queryByText("sara@finna.ai")).toBeNull());
   });
 });
@@ -142,7 +145,7 @@ describe("Private tab · one-time links", () => {
     expect(api.getConfig).toHaveBeenCalledTimes(1);
     expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "private_link", title: "Sales CRM", reviewedConfig: { data: {}, forms: [] } }), expect.any(AbortSignal));
     expect(api.createAccessLink).toHaveBeenCalledWith("sales-crm", { baseRevision: 1 }, expect.any(AbortSignal));
-    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Copy" })).toBeTruthy();
     // The secret itself is never rendered, only a masked label.
     expect(screen.queryByText(secretUrl)).toBeNull();
     expect(screen.getByLabelText("1 links")).toBeTruthy();

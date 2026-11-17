@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SetStateAction } from "react";
 import type { SiteAccessLinkSummary, SiteRecord } from "@matrix-os/contracts";
-import type { EmailInvitationAdapter, EmailInvitationSummary } from "./email-invitations";
+import type { EmailInvitationAdapter, EmailInvitationPage, EmailInvitationSummary } from "./email-invitations";
 import { needsModeSwitchConfirm, pageModeOf, type PageMode, type PageModeTarget } from "./share-model";
 import { errorStatus, isAbortError, shareErrorMessage, type ShareSiteClient } from "./share-site-client";
 
@@ -27,6 +27,10 @@ interface ShareView {
   invitations: EmailInvitationSummary[];
   emailRevision: number;
   emailActive: boolean;
+  emailAvailable: boolean;
+  invitationsNextCursor: string | null;
+  invitationsPaged: boolean;
+  inviteOutcome: "queued" | "existing" | null;
   pendingSwitch: ShareModeRequest | null;
   /** Friendly path rejected by the platform's atomic alias claim. */
   slugConflict: string | null;
@@ -34,7 +38,7 @@ interface ShareView {
 
 const initialView = (): ShareView => ({
   site: null, loading: true, loadFailed: false, operation: null, error: null,
-  links: [], linksNextCursor: null, freshLinks: {}, invitations: [], emailRevision: 0, emailActive: false,
+  links: [], linksNextCursor: null, freshLinks: {}, invitations: [], emailRevision: 0, emailActive: false, emailAvailable: false, invitationsNextCursor: null, invitationsPaged: false, inviteOutcome: null,
   pendingSwitch: null, slugConflict: null,
 });
 
@@ -57,14 +61,25 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   }
   const lifecycle = useRef<AbortController | null>(null);
   const busy = useRef(false);
-  const patch = (value: Partial<ShareView>) => setView((current) => ({ ...current, ...value }));
+  const mutationVersion = useRef(0);
+  const newestResetPending = useRef(false);
+  const identityRef = useRef({ appSlug, client, emailInvites });
+  if (identityRef.current.appSlug !== appSlug || identityRef.current.client !== client || identityRef.current.emailInvites !== emailInvites) {
+    identityRef.current = { appSlug, client, emailInvites };
+  }
+  const identity = identityRef.current;
+  // Account/runtime changes must discard every late mutation result too.
+  const setCurrentView = (value: SetStateAction<ShareView>) => {
+    setView((current) => identityRef.current !== identity ? current : typeof value === "function" ? value(current) : value);
+  };
+  const patch = (value: Partial<ShareView>) => setCurrentView((current) => ({ ...current, ...value }));
   const pageMode: PageMode = pageModeOf(view.site, view.emailActive);
 
   // Owner actions get their own lifecycle: a silent re-read must never abort a
   // running mutation (it would leave `operation` set and the buttons disabled).
   useEffect(() => {
     const controller = new AbortController();
-    lifecycle.current = controller; busy.current = false;
+    lifecycle.current = controller; busy.current = false; newestResetPending.current = false;
     return () => { controller.abort(); };
   }, [appSlug, client, emailInvites]);
 
@@ -73,25 +88,50 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     const controller = new AbortController();
     const signal = controller.signal;
     let current = true;
+    const version = mutationVersion.current;
     void (async () => {
       try {
-        const site = await client.get(appSlug, signal);
-        const emailActive = emailInvites?.active(appSlug) ?? false;
-        // react-doctor-disable-next-line react-doctor/async-defer-await -- the early return below is the effect-cancellation guard; it must follow the awaits.
-        const [links, page] = await Promise.all([
-          site?.status === "published" && site.accessMode === "private_link" ? client.accessLinks(appSlug, signal) : null,
-          emailActive && emailInvites ? emailInvites.list(appSlug, signal) : null,
+        const [initialSite, emailAvailable] = await Promise.all([
+          client.get(appSlug, signal),
+          emailInvites?.kind === "live" ? emailInvites.available(appSlug, signal).catch((error: unknown) => {
+            console.warn("[share] invitation readiness unavailable", error instanceof Error ? error.name : "UnknownError");
+            return false;
+          }) : Promise.resolve(emailInvites?.kind === "preview"),
         ]);
-        if (!current) return;
-        setView((previous) => ({
-          ...previous, site, loading: false, loadFailed: false, emailActive,
-          links: links?.links ?? [], linksNextCursor: links?.nextCursor ?? null,
-          invitations: page?.invitations ?? [], emailRevision: page?.siteRevision ?? 0,
-        }));
+        let site = initialSite;
+        // Read once more after a concurrent change; never attach a newer token
+        // to metadata read at an older revision. Continued churn fails closed.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const emailActive = emailInvites?.kind === "preview" ? emailInvites.active(appSlug)
+            : site?.status === "published" && site.accessMode === "private_email";
+          // react-doctor-disable-next-line react-doctor/async-defer-await -- cancellation and revision guards must run after the in-flight reads settle.
+          const [links, page] = await Promise.all([
+            site?.status === "published" && site.accessMode === "private_link" ? client.accessLinks(appSlug, signal) : null,
+            emailActive && emailAvailable && emailInvites ? emailInvites.list(appSlug, signal) : null,
+          ]);
+          if (!current || version !== mutationVersion.current || busy.current) return;
+          if (emailInvites?.kind === "live" && page && page.siteRevision !== site?.revision) {
+            if (attempt === 1) throw Object.assign(new Error("Publication changed during read"), { status: 409 });
+            site = await client.get(appSlug, signal);
+            continue;
+          }
+          setCurrentView((previous) => ({
+            ...previous, site, loading: false, loadFailed: false, emailActive, emailAvailable,
+            links: links?.links ?? [], linksNextCursor: links?.nextCursor ?? null,
+            invitations: page?.invitations ?? [], emailRevision: page?.siteRevision ?? site?.revision ?? 0,
+            invitationsNextCursor: page?.nextCursor ?? null, invitationsPaged: false,
+          }));
+          return;
+        }
       } catch (error: unknown) {
-        if (!current) return;
+        if (!current || version !== mutationVersion.current || busy.current) return;
         console.warn("[share] publication load failed", error instanceof Error ? error.name : "UnknownError");
-        setView((previous) => ({ ...previous, loading: false, loadFailed: true, error: { operation: "load", message: "Sharing settings couldn’t load. Try again." } }));
+        setCurrentView((previous) => ({ ...previous, loading: false, loadFailed: true, error: { operation: "load", message: "Sharing settings couldn’t load. Try again." } }));
+      } finally {
+        if (current && identityRef.current === identity && newestResetPending.current) {
+          newestResetPending.current = false;
+          patch({ operation: null });
+        }
       }
     })();
     return () => { current = false; controller.abort(); };
@@ -104,23 +144,30 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
    */
   async function run(operation: ShareOperation, work: (signal: AbortSignal) => Promise<void>): Promise<boolean> {
     const controller = lifecycle.current;
-    if (!controller || controller.signal.aborted || busy.current || view.loading || view.loadFailed) return false;
+    if (!controller || controller.signal.aborted || busy.current || newestResetPending.current || view.loading || view.loadFailed) return false;
     busy.current = true;
-    patch({ operation, error: null });
+    mutationVersion.current += 1;
+    patch({ operation, error: null, ...(operation === "invite" || operation === "switch" ? { inviteOutcome: null } : {}) });
     try {
       await work(controller.signal);
-      return true;
+      return !controller.signal.aborted && identityRef.current === identity;
     } catch (error: unknown) {
       if (controller.signal.aborted || isAbortError(error)) return false;
       console.warn(`[share] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
       patch({ error: { operation, message: shareErrorMessage(error) } });
       // Another window or device changed the publication: re-read it so the
       // next attempt carries the current revision.
-      if (errorStatus(error) === 409) setReload((value) => value + 1);
+      if (errorStatus(error) === 409 && identityRef.current === identity) setReload((value) => value + 1);
       return false;
     } finally {
-      busy.current = false;
-      if (!controller.signal.aborted) patch({ operation: null });
+      if (identityRef.current === identity && lifecycle.current === controller) {
+        busy.current = false;
+        if (!controller.signal.aborted) {
+          patch({ operation: null });
+          // Resolve partial successes/failures and any read invalidated by this mutation.
+          if (operation !== "load") setReload((value) => value + 1);
+        }
+      }
     }
   }
 
@@ -128,9 +175,9 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
 
   /** Leave `private_email` before entering another mode (2691: revocation is permanent). */
   async function leaveEmail(signal: AbortSignal) {
-    if (!view.emailActive || !emailInvites) return;
+    if (!view.emailActive || emailInvites?.kind !== "preview") return;
     await emailInvites.deactivate(appSlug, signal);
-    patch({ emailActive: false, invitations: [], emailRevision: 0 });
+    patch({ emailActive: false, invitations: [], emailRevision: 0, invitationsNextCursor: null });
   }
 
   async function ensurePrivateLinkSite(client: ShareSiteClient, signal: AbortSignal): Promise<SiteRecord> {
@@ -153,9 +200,9 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       // react-doctor-disable-next-line react-doctor/server-sequential-independent-await -- ordered access-mode transition, not independent work.
       const site = await ensurePrivateLinkSite(client, signal);
       const modeChanged = view.site?.accessMode !== "private_link" || view.site?.status !== "published";
-      patch({ site, ...(modeChanged ? { links: [], linksNextCursor: null, freshLinks: {} } : {}) });
+      patch({ site, emailActive: false, invitations: [], invitationsNextCursor: null, ...(modeChanged ? { links: [], linksNextCursor: null, freshLinks: {} } : {}) });
       const created = await client.createAccessLink(appSlug, { baseRevision: site.revision }, signal);
-      setView((current) => ({
+      setCurrentView((current) => ({
         ...current,
         links: [created.link, ...current.links.filter((link) => link.id !== created.link.id)],
         freshLinks: Object.fromEntries([[created.link.id, created.url] as const, ...Object.entries(current.freshLinks)].slice(0, MAX_FRESH_LINKS)),
@@ -170,7 +217,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
         const next = site && site.status === "published"
           ? await client.update(appSlug, { ...metadata, accessMode: "public", baseRevision: site.revision }, signal)
           : await client.deploy(appSlug, { ...metadata, accessMode: "public", baseRevision: site?.revision ?? 0, reviewedConfig: await client.getConfig(appSlug, signal) }, signal);
-        patch({ site: next, links: [], linksNextCursor: null, freshLinks: {}, slugConflict: null });
+        patch({ site: next, emailActive: false, invitations: [], invitationsNextCursor: null, links: [], linksNextCursor: null, freshLinks: {}, slugConflict: null });
       } catch (error: unknown) {
         // The atomic alias claim lost: show the friendly path as taken.
         if (errorStatus(error) === 409 && metadata.slug && metadata.slug !== site?.slug) patch({ slugConflict: metadata.slug });
@@ -178,27 +225,52 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       }
       return;
     }
-    if (!emailInvites) throw new Error("Email invitations unavailable");
-    if (!view.emailActive) {
-      const site = view.site;
-      // TODO(2691): replace with client.update({ accessMode: "private_email", baseRevision }).
-      // Until then the preview stops all current Matrix.page access by unpublishing,
-      // so the confirm copy ("public link stops working") stays true.
-      if (site && site.status === "published") patch({ site: await client.unpublish(appSlug, site.revision, signal), links: [], linksNextCursor: null, freshLinks: {} });
-      await emailInvites.activate(appSlug, signal);
+    if (!emailInvites || !view.emailAvailable) throw new Error("Email invitations unavailable");
+    let emailSiteRevision = view.site?.revision;
+    if (emailInvites.kind === "preview") {
+      if (!view.emailActive) {
+        const site = view.site;
+        if (site?.status === "published") patch({ site: await client.unpublish(appSlug, site.revision, signal), links: [], linksNextCursor: null, freshLinks: {} });
+        await emailInvites.activate(appSlug, signal);
+      }
+    } else {
+      const current = view.site;
+      const site = current?.status === "published"
+        ? current.accessMode === "private_email" ? current
+          : await client.update(appSlug, { title: current.title, description: current.description, slug: current.slug, accessMode: "private_email", baseRevision: current.revision }, signal)
+        : await client.deploy(appSlug, { title: titleFor(current), description: current?.description ?? "", slug: current?.slug ?? null, accessMode: "private_email", baseRevision: current?.revision ?? 0, reviewedConfig: await client.getConfig(appSlug, signal) }, signal);
+      emailSiteRevision = site.revision;
+      // The backend transaction revokes the old mode and activates the new one.
+      patch({ site, emailActive: true, emailRevision: site.revision, links: [], linksNextCursor: null, freshLinks: {} });
     }
     const page = await emailInvites.list(appSlug, signal);
+    if (emailInvites.kind === "live" && page.siteRevision !== emailSiteRevision) {
+      throw Object.assign(new Error("Publication changed before invite"), { status: 409 });
+    }
     const result = await emailInvites.invite(appSlug, { emailAddresses: [request.email], baseRevision: page.siteRevision }, signal);
-    // Re-list after the invite settles so the shown revision and people match the server.
-    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await -- depends on the invite completing first.
-    const after = await emailInvites.list(appSlug, signal);
-    patch({ emailActive: true, invitations: after.invitations, emailRevision: after.siteRevision });
+    syncEmailRevision(result.siteRevision);
     const outcome = result.results[0]?.outcome;
-    if (outcome === "invalid" || outcome === "policy_rejected") throw Object.assign(new Error("Invitation rejected"), { status: 400 });
+    patch({ emailActive: true, inviteOutcome: outcome === "queued" || outcome === "existing" ? outcome : null });
+    const after = await emailInvites.list(appSlug, signal);
+    syncEmailPage(after, result.siteRevision);
+    if (outcome !== "queued" && outcome !== "existing") throw Object.assign(new Error("Invitation rejected"), { status: 400 });
+  }
+
+  function syncEmailRevision(revision: number) {
+    setCurrentView((current) => ({ ...current, emailRevision: revision,
+      site: current.site ? { ...current.site, revision } : null }));
+  }
+
+  function syncEmailPage(page: EmailInvitationPage, expectedRevision: number) {
+    if (emailInvites?.kind === "live" && page.siteRevision !== expectedRevision) {
+      throw Object.assign(new Error("Publication changed after invitation mutation"), { status: 409 });
+    }
+    setCurrentView((current) => ({ ...current, invitations: page.invitations,
+      invitationsNextCursor: page.nextCursor ?? null, invitationsPaged: false, emailRevision: page.siteRevision }));
   }
 
   function request(next: ShareModeRequest): Promise<boolean> {
-    if (view.loading || view.loadFailed) return Promise.resolve(false);
+    if (view.loading || view.loadFailed || (next.to === "private_email" && !view.emailAvailable)) return Promise.resolve(false);
     const target: PageModeTarget = next.to;
     if (needsModeSwitchConfirm(pageMode, target)) { patch({ pendingSwitch: next, error: null }); return Promise.resolve(false); }
     const operation: ShareOperation = next.to === "private_email" ? "invite" : next.to === "private_link" ? "link_create" : "publish";
@@ -216,8 +288,8 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   return {
     ...view,
     pageMode,
-    emailInvitesAvailable: emailInvites !== null,
-    retry: () => { setView(initialView()); setReload((value) => value + 1); },
+    emailInvitesAvailable: view.emailAvailable,
+    retry: () => { setCurrentView(initialView()); setReload((value) => value + 1); },
     /** Silent re-read (e.g. when the popover opens) so mutations use the current revision. */
     refresh: () => { if (!busy.current) setReload((value) => value + 1); },
     /** Redeploys the app's current files, keeping access mode and details. */
@@ -243,21 +315,21 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       await leaveEmail(signal);
       const site = view.site;
       if (client && site && site.status === "published") {
-        patch({ site: await client.unpublish(appSlug, site.revision, signal), links: [], linksNextCursor: null, freshLinks: {} });
+        patch({ site: await client.unpublish(appSlug, site.revision, signal), emailActive: false, invitations: [], invitationsNextCursor: null, links: [], linksNextCursor: null, freshLinks: {} });
       }
     }),
     request,
     confirmSwitch,
     cancelSwitch: () => patch({ pendingSwitch: null }),
     clearSlugConflict: () => patch({ slugConflict: null }),
-    forgetFreshLink: (linkId: string) => setView((current) => {
+    forgetFreshLink: (linkId: string) => setCurrentView((current) => {
       const { [linkId]: _removed, ...rest } = current.freshLinks;
       return { ...current, freshLinks: rest };
     }),
     revokeLink: (linkId: string) => run("link_revoke", async (signal) => {
       if (!client) return;
       await client.revokeAccessLink(appSlug, linkId, signal);
-      setView((current) => {
+      setCurrentView((current) => {
         const { [linkId]: _removed, ...freshLinks } = current.freshLinks;
         return { ...current, links: current.links.filter((link) => link.id !== linkId), freshLinks };
       });
@@ -265,24 +337,39 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     loadMoreLinks: () => run("load", async (signal) => {
       if (!client || !view.linksNextCursor) return;
       const page = await client.accessLinks(appSlug, signal, view.linksNextCursor);
-      setView((current) => ({ ...current, links: [...current.links, ...page.links.filter((link) => !current.links.some((existing) => existing.id === link.id))], linksNextCursor: page.nextCursor }));
+      setCurrentView((current) => ({ ...current, links: [...current.links, ...page.links.filter((link) => !current.links.some((existing) => existing.id === link.id))], linksNextCursor: page.nextCursor }));
     }),
+    loadMoreInvitations: () => run("load", async (signal) => {
+      if (!emailInvites || !view.emailAvailable || !view.invitationsNextCursor) return;
+      const page = await emailInvites.list(appSlug, signal, view.invitationsNextCursor);
+      // A changed list invalidates the cursor; refresh instead of mixing revisions.
+      if (page.siteRevision !== view.emailRevision) throw Object.assign(new Error("Invitation list changed"), { status: 409 });
+      setCurrentView((current) => ({ ...current,
+        invitations: [...current.invitations, ...page.invitations.filter((item) => !current.invitations.some((existing) => existing.id === item.id))].slice(-100),
+        invitationsNextCursor: page.nextCursor ?? null, invitationsPaged: true }));
+    }),
+    showNewestInvitations: () => {
+      if (busy.current || newestResetPending.current) return;
+      newestResetPending.current = true;
+      patch({ operation: "load" });
+      setReload((value) => value + 1);
+    },
     revokeInvite: (invitation: EmailInvitationSummary) => run("invite_change", async (signal) => {
-      if (!emailInvites) return;
-      await emailInvites.revoke(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
-      const page = await emailInvites.list(appSlug, signal);
-      patch({ invitations: page.invitations, emailRevision: page.siteRevision });
+      if (!emailInvites || !view.emailAvailable) return;
+      const result = await emailInvites.revoke(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
+      syncEmailRevision(result.siteRevision);
+      syncEmailPage(await emailInvites.list(appSlug, signal), result.siteRevision);
     }),
     resendInvite: (invitation: EmailInvitationSummary) => run("invite_change", async (signal) => {
-      if (!emailInvites) return;
-      await emailInvites.resend(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
-      const page = await emailInvites.list(appSlug, signal);
-      patch({ invitations: page.invitations, emailRevision: page.siteRevision });
+      if (!emailInvites || !view.emailAvailable) return;
+      const result = await emailInvites.resend(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
+      syncEmailRevision(result.siteRevision);
+      syncEmailPage(await emailInvites.list(appSlug, signal), result.siteRevision);
     }),
     unpublish: () => run("unpublish", async (signal) => {
       const site = view.site;
       if (!client || !site || site.status !== "published") return;
-      patch({ site: await client.unpublish(appSlug, site.revision, signal), links: [], linksNextCursor: null, freshLinks: {} });
+      patch({ site: await client.unpublish(appSlug, site.revision, signal), emailActive: false, invitations: [], invitationsNextCursor: null, links: [], linksNextCursor: null, freshLinks: {} });
     }),
   };
 }

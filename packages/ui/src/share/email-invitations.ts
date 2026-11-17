@@ -1,19 +1,8 @@
 /**
- * Email invitations for Matrix.page (`private_email` access mode, spec 2691).
- *
- * STUB: the real backend ships in the unmerged 2691 stack (#3233–#3340). This
- * adapter mirrors that contract (specs/2691-email-app-invitations/contracts/
- * http-api.openapi.yaml on the stack) so the Private tab can be built and
- * tested now. Only an in-memory fake exists here, and it is gated behind
- * `NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW=1` (or the Electron
- * equivalent) so production users never see invitations that send nothing.
- *
- * TODO(2691): after #3233–#3340 merge, add `createSiteEmailInvitationAdapter`
- * backed by the site client (`emailInvitations`, `createEmailInvitations`,
- * `resendEmailInvitation`, `revokeEmailInvitation`) and switch modes with
- * `PATCH /api/apps/:slug/site { accessMode: "private_email" }`. Do not
- * reimplement the 2691 backend or its viewer auth flow here.
+ * Shared invitation UI contract. Production hosts use the site-client adapter.
+ * The bounded in-memory adapter is reserved for explicit previews and fixtures.
  */
+import type { SiteEmailInvitationSummary } from "@matrix-os/contracts";
 
 /** Matches 2691 `InvitationSummary.state`. */
 export type EmailInvitationState = "pending" | "accepted" | "expired" | "revoked";
@@ -25,33 +14,44 @@ export interface EmailInvitationSummary {
   state: EmailInvitationState;
   /** Optimistic concurrency token for resend/revoke (2691 `revision`). */
   revision: number;
+  deliveryState?: SiteEmailInvitationSummary["deliveryState"];
   issuedAt: string;
   expiresAt: string;
 }
 
-export interface EmailInvitationPage { invitations: EmailInvitationSummary[]; siteRevision: number }
+export interface EmailInvitationPage { invitations: EmailInvitationSummary[]; siteRevision: number; nextCursor?: string | null }
 
 /** 2691 `results[]` entry. */
 export type EmailInvitationResult =
   | { inputIndex: number; outcome: "queued" | "existing"; invitation: EmailInvitationSummary }
   | { inputIndex: number; outcome: "invalid" | "duplicate_in_batch" | "policy_rejected" };
 
-export interface EmailInvitationAdapter {
-  /** `preview` = in-memory fake; `live` = real 2691 API (not wired yet). */
-  readonly kind: "preview" | "live";
-  /** Whether `private_email` is the active Matrix.page access mode. */
-  active(appSlug: string): boolean;
-  /**
-   * Make `private_email` the access mode. The caller has already confirmed any
-   * mode switch; the previous mode's access must stop before this resolves.
-   */
-  activate(appSlug: string, signal: AbortSignal): Promise<void>;
-  /** Leave `private_email`; all invitations and grants are revoked for good. */
-  deactivate(appSlug: string, signal: AbortSignal): Promise<void>;
-  list(appSlug: string, signal: AbortSignal): Promise<EmailInvitationPage>;
+interface EmailInvitationOperations {
+  list(appSlug: string, signal: AbortSignal, cursor?: string | null): Promise<EmailInvitationPage>;
   invite(appSlug: string, value: { emailAddresses: string[]; baseRevision: number }, signal: AbortSignal): Promise<{ results: EmailInvitationResult[]; siteRevision: number }>;
   resend(appSlug: string, id: string, value: { baseRevision: number; invitationRevision: number }, signal: AbortSignal): Promise<{ invitation: EmailInvitationSummary; siteRevision: number }>;
   revoke(appSlug: string, id: string, value: { baseRevision: number; invitationRevision: number }, signal: AbortSignal): Promise<{ invitation: EmailInvitationSummary; siteRevision: number }>;
+}
+
+export interface PreviewEmailInvitationAdapter extends EmailInvitationOperations {
+  readonly kind: "preview";
+  active(appSlug: string): boolean;
+  activate(appSlug: string, signal: AbortSignal): Promise<void>;
+  deactivate(appSlug: string, signal: AbortSignal): Promise<void>;
+}
+
+export interface LiveEmailInvitationAdapter extends EmailInvitationOperations {
+  readonly kind: "live";
+  available(appSlug: string, signal: AbortSignal): Promise<boolean>;
+}
+
+export type EmailInvitationAdapter = PreviewEmailInvitationAdapter | LiveEmailInvitationAdapter;
+
+/** Match the server's resend policy, including delivery with an unknown outcome. */
+export function canResendEmailInvitation(invitation: EmailInvitationSummary, now = Date.now()): boolean {
+  return invitation.state === "expired" || invitation.state === "revoked"
+    || (invitation.state === "pending" && (Date.parse(invitation.expiresAt) <= now
+      || ["failed", "ambiguous", "suppressed"].includes(invitation.deliveryState ?? "")));
 }
 
 export class EmailInvitationError extends Error {
@@ -73,7 +73,7 @@ function abortIfNeeded(signal: AbortSignal) {
  * In-memory stand-in for the 2691 API. State lives only in this tab, is
  * bounded (LRU over apps, capped invitations) and sends no email.
  */
-export function createInMemoryEmailInvitations(options: { now?: () => number; newId?: () => string } = {}): EmailInvitationAdapter {
+export function createInMemoryEmailInvitations(options: { now?: () => number; newId?: () => string } = {}): PreviewEmailInvitationAdapter {
   const now = options.now ?? (() => Date.now());
   const newId = options.newId ?? (() => globalThis.crypto.randomUUID());
   const apps = new Map<string, PreviewApp>();
@@ -167,9 +167,9 @@ export function emailInvitesPreviewEnabled(value: string | undefined): boolean {
   return value === "1" || value === "true";
 }
 
-const sharedPreview = { adapter: null as EmailInvitationAdapter | null };
+const sharedPreview = { adapter: null as PreviewEmailInvitationAdapter | null };
 /** One fake per renderer process so the popover keeps state while it reopens. */
-export function previewEmailInvitationAdapter(enabled: boolean): EmailInvitationAdapter | null {
+export function previewEmailInvitationAdapter(enabled: boolean): PreviewEmailInvitationAdapter | null {
   if (!enabled) return null;
   sharedPreview.adapter ??= createInMemoryEmailInvitations();
   return sharedPreview.adapter;
