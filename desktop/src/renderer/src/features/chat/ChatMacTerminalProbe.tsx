@@ -319,17 +319,17 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
   }
 
   const actions: ComposerMentionAction[] = [];
-  if (!available || !readyToCheck) return { actions, feedback: null };
+  if (!available || !readyToCheck) return { actions, feedback: null, watchScope: null };
   const preparationStatus = preparation?.status;
   const result = runResult && (!runId || runResult.runId === runId) ? runResult.status : null;
   const runLabel = result ? RUN_STATUS[result] : runId ? "Checking the approved Mac terminal…" : undefined;
   const status = preparationLabel(preparation, Boolean(activeRun))
     ?? (activeBackground ? backgroundLabel(activeBackground) : runLabel);
-  const canPrepare = onDraft && !activeRun && backgroundStatus?.active === false
+  const terminalIdle = !activeRun && backgroundStatus?.active === false
     && preparationStatus !== "preparing" && preparationStatus !== "ready" && preparationStatus !== "stopping"
     && !(preparation?.status === "snapshot" && preparation.phase === "waiting")
     && (!runId || result);
-  if (canPrepare) {
+  if (onDraft && terminalIdle) {
     actions.push(
       { label: "Request Mac terminal check", kind: "terminal", keywords: "system",
         select: (queryDraft) => { void prepare("one-time", queryDraft); } },
@@ -357,5 +357,7 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
       ) : null}
     </div>
   ) : null;
-  return { actions, feedback };
+  const watchScope = terminalIdle ? { actorId: chat.ownerScope.ownerId, chatId: chat.id,
+    projectId: root.projectId, worktreeId: root.worktreeId } : null;
+  return { actions, feedback, watchScope };
 }

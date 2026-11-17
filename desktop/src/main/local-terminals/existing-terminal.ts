@@ -32,13 +32,14 @@ const UNSAFE_SCREEN_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\p{Bidi_Con
 
 export interface ExistingTerminalReader {
   terminals: readonly { id: string; title: string }[];
-  read(id: string, signal: AbortSignal): Promise<string>;
+  read(id: string, signal: AbortSignal, options?: { allowEmpty?: boolean }): Promise<string>;
   assertCurrent(id: string, signal: AbortSignal): Promise<void>;
+  assertConnected(): void;
 }
 
-function snapshot(text: string): string {
+function snapshot(text: string, allowEmpty = false): string {
   const clean = stripVTControlCharacters(text).replace(/\r\n/g, "\n").replace(UNSAFE_SCREEN_CHARS, "").trim();
-  if (!clean) throw new Error("Local terminal screen is empty");
+  if (!clean && !allowEmpty) throw new Error("Local terminal screen is empty");
   return clean.length <= MAC_TERMINAL_SNAPSHOT_MAX_CHARS
     ? clean : Array.from(clean).slice(-MAC_TERMINAL_SNAPSHOT_MAX_CHARS).join("").trimStart();
 }
@@ -90,13 +91,14 @@ export async function openExistingTerminalReader(
   return {
     terminals,
     assertCurrent,
-    async read(id, signal) {
+    assertConnected: requireConnection,
+    async read(id, signal, options) {
       await assertCurrent(id, signal);
       // Positive history lines can send scroll keys to a full-screen app.
       // Restrict the pinned Herdr Core read to the visible screen.
       const result = Screen.parse(await call("terminal.read", { terminal: id, lines: 0 }, signal));
       await assertCurrent(id, signal);
-      return snapshot(result.text);
+      return snapshot(result.text, options?.allowEmpty);
     },
   };
 }

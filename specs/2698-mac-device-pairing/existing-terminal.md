@@ -18,7 +18,7 @@ Cap the picker at 20 live local terminals and snapshot at 2,000 Unicode code poi
 ## Validation
 
 - Use the real native Terminal window and two live Mac PTYs in an isolated build. Put distinct output in each. Select the intended terminal via the native picker, approve the matching preview, then confirm only that terminal's output appears in the original Chat draft. Send using an isolated fixture to prove there is no delivery before the owner's action.
-- Tests cover closed/replaced terminals, mismatched scope, invalid native picker response, account change, pairing revoke and Stop, and verify the read path uses zero history and never sends input. Broader transcript retention, live stream and interactive takeover remain separate PR work. Publish public docs via a reviewed documentation PR once signed-build qualification passes.
+- Tests cover closed/replaced terminals, mismatched scope, invalid native picker response, account change, pairing revoke and Stop, and verify the read path uses zero history and never sends input. Continuous local observation has a [separate watch flow](./live-terminal.md). Interactive takeover remains open. Publish public docs via a reviewed documentation PR once signed-build qualification passes.
 
 ## Isolated Mac acceptance
 

@@ -12,16 +12,29 @@ const PrepareReply = z.union([
   z.strictObject({ status: z.enum(["declined", "unavailable", "busy", "failed"]) }),
 ]);
 export const MAC_TERMINAL_SNAPSHOT_MAX_CHARS = 2_000;
+const TerminalScreen = z.string().max(MAC_TERMINAL_SNAPSHOT_MAX_CHARS * 2)
+  .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/)
+  .refine(text => Array.from(text).length <= MAC_TERMINAL_SNAPSHOT_MAX_CHARS);
+const TerminalSnapshot = {
+  terminalId: LocalTerminalIdSchema,
+  title: z.string().min(1).max(256).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/),
+};
+const TerminalSelectionFailure = z.strictObject({ status: z.enum(["declined", "unavailable", "busy", "failed"]) });
 const ExistingTerminalReadReply = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("ready"), ...TerminalSnapshot, output: TerminalScreen.refine(text => text.length > 0) }),
+  TerminalSelectionFailure,
+]);
+const TerminalWatchReference = Prepare.extend({ watchId: z.uuid() });
+const TerminalWatchStartReply = z.discriminatedUnion("status", [
   z.strictObject({
-    status: z.literal("ready"),
-    terminalId: LocalTerminalIdSchema,
-    title: z.string().min(1).max(256).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/),
-    output: z.string().min(1).max(MAC_TERMINAL_SNAPSHOT_MAX_CHARS * 2)
-      .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/)
-      .refine(text => Array.from(text).length <= MAC_TERMINAL_SNAPSHOT_MAX_CHARS),
+    status: z.literal("ready"), ...TerminalSnapshot, output: TerminalScreen,
+    watchId: z.uuid(), expiresAt: z.number().int().positive(),
   }),
-  z.strictObject({ status: z.enum(["declined", "unavailable", "busy", "failed"]) }),
+  TerminalSelectionFailure,
+]);
+const TerminalWatchReadReply = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("ready"), output: TerminalScreen }),
+  z.strictObject({ status: z.enum(["ended", "busy"]) }),
 ]);
 const RunReply = z.strictObject({ status: z.enum(["returned", "unavailable", "busy", "failed", "already-handled"]) });
 const BackgroundGrant = {
@@ -45,6 +58,12 @@ export const MAC_TERMINAL_PROBE_INVOKE = {
   "chat:mac-terminal-available": { request: z.strictObject({}), response: z.strictObject({ available: z.boolean() }) },
   "chat:mac-terminal-prepare": { request: Prepare, response: PrepareReply },
   "chat:mac-terminal-read-existing": { request: Prepare, response: ExistingTerminalReadReply },
+  "chat:mac-terminal-watch-start": { request: Prepare, response: TerminalWatchStartReply },
+  "chat:mac-terminal-watch-read": { request: TerminalWatchReference, response: TerminalWatchReadReply },
+  "chat:mac-terminal-watch-stop": {
+    request: TerminalWatchReference,
+    response: z.strictObject({ ok: z.boolean() }),
+  },
   "chat:mac-terminal-run": { request: Run, response: RunReply },
   "chat:mac-terminal-background-start": { request: Prepare, response: BackgroundStartReply },
   "chat:mac-terminal-background-status": { request: Prepare, response: BackgroundStatus },
