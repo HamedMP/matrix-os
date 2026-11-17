@@ -704,6 +704,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const switchConversation = useCallback((chatId: string) => {
     if (!isCurrent()) return;
     if (activeChatIdRef.current === chatId) {
+      setActiveChatId(chatId);
       void loadDetail(chatId);
       return;
     }
