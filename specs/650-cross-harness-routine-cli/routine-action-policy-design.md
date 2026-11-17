@@ -4,7 +4,7 @@ Status: implementation mapping confirmed within the previously approved five-har
 
 ## Existing evidence
 
-Canonical admitted Chat runs carry authenticated permission/interaction modes. Full-access integration calls already use a live source policy plus exact request digest, but routines are not in that whitelist. Native OpenCode and Pi enforce a read-only native sandbox and have no write-approval port. Existing canonical approval cards carry actionDigest; generic provider submission/verification currently drops it. Terminal has no canonical source Chat/run, so a Chat run must not be invented for its permission prompt.
+Canonical admitted Chat runs carry authenticated permission/interaction modes. Full-access integration calls already use a live source policy plus exact request digest, but routines are not in that whitelist. Native OpenCode and Pi enforce a read-only native sandbox and have no write-approval port. Existing canonical approval cards carry actionDigest; generic provider submission/verification currently drops it. Terminal has no canonical source Chat/run.
 
 Source map: .trellis/tasks/10-31-cross-harness-routine-cli/research/routine-cli-current-action-policy-map.md. This is source inspection, not native runtime acceptance.
 
@@ -17,15 +17,15 @@ Source map: .trellis/tasks/10-31-cross-harness-routine-cli/research/routine-cli-
 | Native OpenCode/Pi supervised with read-only native tools | Current source/read/target checks | Same explicit one-operation owner decision through a new typed host routine tool; native filesystem sandbox and Bash restrictions stay in force |
 | Plan/review, shared/org, unsupported source/profile | Only when existing read policy permits | Deny; an action card cannot override these ceilings |
 | Managed Matrix Pi | Actual managed-run policy and binding | Full access mapping or an explicitly supported one-operation owner decision; never cast its binding to BotTask |
-| Verified Matrix Terminal native launch | Current kernel-backed source/read/target checks | Always require the one-operation owner decision; do not infer authority from --yolo, agent hints, CLI arguments or an invented Chat run |
+| Verified owner-private Matrix Terminal launch | Current kernel-backed source/read/target checks | Gateway assigns Full Access to the live Terminal source. Each write still uses one exact invocation and the current target. |
 
-The new supervised/Terminal decisions authorize one remote routine operation. They do not enable native shell/file writes, a persistent routine grant, background model consent, integrations or activation. A successful propose still means queued or pending human routine approval, never active.
+Both supervised Chat confirmation and default Terminal Full Access authorize one remote routine operation. They do not enable native shell/file writes, a persistent routine grant, background model consent, integrations or activation. A successful propose still means queued or pending human routine approval, never active.
 
 ## Exact decision and trusted owner path
 
 A shared controller captures the actual host source handle and random host invocation UUID, resolves the original pinned target for duplicate/reconciliation or the current default for a new request, and hashes the strict operation + source generation + invocation + exact target incarnation + current policy fingerprint. All identities come from host/repository context.
 
-For Chat, reuse the existing canonical pending-approval card and add a routine-specific submit branch that preserves the exact action digest. For Terminal, expose the same owner decision in the current Computer's shared UI, keyed to its real session/incarnation/launch; do not create a synthetic Chat/run. No approve-for-session or remembered action grant.
+For Chat, the canonical pending-approval card uses a routine-specific submit branch that preserves the exact action digest. The Gateway derives Terminal Full Access from the verified owner-private launch, keyed to the real session, incarnation and launch. Terminal creates no confirmation card or inbox. Reads and writes retain live source and target checks. Agent hints, CLI flags and restored session records convey no authority.
 
 Use the existing platform authenticated-owner proxy/proof pattern with a narrow routine decision tuple. Chat/native source capabilities and generic agent/CLI credentials cannot mint this owner proof. The gateway validates actual configured owner+Computer and the exact stored challenge, proof, digest, decision and one-time request identity. New endpoints have explicit auth registration, bodyLimit and strict bounded schemas. A source capability cannot approve its own challenge or save a default.
 
@@ -49,4 +49,4 @@ Add failing tests first for self-approval/source-token/JWT-fallback rejection, a
 
 ## Implemented Task4b mapping
 
-The source registry, exact controller, Platform purpose mint/verify, capability/request/canonical startup composition and shared owner confirmation paths are implemented; see interfaces.md for the concrete auth matrix, owner namespace limit, route/proxy wiring and lifecycle. Trusted native producers remain Tasks5/6 and real Terminal launch proof remains Task7. No missing producer is replaced by a fixture or generic identity path. Browser-purpose consent uses the actual verified Clerk namespace and selected owned machine; distinct legacy/local namespaces without an established mapping remain unsupported, with no alias merge. Source/code/HTTP/Postgres/component evidence is separate from native/provider/live acceptance.
+The source registry, exact controller, Platform purpose mint/verify, capability/request/canonical startup composition and Chat owner confirmation paths are implemented; see interfaces.md for the concrete auth matrix, owner namespace limit, route/proxy wiring and lifecycle. Trusted native producers remain Tasks5/6 and real Terminal launch proof remains Task7. No missing producer is replaced by a fixture or generic identity path. Browser-purpose consent uses the actual verified Clerk namespace and selected owned machine; distinct legacy/local namespaces without an established mapping remain unsupported, with no alias merge. Source/code/HTTP/Postgres/component evidence is separate from native/provider/live acceptance.

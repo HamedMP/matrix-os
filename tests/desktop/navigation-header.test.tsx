@@ -15,6 +15,13 @@ function render(ui: React.ReactElement) {
 }
 
 describe("Desktop navigation header", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
+  const pristinePlatform = navigator.platform;
+
+  function setPlatform(platform: string) {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+  }
+
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
@@ -29,14 +36,48 @@ describe("Desktop navigation header", () => {
   afterEach(() => {
     cleanup();
     delete (window as { operator?: unknown }).operator;
+    // jsdom serves `platform` from Navigator.prototype; drop the test-owned
+    // override instead of leaving it for later tests.
+    if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
+    else Reflect.deleteProperty(navigator, "platform");
+    expect(navigator.platform).toBe(pristinePlatform);
   });
 
   it("removes sidebar-only chrome for the native desktop shell", () => {
+    setPlatform("MacIntel");
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.getByRole("banner").style.gridTemplateColumns)
       .toBe("96px minmax(0, 1fr)");
+  });
+
+  it("starts Windows tabs at the left edge of the safe title bar area", () => {
+    setPlatform("Win32");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    expect(screen.getByRole("banner").style.background).toBe("var(--bg-sunken)");
+    expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
+  });
+
+  it("does not reserve a left control column on Linux", () => {
+    setPlatform("Linux x86_64");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    expect(screen.getByRole("banner").children).toHaveLength(1);
+  });
+
+  it("keeps the macOS traffic-light column as a hidden drag spacer", () => {
+    setPlatform("MacIntel");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    const banner = screen.getByRole("banner");
+    expect(banner.style.background).toBe("color-mix(in srgb, var(--bg-sunken) 82%, transparent)");
+    expect(banner.children).toHaveLength(2);
+    expect(banner.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("uses permanent workspace tabs instead of Browser breadcrumbs or actions in native desktop", () => {

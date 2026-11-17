@@ -62,5 +62,9 @@ export function normalizeLeadingGlobalFlags(argv: string[]): string[] {
     return argv;
   }
 
-  return [...argv.slice(index), ...leadingFlags];
+  // Keep them ahead of `--`: everything after it belongs to the program being run.
+  const rest = argv.slice(index);
+  const separator = rest.indexOf("--");
+  if (separator < 0) return [...rest, ...leadingFlags];
+  return [...rest.slice(0, separator), ...leadingFlags, ...rest.slice(separator)];
 }

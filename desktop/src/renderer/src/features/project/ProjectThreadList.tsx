@@ -24,9 +24,9 @@ export type { ThreadRailTone } from "./project-thread-list-model";
 
 const RAIL_TONE_STYLES: Record<ThreadRailTone, { background: string; color: string }> = {
   running: { background: "var(--accent-muted)", color: "var(--status-running)" },
-  waiting: { background: "var(--warning-muted)", color: "var(--warning)" },
-  done: { background: "var(--success-muted)", color: "var(--success)" },
-  failed: { background: "var(--danger-muted)", color: "var(--danger)" },
+  waiting: { background: "var(--warning-muted)", color: "var(--warning-text)" },
+  done: { background: "var(--success-muted)", color: "var(--success-text)" },
+  failed: { background: "var(--danger-muted)", color: "var(--danger-text)" },
 };
 
 function ThreadRow({
@@ -260,13 +260,13 @@ export function ProjectThreadList({
         ) : null}
         {status === "error" && !workspace ? (
           <div className="flex items-start gap-2 px-2 py-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-            <AlertCircle size={13} className="mt-0.5 shrink-0" style={{ color: "var(--warning)" }} />
+            <AlertCircle size={13} className="mt-0.5 shrink-0" style={{ color: "var(--warning-text)" }} />
             <span className="min-w-0 flex-1">{error ?? "Project workspace unavailable"}</span>
             <button
               type="button"
               aria-label="Retry loading the project workspace"
               className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium"
-              style={{ borderColor: "var(--warning)", color: "var(--warning)" }}
+              style={{ borderColor: "var(--warning)", color: "var(--warning-text)" }}
               onClick={onRetry}
             >
               Retry

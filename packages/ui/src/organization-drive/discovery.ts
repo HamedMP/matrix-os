@@ -42,7 +42,7 @@ async function inspectScope(api: CollaborationDirectApi, scopeId: string, organi
 
 export async function loadOrganizationDriveOptions(api: CollaborationDirectApi,
   pageCounts: OrganizationDrivePageCounts): Promise<OrganizationDriveOption[]> {
-  const get = (path: string) => api.get(path);
+  const get = (path: string) => api.getDiscovery(path);
   const [inbox, shared, organizations] = await Promise.all([
     loadDiscoveryItems(get, "inbox"), loadDiscoveryItems(get, "shared"), api.get("/api/organizations"),
   ]);

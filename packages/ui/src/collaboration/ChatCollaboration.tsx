@@ -28,7 +28,7 @@ import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
 import { SharedAppViewer } from "./SharedAppViewer.js";
-import { createSharedAppTransport } from "./shared-app-transport.js";
+import { createSharedAppTransport, startSharedAppLaunch, type SharedAppInitialLaunch } from "./shared-app-transport.js";
 import type { CollaborationDirectClient } from "./direct-client.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
@@ -102,17 +102,24 @@ function SharedAppScopeView({ api, scopeId, expectedBuildId, expectedShareRevisi
   expectedBuildId?: string;
   expectedShareRevision?: string;
 }) {
-  const [target, setTarget] = useState<CollaborativeAppDirectoryItem | null>(null);
+  const [opened, setOpened] = useState<{ target: CollaborativeAppDirectoryItem; initialLaunch?: SharedAppInitialLaunch } | null>(null);
   const [failed, setFailed] = useState(false);
+  const target = opened?.target ?? null;
   useEffect(() => {
     let active = true;
+    // A link pinned to a build and share revision already names everything the launch needs,
+    // so it starts alongside the lookup (ENG-490). The launch re-checks membership itself, and
+    // its result is only used once the lookup confirms the same target.
+    const initialLaunch = expectedBuildId && expectedShareRevision
+      ? startSharedAppLaunch(api, scopeId, { buildId: expectedBuildId, shareRevision: expectedShareRevision })
+      : undefined;
     void findSharedApp(api, scopeId)
       .then((value) => {
         if ((expectedBuildId && value.buildId !== expectedBuildId)
           || (expectedShareRevision && value.shareRevision !== expectedShareRevision)) {
           throw new Error("SharedAppTargetChanged");
         }
-        if (active) setTarget(value);
+        if (active) setOpened({ target: value, ...(initialLaunch ? { initialLaunch } : {}) });
       })
       .catch((failure: unknown) => {
         console.warn("[shared-app] discovery failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -121,9 +128,9 @@ function SharedAppScopeView({ api, scopeId, expectedBuildId, expectedShareRevisi
     return () => { active = false; };
   }, [api, expectedBuildId, expectedShareRevision, scopeId]);
   const direct = directClientOf(api);
-  const transport = useMemo(() => target && direct
-    ? createSharedAppTransport({ platform: api, direct, target })
-    : null, [api, direct, target]);
+  const transport = useMemo(() => opened && direct
+    ? createSharedAppTransport({ platform: api, direct, target: opened.target, initialLaunch: opened.initialLaunch })
+    : null, [api, direct, opened]);
   if (failed || (target && !direct)) return <SafeError title="Shared app unavailable" />;
   if (!target || !transport) return <p role="status" className="p-8">Loading shared app…</p>;
   return <SharedAppViewer target={target} transport={transport} />;

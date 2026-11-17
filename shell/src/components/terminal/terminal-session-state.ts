@@ -1,3 +1,7 @@
+import { terminalShellVisualStatus, TERMINAL_WAITING_DOT_STYLE } from "@matrix-os/ui/terminal-agents";
+
+export { TERMINAL_STATUS_LABEL } from "@matrix-os/ui/terminal-agents";
+
 export interface ShellSessionSummary {
   name: string;
   workspaceId: string;
@@ -15,6 +19,8 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: "running" | "waiting" | "finished" | "idle";
+  /** Live agent status from the terminal events stream; wins over `visualStatus`. */
+  agentVisualStatus?: "running" | "waiting" | "finished" | "idle";
   agent?: "claude" | "codex" | "hermes" | "opencode" | "pi";
   subtitle?: string;
   lastAction?: string;
@@ -34,15 +40,10 @@ export interface ShellSessionSummary {
 export function getShellVisualStatus(
   shell: ShellSessionSummary,
 ): NonNullable<ShellSessionSummary["visualStatus"]> {
-  if (shell.visualStatus) return shell.visualStatus;
-  if (shell.status === "degraded") return "waiting";
-  return shell.unread ? "finished" : "idle";
+  return terminalShellVisualStatus(shell);
 }
 
-export const SHELL_WAITING_STATUS_DOT_STYLE = {
-  background: "#E0A12E",
-  boxShadow: "0 0 0 4px rgba(224,161,46,0.25)",
-} as const;
+export const SHELL_WAITING_STATUS_DOT_STYLE = TERMINAL_WAITING_DOT_STYLE;
 
 export function shouldShowShellStatusDot(shell: ShellSessionSummary): boolean {
   return getShellVisualStatus(shell) === "waiting";

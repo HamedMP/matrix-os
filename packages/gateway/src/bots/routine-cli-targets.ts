@@ -1,3 +1,4 @@
+import { isRetainedRoutineCoordinator } from "./retained-routine-preview.js";
 import { RoutineDestinationViewSchema, type RoutineDestinationView } from "@matrix-os/contracts/routine-destination";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
@@ -62,6 +63,7 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
 
   const validateTarget = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope,
     target: { botId: string; chatId: string; bindingCreatedAt?: string }, action: TargetAccess["action"]) => {
+    if (isRetainedRoutineCoordinator(target.botId, target.chatId)) throw new RoutineCliError("target_unavailable");
     if (!deps.canAccessTarget) throw new RoutineCliError("unavailable");
     const owner = { type: "personal" as const, ownerId: configured.ownerId };
     const chatTrx = trx as unknown as Transaction<ChatDatabase>;
@@ -116,11 +118,8 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
     if (!await deps.revalidateSource(source, action, trx)) throw new RoutineCliError("permission_denied");
     requireSource(source, action);
   };
-  const resolveWithin = (trx: Transaction<OwnerBotDatabase>, value: RoutineCliSourceContext | undefined,
-    action: RoutineCliAction, pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
-    if (!trx.isTransaction) throw new RoutineCliError("unavailable");
-    const source = requireSource(value, action), configured = scope();
-    await sourceLive(trx, source, action);
+  const resolveDefaultWithin = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope,
+    action: RoutineCliAction, pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => {
     await lockRoutineCliPreference(trx, configured);
     const saved = await preferences.get(configured, trx);
     if (pinned && (pinned.ownerId !== configured.ownerId || pinned.computerId !== configured.computerId
@@ -129,8 +128,16 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
       throw new RoutineCliError("revision_conflict");
     if (!saved?.target) throw new RoutineCliError("target_required");
     const target = await validateTarget(trx, configured, saved.target, action);
-    await sourceLive(trx, source, action);
     return { ...configured, ...target, preferenceRevision: saved.revision };
+  };
+  const resolveWithin = (trx: Transaction<OwnerBotDatabase>, value: RoutineCliSourceContext | undefined,
+    action: RoutineCliAction, pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+    if (!trx.isTransaction) throw new RoutineCliError("unavailable");
+    const source = requireSource(value, action), configured = scope();
+    await sourceLive(trx, source, action);
+    const target = await resolveDefaultWithin(trx, configured, action, pinned);
+    await sourceLive(trx, source, action);
+    return target;
   });
   /** Already accepted receipt/task target; current default preference cannot redirect this snapshot. */
   const validatePinnedWithin = (trx: Transaction<OwnerBotDatabase>, value: RoutineCliSourceContext | undefined,
@@ -148,6 +155,12 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
   });
   return {
     validatePinnedWithin,
+    // The fresh browser turn can pin the owner's existing destination before a native source exists.
+    resolveOwnerDefaultWithin: (trx: Transaction<OwnerBotDatabase>, principal: RequestPrincipal,
+      pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+      if (!trx.isTransaction) throw new RoutineCliError("unavailable");
+      return resolveDefaultWithin(trx, requireOwner(principal), "read", pinned);
+    }),
     /** Private accepted-task port: caller must prove the immutable task/run claim first. This validates
      * current owner/target policy only; it neither revives the origin nor authorizes an unclaimed intent. */
     validateClaimedTargetWithin: (trx: Transaction<OwnerBotDatabase>, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {

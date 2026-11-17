@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import type { TerminalRef, TerminalTabServerFrameSchema } from "@matrix-os/contracts";
@@ -16,6 +17,8 @@ type Frame = z.infer<typeof TerminalTabServerFrameSchema>;
 async function fixture() {
   const homePath = await mkdtemp("/tmp/matrix-eng294-");
   let emit: ((data: Uint8Array) => void) | undefined;
+  let clientExit: ((exitCode: number | null) => void) | undefined;
+  let writeGate: { started: () => void; wait: Promise<void> } | undefined;
   const createTab = vi.fn(async () => ({ tabId: 1, paneId: "terminal_1" }));
   const closeTab = vi.fn(async () => {});
   const adapter: ZellijRuntimeAdapter = {
@@ -23,7 +26,8 @@ async function fixture() {
     subscribeWorkspace: async () => ({ close: async () => {} }),
     openAttachment: async (_session, input) => {
       emit = input.onData;
-      return { write: async () => {}, resize: async () => {}, close: async () => {} };
+      clientExit = input.onExit;
+      return { write: async () => { const gate = writeGate; if (gate) { gate.started(); await gate.wait; writeGate = undefined; } }, resize: async () => {}, close: async () => {} };
     },
     resizeSession: async () => {},
   };
@@ -48,6 +52,13 @@ async function fixture() {
     const ref: TerminalRef = { workspaceId: workspace.id, tabId: tab.id };
   return {
     runtime, store, ref, tab, createTab, closeTab,
+    holdWrite() {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      writeGate = { started: () => started.resolve(), wait: release.promise };
+      return { started: started.promise, release: () => release.resolve() };
+    },
+    clientExit() { if (!clientExit) throw new Error("No attachment"); clientExit(1); },
     emit(data: string) {
       if (!emit) throw new Error("Fixture has no live attachment");
       emit(Buffer.from(data));
@@ -187,4 +198,46 @@ it("delivers numbered markers in the snapshot-to-live handoff exactly once while
     release.resolve();
     await f.cleanup();
   }
+});
+
+// A zellij attachment is a client, not the command it observes. Changing shell
+// presentation can disconnect that client while the original process survives.
+it("reattaches the original tab after its viewer client exits unexpectedly", async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    const first = f.attach("canvas");
+    await vi.waitFor(() => { f.emit("canvas-marker\r\n"); expect(output(first.frames)).toContain("canvas-marker"); });
+    f.clientExit();
+    await vi.waitFor(() => expect(first.onClose.mock.calls.length > 0 || first.frames.some(frame =>
+      frame.type === "safe-error" || frame.type === "error")).toBe(true));
+    const saved = await f.store.getRuntimeWorkspace(f.ref.workspaceId);
+    expect(saved?.tabs[f.ref.tabId].status).toBe("running");
+    const resumed = f.attach("desktop");
+    await vi.waitFor(() => { f.emit("same-process-marker\r\n"); expect(output(resumed.frames)).toContain("same-process-marker"); });
+    expect(terminalTabIncarnation((await f.store.getRuntimeWorkspace(f.ref.workspaceId))!.tabs[f.ref.tabId])).toBe(f.tab.incarnation);
+    expect(f.createTab).toHaveBeenCalledTimes(1);
+    expect(f.closeTab).not.toHaveBeenCalled();
+  } finally { await f.cleanup(); }
+});
+
+it("admits a replacement viewer only after a dying client drains pending input", async () => {
+  const f = await fixture();
+  const gate = f.holdWrite();
+  try {
+    const first = await f.keepAlive();
+    const writing = first.write("before-loss");
+    await gate.started;
+    f.clientExit();
+    const next = f.keepAlive();
+    // Give admission a chance to race the deliberately held input write.
+    await delay(50);
+    gate.release();
+    await writing;
+    const resumed = await next;
+    await expect(resumed.write("after-loss")).resolves.toBeUndefined();
+    expect(terminalTabIncarnation((await f.store.getRuntimeWorkspace(f.ref.workspaceId))!.tabs[f.ref.tabId])).toBe(f.tab.incarnation);
+    expect(f.createTab).toHaveBeenCalledTimes(1);
+    expect(f.closeTab).not.toHaveBeenCalled();
+  } finally { gate.release(); await f.cleanup(); }
 });

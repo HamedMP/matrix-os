@@ -33,12 +33,14 @@ import {
   type TerminalRuntimeRequest,
   type TerminalRuntimeResponse,
 } from "./socket-protocol.js";
+import type { TerminalScreenCapture } from "./screen-capture.js";
 
 export interface TerminalRuntimeControlApi {
   prepareNativeTab?(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation>;
   completeNativeTab?(ref: TerminalRef, input: NativeTabCompletion): Promise<TerminalTab>;
   archiveEndedTab?(ref: TerminalRef, input: TerminalEndedTabArchiveInput): Promise<TerminalTab>;
   getCommandState?(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState>;
+  captureScreen?(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null>;
   getCommandResult?(ref: TerminalRef, expectedIncarnation: string): Promise<TerminalCommandResult>;
   scrollState?(ref: TerminalRef, line?: number): Promise<TerminalScrollState | null>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
@@ -86,6 +88,11 @@ function encodeSocketResponseFrame(value: unknown): Buffer {
 export interface TerminalRuntimeSocketServerOptions {
   socketPath: string;
   runtime: TerminalRuntimeControlApi;
+  /** Per-tab agent status reported from inside panes; absent means none is reported. */
+  agentStatus?: {
+    list(): Promise<unknown[]>;
+    resolvePane?(sessionName: string, paneId: string): Promise<unknown>;
+  };
   maxConnections?: number;
   idleTimeoutMs?: number;
 }
@@ -409,9 +416,13 @@ export class TerminalRuntimeSocketServer {
         return this.options.runtime.completeNativeTab(request.input, request.input);
       }
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
+      case "ListAgentStatuses": return this.options.agentStatus?.list() ?? [];
+      case "ResolvePane": return (await this.options.agentStatus?.resolvePane?.(request.input.sessionName, request.input.paneId)) ?? null;
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);
+      // An older runtime API without capture answers null; readers then use the snapshot.
+      case "CaptureScreen": return (await this.options.runtime.captureScreen?.(request.input)) ?? null;
       case "GetCommandState": {
         const { workspaceId, tabId, expectedIncarnation } = request.input;
         const result = await this.options.runtime.getCommandState?.({ workspaceId, tabId }, expectedIncarnation);

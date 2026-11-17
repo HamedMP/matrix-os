@@ -5,6 +5,7 @@ import { AccountDeletionRepository } from '../../packages/platform/src/account-d
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
 import { eraseOwnerSites, eraseOwnerSiteRegistry } from '../../packages/platform/src/sites/account-lifecycle.js';
+import { markSiteLegacyPrivate, seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
 const env = { ACCOUNT_DELETION_SECRET: 'site-account-deletion-secret-123456789' };
 const owner = { ownerId: 'user_deleting', machineId: 'lifecycle-machine', appSlug: 'launch' };
@@ -32,8 +33,8 @@ it('cleans all owner objects including failed candidates and removes owner regis
     const objects = new Map<string, Uint8Array>();
     const service = createSitesService({ db, env, storage: { async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, async getObject() { return { body: null }; } } });
     const site = await service.deploy(owner, deployment);
-    const privateSite=await service.patch(owner,{accessMode:'private_link',baseRevision:site.revision});
-    await service.createAccessLink(owner,{baseRevision:privateSite.revision});
+    await markSiteLegacyPrivate(db,site.id);
+    await seedLegacyAccessLink(db,site.id);
     expect([...objects.keys()][0]).toContain(`sites/owners/${owner.ownerId}/${site.id}/`);
     objects.set(`sites/owners/${owner.ownerId}/orphan/candidate/index.html`, new Uint8Array([1]));
     objects.set('sites/owners/user_other/private/index.html', new Uint8Array([2]));

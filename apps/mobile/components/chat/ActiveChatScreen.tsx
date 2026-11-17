@@ -5,6 +5,7 @@ import type { TextInputInstance } from "react-native";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { chatDraftKey } from "@/lib/chat-drafts";
+import { useMarkChatRead } from "@/lib/queries/use-mark-chat-read";
 import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { useOpenSidePanel } from "@/lib/use-shell-navigation";
@@ -37,13 +38,16 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+    catalog, directBot, providerCatalogChecking, selection, chooseSelection, permissionMode, choosePermissionMode,
+    attachmentKinds, composer,
   } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
+  // A chat read here stops showing as Completed in the chat lists, as on Desktop.
+  useMarkChatRead(detail);
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,
@@ -151,7 +155,9 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
             catalog={catalog}
             catalogLoading={providerCatalogChecking}
             selection={selection}
-            onSelectionChange={setSelectionOverride}
+            onSelectionChange={chooseSelection}
+            permissionMode={permissionMode}
+            onPermissionModeChange={choosePermissionMode}
           />
         ),
       }}

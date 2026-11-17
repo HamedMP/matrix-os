@@ -13,8 +13,10 @@
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./collaborative-app-sharing": "./src/collaboration/collaborative-app-sharing.ts",
+    "./share": "./src/share/index.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
     "./feature-flags": "./src/feature-flags.ts",
+    "./terminal-agents": "./src/terminal-agents/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./chat-composer.css": "./src/chat/composer/chat-composer.css",
@@ -46,11 +48,13 @@
     "@matrix-os/brand": "workspace:*",
     "@matrix-os/contracts": "workspace:*",
     "@noble/hashes": "2.3.0",
+    "@radix-ui/react-collapsible": "1.1.12",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-select": "2.2.6",
+    "@radix-ui/react-tabs": "1.1.13",
     "lucide-react": "^0.563.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
@@ -65,8 +69,8 @@
   "devDependencies": {
     "@types/react": "~19.2.14",
     "@types/react-dom": "~19.2.3",
-    "typescript": "^5.5.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "typescript": "^5.5.0"
   }
 }

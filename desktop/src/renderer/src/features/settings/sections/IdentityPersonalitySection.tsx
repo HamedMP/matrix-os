@@ -88,7 +88,7 @@ function SoulEditor() {
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>SOUL · system/soul.md</span>
         <div className="flex items-center gap-2">
-          {status === "saved" ? <span className="text-xs" style={{ color: "var(--success)" }}>Saved</span> : null}
+          {status === "saved" ? <span className="text-xs" style={{ color: "var(--success-text)" }}>Saved</span> : null}
           <Button variant="primary" disabled={!dirty || status === "saving" || !!validationError} onClick={() => void save()}>
             <Save size={13} />
             {status === "saving" ? "Saving…" : "Save"}
@@ -113,7 +113,7 @@ function SoulEditor() {
         />
       )}
       {validationError || error ? (
-        <span role="alert" className="text-xs" style={{ color: "var(--danger)" }}>
+        <span role="alert" className="text-xs" style={{ color: "var(--danger-text)" }}>
           {validationError ?? error}
         </span>
       ) : null}

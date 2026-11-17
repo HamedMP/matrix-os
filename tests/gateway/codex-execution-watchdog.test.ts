@@ -43,6 +43,57 @@ it("still expires an individual tool that never returns", async () => {
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it.each([false, true])("keeps a quiet shell command alive beyond 30 minutes (other activity: %s)", async otherActivity => {
+  const expire = vi.fn();
+  const watchdog = createCodexExecutionWatchdog({ expire, waitingForHuman: () => false, env: {} });
+  try {
+    watchdog.start();
+    watchdog.toolStarted("ci_watch_redirected_to_file", "commandExecution");
+    for (let minute = 0; minute < 31; minute += 1) {
+      if (otherActivity) {
+        watchdog.toolStarted("ci_status", "commandExecution");
+        watchdog.toolCompleted("ci_status");
+      }
+      await elapsed(60_000);
+    }
+    expect(expire).not.toHaveBeenCalled();
+    watchdog.toolCompleted("ci_watch_redirected_to_file");
+    await elapsed(8 * 60 * 60_000);
+    expect(expire).not.toHaveBeenCalled();
+  } finally { watchdog.stop(); }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("still enforces the shell command deadline despite command output", async () => {
+  const expire = vi.fn();
+  const watchdog = createCodexExecutionWatchdog({ expire, waitingForHuman: () => false,
+    env: { MATRIX_CODEX_COMMAND_DEADLINE_MS: "2000", MATRIX_CODEX_NO_PROGRESS_MS: "100" } });
+  try {
+    watchdog.start();
+    watchdog.toolStarted("command", "commandExecution");
+    await elapsed(1_000);
+    expect(expire).not.toHaveBeenCalled();
+    watchdog.progress("command");
+    await elapsed(1_000);
+    expect(expire).toHaveBeenCalledExactlyOnceWith({ phase: "tool_deadline", toolCallId: "command", durationMs: 2_000 });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { watchdog.stop(); }
+});
+
+it("keeps a connector's own inactivity deadline despite other command activity", async () => {
+  const expire = vi.fn();
+  const watchdog = createCodexExecutionWatchdog({ expire, waitingForHuman: () => false,
+    env: { MATRIX_CODEX_NO_PROGRESS_MS: "1000" } });
+  try {
+    watchdog.start();
+    watchdog.toolStarted("stalled_connector", "mcpToolCall");
+    watchdog.toolStarted("command", "commandExecution");
+    watchdog.progress("command");
+    await elapsed(1_000);
+    expect(expire).toHaveBeenCalledExactlyOnceWith({ phase: "tool_no_progress", toolCallId: "stalled_connector", durationMs: 1_000 });
+  } finally { watchdog.stop(); }
+});
+
 it("does not count human wait against an individual tool deadline", async () => {
   const expire = vi.fn();
   let waiting = true;

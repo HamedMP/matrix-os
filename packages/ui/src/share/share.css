@@ -1,0 +1,34 @@
+/*
+ * Share popover tokens. Each value prefers the host's shadcn token (Web shell),
+ * then the Electron Desktop token, then the zinc value from the approved design.
+ */
+.matrix-share {
+  --share-bg: var(--popover, var(--background, var(--bg-surface, #ffffff)));
+  --share-fg: var(--popover-foreground, var(--foreground, var(--text-primary, #18181b)));
+  --share-muted: var(--muted, var(--bg-raised, #f1f1f3));
+  --share-muted-fg: var(--muted-foreground, var(--text-secondary, #5b5b66));
+  --share-subtle-fg: var(--muted-foreground, var(--text-tertiary, #71717a));
+  --share-border: var(--border, var(--border-default, #e4e4e7));
+  --share-input: var(--input, var(--border-default, #d4d4d8));
+  --share-primary: var(--primary, var(--accent, #18181b));
+  --share-primary-fg: var(--primary-foreground, var(--text-on-accent, #ffffff));
+  --share-panel: color-mix(in srgb, var(--share-muted) 45%, var(--share-bg));
+  --share-ring: var(--ring, var(--focus-ring, #a1a1aa));
+  --share-success: #22c55e;
+  --share-success-fg: #15803d;
+  --share-success-bg: color-mix(in srgb, #22c55e 10%, var(--share-bg));
+  --share-danger-fg: var(--destructive, var(--danger, #b91c1c));
+  --share-danger-border: color-mix(in srgb, var(--share-danger-fg) 45%, var(--share-bg));
+  color: var(--share-fg);
+  background: var(--share-bg);
+  font-family: var(--font-sans, var(--font-ui, Inter, system-ui, sans-serif));
+}
+
+.matrix-share :focus-visible {
+  outline: 2px solid var(--share-ring);
+  outline-offset: 2px;
+}
+
+@keyframes matrix-share-spin { to { transform: rotate(360deg); } }
+.matrix-share-spin { animation: matrix-share-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .matrix-share-spin { animation-duration: 2.4s; } }

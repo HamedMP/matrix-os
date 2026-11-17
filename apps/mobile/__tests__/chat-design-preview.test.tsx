@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { FlatList, KeyboardAvoidingView, Platform } from "react-native";
+import { FlatList, Platform } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { DesignPreview } from "../dev/design-preview/DesignPreview";

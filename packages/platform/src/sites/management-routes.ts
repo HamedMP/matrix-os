@@ -7,6 +7,8 @@ import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
 import type { SitesService } from './service.js';
 import { SiteError } from './types.js';
+/** Generic, provider-free copy for the retired one-time link capability (ENG-490). */
+export const SITE_ONE_TIME_LINKS_RETIRED_ERROR = 'One-time links are no longer available';
 export function createSiteManagementRoutes(options: {
     db: PlatformDB;
     platformSecret: string;
@@ -14,14 +16,15 @@ export function createSiteManagementRoutes(options: {
 }): Hono {
     const app = new Hono();
     app.use('*', bodyLimit({ maxSize: 15 * 1024 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) }));
-    async function owner(c: Context, allowAccessLinkPaging = false) {
+    async function owner(c: Context, extraQuery: 'paging' | 'slug' | null = null) {
         if (options.platformSecret.length < 32)
             return null;
         const handle = SafeHandleSchema.safeParse(c.req.param('handle'));
         const appSlug = SiteAppSlugSchema.safeParse(c.req.param('appSlug'));
         const query = z.object({
             runtimeSlot: RuntimeSlotSchema.default('primary'),
-            ...(allowAccessLinkPaging ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(extraQuery === 'paging' ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(extraQuery === 'slug' ? { slug: z.string().max(63).optional() } : {}),
         }).strict().safeParse(c.req.query());
         if (!handle.success || !appSlug.success || !query.success)
             throw new SiteError('invalid_request');
@@ -35,8 +38,11 @@ export function createSiteManagementRoutes(options: {
             authenticatedRuntime: { handle: machine.handle, runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: machine.runtimeTokenEpoch } };
     }
     app.onError((error, c) => {
-        if (error instanceof SiteError)
+        if (error instanceof SiteError) {
+            if (error.code === 'gone')
+                return c.json({ error: SITE_ONE_TIME_LINKS_RETIRED_ERROR }, 410);
             return c.json({ error: error.code === 'conflict' ? 'Site changed; reload and try again' : 'Site unavailable' }, error.code === 'conflict' ? 409 : error.code === 'not_found' ? 404 : error.code === 'invalid_request' ? 400 : 503);
+        }
         console.warn('[sites] management failed', error instanceof Error ? error.name : 'UnknownError');
         return c.json({ error: 'Site unavailable' }, 503);
     });
@@ -92,13 +98,18 @@ export function createSiteManagementRoutes(options: {
         return null; throw error; })); if (!input.success)
         throw new SiteError('invalid_request'); return siteResponse(c, await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
     app.get('/:appSlug/access-links', async c => {
-        const identity = await owner(c, true); if (!identity) return denied(c);
+        const identity = await owner(c, 'paging'); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({
             limit: c.req.query('limit'), cursor: c.req.query('cursor'),
         });
         if (!query.success) throw new SiteError('invalid_request');
         return accessLinksResponse(c, await options.service.listAccessLinks(identity, query.data));
     });
+    app.get('/:appSlug/slug-availability', async c => {
+        const identity = await owner(c, 'slug'); if (!identity) return denied(c);
+        return c.json(await options.service.slugAvailability(identity, { slug: c.req.query('slug') }));
+    });
+    // Retired (ENG-490): kept so older gateways get a clean 410 from the service, not a 404.
     app.post('/:appSlug/access-links', smallBody, async c => {
         const identity = await owner(c); if (!identity) return denied(c);
         const input = SiteAccessLinkCreateRequestSchema.safeParse(await c.req.json().catch((error: unknown) => {

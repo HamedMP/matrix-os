@@ -4,6 +4,8 @@ import type {
   CanonicalChatMessage,
 } from "@matrix-os/contracts";
 
+import { mergeChatReadState } from "@/lib/shared-chat-state";
+
 type MessageDelta = NonNullable<CanonicalChatContentFrame["content"]["messageDelta"]>;
 
 // The same bounds a REST snapshot has, so a detail kept alive by streamed
@@ -110,7 +112,9 @@ export function applyCanonicalChatContent(
 
   return {
     ...detail,
-    record: content.record,
+    // A frame's record replaces the cached one, except for a read state the
+    // frame does not carry or carries at an older version.
+    record: mergeChatReadState(content.record, detail.record),
     messages: windowMessages,
     turns,
     runs,

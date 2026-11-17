@@ -1,3 +1,4 @@
+import { isSharedAppOpenPath } from "@matrix-os/contracts";
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
@@ -85,6 +86,7 @@ import {
   applySandboxedAppAssetCorsHeaders,
   buildAppDomainProxyResponse,
   buildCodeDomainProxyHeaders,
+  buildForwardedProxyHeaders,
   hasValidExplicitVmAppAssetToken,
   isAppDomainStaticAssetPath,
   isCodeDomainStaticAssetPath,
@@ -265,6 +267,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     host: string,
     proxyOpts: {
       assetRequest?: boolean;
+      /** Data-free public page: on upstream failure answer a bounded 503, never an auth page. */
+      publicPage?: boolean;
       preserveUpstreamCacheHeaders?: boolean;
       redirectToBillingOnFailure?: boolean;
       upstreamPath?: string;
@@ -315,6 +319,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         c.header('Retry-After', '5');
         return c.text('Matrix OS shell asset unavailable', 503);
+      }
+      if (proxyOpts.publicPage) {
+        applyNoStoreHeaders(c);
+        c.header('Retry-After', '5');
+        return c.text('Matrix OS shell unavailable', 503);
       }
       if (isSignupBillingHandoff(c.req.url)) {
         const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -442,6 +451,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirectToBillingOnFailure: false,
         upstreamPath,
       });
+    }
+    // Org-link hand-off (spec 2693): a public, data-free page that only offers
+    // to open the desktop app. Serve it from the platform shell before identity,
+    // computer-boot or billing routing so neither can block the hand-off.
+    if (isAppDomain && isSharedAppOpenPath(reqPath)) {
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+        applyNoStoreHeaders(c);
+        c.header('Allow', 'GET, HEAD');
+        return c.text('Method Not Allowed', 405);
+      }
+      return proxyAuthShell(c, host, { publicPage: true, redirectToBillingOnFailure: false });
     }
     if (isAppDomain && isPostHogRelayPath(reqPath)) {
       return proxyPostHogRelay(c, { logRouteError: logRouteError });
@@ -765,12 +785,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (shouldForwardProxyHeader(key, value)) {
-          headers.set(key, value);
-        }
-      }
+      const headers = buildForwardedProxyHeaders(c.req.header());
       for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');
@@ -786,7 +801,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
-      headers.set('connection', 'close');
+      // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
@@ -941,13 +956,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             host,
             platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
           )
-        : new Headers();
+        : buildForwardedProxyHeaders(c.req.header());
       if (!isCodeDomain) {
-        for (const [key, value] of Object.entries(c.req.header())) {
-          if (shouldForwardProxyHeader(key, value)) {
-            headers.set(key, value);
-          }
-        }
         for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
         if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
         const rawCookie = c.req.header('cookie');
@@ -963,7 +973,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
         headers.set('accept-encoding', 'identity');
-        headers.set('connection', 'close');
+        // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);

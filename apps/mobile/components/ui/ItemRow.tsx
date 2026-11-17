@@ -14,6 +14,8 @@ export interface ItemRowProps {
   titleAccessory?: ReactNode;
   /** Short text at the top right, such as a time. */
   meta?: string;
+  /** Shown right of the meta text, on its line, such as a status dot. */
+  metaAccessory?: ReactNode;
   trailing?: ReactNode;
   density?: "compact" | "comfortable";
   /** Space between the leading node and the text. */
@@ -31,6 +33,7 @@ export function ItemRow({
   leading,
   titleAccessory,
   meta,
+  metaAccessory,
   trailing,
   density = "compact",
   gap = 12,
@@ -56,7 +59,12 @@ export function ItemRow({
         </View>
         {subtitle ? <Text numberOfLines={1} style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
-      {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
+      {meta || metaAccessory ? (
+        <View testID={testID ? `${testID}-meta` : undefined} style={styles.metaLine}>
+          {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
+          {metaAccessory}
+        </View>
+      ) : null}
       {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
     </>
   );
@@ -117,10 +125,16 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.v2.space[2],
     color: theme.v2.colors.textSubtle,
   },
+  metaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: theme.v2.space[6],
+    marginLeft: theme.v2.space[8],
+  },
   meta: {
     ...theme.v2.text.footnote,
     alignSelf: "flex-start",
-    marginLeft: theme.v2.space[8],
     color: theme.v2.colors.textTertiary,
   },
   trailing: {

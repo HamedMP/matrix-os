@@ -36,10 +36,21 @@ describe("project-scoped shell CLI commands", () => {
   it("exposes only workspace/tab commands and removes native zellij pane commands", () => {
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
       "connect",
+      "get",
+      "interrupt",
+      "keys",
+      "label",
       "list",
       "ls",
       "new",
+      "read",
+      "report",
       "rm",
+      "run",
+      "send",
+      "templates",
+      "wait",
+      "wait-children",
     ]);
   });
 
@@ -111,6 +122,30 @@ describe("project-scoped shell CLI commands", () => {
     await shellCommand.subCommands!.rm.run!({ args: { project: "main", tab: "Build", dev: true, token: "tok" } } as never);
 
     expect(deleteRequests).toEqual([`http://localhost:4000/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ID}`]);
+  });
+
+  // Fault detected: a helper that exited kept its name, so `--tab review` failed as
+  // ambiguous for the new helper started under the same name.
+  it("resolves a name to the one live tab when finished tabs share it", async () => {
+    const liveId = "tt_00000000000000000000000000000002";
+    const deleteRequests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/coding-agents/summary")) return response({ projects: { items: [] } });
+      if (url.endsWith("/api/terminal/workspaces") && !init?.method) return response({ workspaces: [mainWorkspace([
+        { id: TAB_ID, name: "Build", status: "exited" },
+        { id: liveId, name: "Build", status: "running" },
+      ])] });
+      if (init?.method === "DELETE") {
+        deleteRequests.push(url);
+        return response({ ok: true });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await shellCommand.subCommands!.rm.run!({ args: { project: "main", tab: "Build", dev: true, token: "tok" } } as never);
+
+    expect(deleteRequests).toEqual([`http://localhost:4000/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${liveId}`]);
   });
 
   it("rejects ambiguous display names and requires a stable tab id", async () => {

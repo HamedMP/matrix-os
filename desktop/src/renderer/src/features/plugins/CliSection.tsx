@@ -121,7 +121,7 @@ export function CliSection() {
       </div>
 
       {copyError ? (
-        <p className="mt-3 text-xs" style={{ color: "var(--danger)" }}>{copyError}</p>
+        <p className="mt-3 text-xs" style={{ color: "var(--danger-text)" }}>{copyError}</p>
       ) : null}
 
       <div

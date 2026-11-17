@@ -182,6 +182,17 @@ version or schema drift. Runtime capabilities must remain disabled for any
 installed version outside the verified range; do not silently fall back to raw
 terminal parsing for approvals or structured input.
 
+The native Codex execution watchdog does not treat silent shell commands as
+stalled: builds and CI watchers may redirect output to files or legitimately
+wait without writing to the terminal. Commands retain their explicit duration
+limit (`MATRIX_CODEX_COMMAND_DEADLINE_MS`, eight hours by default), regardless
+of output. Other tool items retain independent execution and inactivity limits;
+activity from another command cannot keep a stalled connector alive. Human
+approval/input waiting remains excluded from execution accounting. Stop and
+deadline interruption retain existing cleanup and uncertain-outcome semantics;
+neither authorizes automatic replay. See
+[quiet-command acceptance](../../specs/633-agent-waiting-policy/quiet-command-timeouts.md).
+
 App-server requests must pass through the gateway's bounded request normalizer.
 Command, file-change, and permission requests use Matrix-authored generic copy;
 raw commands, paths, hosts, and permission payloads never enter thread events.

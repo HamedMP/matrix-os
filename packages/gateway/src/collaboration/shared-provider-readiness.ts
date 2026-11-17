@@ -12,6 +12,20 @@ export const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", p
 
 export type SharedProviderReadiness = "ready" | "reconnect_required" | "unavailable";
 
+/** Recheck exact native model IDs/options independently of the Settings source inventory. */
+export async function sharedNativeSelectionReady(
+  providerCatalog: Pick<ChatProviderCatalogService, "getCatalog"> | undefined,
+  ownerId: string,
+  selection: CanonicalChatModelSelection,
+  driverKind: CanonicalProviderDriverKind,
+): Promise<boolean> {
+  if (!providerCatalog) return false;
+  const catalog = await providerCatalog.getCatalog({ userId: ownerId, source: "jwt" }, selection);
+  const validated = validateChatProviderSelection({ catalog, selection, requirements: SHARED_RUN_SELECTION_REQUIREMENTS });
+  return validated.ok && (validated.instance.driverKind === driverKind
+    || driverKind === "claude_code" && validated.instance.driverKind === "kernel");
+}
+
 export type CollaborativeAppProviderRequirement = "connected_provider" | "ai_funding";
 
 /** Sharing never delegates the creator's provider sessions or Matrix-funded AI authority. */

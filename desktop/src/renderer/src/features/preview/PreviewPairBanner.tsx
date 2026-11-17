@@ -3,6 +3,7 @@ import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
 import type { DesktopPreviewSummary } from "../../../../shared/preview-pair";
+import { StatusBanner } from "./StatusBanner";
 function BoundPreviewBanner({ preview }: { preview: DesktopPreviewSummary }) {
   const status = useConnection(state => state.status), handle = useConnection(state => state.handle);
   const organizationId = useConnection(state => state.organizationId), select = useConnection(state => state.selectOrganization);
@@ -12,11 +13,14 @@ function BoundPreviewBanner({ preview }: { preview: DesktopPreviewSummary }) {
   useEffect(() => {
     if (status === "signed-in" && organization && organizationId !== organization.organizationId) select(organization.organizationId);
   }, [status, organization, organizationId, select]);
-  return <div role="status" className="shrink-0 border-b px-4 py-2 text-xs" style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}>
-    <strong>Collaboration preview · {preview.role === "owner" ? "Owner" : "Member"} · PR #{preview.pr}</strong>
-    <span> · {preview.sourceSha.slice(0, 12)} · {status === "signed-in" ? handle : preview.handle}</span>
-    <span> · {status === "signed-in" ? organization?.name ?? "Organization unavailable" : `Sign in with the ${preview.role} test account`}</span>
-  </div>;
+  const title = `Collaboration preview · ${preview.role === "owner" ? "Owner" : "Member"} · PR #${preview.pr}`;
+  const identity = `${preview.sourceSha.slice(0, 12)} · ${status === "signed-in" ? handle : preview.handle}`;
+  const account = status === "signed-in" ? organization?.name ?? "Organization unavailable" : `Sign in with the ${preview.role} test account`;
+  return <StatusBanner fullText={`${title} · ${identity} · ${account}`}>
+    <strong>{title}</strong>
+    <span> · {identity}</span>
+    <span> · {account}</span>
+  </StatusBanner>;
 }
 export function PreviewPairBanner() {
   const [preview, setPreview] = useState<DesktopPreviewSummary | null>(null);

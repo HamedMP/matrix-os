@@ -97,7 +97,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
           >
             <span
               className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
-              style={{ color: visiblyUnavailable ? "var(--danger)" : undefined }}
+              style={{ color: visiblyUnavailable ? "var(--danger-text)" : undefined }}
             >
               {visiblyStarting || inventoryLoading
                 ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
@@ -195,7 +195,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
             >
               <RefreshCw size={12} className={loadStatus === "loading" ? "animate-spin" : ""} aria-hidden="true" />
             </DropdownMenu.Item>
-            {switchError ? <p aria-live="polite" className="px-2 py-2 text-[11px]" style={{ color: "var(--danger)" }}>Couldn&apos;t switch computers. Try again.</p> : null}
+            {switchError ? <p aria-live="polite" className="px-2 py-2 text-[11px]" style={{ color: "var(--danger-text)" }}>Couldn&apos;t switch computers. Try again.</p> : null}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

@@ -851,7 +851,7 @@ function WorkTabContent({
         />
       ) : null}
       {renameChatError ? (
-        <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
           {renameChatError}
         </div>
       ) : null}

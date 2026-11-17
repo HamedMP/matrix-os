@@ -1,14 +1,16 @@
-import { projectChatMessageResponse } from "@matrix-os/contracts";
+import { projectChatMessageResponse, projectChatReadStateResponse } from "@matrix-os/contracts";
 import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 import {
   cancelChatRun,
   chatActivityAt,
+  chatExists,
   retryChatTurn,
   fetchChats,
   fetchChatDetail,
   fetchProjectChats,
   isChatUnread,
   searchChats,
+  updateChatReadState,
 } from "@/lib/requests/canonical-chat";
 
 const gatewayUrl = "https://app.matrix-os.com/vm/alice";
@@ -138,9 +140,21 @@ describe("chat list requests", () => {
   });
 
   it.each([400, 401, 503])("reports HTTP %s with the generic message only", async (status) => {
-    jest.spyOn(global, "fetch").mockResolvedValue(respond({ error: "postgres://internal detail" }, status));
+    const response = respond({ error: "postgres://internal detail" }, status);
+    jest.spyOn(global, "fetch").mockResolvedValue(response);
 
-    await expect(fetchChats(token, gatewayUrl)).rejects.toThrow("Chats unavailable. Try again.");
+    await expect(fetchChats(token, gatewayUrl)).rejects.toMatchObject({
+      name: "AuthenticatedRequestError", status, message: "Chats unavailable. Try again.",
+    });
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
+  it("keeps a network failure uncertain even if its raw error has a status property", async () => {
+    jest.spyOn(global, "fetch").mockRejectedValue(Object.assign(new Error("private network details"), { status: 403 }));
+
+    await expect(fetchChats(token, gatewayUrl)).rejects.toMatchObject({
+      name: "AuthenticatedRequestError", status: undefined, message: "Chats unavailable. Try again.",
+    });
   });
 
   it("does not send a cursor the server would reject", async () => {
@@ -427,5 +441,121 @@ describe("complete question detail", () => {
 
     expect(requestedUrl(fetchMock).searchParams.get("runtime")).toBe("primary");
     expect(parsed.activities).toEqual([activity]);
+  });
+});
+
+describe("chatExists", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("asks the computer for the chat's latest message only", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond({}));
+
+    await expect(chatExists(token, gatewayUrl, "chat_one", 5_000)).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/vm/alice/api/chats/chat_one");
+    expect(new URL(String(url)).searchParams.get("limit")).toBe("1");
+    expect(init).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it("reports a chat the computer does not have", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      respond({ error: { code: "chat_not_found", safeMessage: "Chat not found." } }, 404),
+    );
+
+    await expect(chatExists(token, gatewayUrl, "chat_one")).resolves.toBe(false);
+  });
+
+  it.each([
+    ["an unavailable service", () => Promise.resolve(respond({ error: { code: "service_unavailable" } }, 503))],
+    ["a dropped connection", () => Promise.reject(new TypeError("Network request failed"))],
+  ])("fails without an answer on %s", async (_label, answer) => {
+    jest.spyOn(global, "fetch").mockImplementation(answer);
+
+    await expect(chatExists(token, gatewayUrl, "chat_one")).rejects.toThrow();
+  });
+
+  it("does not call the server with an invalid chat id", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(chatExists(token, gatewayUrl, "../chat")).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// The gateway leaves a chat's read state out unless the request asks for it.
+function respondAsGateway(body: unknown) {
+  return async (input: string | URL | Request) => {
+    const asked = new URL(String(input)).searchParams.get("readStateVersion") === "1" ? "1" : "0";
+    return respond(projectChatReadStateResponse(body, asked));
+  };
+}
+
+describe("chat detail read state", () => {
+  beforeEach(() => jest.restoreAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("asks for the chat's read state, which the chat screen acknowledges", async () => {
+    const readState = { unread: true, markedUnread: false, version: 2, readThroughSeq: 1, latestIncomingSeq: 4 };
+    const detail = { record: chatRecord("chat_one", { readState }), messages: [], turns: [], runs: [], activities: [] };
+    jest.spyOn(global, "fetch").mockImplementation(respondAsGateway(detail));
+
+    const parsed = await fetchChatDetail(token, gatewayUrl, "chat_one");
+
+    expect(parsed.record.readState).toEqual(readState);
+  });
+});
+
+describe("updateChatReadState", () => {
+  const readState = { unread: false, markedUnread: false, version: 3, readThroughSeq: 4, latestIncomingSeq: 4 };
+
+  it("gets back the read state it wrote", async () => {
+    jest.spyOn(global, "fetch").mockImplementation(respondAsGateway(chatRecord("chat_one", { readState })));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .resolves.toMatchObject({ readState });
+  });
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("patches the chat's read state and returns the chat as the server now has it", async () => {
+    const answer = chatRecord("chat_one", { readState });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond(answer));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .resolves.toMatchObject({ chat: { id: "chat_one" }, readState });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/alice/api/chats/chat_one/read-state?readStateVersion=1",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: { Authorization: "Bearer clerk-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "mark_read", throughSeq: 4, baseVersion: 2 }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("does not call the server with an invalid chat id or request", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(updateChatReadState(token, gatewayUrl, "../chat", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: -1, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a refusal with the generic message only", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(respond({ error: { code: "read_state_conflict", safeMessage: "Stale." } }, 409));
+
+    await expect(updateChatReadState(token, gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 }))
+      .rejects.toThrow("Could not update the chat.");
   });
 });

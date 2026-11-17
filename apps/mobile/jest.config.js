@@ -13,9 +13,10 @@ module.exports = {
   modulePaths: [path.resolve(__dirname, "../../node_modules")],
   // micromark and its helpers (character-entities,
   // decode-named-character-reference, devlop) are ESM-only and reach every suite
-  // through the @matrix-os/contracts index, so they must be transformed too.
+  // through the @matrix-os/contracts index, so they must be transformed too, as
+  // must react-native-keyboard-controller's ESM jest mock.
   transformIgnorePatterns: [
-    "node_modules/.pnpm/(?!(react-native|react-native-gesture-handler|standard-navigation|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
+    "node_modules/.pnpm/(?!(react-native|react-native-gesture-handler|react-native-keyboard-controller|standard-navigation|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
     "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|standard-navigation|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
   ],
   setupFiles: ["./jest.setup.js"],
@@ -31,6 +32,8 @@ module.exports = {
     // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.
     "^\\./use-platform-speech-draft\\.js$": "<rootDir>/../../packages/ui/src/speech/use-platform-speech-draft.ts",
     "^\\./pcm\\.js$": "<rootDir>/../../packages/ui/src/speech/pcm.ts",
+    // The shared chat attention derivation (lib/chat-status.ts) imports its sibling by its built name.
+    "^\\./read-state\\.js$": "<rootDir>/../../packages/ui/src/chat/read-state.ts",
     "^\\.\\./agents-providers/utils\\.js$": "<rootDir>/../../packages/ui/src/agents-providers/utils.ts",
     "^\\./managed-credit-freshness\\.js$": "<rootDir>/../../packages/ui/src/agents-providers/managed-credit-freshness.ts",
     "^react$": "<rootDir>/node_modules/react",

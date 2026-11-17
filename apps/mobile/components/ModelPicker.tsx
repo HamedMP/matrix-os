@@ -12,6 +12,7 @@ import {
   selectionCanBeChosen,
 } from "@/components/chat/model-choices";
 import { modelOptionGroups, selectionKeepingOptions, selectionWithOption } from "@/components/chat/model-options";
+import { permissionModeChoices } from "@/components/chat/permission-modes";
 import { ModelSheet, type ModelSheetProps } from "@/components/chat/ModelSheet";
 import { MODEL_TRIGGER_ICON_SIZE, ModelTrigger } from "@/components/chat/ModelTrigger";
 import { Sheet } from "@/components/ui";
@@ -19,18 +20,25 @@ import { useMatrixCreditBalance } from "@/lib/queries/use-matrix-credit-balance"
 
 /**
  * The composer's engine and model control: the trigger the design draws,
- * opening the sheet in which the engine, the model and its options are chosen.
+ * opening the sheet in which the engine, the model, its options and the
+ * permission mode are chosen.
  */
 export function ModelPicker({
   catalog,
   selection,
   onSelectionChange,
   catalogLoading = false,
+  permissionMode = null,
+  onPermissionModeChange,
 }: {
   catalog: CanonicalProviderCatalog | null;
   catalogLoading?: boolean;
   selection: CanonicalChatModelSelection | null;
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
+  /** The permission mode the next message is sent with. */
+  permissionMode?: string | null;
+  /** Chooses the permission mode. Left out, none is offered. */
+  onPermissionModeChange?: (mode: string) => void;
 }) {
   const { width } = useWindowDimensions();
   const { theme } = useUnistyles();
@@ -42,6 +50,7 @@ export function ModelPicker({
   const trigger = modelTrigger(catalog, selection, catalogLoading);
   const notices = modelNotices(catalog, selection, catalogLoading);
   const optionGroups = modelOptionGroups(catalog, selection);
+  const permissionModes = onPermissionModeChange ? permissionModeChoices(catalog, selection, permissionMode) : [];
 
   function closeSheet() {
     setSheet((current) => ({ ...current, open: false }));
@@ -69,6 +78,13 @@ export function ModelPicker({
     onSelectionChange(selectionWithOption(selection, optionId, value));
   }
 
+  function handlePermissionMode(mode: string) {
+    if (catalogLoading || !onPermissionModeChange) return;
+    const offered = permissionModes.find((candidate) => candidate.value === mode);
+    if (!offered || offered.selected) return;
+    onPermissionModeChange(mode);
+  }
+
   // The label is limited to the room the composer's toolbar leaves: the window
   // less the composer's margins and padding, the attach and send buttons with
   // the gaps beside them, and the trigger's own padding and icons.
@@ -92,11 +108,6 @@ export function ModelPicker({
         </Text>
       ))}
       {notices.reserved.length > 0 ? <Text style={styles.note}>Your credit is reserved while usage is confirmed.</Text> : null}
-      {notices.unavailable.map((note) => (
-        <Text key={note.key} accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
-          {note.text}
-        </Text>
-      ))}
       {notices.recovery ? <Text accessibilityRole="alert" style={styles.note}>{notices.recovery}</Text> : null}
       <Sheet visible={sheet.open} onClose={closeSheet} testID="model-picker-sheet">
         {sheet.openings > 0 ? (
@@ -104,9 +115,11 @@ export function ModelPicker({
             key={sheet.openings}
             engines={modelEngines(catalog, selection)}
             options={optionGroups}
+            permissionModes={permissionModes}
             loading={catalogLoading}
             onSelectModel={handleModel}
             onSelectOption={handleOption}
+            onSelectPermissionMode={handlePermissionMode}
           />
         ) : null}
       </Sheet>

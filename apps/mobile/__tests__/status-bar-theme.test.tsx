@@ -22,6 +22,11 @@ jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => mockUseAuth(),
 }));
 
+// Opening notifications drives the real navigators, which this stand-in lacks.
+jest.mock("@/components/NotificationRouter", () => ({
+  NotificationRouter: () => null,
+}));
+
 jest.mock("expo-splash-screen", () => ({
   preventAutoHideAsync: jest.fn(() => Promise.resolve(true)),
   hideAsync: jest.fn(() => Promise.resolve()),

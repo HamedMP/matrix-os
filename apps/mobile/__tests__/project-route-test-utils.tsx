@@ -65,6 +65,7 @@ export function expoRouterModule() {
 export const shell = {
   selectChat: jest.fn(),
   setSelectionOverride: jest.fn(),
+  setPermissionModeOverride: jest.fn(),
   bindDraftChatId: jest.fn(),
   warmSessionToken: jest.fn(),
   /** Called with the props the screen gives the model picker. */
@@ -81,6 +82,7 @@ export const requests = {
   fetchChatProviderCatalog: jest.fn(),
   createChat: jest.fn(),
   admitChatTurn: jest.fn(),
+  fetchChatDetail: jest.fn(),
 };
 
 /** Stands in for `@/lib/requests`: the real keys and error class over mocked requests. */
@@ -190,6 +192,8 @@ export function modelPickerProps() {
     catalogLoading: boolean;
     selection: unknown;
     onSelectionChange: (selection: unknown) => void;
+    permissionMode?: string | null;
+    onPermissionModeChange?: (mode: string) => void;
   };
 }
 

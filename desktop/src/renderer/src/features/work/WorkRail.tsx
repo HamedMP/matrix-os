@@ -531,7 +531,7 @@ export function WorkRail({
         {selectionError ? <p role="alert" className="px-3 text-xs">{selectionError}</p> : null}
         {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
         {renameError ? (
-          <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger)" }}>{renameError}</p>
+          <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger-text)" }}>{renameError}</p>
         ) : null}
       </WorkRailScrollArea>
       <DeleteConversationDialog

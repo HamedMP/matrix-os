@@ -7,12 +7,13 @@ import { TerminalHostDescriptorSchema, type TerminalHostDescriptor } from "./hos
 /** Owns the native handle independently of the source/control channel. No restore
  * descriptor or public connector can manufacture a replacement private channel. */
 export async function startOwnedTerminalHost(options: {
-  descriptor: TerminalHostDescriptor; digest: string; ipc?: TerminalHostIpc;
+  descriptor: TerminalHostDescriptor; digest: string; ipc?: TerminalHostIpc; login?: Record<string, string>;
   pty: Pick<typeof import("node-pty"), "spawn">; readProcess?: typeof readLinuxProcess;
 }) {
   const descriptor = TerminalHostDescriptorSchema.parse(options.descriptor), read = options.readProcess ?? readLinuxProcess;
+  if ((descriptor.launch.profile === "login-shell") !== (options.login !== undefined)) throw new Error("Terminal login environment unavailable");
   const pty = await createHostedTerminalPty({ directory: descriptor.directory, launch: { ...descriptor.launch,
-    env: { ...descriptor.launch.env, MATRIX_TERMINAL_ROUTINE_SOCKET: join(descriptor.directory, "routine.sock") } }, cols: descriptor.cols, rows: descriptor.rows, pty: options.pty });
+    env: { ...(options.login ?? descriptor.launch.env), MATRIX_TERMINAL_ROUTINE_SOCKET: join(descriptor.directory, "routine.sock") } }, cols: descriptor.cols, rows: descriptor.rows, pty: options.pty });
   let channel: ReturnType<typeof createTerminalHostChannel> | undefined, broker: Awaited<ReturnType<typeof createTerminalWriterBroker>> | undefined;
   let cleanup: Promise<unknown> | undefined;
   const closeProof = () => {

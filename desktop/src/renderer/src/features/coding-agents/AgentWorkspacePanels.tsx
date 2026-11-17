@@ -83,7 +83,7 @@ export function NotificationPreferencesPanel() {
           </label>
         ))}
         {error ? (
-          <p className="text-xs" style={{ color: "var(--danger)" }}>
+          <p className="text-xs" style={{ color: "var(--danger-text)" }}>
             {error}
           </p>
         ) : null}

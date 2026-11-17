@@ -450,7 +450,7 @@ export class AuthService {
     this.expireCredentialIfNeeded();
     const currentCredential = this.credential;
     const currentProfile = this.profile;
-    if (!currentCredential || !currentProfile) {
+    if (!currentCredential) {
       throw new Error(RUNTIME_SELECTION_ERROR);
     }
     const nonce = ++this.flowNonce;
@@ -465,7 +465,12 @@ export class AuthService {
       const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot);
       if (!isCurrentSelection()) throw new Error("stale runtime selection");
       const nextProfile: ConnectionProfile = {
-        ...currentProfile,
+        // The credential authenticates the owner; the profile is an optional
+        // presentation cache. Never copy another owner's cached identity.
+        ...(currentProfile?.userId === currentCredential.userId ? currentProfile : {
+          userId: currentCredential.userId,
+          platformHost: this.getGatewayOrigin(),
+        }),
         handle: nextCredential.handle,
         runtimeSlot: slot,
       };
@@ -480,7 +485,8 @@ export class AuthService {
           await this.deps.saveProfile(nextProfile);
           if (!isCurrentSelection()) {
             await this.deps.credentialStore.save(currentCredential);
-            await this.deps.saveProfile(currentProfile);
+            if (currentProfile) await this.deps.saveProfile(currentProfile);
+            else await this.deps.clearProfile();
             throw new Error("stale runtime selection");
           }
         } catch (err: unknown) {

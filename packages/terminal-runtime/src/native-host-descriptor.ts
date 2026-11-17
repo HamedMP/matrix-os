@@ -8,7 +8,9 @@ const value = z.string().max(8192).refine(value => !value.includes("\0"));
 // Native tool/account setup belongs to the owner environment. This descriptor does not carry source authority.
 const environment = z.object({ PATH: value, HOME: absolute, TERM: value.optional(), COLORTERM: value.optional(), SHELL: absolute.optional(),
   LANG: value.optional(), LC_ALL: value.optional(), TZ: value.optional(), TMPDIR: absolute.optional(), MATRIX_HOME: absolute.optional(), MATRIX_NODE_PREFIX: absolute.optional() }).strict();
-export const TerminalHostLaunchSchema = z.object({ command: absolute, args: z.array(value).max(64), cwd: absolute, env: environment, inheritEnv: z.literal(false) }).strict();
+export const TerminalHostLaunchSchema = z.object({ command: absolute, args: z.array(value).max(64), cwd: absolute, env: environment, inheritEnv: z.literal(false),
+  profile: z.literal("login-shell").optional() }).strict().refine(launch =>
+  launch.profile === undefined || launch.command === "/usr/bin/env" && launch.args.length === 3 && launch.args[0] === "sh" && launch.args[1] === "-lc");
 export const TerminalHostDescriptorSchema = z.object({ version: z.literal(1), kind: z.literal("terminal-native"), launchId: z.string().regex(/^[a-f0-9]{32}$/),
   generation: z.string().regex(/^gen_[a-f0-9]{64}$/), createdAt: z.iso.datetime(), directory: absolute,
   launch: TerminalHostLaunchSchema, cols: z.number().int().min(1).max(500), rows: z.number().int().min(1).max(200),

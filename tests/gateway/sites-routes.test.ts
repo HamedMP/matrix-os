@@ -17,6 +17,16 @@ describe('owner publishing authentication',()=>{
  it('returns no publication and validates app paths',async()=>{expect((await ownerApp().request('/api/apps/event/site')).status).toBe(404);expect((await ownerApp().request('/api/apps/%24evil/site')).status).toBe(400);});
  it('fails safely when publication services are missing',async()=>{const response=await ownerApp('owner',null).request('/api/apps/event/site');expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Site unavailable'});});
  it('caps every mutation before JSON parsing',async()=>{const response=await ownerApp().request('/api/apps/event/site',{method:'DELETE',body:'x'.repeat(20000)});expect(response.status).toBe(413);});
+ it('relays the retired one-time link refusal as a generic gone response',async()=>{
+  const {SitePlatformError}=await import('../../packages/gateway/src/sites/platform-client.js');
+  const platform={request:vi.fn().mockRejectedValue(new SitePlatformError(410)),createAccessLink:vi.fn().mockRejectedValue(new SitePlatformError(410))};
+  const app=ownerApp('owner',platform);
+  for(const [path,method,body] of [['/api/apps/event/site/access-links','POST',{baseRevision:4}],['/api/apps/event/site','PATCH',{accessMode:'private_link',baseRevision:4}]] as const){
+   const response=await app.request(path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+   expect(response.status).toBe(410);
+   expect(await response.json()).toEqual({error:'One-time links are no longer available'});
+  }
+ });
  it('validates and forwards owner access-link management without exposing platform details',async()=>{
   const linkId=randomUUID();
   const platform={request:vi.fn(),accessLinks:vi.fn().mockResolvedValue({links:[],nextCursor:null}),createAccessLink:vi.fn().mockResolvedValue({link:{id:linkId},url:'https://matrix.page/link'}),revokeAccessLink:vi.fn().mockResolvedValue(undefined)};
@@ -68,4 +78,29 @@ it('bounds forged site proofs by the trusted transport IP despite rotating Cloud
  for (let i = 0; i < 121; i++) statuses.push((await app.request('/api/internal/sites/'+siteId+'/submit', {method:'POST',headers:{'x-real-ip':'198.18.242.3','cf-connecting-ip':`198.19.1.${i}`,'x-matrix-site-signature':'forged','x-matrix-site-timestamp':String(Date.now())}})).status);
  expect(statuses.slice(0,120)).toEqual(Array(120).fill(401));
  expect(statuses[120]).toBe(429); expect(verifier).toHaveBeenCalledTimes(120);
+});
+
+describe('owner friendly-path availability', () => {
+ // Outcome: the share popover can show Available/Taken before publishing.
+ // Faults: unvalidated query reaching the platform, or platform errors leaking.
+ it('validates the query and forwards only the friendly path', async () => {
+  const platform = { request: vi.fn(), slugAvailability: vi.fn().mockResolvedValue({ status: 'taken', suggestions: ['crm-app'] }) };
+  const app = ownerApp('owner', platform);
+  const ok = await app.request('/api/apps/event/site/slug-availability?slug=crm');
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toEqual({ status: 'taken', suggestions: ['crm-app'] });
+  expect(platform.slugAvailability).toHaveBeenCalledWith('event', 'crm', expect.any(AbortSignal));
+  expect((await app.request('/api/apps/event/site/slug-availability')).status).toBe(400);
+  expect((await app.request(`/api/apps/event/site/slug-availability?slug=${'x'.repeat(64)}`)).status).toBe(400);
+  expect((await app.request('/api/apps/event/site/slug-availability?slug=crm&extra=1')).status).toBe(400);
+  expect(platform.slugAvailability).toHaveBeenCalledTimes(1);
+ });
+ it('rejects collaborators and hides platform failures', async () => {
+  const { SitePlatformError } = await import('../../packages/gateway/src/sites/platform-client.js');
+  const platform = { request: vi.fn(), slugAvailability: vi.fn().mockRejectedValue(new SitePlatformError(409)) };
+  expect((await ownerApp('collaborator', platform).request('/api/apps/event/site/slug-availability?slug=crm')).status).toBe(403);
+  const failed = await ownerApp('owner', platform).request('/api/apps/event/site/slug-availability?slug=crm');
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toEqual({ error: 'Site unavailable' });
+ });
 });

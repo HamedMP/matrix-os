@@ -307,19 +307,24 @@ export class CollaborationChatExecutionAdapter {
       const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
       if (mode !== "members") return { capability: { ...capability, status: "unavailable" } };
     }
-    if (this.options.resolveOwnerSourceAdmission) {
+    // Project authority below already resolves the fresh owner source. Repeating
+    // that discovery here can consume the relay's entire availability budget.
+    if (!inheritedProject && this.options.resolveOwnerSourceAdmission) {
       const admission = await this.options.resolveOwnerSourceAdmission(context.scopeId, context.ownerId);
       if (admission === "missing") return { capability: { ...capability, status: "unavailable" } };
     }
 
     let canonicalProviderAuthority: CanonicalSharedProviderAuthority | undefined;
+    if (inheritedProject && !this.options.resolveCanonicalProviderAuthority) {
+      return { capability: { ...capability, status: "unavailable" } };
+    }
     if ((inheritedProject || capability.effectiveSelection) && this.options.resolveCanonicalProviderAuthority) {
       try {
         canonicalProviderAuthority = await this.options.resolveCanonicalProviderAuthority(
           context.scopeId,
           context.ownerId,
           capability.effectiveSelection ?? null,
-          inheritedProject ? null : boundDriverKind ?? null,
+          boundDriverKind ?? null,
         ) ?? undefined;
       } catch (error: unknown) {
         console.warn("[collaboration] canonical shared Provider authority unavailable",

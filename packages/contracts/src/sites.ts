@@ -12,12 +12,32 @@ export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
 export const SITE_MANAGEMENT_CONTRACT_VERSION = "2";
-const reserved = new Set(["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"]);
+/** Matrix.page top-level routes a friendly path can never claim. */
+export const SITE_RESERVED_SLUGS = ["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"] as const;
+const reserved: ReadonlySet<string> = new Set(SITE_RESERVED_SLUGS);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const siteSlugPattern = /^[a-z][a-z0-9-]{1,62}$/;
 export const SiteIdSchema = z.uuid();
 export const SiteAppSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
-export const SiteSlugSchema = z.string().regex(/^[a-z][a-z0-9-]{1,62}$/)
+export const SiteSlugSchema = z.string().regex(siteSlugPattern)
   .refine((s) => !reserved.has(s) && !uuidPattern.test(s), "This URL is unavailable");
+/** Local friendly-path check: `invalid` format, `reserved` route, or `valid` (availability still needs the platform). */
+export function classifySiteSlug(value: string): "invalid" | "reserved" | "valid" {
+  if (!siteSlugPattern.test(value)) return "invalid";
+  return reserved.has(value) || uuidPattern.test(value) ? "reserved" : "valid";
+}
+/** Ordered alternative friendly paths offered when a path is taken. */
+export function siteSlugSuggestionCandidates(slug: string, hints: readonly string[] = []): string[] {
+  const candidates = [...hints.map((hint) => `${slug}-${hint}`), `${slug}-app`, `${slug}-2`, `${slug}-3`];
+  return [...new Set(candidates)].filter((candidate) => candidate !== slug && classifySiteSlug(candidate) === "valid");
+}
+export const SiteSlugAvailabilityQuerySchema = z.object({ slug: z.string().min(1).max(63) }).strict();
+export const SiteSlugAvailabilityStatusSchema = z.enum(["available", "taken", "reserved", "invalid"]);
+export const SiteSlugAvailabilitySchema = z.object({
+  status: SiteSlugAvailabilityStatusSchema,
+  suggestions: z.array(SiteSlugSchema).max(2),
+}).strict();
+export type SiteSlugAvailability = z.infer<typeof SiteSlugAvailabilitySchema>;
 export const SiteReferenceSchema = z.union([SiteIdSchema, SiteSlugSchema]);
 export const SiteUrlSchema = z.url().refine((value) => {
   const url = new URL(value);
@@ -73,6 +93,9 @@ export function validateSiteForm(form: SiteForm, input: unknown) {
 const title = z.string().trim().min(1).max(200);
 const description = z.string().trim().max(1000);
 const baseRevision = z.number().int().min(0).max(2_147_483_647);
+// `private_link` (one-time links, spec 2690) is retired for new use (ENG-490). It stays
+// readable for legacy records, and write schemas still accept it so older clients that
+// echo a legacy site's current mode keep working; the platform rejects any change INTO it.
 export const SiteAccessModeSchema = z.enum(["public", "private_link"]);
 export const SiteOwnerMutationSchema = z.object({
   title: title.optional(), description: description.optional(),

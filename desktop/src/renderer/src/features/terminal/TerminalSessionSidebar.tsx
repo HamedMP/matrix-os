@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, Trash2, X } from "@renderer/lib/hugeicons";
 import { type Ref, useState } from "react";
+import { TerminalStatusDot, terminalShellVisualStatus } from "@matrix-os/ui/terminal-agents";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
@@ -131,7 +132,7 @@ export function TerminalSessionSidebar({
                         <X size={13} />
                       </button>
                     </div>
-                    {renameError ? <span className="text-[10px]" style={{ color: "var(--danger)" }}>{renameError}</span> : null}
+                    {renameError ? <span className="text-[10px]" style={{ color: "var(--danger-text)" }}>{renameError}</span> : null}
                   </div>
                 ) : (
                   <>
@@ -150,17 +151,21 @@ export function TerminalSessionSidebar({
                     >
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-center justify-between gap-2">
-                          <span
-                            data-testid={`terminal-session-title-${session.name}`}
-                            className="truncate text-sm leading-5"
-                            style={{ color: "var(--text-primary)" }}
-                            onDoubleClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              onRename(session);
-                            }}
-                          >
-                            {title}
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <TerminalStatusDot status={terminalShellVisualStatus(session)} runningColor="var(--accent)"
+                              testId={`terminal-session-agent-status-${session.name}`} />
+                            <span
+                              data-testid={`terminal-session-title-${session.name}`}
+                              className="truncate text-sm leading-5"
+                              style={{ color: "var(--text-primary)" }}
+                              onDoubleClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onRename(session);
+                              }}
+                            >
+                              {title}
+                            </span>
                           </span>
                           <span className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
                             {session.pinned ? <PinIcon size={11} aria-label="Pinned" /> : null}
@@ -268,7 +273,7 @@ function SessionAction({ icon, label, danger = false, onSelect }: { icon: React.
     <DropdownMenu.Item
       onSelect={onSelect}
       className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
-      style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
+      style={{ color: danger ? "var(--danger-text)" : "var(--text-primary)" }}
     >
       {icon}
       {label}

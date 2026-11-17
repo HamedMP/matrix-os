@@ -2,6 +2,7 @@ import type { NativeTabAdmission, NativeTabCompletion, NativeTabReservation } fr
 import { randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import {
+  TerminalRefSchema,
   TerminalTabClientFrameSchema,
   TerminalTabServerFrameSchema,
   TerminalTabSchema,
@@ -16,6 +17,7 @@ import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type Termina
 import { TerminalCommandResultRefSchema, TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
 import { TerminalEndedTabArchiveRequestSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
+import { TERMINAL_AGENT_STATUS_MAX_ENTRIES, TerminalAgentStatusEntrySchema, type TerminalAgentStatusEntry } from "./agent-status.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   TERMINAL_RUNTIME_CLIENT_REQUEST_TIMEOUT_MS,
@@ -24,6 +26,11 @@ import {
   TerminalRuntimeResponseSchema,
   type TerminalRuntimeRequest,
 } from "./socket-protocol.js";
+import {
+  TerminalScreenCaptureRequestSchema,
+  TerminalScreenCaptureSchema,
+  type TerminalScreenCapture,
+} from "./screen-capture.js";
 
 export interface TerminalRuntimeSocketClientOptions {
   socketPath: string;
@@ -46,6 +53,19 @@ export class TerminalRuntimeSocketClient {
 
   async listWorkspaces(): Promise<TerminalWorkspace[]> {
     return z.array(TerminalWorkspaceSchema).max(1_000).parse(await this.call("ListWorkspaces", {}));
+  }
+
+  async listAgentStatuses(): Promise<TerminalAgentStatusEntry[]> {
+    const parsed = z.array(TerminalAgentStatusEntrySchema).max(TERMINAL_AGENT_STATUS_MAX_ENTRIES).parse(await this.call("ListAgentStatuses", {}));
+    return parsed.map((entry) => ({
+      ...entry,
+      ref: TerminalRefSchema.parse(entry.ref),
+    }));
+  }
+
+  /** The live tab a pane belongs to, from zellij's `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID`. */
+  async resolvePane(input: { sessionName: string; paneId: string }): Promise<{ workspaceId: string; tabId: string } | null> {
+    return TerminalRefSchema.nullable().parse(await this.call("ResolvePane", input));
   }
 
   async ensureWorkspace(input: { projectId?: string } = {}): Promise<TerminalWorkspace> {
@@ -74,6 +94,12 @@ export class TerminalRuntimeSocketClient {
 
   async getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<unknown> {
     return this.call("GetSnapshot", ref);
+  }
+
+  /** The tab's screen read from zellij now, or null when the runtime cannot capture it. */
+  async captureScreen(ref: { workspaceId: string; tabId: string }, lines: number): Promise<TerminalScreenCapture | null> {
+    const input = TerminalScreenCaptureRequestSchema.parse({ workspaceId: ref.workspaceId, tabId: ref.tabId, lines });
+    return TerminalScreenCaptureSchema.nullable().parse(await this.call("CaptureScreen", input));
   }
 
   async getCommandState(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalCommandState> {

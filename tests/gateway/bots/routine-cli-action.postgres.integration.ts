@@ -96,14 +96,22 @@ describe("routine action real Platform producer -> gateway controller -> durable
     await expect(answer(emitted[0]!)).rejects.toMatchObject({ code: "revision_conflict" });
     sourceAbort.abort(); expect(await preparing).toBe(false);
   });
-  it("Terminal uses its real distinct launch and requires exact decision even with full access", async () => {
+  it("uses the distinct Full Access Terminal launch without a per-operation card", async () => {
     policy.permissionMode = "full_access"; policy.originCeiling = "full";
     const source = await setup("terminal_launch"), operation = propose(102);
-    const preparing = source.authorize({ operation, invocationId: invocation(3), signal: new AbortController().signal });
-    await waitFor(() => controller.list({ userId: scope.ownerId, source: "jwt" }).length === 1);
-    const view = controller.list({ userId: scope.ownerId, source: "jwt" })[0]!;
-    expect(view.sourceKind).toBe("terminal_launch"); await answer(view); expect(await preparing).toBe(true);
-    expect(emitted).toEqual([]);
+    const caller = new AbortController(), owner = { userId: scope.ownerId, source: "jwt" as const };
+    const call = { operation, invocationId: invocation(3), signal: caller.signal };
+    // With the old policy the authorization stayed pending for a human decision.
+    try {
+      await expect(source.authorize(call)).resolves.toBe(true);
+      const delivery = await source.issue(call);
+      const service = createRoutineCliRequestService({ db, scope, sources: controller.sources, targets: controller.targets,
+        transact: f.transact, authorizeTarget: controller.authorizeTarget, admitMutation: f.admitMutation });
+      await expect(service.execute({ token: delivery.takeToken(), operation })).resolves.toMatchObject({ kind: "receipt" });
+      expect(controller.list(owner, true)).toEqual([]);
+      expect(network.calls).toBe(0);
+      expect(emitted).toEqual([]);
+    } finally { caller.abort(); }
   });
 });
 

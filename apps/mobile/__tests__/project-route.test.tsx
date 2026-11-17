@@ -3,6 +3,7 @@ import { TextInput } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectRoute from "../app/(drawer)/(tabs)/(chats)/projects/[projectId]";
+import { composerChoices } from "@/lib/remembered-composer-choice";
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: async () => "session-token" }),
@@ -51,14 +52,17 @@ const input = () => screen.getByLabelText("Message Matrix");
 const sendButton = () => screen.getByRole("button", { name: "Send message" });
 
 describe("project route", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    jest.useFakeTimers();
     mockRoutes.resetProjectRoute();
+    await composerChoices.forget();
     jest.spyOn(console, "warn").mockImplementation(() => {});
   });
 
   afterEach(async () => {
     await mockRoutes.cleanupProjectRoute();
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   describe("project", () => {
@@ -355,6 +359,119 @@ describe("project route", () => {
       expect(input().props.value).toBe("");
     });
 
+    it("opens the project chat when the admission response is lost after its first turn was stored", async () => {
+      const admissionResponse = pendingRequest<typeof admission>();
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockReturnValue(admissionResponse.promise);
+      await renderPortfolio();
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
+      const requestId = requests.admitChatTurn.mock.calls[0][3].clientRequestId as string;
+      requests.fetchChatDetail.mockResolvedValue({
+        record: created,
+        turns: [{ id: "turn_1", clientRequestId: requestId, inputMessageId: "msg_1" }],
+        messages: [{ id: "msg_1" }],
+        runs: [{ id: "run_1", turnId: "turn_1" }],
+      });
+      await act(async () => admissionResponse.reject(new Error("response lost")));
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(shell.bindDraftChatId).toHaveBeenCalledWith("chat_new");
+      expect(input().props.value).toBe("");
+    });
+
+    it("waits for a slow admission after a dropped response, including a transient lookup failure", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockRejectedValue(new Error("connection dropped"));
+      requests.fetchChatDetail
+        .mockRejectedValueOnce(new Error("still reconnecting"))
+        .mockResolvedValueOnce({ record: created, turns: [], messages: [], runs: [] })
+        .mockImplementation(async () => ({
+          record: created,
+          turns: [{ id: "turn_1", clientRequestId: requests.admitChatTurn.mock.calls[0][3].clientRequestId, inputMessageId: "msg_1" }],
+          messages: [{ id: "msg_1" }],
+          runs: [{ id: "run_1", turnId: "turn_1" }],
+        }));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(input().props.value).toBe("Draft the case study");
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_000); });
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(requests.admitChatTurn).toHaveBeenCalledTimes(1);
+      expect(requests.createChat).toHaveBeenCalledTimes(1);
+      expect(input().props.value).toBe("");
+    });
+
+    it.each([400, 401, 403, 409, 422, 429])("shows an HTTP %s refusal immediately without reading for admission", async (status) => {
+      // Keep the request encoder and error mapper real: the HTTP status must
+      // survive that boundary before the send hook can decide to stop.
+      const actual = jest.requireActual<typeof import("@/lib/requests/canonical-chat")>("@/lib/requests/canonical-chat");
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockImplementation(actual.admitChatTurn);
+      jest.spyOn(global, "fetch").mockResolvedValue({
+        ok: false, status,
+        json: jest.fn().mockResolvedValue({ error: "private upstream details" }),
+      } as unknown as Response);
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      const sentAt = Date.now();
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again."));
+
+      expect(Date.now() - sentAt).toBeLessThan(1_000);
+      expect(requests.fetchChatDetail).not.toHaveBeenCalled();
+      expect(input().props.value).toBe("Draft the case study");
+      expect(screen.queryByText(/private upstream/)).toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
+    });
+
+    it.each([500, 503])("still recovers a saved first turn after HTTP %s", async (status) => {
+      const actual = jest.requireActual<typeof import("@/lib/requests/canonical-chat")>("@/lib/requests/canonical-chat");
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockImplementation(actual.admitChatTurn);
+      jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status } as Response);
+      requests.fetchChatDetail
+        .mockResolvedValueOnce({ record: created, turns: [], messages: [], runs: [] })
+        .mockImplementation(async () => ({
+          record: created,
+          turns: [{ id: "turn_1", clientRequestId: requests.admitChatTurn.mock.calls[0][3].clientRequestId, inputMessageId: "msg_1" }],
+          messages: [{ id: "msg_1" }],
+          runs: [{ id: "run_1", turnId: "turn_1" }],
+        }));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).toBeNull();
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000); });
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(requests.admitChatTurn).toHaveBeenCalledTimes(1);
+      expect(input().props.value).toBe("");
+    });
+
+    it.each(["Reworded prompt", ""])("clears the previous send error when the draft becomes %j", async (draft) => {
+      requests.createChat.mockRejectedValue(new Error("upstream said no"));
+      await renderPortfolio();
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+
+      fireEvent.changeText(input(), draft);
+
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(input().props.value).toBe(draft);
+    });
+
     it("takes nothing more while the message is on its way, and again once it could not be sent", async () => {
       const creating = pendingRequest<typeof created>();
       requests.createChat.mockReturnValue(creating.promise);
@@ -388,18 +505,36 @@ describe("project route", () => {
       expect(router.push).not.toHaveBeenCalled();
       expect(shell.setSelectionOverride).not.toHaveBeenCalled();
       expect(screen.queryByText(/upstream/)).toBeNull();
+      expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again.");
+    });
+
+    it("keeps a failed first turn ready to retry when the created chat has no admitted message", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockRejectedValue(new Error("admission refused"));
+      requests.fetchChatDetail.mockResolvedValue({ record: created, turns: [], messages: [], runs: [] });
+      await renderPortfolio();
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not confirm delivery. Retry to check again."), { timeout: 8_000 });
+      expect(requests.fetchChatDetail).toHaveBeenCalledTimes(5);
+      expect(input().props.value).toBe("Draft the case study");
+      expect(router.push).not.toHaveBeenCalled();
     });
 
     it("sends the same message again under the request ids of the attempt that failed", async () => {
       requests.createChat.mockResolvedValue(created);
       requests.admitChatTurn.mockRejectedValueOnce(new Error("upstream said no"));
       requests.admitChatTurn.mockResolvedValueOnce(admission);
+      requests.fetchChatDetail.mockResolvedValue({ record: created, turns: [], messages: [], runs: [] });
       await renderPortfolio();
       fireEvent.changeText(input(), "Draft the case study");
 
       fireEvent.press(sendButton());
       await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false }));
+      await waitFor(() => expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false }), { timeout: 8_000 });
       fireEvent.press(sendButton());
       await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
 
@@ -425,6 +560,60 @@ describe("project route", () => {
 
       await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(opus));
       expect(requests.createChat).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, expect.objectContaining({ currentSelection: opus }));
+    });
+
+    it("lets the next new chat follow the project's latest chat once a chat is started with the model chosen here", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockResolvedValue(admission);
+      await renderPortfolio();
+      act(() => modelPickerProps().onSelectionChange(opus));
+
+      // By the time the chats are read again, the newest one was switched back to Sonnet.
+      const switchedBack = { ...landing, chat: { ...landing.chat, currentSelection: sonnet, activityAt: new Date().toISOString() } };
+      requests.fetchProjectChats.mockResolvedValue({ items: [switchedBack, caseStudy] });
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(opus));
+
+      await waitFor(() => expect(modelPickerProps().selection).toEqual(sonnet));
+    });
+
+    it("starts on the model of the project's most recently active chat, as last used on any device", async () => {
+      const usedOpus = { ...landing, chat: { ...landing.chat, currentSelection: opus, activityAt: new Date().toISOString() } };
+      requests.fetchProjectChats.mockResolvedValue({ items: [caseStudy, usedOpus] });
+      await mockRoutes.renderProjectRoute(<ProjectRoute />);
+
+      await waitFor(() => expect(modelPickerProps()?.selection).toEqual(opus));
+    });
+
+    it("holds the model and sends back until the project's chats have been read", async () => {
+      const read = pendingRequest<{ items: unknown[] }>();
+      requests.fetchProjectChats.mockReturnValue(read.promise);
+      await renderProject();
+      await waitFor(() => expect(modelPickerProps()?.catalog).toEqual(catalog));
+
+      expect(modelPickerProps()).toMatchObject({ catalogLoading: true, selection: null });
+      fireEvent.changeText(input(), "Draft the case study");
+      expect(sendButton().props.accessibilityState).toMatchObject({ disabled: true });
+
+      const usedOpus = { ...landing, chat: { ...landing.chat, currentSelection: opus } };
+      await act(async () => read.resolve({ items: [usedOpus] }));
+
+      await waitFor(() => expect(modelPickerProps()).toMatchObject({ catalogLoading: false, selection: opus }));
+      expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false });
+    });
+
+    it("remembers a model chosen here for the next new chat in a project with no chats", async () => {
+      const first = await renderPortfolio();
+      act(() => modelPickerProps().onSelectionChange(opus));
+      first.unmount();
+      shell.modelPicker.mockClear();
+
+      requests.fetchProjectChats.mockResolvedValue({ items: [] });
+      await mockRoutes.renderProjectRoute(<ProjectRoute />, { projectId: mockRoutes.admin.id });
+
+      await waitFor(() => expect(modelPickerProps()).toMatchObject({ catalogLoading: false, selection: opus }));
+      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(TOKEN, GATEWAY_URL, mockRoutes.admin.id, expect.anything());
     });
 
     it("leaves the person where they are when they left the project before the chat was started", async () => {

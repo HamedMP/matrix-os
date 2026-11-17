@@ -11,6 +11,7 @@ import {
   type ZellijRuntimeAdapter,
 } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
+import { createTerminalAgentStatusIndex, writeTerminalPaneStatus } from "../../packages/terminal-runtime/src/agent-status.js";
 
 const homes: string[] = [];
 
@@ -50,6 +51,15 @@ class FakeZellij implements ZellijRuntimeAdapter {
   exitDuringNextAttachmentOpen?: { exitCode: number | null };
   nextTabCreated?: () => void;
   private nextTabId = 1;
+  readonly screenDumps = new Map<string, { viewport: string; full: string }>();
+  readonly dumpCalls: Array<{ paneId: string; full: boolean }> = [];
+
+  async dumpPaneText(_sessionName: string, paneId: string, full: boolean): Promise<string> {
+    this.dumpCalls.push({ paneId, full });
+    const dump = this.screenDumps.get(paneId);
+    if (!dump) throw new Error("missing pane");
+    return full ? dump.full : dump.viewport;
+  }
 
   async ensureSession(sessionName: string): Promise<void> {
     if (!this.sessions.has(sessionName)) this.sessions.set(sessionName, new Map());
@@ -179,8 +189,10 @@ class FakeZellij implements ZellijRuntimeAdapter {
       await deletedPause.wait;
     }
   }
-  async renameTab(_sessionName: string, tabId: number, name: string): Promise<void> {
+  async renameTab(sessionName: string, tabId: number, name: string): Promise<void> {
     this.renamedTabs.push({ tabId, name });
+    const tab = this.sessions.get(sessionName)?.get(tabId);
+    if (tab) tab.name = name;
   }
   async resizeSession(_sessionName: string, size: { cols: number; rows: number }): Promise<void> {
     this.resizedSessions.push(size);
@@ -194,6 +206,49 @@ class FakeZellij implements ZellijRuntimeAdapter {
 }
 
 describe("project-scoped terminal runtime", () => {
+  // Fault detected (#3297 review): a hook that reports `blocked` while the adapter is
+  // still naming the new pane lost that status, so sends bypassed the approval prompt.
+  it("keeps a status the new tab's program reported before its pane was activated", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    let now = new Date("2026-11-11T10:00:00.000Z");
+    const zellij = new FakeZellij();
+    const store = new TerminalWorkspaceStore({ homePath, now: () => now });
+    const createRuntimeTab = zellij.createTab.bind(zellij);
+    zellij.createTab = async (sessionName, input) => {
+      const ids = await createRuntimeTab(sessionName, input);
+      // The command is running: its hook reports before createTab returns.
+      await writeTerminalPaneStatus({
+        homePath, sessionName, paneId: ids.paneId.slice("terminal_".length),
+        status: "blocked", source: "hook", now: () => now,
+      });
+      now = new Date("2026-11-11T10:00:02.000Z");
+      return ids;
+    };
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace();
+    const tab = await runtime.createTab(workspace.id, { name: "agent", cwd: "", command: ["claude"] });
+    const index = createTerminalAgentStatusIndex({ homePath, store });
+    await expect(index.list()).resolves.toMatchObject([{ ref: { workspaceId: workspace.id, tabId: tab.id }, status: "blocked" }]);
+    await runtime.shutdown();
+  });
+
+  // Fault detected (review of #3297): each status refresh re-read and parsed the whole
+  // state file once per saved workspace, every second while an event stream was open.
+  it("reads the workspace state once per status refresh, however many workspaces exist", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const runtime = new TerminalRuntime({ store, zellij: new FakeZellij() });
+    for (const projectId of ["app-a", "app-b", "app-c"]) await runtime.ensureWorkspace({ projectId });
+    let perWorkspaceReads = 0;
+    const getRuntimeWorkspace = store.getRuntimeWorkspace.bind(store);
+    store.getRuntimeWorkspace = async (id) => { perWorkspaceReads += 1; return getRuntimeWorkspace(id); };
+    await createTerminalAgentStatusIndex({ homePath, store }).list();
+    expect(perWorkspaceReads).toBe(0);
+    await runtime.shutdown();
+  });
+
   it("keeps a unique persisted incarnation when a tab ID is reused in the same millisecond", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -266,7 +321,87 @@ describe("project-scoped terminal runtime", () => {
     await runtime.shutdown();
   });
 
-  it("rejects an attachment when its pane exits while the adapter is opening it", async () => {
+  // Fault detected: zellij only reports screen updates for panes a client renders, so the
+  // cached snapshot of a background tab freezes and `read` returns minutes-old output.
+  it("captures a tab's screen on demand from zellij, not from the cached snapshot", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "background", cwd: "projects/matrix-os" });
+    const paneId = (await new TerminalWorkspaceStore({ homePath }).getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    zellij.screenDumps.set(paneId!, {
+      viewport: "$ echo fresh\nfresh\n$ \n",
+      full: "old 1\nold 2\n$ echo fresh\nfresh\n$ \n",
+    });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+
+    await expect(runtime.captureScreen({ ...ref, lines: 1 }))
+      .resolves.toEqual({ viewport: ["$ echo fresh", "fresh", "$ "], scrollback: ["old 2"] });
+    await expect(runtime.captureScreen({ ...ref, lines: 0 }))
+      .resolves.toEqual({ viewport: ["$ echo fresh", "fresh", "$ "], scrollback: [] });
+    // History costs a second, full dump only when it was asked for.
+    expect(zellij.dumpCalls).toEqual([
+      { paneId, full: false }, { paneId, full: true }, { paneId, full: false },
+    ]);
+    await runtime.shutdown();
+  });
+
+  // Fault detected: output printed between the viewport and history dumps showed a row twice
+  // and dropped the newest row, because screen and history came from different moments.
+  it("takes the screen and its history from the same moment when output arrives between dumps", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "busy", cwd: "projects/matrix-os" });
+    const paneId = (await new TerminalWorkspaceStore({ homePath }).getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    // The program prints "c" after the viewport dump, scrolling "a" into history.
+    zellij.screenDumps.set(paneId!, { viewport: "a\nb\n", full: "h0\na\nb\nc\n" });
+
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: tab.id, lines: 10 }))
+      .resolves.toEqual({ viewport: ["b", "c"], scrollback: ["h0", "a"] });
+    await runtime.shutdown();
+  });
+
+  // Fault detected (review of #3296): zellij still holds a finished program's pane, but
+  // capture refused finished tabs, so `read` fell back to a snapshot nobody had rendered
+  // and missed the command's final output.
+  it("captures a finished tab's screen while zellij still holds its pane", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const store = new TerminalWorkspaceStore({ homePath });
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "tests", cwd: "projects/matrix-os" });
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    const paneId = (await store.getRuntimeWorkspace(workspace.id))?.tabs[tab.id]?.zellijPaneId;
+    zellij.screenDumps.set(paneId!, { viewport: "12 passed\n", full: "bun test\n12 passed\n" });
+    await store.markTabExited(ref, 0);
+
+    await expect(runtime.captureScreen({ ...ref, lines: 10 }))
+      .resolves.toEqual({ viewport: ["12 passed"], scrollback: ["bun test"] });
+    await runtime.shutdown();
+  });
+
+  it("captures nothing for an unknown tab or when zellij cannot dump the pane", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "matrix-os" });
+    const tab = await runtime.createTab(workspace.id, { name: "gone", cwd: "projects/matrix-os" });
+
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: `tt_${"f".repeat(32)}`, lines: 5 })).resolves.toBeNull();
+    // No dump registered for the pane: the adapter fails, the caller falls back.
+    await expect(runtime.captureScreen({ workspaceId: workspace.id, tabId: tab.id, lines: 5 })).resolves.toBeNull();
+    await runtime.shutdown();
+  });
+
+  it("rejects an attachment when its client exits during opening without ending the program", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
     const store = new TerminalWorkspaceStore({ homePath });
@@ -281,7 +416,7 @@ describe("project-scoped terminal runtime", () => {
       send: () => undefined,
     })).rejects.toThrow("Terminal tab unavailable");
     await runtime.flushCheckpoints();
-    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "exited", exitCode: 17 });
+    expect((await runtime.listWorkspaces())[0]?.tabs[0]).toMatchObject({ status: "running" });
     expect(zellij.attachments.size).toBe(0);
     await runtime.shutdown();
   });
@@ -1603,6 +1738,30 @@ describe("project-scoped terminal runtime", () => {
     expect(restartedZellij.sessions.size).toBe(1);
     expect([...restartedZellij.sessions.values()][0]?.size).toBe(0);
     await restartedRuntime.shutdown();
+  });
+
+  it("keeps a renamed tab live with the same runtime identity after reconciliation", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-rename-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    try {
+      const workspace = await runtime.ensureWorkspace();
+      const tab = await runtime.createTab(workspace.id, { name: "before", cwd: "" });
+      const ref = { workspaceId: workspace.id, tabId: tab.id };
+      const original = (await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!;
+      await runtime.renameTab(ref, { name: "agent-a", baseRevision: tab.revision });
+      await runtime.restoreAll();
+      expect(await store.getTab(ref)).toMatchObject({ name: "agent-a", status: "running", incarnation: tab.incarnation });
+      const current = (await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!;
+      expect(current).toMatchObject({ zellijTabName: original.zellijTabName, zellijTabId: original.zellijTabId, zellijPaneId: original.zellijPaneId });
+      expect(zellij.sessions.get((await store.getRuntimeWorkspace(workspace.id))!.zellijSessionName)?.size).toBe(1);
+      expect(zellij.renamedTabs).toEqual([]);
+      const viewer = await runtime.attach(ref, { viewerId: "after-rename", send: () => undefined });
+      await expect(viewer.write("same-process")).resolves.toBeUndefined();
+      await viewer.detach();
+    } finally { await runtime.shutdown(); }
   });
 
   it("separates detach, tab termination, canonical hard sizing, and confirmed workspace deletion", async () => {

@@ -5,7 +5,7 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, SiteSlugAvailabilityQuerySchema, type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -61,7 +61,7 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  app.onError((error,c)=>{console.warn('[sites] Owner request failed',error.name);return c.json({error:'Site unavailable'},503);});
  async function call(c:Context,method:string,body?:unknown,child='',signal?:AbortSignal,deadlineAt?:number):Promise<Response>{
   try{const site=await (signal?options.platform!.request(c.req.param('slug')!,method,body,child,signal,deadlineAt):options.platform!.request(c.req.param('slug')!,method,body,child));return site?c.json(site):c.json({error:'Site not found'},404);}
-  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':error.status===410?'One-time links are no longer available':'Site unavailable'},error.status);throw error;}
  }
  async function body<T>(c:Context,schema:z.ZodType<T>){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
  app.get(base,c=>call(c,'GET'));
@@ -121,10 +121,15 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   try{return c.json(await options.platform!.accessLinks(c.req.param('slug')!,parsed.data));}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
  });
+ app.get(base+'/slug-availability',async c=>{
+  const parsed=SiteSlugAvailabilityQuerySchema.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);
+  try{return c.json(await options.platform!.slugAvailability(c.req.param('slug')!,parsed.data.slug,c.req.raw.signal));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status===400?400:503);throw error;}
+ });
  app.post(base+'/access-links',limit,async c=>{
   const parsed=await body(c,SiteAccessLinkCreateRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
   try{return c.json(await options.platform!.createAccessLink(c.req.param('slug')!,parsed.data));}
-  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':error.status===410?'One-time links are no longer available':'Site unavailable'},error.status);throw error;}
  });
  app.delete(base+'/access-links/:linkId',limit,async c=>{
   const linkId=SiteIdSchema.safeParse(c.req.param('linkId'));if(!linkId.success)return c.json({error:'Invalid request'},400);

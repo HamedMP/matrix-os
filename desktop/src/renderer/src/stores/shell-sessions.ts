@@ -26,6 +26,8 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: ShellVisualStatus;
+  /** Live agent status from the terminal events stream; wins over `visualStatus`. Never persisted. */
+  agentVisualStatus?: ShellVisualStatus;
   agent?: "claude" | "codex" | "hermes" | "opencode" | "pi";
   subtitle?: string;
   lastAction?: string;
