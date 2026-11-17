@@ -26,3 +26,31 @@ it("checks the owner, validates bounded side turns, and returns only the saved s
   expect(invalid.status).toBe(400);
   expect(ask).toHaveBeenCalledTimes(1);
 });
+
+it.each([false, true])("accepts the contract's full multilingual question (escaped JSON: %s)", async (escaped) => {
+  const text = "问".repeat(8_000);
+  const snapshot = { threadId: "side_" + "a".repeat(32), messages: [] };
+  const ask = vi.fn(async () => snapshot);
+  const generate = vi.fn();
+  const app = createSideChatRoutes({ repository: { ask } as unknown as SideChatRepository,
+    generate, getPrincipal: () => ({ userId: "owner_a", source: "jwt" }) });
+  const json = JSON.stringify({ clientRequestId: "req_multilingual", text });
+  const response = await app.request("/api/chats/chat_a/side-chat/turns", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: escaped ? json.replaceAll("问", "\\u95ee") : json,
+  });
+  expect(response.status).toBe(200);
+  expect(ask).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_a" }, "chat_a",
+    { clientRequestId: "req_multilingual", text }, generate);
+});
+
+it("rejects oversized wire bodies before calling the side-chat repository", async () => {
+  const ask = vi.fn();
+  const app = createSideChatRoutes({ repository: { ask } as unknown as SideChatRepository,
+    generate: vi.fn(), getPrincipal: () => ({ userId: "owner_a", source: "jwt" }) });
+  const response = await app.request("/api/chats/chat_a/side-chat/turns", {
+    method: "POST", headers: { "content-type": "application/json" }, body: " ".repeat(65 * 1024) + "{}",
+  });
+  expect(response.status).toBe(413);
+  expect(ask).not.toHaveBeenCalled();
+});
