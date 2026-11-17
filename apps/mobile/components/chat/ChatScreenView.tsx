@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { BackIcon, NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
+import type { ReactNode } from "react";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
@@ -14,6 +15,8 @@ import { Composer, type ComposerProps } from "./Composer";
 import { chatHomeExit } from "./message-motion";
 import { MessageList, type MessageListProps } from "./MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
+
+type RenderMessageList = (slots?: Pick<MessageListProps, "renderAfterMessage" | "earlier" | "footer">) => ReactNode;
 
 export interface ChatScreenViewProps
   extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "renderComputerPhoto"> {
@@ -39,6 +42,8 @@ export interface ChatScreenViewProps
   onReloadChat?: () => void;
   /** What a message that was not sent offers. Nothing is offered when left out. */
   unsentActions?: UnsentMessageActions | null;
+  /** Optionally composes the ready message list with screen-owned timeline content. */
+  renderThread?: (renderMessageList: RenderMessageList) => ReactNode;
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
@@ -62,9 +67,14 @@ export function ChatScreenView({
   onReloadChat,
   unsentActions = null,
   composer,
+  renderThread,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
+  const renderMessageList: RenderMessageList = (slots = {}) => (
+    <MessageList {...slots} messages={messages} chatId={chatId} renderRequest={renderRequest}
+      renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
+  );
 
   return (
     // The keyboard is drawn over the screen on both platforms (Android does not
@@ -99,13 +109,7 @@ export function ChatScreenView({
         <ChatUnavailable onRetry={onReloadChat} />
       ) : (
         <UnsentMessageActionsProvider value={unsentActions}>
-          <MessageList
-            messages={messages}
-            chatId={chatId}
-            renderRequest={renderRequest}
-            renderResults={renderResults}
-            renderComputerPhoto={renderComputerPhoto}
-          />
+          {renderThread ? renderThread(renderMessageList) : renderMessageList()}
         </UnsentMessageActionsProvider>
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
