@@ -54,7 +54,18 @@ export function useWebChatRailOrder(items: readonly RenameableConversation[], cl
     const displayed = visible ?? ids;
     const movedDown = displayed.indexOf(source) < displayed.indexOf(target);
     const alreadyOrdered = movedDown ? ids.indexOf(source) > ids.indexOf(target) : ids.indexOf(source) < ids.indexOf(target);
-    setState({...current,mode:"manual",ids:alreadyOrdered ? ids : moveRailItem(ids,source,target)});
+    let reordered = alreadyOrdered ? ids : moveRailItem(ids,source,target);
+    if (current.mode !== "manual" && visible) {
+      const moved = moveRailItem(visible,source,target);
+      const slots = ids.filter(id => visible.includes(id));
+      // Snapshot the server group's displayed order into its existing slots.
+      // Other groups keep their ranks when manual sorting is first activated.
+      reordered = ids.map(id => {
+        const slot = slots.indexOf(id);
+        return slot < 0 ? id : moved[slot]!;
+      });
+    }
+    setState({...current,mode:"manual",ids:reordered});
   };
   return {chats,manualIds:current.mode === "manual" ? current.ids : undefined,mode:current.mode,setMode,move,scopeKey:current.scopeKey};
 }

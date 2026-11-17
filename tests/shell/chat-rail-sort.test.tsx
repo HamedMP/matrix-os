@@ -74,6 +74,12 @@ it('rejects a stale reorder whose target has left the visible group',()=>{
  act(()=>hook.result.current.move('chat','b','a',['b']));
  expect(hook.result.current.mode).toBe('lastUpdated');
 });
+it('preserves untouched visible rows when the first server-page move differs from global timestamp order',()=>{
+ const items=['c','a','b'].map((id,index)=>({id,preview:id,messageCount:1,updatedAt:3-index})); const client={};
+ const hook=renderHook(()=>useWebChatRailOrder(items,client));
+ act(()=>hook.result.current.move('chat','a','b',['a','b','c']));
+ expect(hook.result.current.manualIds).toEqual(['b','a','c']);
+});
 
 it("keeps legacy conversations visible when an update timestamp is outside the Date range",()=> {
   const items=[{id:"invalid",preview:"Invalid date",messageCount:1,updatedAt:1e30},{id:"valid",preview:"Valid date",messageCount:1,updatedAt:2}];
