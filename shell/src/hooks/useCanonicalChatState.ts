@@ -1,5 +1,6 @@
 import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
+import { createCanonicalChatRowActions } from "@/lib/canonical-chat-row-actions";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
@@ -855,7 +856,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       ? detailRef.current.record
       : records.find((record) => record.chat.id === chatId);
     try {
-      current ??= (await client.detail(chatId)).record;
+      if (current === undefined) current = (await client.detail(chatId)).record;
       if (!isCurrent()) return false;
       const updated = await client.updateTitle(chatId, {
         expectedTitleVersion: current.chat.titleVersion ?? 0,
@@ -971,6 +972,32 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       return false;
     }
   }, [client, loadList, isCurrent]);
+  const chatRowActions = useMemo(() => createCanonicalChatRowActions({
+    client, isCurrent, records: () => navigation.store?.getSnapshot().items ?? [],
+    publish: updated => {
+      setRecords(current => current.map(record => record.chat.id === updated.chat.id ? mergeChatNavigationRecord(record, updated) : record));
+      setDetail(current => current?.record.chat.id === updated.chat.id ? { ...current, record: updated } : current);
+      void loadList();
+    }, reportFailure: () => setSafeError("The Chat could not be updated. Try again."),
+  }), [client, isCurrent, setRecords, loadList, navigation.store]);
+  const archiveClient = useMemo(() => ({
+    list: client.list, search: client.search,
+    updateLifecycle: async (id: string, input: { baseRevision: number; lifecycle: "active" | "archived" }) => {
+      if (!isCurrent()) throw new Error("ChatAuthorityChanged");
+      const updated = await client.updateLifecycle(id, input);
+      if (!isCurrent()) throw new Error("ChatAuthorityChanged");
+      setRecords(current => input.lifecycle === "archived" ? current.filter(row => row.chat.id !== id)
+        : [updated, ...current.filter(row => row.chat.id !== id)].slice(0, 1000));
+      return updated;
+    },
+    delete: async (id: string, requestId: string) => {
+      if (!isCurrent()) throw new Error("ChatAuthorityChanged");
+      const result = await client.delete(id, requestId);
+      if (!isCurrent()) throw new Error("ChatAuthorityChanged");
+      setRecords(current => current.filter(row => row.chat.id !== id));
+      return result;
+    },
+  }), [client, isCurrent, setRecords]);
   const listArchivedConversations = useCallback((cursor?: string) => client.list({ lifecycle: "archived", limit: 50, ...(cursor ? { cursor } : {}) }), [client]);
   const archiveProjectChats = useCallback(async (projectId: string) => {
     if (!isCurrent()) return null;
@@ -1067,6 +1094,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     queue: [],
     agentClient: authority.agentClient,
     sideChatClient: client,
+    archiveClient,
+    chatRowActions,
     terminalSessionIds: selectedDetail?.terminalSessionIds ?? [],
     browserPermissions: client.browserPermissions,
     agentSummaryClient: authority.summaryClient,

@@ -6,11 +6,12 @@ import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
 import { ChatRailOrderContext, ChatRailOrderItem, ChatImportSourceFilter, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
-import { ArchivedChatsDialog } from "./chat/ArchivedChatsDialog";
-import { WebChatInspector } from "./chat/WebChatInspector";
+import { ArchivedChatsPage, type ChatArchiveClient } from "@matrix-os/ui";
+import { WebChatSearchDialog } from "./chat/WebChatSearchDialog";
+import { useWebChatHistory, useInlineChatSearch, useWebChatRowShortcuts } from "./chat/useWebChatHistory";
 import type { SideChatClient } from "@matrix-os/ui";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
-import { ChatProviderOnboarding } from "./chat-provider-onboarding";
+import { EmptyState, AssistantBubble } from "./chat/ChatAppContentViews";
 import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, ProjectChatSlashScope, StartAgentChat } from "@matrix-os/ui";
@@ -27,7 +28,6 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { appendSideChatAnswer } from "./chat/side-chat-draft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
@@ -62,15 +62,8 @@ import {
   Message,
   MessageContent,
 } from "@/components/ai-elements/message";
-import { Reasoning } from "@/components/ai-elements/reasoning";
-import { extractThinking } from "@/components/ai-elements/reasoning-utils";
 import { SuggestionChips } from "@/components/ai-elements/suggestions";
 import { getMessageSuggestions } from "@/components/ai-elements/suggestions-utils";
-import { Plan } from "@/components/ai-elements/plan";
-import { parsePlan } from "@/components/ai-elements/plan-utils";
-import { Task } from "@/components/ai-elements/task";
-import { parseTask } from "@/components/ai-elements/task-utils";
-import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
@@ -111,24 +104,7 @@ import {
 } from "@/lib/hugeicons";
 
 type ConversationMeta = RenameableConversation;
-type SearchConversationMeta = ConversationMeta & {
-  projectId?: string;
-  importSource?: import("@matrix-os/contracts").CanonicalChatImportSource;
-  searchActiveRun?: boolean;
-};
 const MAX_REMEMBERED_DELETIONS = 200;
-
-function searchConversationRow(record: import("@matrix-os/contracts").CanonicalChatRecord): SearchConversationMeta {
-  return {
-    id: record.chat.id, title: record.chat.title, preview: record.chat.title,
-    messageCount: record.chat.messageCount,
-    updatedAt: Date.parse(record.chat.activityAt ?? record.chat.updatedAt),
-    ...(record.projectId ? { projectId: record.projectId } : {}),
-    ...(record.importSource ? { importSource: record.importSource } : {}),
-    ...(record.readState ? { readState: record.readState } : {}),
-    searchActiveRun: Boolean(record.activeRun),
-  };
-}
 
 function loadShellChatImage(src: string) {
   const path = new URL(src, "https://matrix.invalid").searchParams.get("path");
@@ -193,6 +169,8 @@ interface ChatAppProps {
   onDeleteConversation?: (id: string) => Promise<boolean>;
   onArchiveConversation?: (id: string) => Promise<{ chatId: string; revision: number } | null>;
   onRestoreConversation?: (id: string, revision: number) => Promise<boolean>;
+  archiveClient?: ChatArchiveClient;
+  chatRowActions?: import("@/hooks/useChatState").ChatState["chatRowActions"];
   onListArchivedConversations?: (cursor?: string) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
   onArchiveProjectChats?: (projectId: string) => Promise<{ archived: Array<{ chatId: string; revision: number }>; archivedCount: number; skippedCount: number } | null>;
   onRestoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<readonly string[]>;
@@ -270,7 +248,7 @@ function ChatAppContent({
   onDeleteConversation,
   onArchiveConversation,
   onRestoreConversation,
-  onListArchivedConversations,
+  archiveClient, chatRowActions,
   onArchiveProjectChats,
   onRestoreArchivedChats,
   onSubmit,
@@ -327,19 +305,25 @@ function ChatAppContent({
     setAgentDraftRequest(null);
     createChat(projectId);
   };
-  const onNewChat = () => startNewChat(mobile ? undefined : focusedProject?.id);
+  const onNewChat = () => { setArchivesOpen(false); startNewChat(mobile ? undefined : focusedProject?.id); };
   const openProjectHome = (project: WebProject) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     setProjectFocus({ identity: webProjects.identity, id: project.id });
     if (!mobile && projectHome?.id !== project.id) startNewChat(project.id);
   };
-  const onSwitchConversation = (id: string) => { if (isCurrentAuthority && !isCurrentAuthority()) return; botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
+  const onSwitchConversation = (id: string) => { if (isCurrentAuthority && !isCurrentAuthority()) return; botDraftNavigation.clearNotice(); agentsNavigation?.close(); setArchivesOpen(false); switchConversation(id); };
   const composer = useChatComposerDraft(composerScope, draftIdentity);
   const botDraftNavigation = useWebBotDraftNavigation({client:summaryClient,identityKey:authorityKey ?? projectGatewayUrl,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
-  const revealSearch = useCallback(() => setSidebarOpen(true), []);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchCenter, setSearchCenter] = useState<number>();
+  const revealSearch = () => {
+    const root = rootRef.current?.getBoundingClientRect();
+    setSearchCenter(root ? root.left + (root.width + (sidebarOpen ? 240 : 0)) / 2 : undefined);
+    setSearchOpen(true);
+  };
   const agentDraftSequence = useRef(0);
   const startAgentChat: StartAgentChat = (text, resources) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
@@ -355,25 +339,13 @@ function ChatAppContent({
     else onComposerDraftConsumed?.(id);
   };
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [rootWidth, setRootWidth] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    if (typeof ResizeObserver === "undefined") { setRootWidth(root.clientWidth); return; }
-    const observer = new ResizeObserver(() => setRootWidth(root.clientWidth));
-    observer.observe(root);
-    setRootWidth(root.clientWidth);
-    return () => observer.disconnect();
-  }, []);
   const previewTrigger = useRef<HTMLElement | null>(null);
   const openMessageFile = (path: string) => {
     const target = resolveChatMessageLink(path);
     if (!sessionId || target?.kind !== "file") return false;
     previewTrigger.current = document.activeElement as HTMLElement | null;
     setPreviewFile({ chatId: sessionId, path: target.path });
-    setInspectorOpen(true);
     return true;
   };
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
@@ -398,46 +370,16 @@ function ChatAppContent({
   const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
   const [renamePending, setRenamePending] = useState(false);
   // Remember Chats deleted here so a project's paged copy cannot bring them back.
-  const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([]);
-  const [projectArchiveVersion, setProjectArchiveVersion] = useState(0);
-  const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
-  const [archiveUndoPending, setArchiveUndoPending] = useState(false);
-  const [archiveUndoError, setArchiveUndoError] = useState<typeof archiveUndo>(null);
-  const [archivesOpen, setArchivesOpen] = useState(false);
-  const [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
+  const { pageClient, deletedChatIds, setDeletedChatIds, projectArchiveVersion, setProjectArchiveVersion,
+    searchRefreshVersion, setSearchRefreshVersion, archivesOpen, setArchivesOpen,
+    archiveChat, archiveProject, onRestored, changed: historyChanged, toast: archiveToast } = useWebChatHistory({
+    archive: onArchiveConversation, restore: onRestoreConversation, archiveProjectChats: onArchiveProjectChats,
+    restoreMany: onRestoreArchivedChats, client: archiveClient, authorityKey,
+    projectName: id => webProjects.projects.find(project => project.id === id || project.slug === id)?.name,
+  });
   const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({});
   const rememberRenamedTitle = (chatId: string, title: string) => setRenamedTitles(current =>
     Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, title]].slice(-100)));
-  useEffect(() => {
-    if (!archiveUndo || archiveUndoPending) return;
-    const timer = window.setTimeout(() => setArchiveUndo(null), 6_000);
-    return () => window.clearTimeout(timer);
-  }, [archiveUndo, archiveUndoPending]);
-  const archiveChat = async (conv: ConversationMeta) => {
-    if (!onArchiveConversation) return;
-    const archived = await onArchiveConversation(conv.id);
-    if (!archived) return;
-    setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), conv.id]);
-    setArchiveUndoError(null);
-    setArchiveUndo({ chats: [archived], label: `Archived ${conv.title || conv.preview || "New chat"}` });
-  };
-  const archiveProject = async (projectId: string, projectSlug: string, projectName: string) => {
-    if (!onArchiveProjectChats) return false;
-    const results = await Promise.allSettled([...new Set([projectId, projectSlug])].map(reference => onArchiveProjectChats(reference)));
-    const completed = results.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : []);
-    const archived = [...new Map(completed.flatMap(result => result.archived).map(chat => [chat.chatId, chat])).values()];
-    const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
-    if (archived.length) {
-      setDeletedChatIds(current => [...current, ...archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
-      setProjectArchiveVersion(version => version + 1);
-    }
-    if (archived.length || skippedCount) {
-      setArchiveUndoError(null);
-      setArchiveUndo({ chats: archived,
-        label: `Archived ${archived.length} chats in ${projectName}${skippedCount ? `; ${skippedCount} running skipped` : ""}` });
-    }
-    return completed.length === results.length;
-  };
   const deleteChat = useDeleteChatDialog(onDeleteConversation ? async (chatId: string) => {
     const deleted = await onDeleteConversation(chatId);
     if (deleted) setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), chatId]);
@@ -551,40 +493,8 @@ function ChatAppContent({
   const railOrder = useWebChatRailOrder(ordinaryConversations,agentClient);
   const orderedConversations = mobile ? ordinaryConversations : railOrder.chats;
   const trimmedSearch = searchQuery.trim();
-  const searchKey = JSON.stringify([authorityKey, projectGatewayUrl, trimmedSearch, searchRefreshVersion]);
-  const [serverSearch, setServerSearch] = useState<{ key: string; rows: SearchConversationMeta[]; loading: boolean; error: boolean; nextCursor?: string; loadingMore?: boolean; loadMoreError?: boolean }>({ key: "", rows: [], loading: false, error: false });
-  useEffect(() => {
-    if (!trimmedSearch || !searchConversations) return;
-    let current = true;
-    setServerSearch({ key: searchKey, rows: [], loading: true, error: false });
-    const timer = window.setTimeout(() => {
-      void searchConversations(trimmedSearch, { lifecycle: "active", limit: 50 }).then(page => {
-        if (!current) return;
-        setServerSearch({ key: searchKey, rows: page.items.map(searchConversationRow), loading: false, error: false, nextCursor: page.nextCursor });
-      }).catch((cause: unknown) => {
-        if (!current) return;
-        console.warn("[chat-search] Search unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-        setServerSearch({ key: searchKey, rows: [], loading: false, error: true });
-      });
-    }, 250);
-    return () => { current = false; window.clearTimeout(timer); };
-  }, [trimmedSearch, searchConversations, searchKey]);
-  const loadMoreSearch = () => {
-    const cursor = serverSearch.nextCursor;
-    if (!cursor || !searchConversations || serverSearch.loadingMore || serverSearch.key !== searchKey) return;
-    setServerSearch(state => ({ ...state, loadingMore: true, loadMoreError: false }));
-    void searchConversations(trimmedSearch, { lifecycle: "active", limit: 50, cursor }).then(page => {
-      setServerSearch(state => {
-        if (state.key !== searchKey) return state;
-        const ids = new Set(state.rows.map(row => row.id));
-        return { ...state, rows: [...state.rows, ...page.items.map(searchConversationRow).filter(row => !ids.has(row.id))].slice(-500),
-          nextCursor: page.nextCursor, loadingMore: false };
-      });
-    }).catch((cause: unknown) => {
-      console.warn("[chat-search] Search page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-      setServerSearch(state => state.key === searchKey ? { ...state, loadingMore: false, loadMoreError: true } : state);
-    });
-  };
+  const { searchKey, serverSearch, loadMoreSearch } = useInlineChatSearch(searchConversations, trimmedSearch,
+    JSON.stringify([authorityKey, projectGatewayUrl, searchRefreshVersion]));
   const filteredConversations = !trimmedSearch
     ? orderedConversations
     : orderedConversations.filter((c) =>
@@ -611,7 +521,10 @@ function ChatAppContent({
     onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
     onRenameCancel={() => setEditingChat(null)}
     onDelete={!mobile && deleteChat.open ? () => deleteChat.open?.({ id: conv.id, title: conv.title || conv.preview || "New chat" }) : undefined}
-    onArchive={!mobile && onArchiveConversation && !conv.canonicalRecord?.activeRun && !conv.searchActiveRun ? () => { void archiveChat(conv); } : undefined}
+    onPin={!mobile && chatRowActions ? () => { void chatRowActions.pin(conv.id, !conv.canonicalRecord?.chat.userState?.pinned).then(done => { if (done) historyChanged(); }); } : undefined}
+    moveItems={!mobile && chatRowActions ? [{ label: "No project", onSelect: () => { void chatRowActions.move(conv.id, null).then(done => { if (done) historyChanged(); }); } }, ...webProjects.projects.map(project => ({ label: project.name, onSelect: () => { void chatRowActions.move(conv.id, project.id).then(done => { if (done) historyChanged(); }); } }))] : undefined}
+    projectName={webProjects.projects.find(project => project.id === conv.canonicalRecord?.projectId || project.slug === conv.canonicalRecord?.projectId)?.name}
+    onArchive={!mobile && onArchiveConversation ? () => { void archiveChat(conv); } : undefined}
     onRenameCommit={(title) => {
       if (!onRenameConversation || renamePending) return;
       setRenamePending(true);
@@ -626,6 +539,12 @@ function ChatAppContent({
   // Reorderable within its lifecycle group, in the main list and in a focused project alike.
   const renderRailRow = (conv: ConversationMeta) => <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}>{renderConversationRow(conv)}</ChatRailOrderItem>;
 
+  useWebChatRowShortcuts({ active: active && !mobile && !searchOpen && !archivesOpen, record: conversations.find(conv => conv.id === sessionId),
+    archive: onArchiveConversation ? archiveChat : undefined,
+    pin: chatRowActions ? conv => { void chatRowActions.pin(conv.id, !conv.canonicalRecord?.chat.userState?.pinned).then(done => { if (done) historyChanged(); }); } : undefined,
+    rename: onRenameConversation ? conv => setEditingChat({id:conv.id,source:"rail"}) : undefined,
+    read: onUpdateReadState ? conv => { void onUpdateReadState(conv.id, conv.readState?.unread ? {type:"mark_read",throughSeq:conv.readState.latestIncomingSeq,baseVersion:conv.readState.version} : {type:"mark_unread"}); } : undefined,
+  });
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
@@ -666,7 +585,7 @@ function ChatAppContent({
     onCancel={onCancelQueuedTurn} onSteer={onSteerQueuedTurn} />;
 
   return (
-    <div ref={rootRef} className="relative flex h-full bg-background antialiased" onClickCapture={(event) => {
+    <div ref={rootRef} className="chat-web-design relative flex h-full bg-background antialiased" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
       const anchor = element?.closest("a");
       const code = element?.closest("code");
@@ -678,39 +597,7 @@ function ChatAppContent({
         openMessageFile(target.path);
       }
     }}>
-      {archiveUndo ? <div role="status" className="absolute bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-lg">
-        <span>{archiveUndoError === archiveUndo ? "Chats could not be restored. Try again." : archiveUndo.label}</span>
-        {onRestoreConversation && archiveUndo.chats.length > 0 ? <button type="button" className="font-semibold text-primary" disabled={archiveUndoPending} onClick={async () => {
-          if (archiveUndoPending) return;
-          const undo = archiveUndo;
-          const chats = undo.chats;
-          setArchiveUndoPending(true);
-          setArchiveUndoError(null);
-          try {
-            const restoredIds = chats.length === 1
-              ? (await onRestoreConversation(chats[0]!.chatId, chats[0]!.revision) ? [chats[0]!.chatId] : [])
-              : await onRestoreArchivedChats?.(chats) ?? [];
-            const restoredById = Object.fromEntries(restoredIds.map(id => [id, true]));
-            if (restoredIds.length) {
-              setDeletedChatIds(current => current.filter(id => !Object.hasOwn(restoredById, id)));
-              setProjectArchiveVersion(version => version + 1);
-            }
-            const remaining = chats.filter(chat => !Object.hasOwn(restoredById, chat.chatId));
-            if (remaining.length) {
-              const retryUndo = remaining.length === chats.length ? undo : { ...undo, chats: remaining };
-              setArchiveUndo(current => current === undo ? retryUndo : current);
-              setArchiveUndoError(retryUndo);
-              return;
-            }
-            setArchiveUndo(current => current === undo ? null : current);
-          } catch (error: unknown) {
-            console.warn("[chat] Archive Undo failed:", error instanceof Error ? error.name : "UnknownError");
-            setArchiveUndoError(undo);
-          } finally {
-            setArchiveUndoPending(false);
-          }
-        }}>Undo</button> : null}
-      </div> : null}
+      {archiveToast}
       {providerSetupError && (
         <ShellNotificationPortal>
           <ShellNotificationCard
@@ -723,13 +610,13 @@ function ChatAppContent({
       )}
       {/* Sidebar */}
       <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
-        className={`z-20 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-all duration-200 ease-out ${
+        className={`z-20 flex flex-col border-r border-sidebar-border bg-background text-foreground backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
-            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
+            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[240px]"
             : "w-0 overflow-hidden"
         }`}
       >
-        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-sidebar p-3 pb-2">
+        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-background p-3 pb-2">
           {/* The phone drawer closes from inside; wider layouts toggle from the Chat pane, like Electron. */}
           {mobile ? (
             <Button
@@ -753,7 +640,7 @@ function ChatAppContent({
         </div>
 
         {/* Search remains reachable while the conversation list scrolls. */}
-        {!mobile ? <WebChatRailControls active={active} onSearch={revealSearch} query={searchQuery} onQuery={setSearchQuery}/> : <div className="px-3 pb-2">
+        {!mobile ? <WebChatRailControls active={active} onSearch={revealSearch} sourceFilter={sourceFilter} onSourceFilter={setSourceFilter}/> : <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
             <SearchIcon className="size-3.5 text-muted-foreground" />
             <input
@@ -768,8 +655,7 @@ function ChatAppContent({
         </div>
 
         }
-        <div className="px-3 pb-2"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
-        {!mobile && onListArchivedConversations ? <button type="button" className="mx-3 mb-2 self-start text-xs text-muted-foreground hover:text-foreground" onClick={() => setArchivesOpen(true)}>Archived chats</button> : null}
+        {mobile ? <div className="px-3 pb-2"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div> : null}
         {sourceFilter !== "all" && listedConversations.length === 0 && !webProjects.loading && !webProjects.error
           && webProjects.projects.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
@@ -825,18 +711,18 @@ function ChatAppContent({
           </div>
         </ScrollArea>
         <DeleteChatDialog {...deleteChat.dialog} />
-        {onListArchivedConversations && onRestoreConversation && onDeleteConversation ? <ArchivedChatsDialog open={archivesOpen} onClose={() => setArchivesOpen(false)}
-          list={onListArchivedConversations} search={searchConversations} restore={async (chatId, revision) => {
-            const restored = await onRestoreConversation(chatId, revision);
-            if (restored) { setDeletedChatIds(current => current.filter(id => id !== chatId)); setSearchRefreshVersion(version => version + 1); setProjectArchiveVersion(version => version + 1); }
-            return restored;
-          }} remove={onDeleteConversation}/> : null}
       </aside></ChatRailOrderContext.Provider>
 
+      {!mobile && searchOpen ? <WebChatSearchDialog key={JSON.stringify([authorityKey, projectGatewayUrl])} client={pageClient} search={searchConversations}
+        recent={conversations.flatMap(item => item.canonicalRecord ? [item.canonicalRecord] : [])} projects={webProjects.projects} centerX={searchCenter}
+        onClose={() => setSearchOpen(false)} onSelect={onSwitchConversation} onProject={openProjectHome} onShared={onOpenSharedHome}
+        onOpenArchived={() => setArchivesOpen(true)} onRestored={onRestored}/> : null}
+      {!mobile && archivesOpen && archiveClient ? <ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
+        client={pageClient!} projects={webProjects.projects} onChanged={historyChanged}/> : null}
       {/* Main content */}
-      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
+      {!archivesOpen || mobile ? <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
         providerCatalog={agentProviderCatalog} headerLeading={sidebarToggle}>
-      <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
+      <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0" style={{ display: archivesOpen && !mobile ? "none" : undefined }}>
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-12"}`}>
           {sidebarToggle}
@@ -897,7 +783,6 @@ function ChatAppContent({
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
-          {!collaborationView && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}>Inspector</Button> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
@@ -917,7 +802,6 @@ function ChatAppContent({
           </>}
           headerActions={<>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
-            {sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}>Inspector</Button> : null}
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => openProviderSettings()}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
           </>}
@@ -991,8 +875,7 @@ function ChatAppContent({
                           onSubmit={onSubmitApproval ? async (runId, approvalId, decision, browserChoice) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);
-                            try { if (!await onSubmitApproval(runId, approvalId, decision, browserChoice)) throw new Error("ApprovalUnavailable"); }
-                            finally { setSubmittingApprovalId(null); }
+                            return onSubmitApproval(runId, approvalId, decision, browserChoice).then(done => { if (!done) throw new Error("ApprovalUnavailable"); }).finally(() => setSubmittingApprovalId(null));
                           } : undefined}
                         />
                       ) : (
@@ -1079,113 +962,9 @@ function ChatAppContent({
         </BotChatPanel>
         </>}
       </main>
-      {sessionId && sideChatClient && inspectorOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        chatId={sessionId} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
-        rootWidth={rootWidth} railWidth={sidebarOpen ? 260 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
-        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
-        sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
-        onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
-      {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
+      {previewFile && previewFile.chatId === sessionId && !archivesOpen
         ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
-      </ChatAgentsContent></BotModelRecoveryProvider>
+      </ChatAgentsContent></BotModelRecoveryProvider> : null}
     </div>
-  );
-}
-
-// The Matrix glyph Electron Desktop shows on a new Chat, drawn from the shipped logo.
-const NEW_CHAT_LOGO_STYLE = {
-  width: Math.round((28 * 510) / 660), height: 28, background: "currentColor",
-  WebkitMask: "url('/matrix-logo.svg') no-repeat center / contain", mask: "url('/matrix-logo.svg') no-repeat center / contain",
-} as const;
-
-function EmptyState({
-  composerProps,
-  composerKey,
-  onSubmit,
-  connected,
-  mobile,
-  composerDraftRequest,
-  onComposerDraftConsumed,
-  providerReady,
-  attachmentsEnabled,
-  projectHome,
-}: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "projectSlash" | "isCurrentAuthority" | "attachmentPolicy" | "matrixGatewayUrl">;
-  composerKey: string;
-  onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
-  connected: boolean;
-  mobile: boolean;
-  composerDraftRequest?: ChatAgentDraftRequest | null;
-  onComposerDraftConsumed?: (id: number) => void;
-  providerReady: boolean;
-  attachmentsEnabled: boolean;
-  projectHome?: React.ReactNode;
-}) {
-  const layout = mobile ? "narrow" : "wide";
-  const input = (
-    <ChatInput
-      key={composerKey} {...composerProps}
-      connected={connected && providerReady}
-      busy={false}
-      onSubmit={onSubmit}
-      autoFocus={!mobile && !projectHome}
-      placeholder="How can I help you today?"
-      draftRequest={composerDraftRequest}
-      onDraftConsumed={onComposerDraftConsumed}
-      unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
-      attachmentsEnabled={attachmentsEnabled}
-    />
-  );
-  if (projectHome) {
-    return <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      {projectHome}
-      <ChatComposerColumn layout={layout}>{input}</ChatComposerColumn>
-    </div>;
-  }
-  return (
-    <ChatNewChatContent
-      logo={<span aria-hidden="true" data-testid="chat-welcome-matrix-logo" className="block" style={NEW_CHAT_LOGO_STYLE} />}
-      layout={layout}
-      wrapHero={(children) => <ChatProviderOnboarding>{children}</ChatProviderOnboarding>}
-      onSelect={(prompt) => composerProps.composer.setText(prompt)}
-      composer={input}
-    />
-  );
-}
-
-function AssistantBubble({
-  content,
-  attachments,
-  openAttachment,
-  loadImage,
-  onAction,
-}: {
-  content: string;
-  attachments?: ChatMessage["attachments"];
-  openAttachment?: (path: string) => boolean | void;
-  loadImage?: (src: string) => Promise<Blob>;
-  onAction?: (text: string) => void;
-}) {
-  const { thinking, rest } = extractThinking(content);
-  const planSteps = parsePlan(rest);
-  const taskData = parseTask(rest);
-  const displayContent = planSteps
-    ? rest.replace(/```plan\n[\s\S]*?```/, "").trim()
-    : taskData
-      ? rest.replace(/```task\n[\s\S]*?```/, "").trim()
-      : rest;
-
-  return (
-    <Message from="assistant">
-      <MessageContent>
-        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
-        {thinking && <Reasoning content={thinking} />}
-        {planSteps && <Plan steps={planSteps} />}
-        {taskData && <Task task={taskData} />}
-        {displayContent && (
-          <RichContent onAction={onAction} openFile={openAttachment}>{displayContent}</RichContent>
-        )}
-      </MessageContent>
-    </Message>
   );
 }

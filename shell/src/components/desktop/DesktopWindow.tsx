@@ -264,6 +264,8 @@ export function DesktopWindow({
                 onArchiveProjectChats={chat.archiveProjectChats}
                 onRestoreArchivedChats={chat.restoreArchivedChats}
                 sideChatClient={chat.sideChatClient}
+                archiveClient={chat.archiveClient}
+                chatRowActions={chat.chatRowActions}
                 terminalSessionIds={chat.terminalSessionIds}
                 onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} projectSkillRootAvailable={chat.projectSkillRootAvailable} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatRunStatusChange={chat.chatRunStatusChange}

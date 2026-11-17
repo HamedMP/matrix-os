@@ -2,6 +2,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { RenameableConversationRow } from "../../shell/src/components/chat/ChatTitleRename";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { useWebChatRailOrder } from "../../shell/src/components/chat/useWebChatRailOrder";
 import { clientFixture } from "../desktop/chat-agents-fixture";
@@ -12,7 +13,8 @@ it("shows Web search without filter or sorting controls",async()=> {
   const client = clientFixture();
   vi.stubGlobal("fetch",vi.fn(async()=>Response.json(await client.catalog())));
   await act(async()=>{render(<ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client}/>);await Promise.resolve();});
-  const search = screen.getByRole("textbox", {name:"Search chats"});
+  fireEvent.click(screen.getByRole("button", {name:"Search chats"}));
+  const search = screen.getByRole("combobox", {name:"Search chats"});
   fireEvent.change(search, {target:{value:"test"}});
   expect((search as HTMLInputElement).value).toBe("test");
   expect(screen.queryByRole("button",{name:"Sort chats"})).toBeNull();
@@ -82,4 +84,42 @@ it("rejects invalid Web moves before entering manual order",()=>{
   act(()=>hook.result.current.move("chat","a","b"));
   expect(hook.result.current.mode).toBe("manual");
   expect(hook.result.current.chats.map(item=>item.id)).toEqual(["a","b"]);
+});
+
+
+it("opens the full archive page from Search and keeps its own search bar", async () => {
+  vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
+  const client=clientFixture();
+  vi.stubGlobal("fetch",vi.fn(async()=>Response.json(await client.catalog())));
+  const archiveClient={list:vi.fn(async()=>({items:[]})),search:vi.fn(async()=>({items:[]})),updateLifecycle:vi.fn(),delete:vi.fn()};
+  await act(async()=>{render(<ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} archiveClient={archiveClient}/>);await Promise.resolve();});
+  expect(screen.queryByRole("button",{name:"Archived chats"})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
+  fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+  expect(screen.queryByRole("dialog",{name:"Archived chats"})).toBeNull();
+  expect(screen.getByRole("region",{name:"Archived chats"})).toBeTruthy();
+  expect(screen.getByRole("searchbox",{name:"Search archived chats"})).toBeTruthy();
+  expect(screen.queryByRole("combobox",{name:"Search chats"})).toBeNull();
+});
+
+
+it("provides Pin and Move to project in a chat row menu", async () => {
+ const pin=vi.fn(),move=vi.fn();
+ render(<RenameableConversationRow conversation={{id:"chat_menu",title:"Menu chat",preview:"",messageCount:1,updatedAt:1}} active={false} mobile={false} editing={false} renamePending={false} onSelect={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPin={pin} moveItems={[{label:"Matrix OS",onSelect:move}]}/>);
+ fireEvent.pointerDown(screen.getByRole("button",{name:"Actions for Menu chat"}),{button:0,ctrlKey:false});
+ fireEvent.click(await screen.findByRole("menuitem",{name:"Pin",exact:true}));expect(pin).toHaveBeenCalledOnce();
+ fireEvent.pointerDown(screen.getByRole("button",{name:"Actions for Menu chat"}),{button:0,ctrlKey:false});
+ fireEvent.keyDown(await screen.findByRole("menuitem",{name:/Move to project/}),{key:"ArrowRight"});
+ fireEvent.click(await screen.findByRole("menuitem",{name:"Matrix OS",exact:true}));expect(move).toHaveBeenCalledOnce();
+});
+
+
+it("archives the selected idle chat with the displayed desktop shortcut", async () => {
+  vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
+  const client=clientFixture();vi.stubGlobal("fetch",vi.fn(async()=>Response.json(await client.catalog())));
+  const archive=vi.fn(async()=>({chatId:"chat_shortcut",revision:2}));
+  await act(async()=>{render(<ChatApp messages={[]} sessionId="chat_shortcut" busy={false} connected conversations={[{id:"chat_shortcut",title:"Shortcut chat",preview:"",messageCount:1,updatedAt:1}]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} onArchiveConversation={archive} agentClient={client}/>);await Promise.resolve();});
+  fireEvent.keyDown(window,{key:"a",metaKey:true,shiftKey:true});
+  await waitFor(()=>expect(archive).toHaveBeenCalledWith("chat_shortcut"));
 });

@@ -30,3 +30,6 @@ The six failing native suites reproduce ten failures locally. Keep the existing 
 ### Full-CI unit shard reconciliation
 
 The Linux shard exposed three stale consumer tests: the agent chrome fixture replaced the archive hook, the token audit omitted shared UI CSS, and Done expected its Figma live count to disappear while expanded. Preserve the real archive exports, include shared CSS definitions in the existing token audit, and retain the live-count assertion through collapse/expand. CI supplies red evidence for all four assertions. Archive, Side chat, and paged-rail regression suites are retained unchanged in the final integration layer to keep the native layer at 50 files; none of their assertions are deleted. Runtime source is unchanged by this reconciliation.
+## Retained archive protection
+
+The bespoke Web archive dialog and its three tests are replaced by the shared full-page archive implementation. The shared archive suite retains title/message search with cursor paging, restore and confirmed deletion, late-page rejection, failures/retry and Undo coverage. Web navigation tests additionally exercise Search → Archived → full page and restoring an older chat back into an already-expanded project. Project filter chips were an implementation addition absent from the Figma; the archive page keeps project context and searches all projects.
