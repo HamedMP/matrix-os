@@ -124,29 +124,31 @@ export function createAppSessionRoutes(opts: {
   routes.delete('/api/auth/app-session', bodyLimit({ maxSize: APP_SESSION_BODY_LIMIT,
     onError: c => c.json({ error: 'Invalid request' }, 413) }), async (c) => {
     let clerkSessionRevoked = false;
-    const clerkToken = opts.clerkAuth?.extractToken(undefined, c.req.header('cookie'));
+    const clerkToken = opts.clerkAuth?.extractToken(c.req.header('authorization'), c.req.header('cookie'));
     if (opts.clerkAuth && clerkToken) {
       const result = await opts.clerkAuth.verify(clerkToken);
-      if (result.authenticated && result.sessionId) {
-        if (opts.appEnv.ACCOUNT_DELETION_SECRET) {
-          try {
-            await terminateEmailClerkSessionForMatrixSignOut(opts.db, result.sessionId,
-              opts.appEnv.ACCOUNT_DELETION_SECRET);
-          } catch (error: unknown) {
-            console.warn('[auth/app-session] viewer session termination failed',
-              error instanceof Error ? error.name : 'UnknownError');
-            opts.applyNoStoreHeaders(c);
-            return c.json({ error: 'Sign-out is temporarily unavailable. Try again.' }, 503);
-          }
-        }
+      if (!result.authenticated || !result.sessionId) {
+        opts.applyNoStoreHeaders(c);
+        return c.json({ error: 'Sign-out is temporarily unavailable. Try again.' }, 503);
+      }
+      if (opts.appEnv.ACCOUNT_DELETION_SECRET) {
         try {
-          clerkSessionRevoked = await opts.clerkAuth.revokeSession(result.sessionId);
-        } catch (err: unknown) {
-          if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-            console.warn('[auth/app-session] Clerk session revoke timed out', err.name);
-          } else {
-            console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
-          }
+          await terminateEmailClerkSessionForMatrixSignOut(opts.db, result.sessionId,
+            opts.appEnv.ACCOUNT_DELETION_SECRET);
+        } catch (error: unknown) {
+          console.warn('[auth/app-session] viewer session termination failed',
+            error instanceof Error ? error.name : 'UnknownError');
+          opts.applyNoStoreHeaders(c);
+          return c.json({ error: 'Sign-out is temporarily unavailable. Try again.' }, 503);
+        }
+      }
+      try {
+        clerkSessionRevoked = await opts.clerkAuth.revokeSession(result.sessionId);
+      } catch (err: unknown) {
+        if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+          console.warn('[auth/app-session] Clerk session revoke timed out', err.name);
+        } else {
+          console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
         }
       }
     }

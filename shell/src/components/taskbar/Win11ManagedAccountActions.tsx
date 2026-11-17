@@ -11,7 +11,7 @@ import {
 } from "@/lib/sign-out";
 
 export function Win11ManagedAccountActions({ onClose }: { onClose: () => void }) {
-  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { isLoaded, isSignedIn, signOut, getToken } = useAuth();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function Win11ManagedAccountActions({ onClose }: { onClose: () => void })
     setSignOutError(null);
     const redirectUrl = getSignInRedirectUrl();
     try {
-      await clearMatrixAppSession();
+      await clearMatrixAppSession(getToken);
     } catch (error: unknown) {
       console.warn("[auth] Matrix app session sign-out failed", error instanceof Error ? error.name : typeof error);
       setSigningOut(false);

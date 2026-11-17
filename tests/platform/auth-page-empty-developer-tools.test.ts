@@ -48,6 +48,50 @@ describe('inline auth fallback continuation', () => {
     expect(signOut).not.toHaveBeenCalled();
   });
 
+
+  it.each(['fresh', 'empty', 'unavailable'])('requires fresh proof before main auth page sign-out: %s', async state => {
+    const signOut = vi.fn(() => new Promise<void>(() => {}));
+    const getToken = vi.fn(async (options?: { skipCache?: boolean }) => {
+      if (!options?.skipCache) return 'initial-proof';
+      if (state === 'unavailable') throw new Error('Offline');
+      return state === 'fresh' ? 'refreshed-proof' : null;
+    });
+    const requests: Array<{ method?: string; headers?: HeadersInit }> = [];
+    const html = getAuthPage('pk_test_matrix', 'sign-in', 'test-nonce', '/', 'https://app.matrix-os.com');
+    const dom = new JSDOM(html, {
+      url: 'https://app.matrix-os.com/sign-in',
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.assign(window, {
+          AbortSignal, Response,
+          Clerk: { load: async () => undefined,
+            user: { fullName: 'Test User', primaryEmailAddress: { emailAddress: 'test@example.com' } },
+            session: { getToken }, signOut },
+          fetch: async (_input: string | URL | Request, init?: RequestInit) => {
+            requests.push({ method: init?.method, headers: init?.headers });
+            return new Response(null, { status: init?.method === 'DELETE' ? 204 : 503 });
+          },
+        });
+      },
+    });
+    openDoms.push(dom);
+    await waitForCondition(() => Boolean(dom.window.document.querySelector('.session-actions button:not(.primary)')));
+    const button = dom.window.document.querySelector<HTMLButtonElement>('.session-actions button:not(.primary)')!;
+    button.click();
+    await waitForCondition(() => signOut.mock.calls.length > 0 || button.textContent?.includes('temporarily unavailable') === true);
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true });
+    const cleanup = requests.filter(request => request.method === 'DELETE');
+    if (state === 'fresh') {
+      expect(cleanup).toHaveLength(1);
+      expect(new Headers(cleanup[0]!.headers).get('authorization')).toBe('Bearer refreshed-proof');
+      expect(signOut).toHaveBeenCalledOnce();
+    } else {
+      expect(cleanup).toHaveLength(0);
+      expect(signOut).not.toHaveBeenCalled();
+      expect(button.disabled).toBe(false);
+    }
+  });
+
   it('keeps a checkout return passive until app-session can expose the authorized runtime', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     let appSessionAttempts = 0;

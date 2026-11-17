@@ -153,7 +153,7 @@ function MountedUserButton({
   onOpenSettings?: (section: AccountSettingsSection) => void;
   showSharedWithMe: boolean;
 }) {
-  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { isLoaded, isSignedIn, signOut, getToken } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
@@ -180,7 +180,7 @@ function MountedUserButton({
     setSignOutError(null);
     const redirectUrl = getSignInRedirectUrl();
     try {
-      await clearMatrixAppSession();
+      await clearMatrixAppSession(getToken);
     } catch (error: unknown) {
       console.warn("[auth] Matrix app session sign-out failed", error instanceof Error ? error.name : typeof error);
       setSigningOut(false);

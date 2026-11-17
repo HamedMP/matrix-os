@@ -1,3 +1,4 @@
+import { appSessionSignOutScript } from './auth-session-sign-out-script.js';
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
 import { getAuthPageIndexingTags } from './auth-page-indexing.js';
@@ -663,20 +664,7 @@ export function getAuthPage(
       console.warn('[matrix] Clerk.signOut did not finish', err instanceof Error ? err.name : String(typeof err));
       window.location.replace(signOutTarget);
     }
-    function clearAppSessionBeforeSignOut(button) {
-      return fetch('/api/auth/app-session', {
-        method: 'DELETE',
-        credentials: 'same-origin',
-        signal: AbortSignal.timeout(10000)
-      }).then(function(response) {
-        if (!response.ok) throw new Error('Matrix app session clear failed');
-      }).catch(function(err) {
-        console.warn('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
-        button.disabled = false;
-        button.textContent = 'Sign-out is temporarily unavailable. Try again.';
-        return false;
-      });
-    }
+    ${appSessionSignOutScript}
     function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
       setDefaultInstallsCard(false);

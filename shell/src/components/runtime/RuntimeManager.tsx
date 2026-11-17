@@ -266,7 +266,7 @@ export function RuntimeManager({
   journeyPollIntervalMs = DEFAULT_JOURNEY_POLL_INTERVAL_MS,
   surface = "manager",
 }: RuntimeManagerProps) {
-  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { isLoaded, isSignedIn, signOut, getToken } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [initialFlow] = useState(() => {
@@ -578,7 +578,7 @@ export function RuntimeManager({
   async function handleSignOut(): Promise<void> {
     setSignOutError(null);
     try {
-      await clearMatrixAppSession();
+      await clearMatrixAppSession(getToken);
     } catch (error: unknown) {
       console.warn("[runtime-manager] app session cleanup failed", error instanceof Error ? error.name : typeof error);
       setSignOutError("Sign-out is temporarily unavailable. Try again.");

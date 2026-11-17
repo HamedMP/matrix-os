@@ -10,7 +10,7 @@ import { authorizeEmailViewerSession } from '../../packages/platform/src/sites/e
 
 afterEach(() => vi.restoreAllMocks());
 
-it('terminates the shared Clerk session across apps before main Matrix sign-out clears cookies', async () => {
+it.each([false, true])('terminates shared app access before sign-out, refreshing an expired cookie=%s', async (freshProof) => {
   const {db}=await createTestPlatformDb();
   const secret='sign-out-sites-secret-that-is-long-enough';
   const sessionId='sess_shared_sign_out';
@@ -40,9 +40,9 @@ it('terminates the shared Clerk session across apps before main Matrix sign-out 
     });
     const app=createApp({db,orchestrator:stubOrchestrator(),env:{ACCOUNT_DELETION_SECRET:secret},
       platformSecret:'site-sign-out-platform-secret-1234567890',
-      clerkAuth:createClerkAuth({verifyToken:async()=>({sub:'user_shared_viewer',sid:sessionId}),revokeSession})});
+      clerkAuth:createClerkAuth({verifyToken:async(token)=>{ if(token === 'expired-cookie') throw new Error('Token expired'); return {sub:'user_shared_viewer',sid:sessionId}; },revokeSession})});
     const response=await app.request('/api/auth/app-session',{method:'DELETE',headers:{host:'app.matrix-os.com',
-      cookie:'__session=verified-clerk-token; matrix_app_session=matrix-token'}});
+      cookie: freshProof ? '__session=expired-cookie; matrix_app_session=matrix-token' : '__session=verified-clerk-token; matrix_app_session=matrix-token', ...(freshProof ? {authorization:'Bearer fresh-clerk-proof'} : {})}});
     expect(response.status).toBe(200);
     expect(revokeSession).toHaveBeenCalledWith(sessionId);
     for (const site of sites) expect(await authorizeEmailViewerSession(db,site.id,site.cookie,secret)).toBe(false);
@@ -64,6 +64,26 @@ it('does not revoke Clerk or clear cookies if viewer termination cannot commit',
         revokeSession }) });
     const response = await app.request('/api/auth/app-session', { method: 'DELETE',
       headers: { host: 'app.matrix-os.com', cookie: '__session=verified-clerk-token' } });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Sign-out is temporarily unavailable. Try again.' });
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(revokeSession).not.toHaveBeenCalled();
+  } finally { await destroyTestPlatformDb(db); }
+});
+
+it.each(['expired', 'missing-session'])('does not report successful cleanup with %s Clerk proof', async (proof) => {
+  const { db } = await createTestPlatformDb();
+  try {
+    const revokeSession = vi.fn(async () => undefined);
+    const app = createApp({ db, orchestrator: stubOrchestrator(),
+      env: { ACCOUNT_DELETION_SECRET: 'sign-out-sites-secret-that-is-long-enough' },
+      platformSecret: 'site-sign-out-platform-secret-1234567890',
+      clerkAuth: createClerkAuth({ verifyToken: async () => {
+        if (proof === 'expired') throw new Error('Token expired');
+        return { sub: 'user_shared_viewer' };
+      }, revokeSession }) });
+    const response = await app.request('/api/auth/app-session', { method: 'DELETE',
+      headers: { host: 'app.matrix-os.com', cookie: '__session=unusable-proof' } });
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'Sign-out is temporarily unavailable. Try again.' });
     expect(response.headers.get('set-cookie')).toBeNull();

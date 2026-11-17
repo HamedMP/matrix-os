@@ -8,24 +8,41 @@ export function getSignInRedirectUrl(): string {
   return new URL(configured, window.location.origin).toString();
 }
 
-export async function clearMatrixAppSession(): Promise<void> {
+export async function clearMatrixAppSession(
+  getToken?: (options: { skipCache: true }) => Promise<string | null>,
+): Promise<void> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
+  let timeoutId: number | undefined;
   try {
-    const response = await fetch("/api/auth/app-session", {
-      method: "DELETE",
-      credentials: "include",
-      signal: controller.signal,
+    const deadline = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        controller.abort();
+        reject(new Error("Matrix app session clear timed out"));
+      }, SIGN_OUT_TIMEOUT_MS);
     });
-    if (!response.ok) {
-      console.warn("[auth] Matrix app session clear returned non-OK status", response.status);
-      throw new Error("Matrix app session clear failed");
-    }
+    await Promise.race([
+      (async () => {
+        const token = getToken ? await getToken({ skipCache: true }) : null;
+        controller.signal.throwIfAborted();
+        if (getToken && !token) throw new Error("Current session proof unavailable");
+        const response = await fetch("/api/auth/app-session", {
+          method: "DELETE",
+          credentials: "include",
+          ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          console.warn("[auth] Matrix app session clear returned non-OK status", response.status);
+          throw new Error("Matrix app session clear failed");
+        }
+      })(),
+      deadline,
+    ]);
   } catch (error: unknown) {
     console.warn("[auth] Matrix app session clear failed", error instanceof Error ? error.name : typeof error);
     throw new Error("Sign-out is temporarily unavailable. Try again.");
   } finally {
-    window.clearTimeout(timeoutId);
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
   }
   clearChatNavigationScopes();
   clearBrowserChatNavigationCache();
