@@ -258,7 +258,8 @@ export function WebChatSearchDialog({
           className="desktop-chat-design chat-search-design gap-0 p-0 sm:max-w-[600px]"
           style={{
             zIndex: SHELL_Z_INDEX.appDialog,
-            top: "12vh",
+            top: "min(128px, 14vh)",
+            translate: "none",
             left: fittedCenter === undefined ? "50%" : fittedCenter,
             width: dialogWidth,
             transform: "translateX(-50%)",

@@ -1,12 +1,13 @@
 "use client";
 
-import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
+import { ChatRailOrderContext, ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
   type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
 import { projectChats, type WebProject, type WebProjectsState } from "./web-projects";
+import { orderWebChatRows } from "./web-chat-row-order";
 import { WebProjectArchiveAction } from "./WebProjectArchiveAction";
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
@@ -95,11 +96,13 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   // Paged rows only fill in older Chats; a listed (or pinned, filtered, deleted) Chat keeps its normal placement.
   const unknownChats = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
-  const allRows: ProjectRow[] = loadNavigationPage
+  const order = useContext(ChatRailOrderContext);
+  const unorderedRows: ProjectRow[] = loadNavigationPage
     ? filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles), sourceFilter, chat => chat.importSource)
       .filter(chat => (!listedChatIds.has(chat.id) || chats.some(item => item.id === chat.id)) && (!search || chat.title.toLowerCase().includes(search)))
       .map(chat => { const known = chats.find(item => item.id === chat.id); return known ? {kind: "known" as const, chat: known} : {kind: "fetched" as const, chat}; })
     : [...chats.map(chat => ({ kind: "known", chat } as const)), ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
+  const allRows = orderWebChatRows(unorderedRows, order.chatIds, row=>row.chat.id);
   // Never hide the open Chat behind Show more.
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
