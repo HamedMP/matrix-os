@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -33,6 +33,39 @@ describe("CanonicalChatWorkspace send failures", () => {
   });
 
   afterEach(cleanup);
+
+  it("clears accepted busy-send text and attachments even when the queue acknowledgement is lost", async () => {
+    const running = createCanonicalChatFixture("running").snapshot;
+    const runningRecord = { chat: running.chat, projectId: "matrix-os", providerBinding: running.chat.providerBinding, activeRun: running.chat.activeRun };
+    const initial = { record: runningRecord, messages: running.messages, turns: running.turns, runs: running.runs, activities: running.activities, queuedTurns: [] };
+    const routeClient = client();
+    vi.mocked(routeClient.getDetail).mockResolvedValue(initial);
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [runningRecord] });
+    let rejectQueue!: (error: Error) => void;
+    vi.mocked(routeClient.queueTurn).mockReturnValue(new Promise((_resolve, reject) => { rejectQueue = reject; }));
+    const putBytes = vi.fn(async (url: string, file: File) => ({ path: new URL(url, "https://matrix.test").searchParams.get("path"), size: file.size }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<CanonicalChatWorkspace api={{ putBytes } as never} client={routeClient} projectId="matrix-os" projectLabel="Matrix OS"
+      initialChatId={running.chat.id} initialView="conversation" active catalog={providerCatalog} />);
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "Follow up while working");
+    fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["notes"], "notes.txt", { type: "text/plain" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledOnce());
+    const request = vi.mocked(routeClient.queueTurn).mock.calls[0]![1];
+    const queuedTurn = { ...request, id: "qturn_lost_ack", chatId: running.chat.id, position: 1,
+      createdAt: running.chat.updatedAt, updatedAt: running.chat.updatedAt };
+    const { baseRevision: _baseRevision, ...saved } = queuedTurn;
+    vi.mocked(routeClient.getDetail).mockResolvedValue({ ...initial, queuedTurns: [saved] });
+    await act(async () => rejectQueue(new AppError("offline")));
+    const queue = await screen.findByRole("region", { name: "Queued turns" });
+    expect(within(queue).getByText("Follow up while working")).toBeTruthy();
+    await waitFor(() => expect(editor.textContent).toBe(""));
+    expect(screen.queryByRole("button", { name: "Remove notes.txt" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(routeClient.queueTurn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
 
   it("shows the safe attachment upload reason", async () => {
     const api = {

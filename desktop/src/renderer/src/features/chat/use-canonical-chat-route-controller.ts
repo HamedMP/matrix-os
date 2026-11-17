@@ -26,6 +26,7 @@ import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
 import { admitDesktopChatTurn } from "./canonical-chat-turn-admission";
+import { hasQueuedChatAdmission } from "./canonical-chat-queue-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -141,11 +142,13 @@ export function useCanonicalChatRouteController({
 
   const loadDetail = useCallback(async (
     chatId: string,
-    options: { background?: boolean } = {},
+    options: { background?: boolean; onRead?: (detail: CanonicalChatDetailResponse) => void } = {},
   ) => {
     const sequence = ++detailRequestSequence.current;
     try {
       let loaded = await client.getDetail(chatId, { limit: 200 });
+      // A superseded read may still prove admission without replacing newer UI state.
+      options.onRead?.(loaded);
       if (sequence !== detailRequestSequence.current) return null;
       const current = detailRef.current;
       if (current?.record.chat.id === loaded.record.chat.id
@@ -606,12 +609,9 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
       && activeChatIdRef.current === current.record.chat.id);
+    const request = { ...input, clientRequestId: input.clientRequestId ?? canonicalChatRequestId(), baseRevision: current.record.chat.revision };
     try {
-      const response = await client.queueTurn(current.record.chat.id, {
-        ...input,
-        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
-        baseRevision: current.record.chat.revision,
-      });
+      const response = await client.queueTurn(current.record.chat.id, request);
       // Actual admission settles the original draft even when current-view publication is stale.
       onAccepted?.();
       if (!isCurrentScope()) return null;
@@ -648,8 +648,16 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] queue failed:", diagnosticErrorKind(error));
       if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
-      await loadDetail(current.record.chat.id);
+      let recoveredAdmission = false;
+      const loaded = await loadDetail(current.record.chat.id, {
+        onRead: (snapshot) => { recoveredAdmission = hasQueuedChatAdmission(snapshot, current.record.chat.id, request); },
+      });
       if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
+      if (recoveredAdmission || hasQueuedChatAdmission(loaded ?? detailRef.current, current.record.chat.id, request)) {
+        onAccepted?.();
+        setError(null);
+        return null;
+      }
       setError("The message could not be queued. Refresh and try again.");
       return null;
     }
