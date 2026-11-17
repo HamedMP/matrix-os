@@ -1340,6 +1340,16 @@ export async function createGateway(config: GatewayConfig) {
 
   const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
     app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
+    sitePublicData: {
+      // Public site visitors reach only the published app's registry record (2694).
+      resolveApp: async (appSlug) => {
+        const registry = appRegistry;
+        if (!registry) return null;
+        await ensureAppProvisioned(appSlug);
+        return registry.get(appSlug);
+      },
+      onChange: ({ app: changedApp, key }) => broadcast({ type: "data:change", app: changedApp, key }),
+    },
     ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>

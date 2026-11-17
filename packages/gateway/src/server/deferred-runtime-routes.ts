@@ -1,6 +1,6 @@
 /** Mount integration/app runtime routes and metrics after gateway auth. */
 import type { Kysely } from "kysely";
-import { registerSiteRuntime } from "../sites/wiring.js";
+import { registerSiteRuntime, type SitePublicDataWiring } from "../sites/wiring.js";
 import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
@@ -20,6 +20,7 @@ export interface DeferredRuntimeRouteOptions {
   app: Hono;
   homePath: string;
   ownerDatabase: Kysely<any> | null;
+  sitePublicData?: SitePublicDataWiring;
   upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   isAllowedBrowserLabOrigin?: (origin: string) => boolean;
   sharedBrowser?: { broker: SharedBrowserBroker; ownerId: string };
@@ -45,7 +46,8 @@ export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRout
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest, posthogErrorTracker, ownerTelemetryDistinctId } = options;
   const APP_AUTH_DEV_BYPASS = options.devAppAuthBypass;
-  await registerSiteRuntime(app, { homePath, db: options.ownerDatabase, platformUrl: internalPlatformUrl, handle: internalHandle });
+  await registerSiteRuntime(app, { homePath, db: options.ownerDatabase, platformUrl: internalPlatformUrl, handle: internalHandle,
+    ...(options.sitePublicData ? { publicData: options.sitePublicData } : {}) });
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
