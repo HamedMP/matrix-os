@@ -54,6 +54,7 @@ jest.mock("@/lib/queries/use-matrix-credit-balance", () => ({
   useMatrixCreditBalance: () => ({ label: null, isPending: false, isError: false }),
 }));
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-send-chat-message", () => ({ useSendChatMessage: () => ({ mutate: mockSend, isPending: false }) }));
 jest.mock("@/components/agents/chat-draft-request", () => ({ useChatDraftRequest: () => null, consumeChatDraftRequest: jest.fn() }));
 jest.mock("@/components/chat/use-chat-thread", () => ({ useChatThread: () => ({ messages: [], running: false, onStop: jest.fn() }) }));
