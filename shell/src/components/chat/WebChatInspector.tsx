@@ -202,9 +202,11 @@ function InspectorContent({
         {selected.kind === "new" ? (
           <ChatInspectorNewTab
             onChoose={choose}
-            recent={sessions.map((session) => ({
+            recent={[
+              ...(filePath ? [{ id: "recent-file", kind: "files" as const, title: filePath.split("/").pop() ?? filePath, subtitle: filePath, onOpen: () => choose("files") }] : []),
+              ...sessions.map((session) => ({
               id: session.ref,
-              kind: "terminal",
+              kind: "terminal" as const,
               title: session.name,
               subtitle: session.cwd,
               onOpen: () =>
@@ -213,7 +215,9 @@ function InspectorContent({
                   kind: "terminal",
                   label: session.name,
                 }),
-            }))}
+            })),
+              ...(layout.tabs.some(tab => tab.kind === "side-chat") ? [{ id: "recent-side", kind: "side-chat" as const, title: "Side chat", subtitle: "Saved conversation", onOpen: () => choose("side-chat") }] : []),
+            ]}
           />
         ) : null}
         {selected.kind === "files" ? (
