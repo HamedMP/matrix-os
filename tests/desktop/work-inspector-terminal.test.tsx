@@ -471,6 +471,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
     expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    fireEvent.click(screen.getByRole("button", { name: "Filter files" }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
     fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
@@ -489,6 +490,8 @@ describe("Work Files and Terminal inspector", () => {
 
   it("hides and restores the file tree while preserving its search", () => {
     render(<WorkFilesInspector scope={{ kind: "home", chatId: "chat" }} projects={[]} active />);
+    expect(screen.queryByRole("searchbox", { name: "Filter files" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Filter files" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter files" }), { target: { value: "notes" } });
     fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));

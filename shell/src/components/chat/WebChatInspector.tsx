@@ -42,6 +42,7 @@ function InspectorContent({
   projectError,
   onRetryProject,
   filePath,
+  fileOpenRequest,
   fileResource,
   onFilePathChange,
   terminalSessionIds,
@@ -50,6 +51,10 @@ function InspectorContent({
   onClose,
 }: WebChatInspectorProps) {
   const theme = useTheme();
+  // The existing Gateway file API resolves the verified project slug, while chats retain canonical IDs.
+  const previewResource = fileResource?.kind === "project" && project
+    && (fileResource.projectId === project.id || fileResource.projectId === project.slug)
+    ? { ...fileResource, projectId: project.slug } : fileResource;
   const {
     layout,
     setLayout,
@@ -87,7 +92,10 @@ function InspectorContent({
     rootWidth,
     railWidth,
     project,
+    projectLoading,
+    projectError,
     filePath,
+    fileOpenRequest,
     onFilePathChange,
     terminalSessionIds,
     sideChatClient,
@@ -233,7 +241,7 @@ function InspectorContent({
                 />}
               </div>
             ) : null}
-            {filePath ? (
+            {filePath && !projectLoading && !projectError ? (
               <>
                 {!fileExpanded ? (
                   <div
@@ -268,7 +276,7 @@ function InspectorContent({
                 ) : null}
                 <ChatFilePanel
                   path={filePath}
-                  resource={fileResource}
+                  resource={previewResource}
                   gatewayUrl={gatewayUrl}
                   embedded
                   onExpand={() => setFileExpanded((value) => !value)}

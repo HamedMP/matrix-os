@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
 import React from "react";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createProjectManager } from "../../packages/gateway/src/project-manager";
+import { createCodingAgentFilePreviewWiring } from "../../packages/gateway/src/coding-agents/file-preview-wiring";
+import { createFilePreviewRoutes } from "../../packages/gateway/src/file-preview-routes";
+import { Hono } from "hono";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useWebChatInspector, type WebChatInspectorProps } from "../../shell/src/components/chat/useWebChatInspector";
@@ -124,7 +131,7 @@ it("opens the verified project file root rather than listing Home for a project 
 });
 
 function inspectorProps(overrides: Partial<WebChatInspectorProps> = {}): WebChatInspectorProps {
- return {chatId:"chat_regression",gatewayUrl:"http://localhost:4000",layoutKey:null,rootWidth:1512,railWidth:240,filePath:null,onFilePathChange:vi.fn(),terminalSessionIds:[],sideChatClient:{getSideChat:vi.fn(),createSideChat:vi.fn(),askSideChat:vi.fn()},onSendToMain:vi.fn(),onClose:vi.fn(),...overrides};
+ return {chatId:"chat_regression",gatewayUrl:"http://localhost:4000",layoutKey:null,rootWidth:1512,railWidth:240,filePath:null,onFilePathChange:vi.fn(),terminalSessionIds:[],sideChatClient:{getSideChat:vi.fn(async()=>({threadId:null,messages:[]})),createSideChat:vi.fn(),askSideChat:vi.fn()},onSendToMain:vi.fn(),onClose:vi.fn(),...overrides};
 }
 function terminalApi(){
  const workspaceId=`tws_${"a".repeat(32)}`;let created=0;
@@ -195,4 +202,56 @@ it.each(['failed','missing'])('shows a retryable project-file error when the pro
  expect(request.mock.calls.some(([url])=>url.endsWith('/files/list?path='))).toBe(false);
  fireEvent.click(screen.getByRole('button',{name:'Retry project files'}));
  await waitFor(()=>expect(request.mock.calls.some(([url])=>url.includes('/files/list?path=projects%2Fmatrix-os%2Frepo'))).toBe(true));
+});
+
+it('opens a canonical project chat file through the actual slug-based Gateway preview boundary',async()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ const homePath=await realpath(await mkdtemp(join(tmpdir(),'eng461-preview-boundary-')));
+ try{
+  const manager=createProjectManager({homePath});
+  const created=await manager.createProject({name:'Preview project',slug:'preview-project',mode:'scratch',ownerScope:{type:'user',id:'owner'},clientRequestId:'req_preview_boundary'});
+  if(!created.ok)throw new Error('Project fixture failed');
+  const project=created.project;
+  await mkdir(join(project.localPath,'src'),{recursive:true});
+  await writeFile(join(project.localPath,'src','preview.txt'),'Verified project content');
+  const {filePreviewService}=createCodingAgentFilePreviewWiring({homePath,ownerId:'owner',projects:{getProjectBySlug:slug=>manager.getProject(slug)}});
+  const app=new Hono().route('/api/file-previews',createFilePreviewRoutes({service:filePreviewService,getPrincipal:()=>({userId:'owner',source:'jwt'})}));
+  const request=vi.fn(async(url:string)=>{
+   const parsed=new URL(url,window.location.origin);
+   if(parsed.pathname.startsWith('/api/file-previews/'))return app.request(parsed.pathname+parsed.search);
+   if(parsed.pathname.endsWith('/workspace/projects'))return Response.json({projects:[project]});
+   if(parsed.pathname.endsWith('/files-location'))return Response.json({path:'projects/preview-project/repo'});
+   return Response.json({entries:[]});
+  });vi.stubGlobal('fetch',request);
+  render(<ChatApp messages={[{id:'message_file',role:'assistant',content:'Changed `src/preview.txt`.',timestamp:1}]} sessionId="chat_preview" chatProjectId={project.id} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+  await screen.findByRole('button',{name:'Expand Preview project chats'});
+  fireEvent.click(screen.getByRole('button',{name:'Open preview.txt'}));
+  expect(await screen.findByText('Verified project content')).toBeTruthy();
+  expect(screen.queryByRole('group',{name:'Suggested messages'})).toBeNull();
+  fireEvent.keyDown(window,{key:'s',metaKey:true,altKey:true});
+  expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(screen.getByRole('button',{name:'Open preview.txt'}));
+  expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
+  expect(request.mock.calls.filter(([url])=>url.includes('/file-previews/')).every(([url])=>new URL(url,window.location.origin).searchParams.get('projectId')===project.slug)).toBe(true);
+ }finally{cleanup();await rm(homePath,{recursive:true,force:true});}
+});
+
+it('keeps file filtering behind the project-root action and clears it when closed',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[{name:'alpha.txt',type:'file'},{name:'beta.txt',type:'file'}]})));
+ render(<WebChatInspector {...inspectorProps()}/>);
+ await screen.findByRole('treeitem',{name:'alpha.txt'});
+ expect(screen.queryByRole('searchbox',{name:'Filter files'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Filter files'}));
+ fireEvent.change(screen.getByRole('searchbox',{name:'Filter files'}),{target:{value:'alpha'}});
+ expect(screen.queryByRole('treeitem',{name:'beta.txt'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Close file filter'}));
+ expect(screen.queryByRole('searchbox',{name:'Filter files'})).toBeNull();
+ expect(screen.getByRole('treeitem',{name:'beta.txt'})).toBeTruthy();
+});
+
+it.each([undefined,{id:'project_matrix',slug:'matrix-os'}])('ensures the terminal workspace in the verified project scope (%o)',async project=>{
+ const api=terminalApi();vi.stubGlobal('fetch',api.request);
+ const hook=renderHook(()=>useWebChatInspector(inspectorProps({project})));
+ await act(async()=>{await hook.result.current.createTerminal();});
+ expect(api.request).toHaveBeenCalledWith('http://localhost:4000/api/terminal/workspaces/ensure',expect.objectContaining({body:JSON.stringify(project?{projectId:project.slug}:{})}));
 });

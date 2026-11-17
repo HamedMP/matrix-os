@@ -857,7 +857,7 @@ function ChatAppContent({
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="min-h-full justify-end gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
                 <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.earlier} notices={false} earlier />
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
                   const id = group.type === "tool_group" ? group.messages[0]!.id : group.message.id;
@@ -943,7 +943,7 @@ function ChatAppContent({
 
             {/* Suggestions + Input */}
             <div className={`mx-auto w-full max-w-[808px] shrink-0 pt-2 ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
-              {!busy && suggestions.length > 0 && (
+              {mobile && !busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
@@ -994,7 +994,7 @@ function ChatAppContent({
       {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
         active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject}
         projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
-        rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
+        rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} fileOpenRequest={previewFile ?? undefined} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         fileResource={previewFile?.chatId === sessionId ? previewFile.resource : undefined}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}

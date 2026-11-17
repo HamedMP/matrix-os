@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ComponentProps } from "react";
-import { FileText } from "lucide-react";
+import { ChatMessageFileLink } from "@matrix-os/ui";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { parseContentSegments, type UICardData, type UIOptionData } from "@/lib/ui-blocks";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -74,10 +74,7 @@ function ChatInlineCode({ children, className, node: _node, ...props }: Componen
   const openFile=useContext(ChatFileOpenContext);
   const value=String(children);
   const target=/[\\/]/.test(value) ? resolveChatMessageLink(value) : null;
-  if(openFile && target?.kind === "file") return <button type="button" aria-label={`Open ${target.path.split("/").at(-1)}`}
-    title={value} onClick={()=>openFile(value)} className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 align-middle font-mono text-xs hover:bg-accent">
-    <FileText size={13} aria-hidden/><span className="truncate">{target.path.split("/").at(-1)}</span>
-  </button>;
+  if(openFile && target?.kind === "file") return <ChatMessageFileLink path={value} label={target.path.split("/").at(-1)!} onOpen={()=>openFile(value)}/>;
   return <code {...props} className={className ?? "rounded bg-muted px-1.5 py-0.5 font-mono text-sm"}>{children}</code>;
 }
 const chatMarkdownComponents={inlineCode:ChatInlineCode};

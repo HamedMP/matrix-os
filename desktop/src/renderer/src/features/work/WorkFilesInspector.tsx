@@ -542,7 +542,7 @@ function WorkInspectorContent({
                 background: "var(--bg-surface)",
               }}
             >
-              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
+              <InspectorFilesPanel rootLabel={selectedFile?.kind !== "home" && scope.kind === "project" ? scope.projectId : "Matrix Home"} scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile && fileTreeVisible ? (
