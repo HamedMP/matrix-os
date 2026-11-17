@@ -23,6 +23,7 @@ const secretUrl = `https://matrix.page/${SITE_ID}#access=${LINK_ID}.${"a".repeat
 
 function client(overrides: Partial<ShareSiteClient> = {}): ShareSiteClient & Record<string, ReturnType<typeof vi.fn>> {
   let stored: SiteRecord | null = null;
+  let storedLinks: ReturnType<typeof link>[] = [];
   const save = (site: SiteRecord) => { stored = site; return site; };
   return {
     get: vi.fn(async () => stored),
@@ -30,9 +31,9 @@ function client(overrides: Partial<ShareSiteClient> = {}): ShareSiteClient & Rec
     update: vi.fn(async (_app, metadata) => save({ ...base, revision: (metadata.baseRevision ?? 0) + 1, accessMode: metadata.accessMode ?? "public", slug: metadata.slug })),
     unpublish: vi.fn(async (_app, revision) => save({ ...base, revision: revision + 1, status: "unpublished" as const })),
     getConfig: vi.fn(async () => ({ data: {}, forms: [] })),
-    accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })),
-    createAccessLink: vi.fn(async () => ({ link: link(), url: secretUrl })),
-    revokeAccessLink: vi.fn(async () => undefined),
+    accessLinks: vi.fn(async () => ({ links: storedLinks, nextCursor: null })),
+    createAccessLink: vi.fn(async () => { const created = link(); storedLinks = [created, ...storedLinks]; return { link: created, url: secretUrl }; }),
+    revokeAccessLink: vi.fn(async (_app: string, id: string) => { storedLinks = storedLinks.filter(value => value.id !== id); }),
     slugAvailability: vi.fn(async () => ({ status: "available" as const, suggestions: [] })),
     ...overrides,
   } as ShareSiteClient & Record<string, ReturnType<typeof vi.fn>>;
@@ -144,7 +145,7 @@ describe("Private tab · one-time links", () => {
     expect(api.getConfig).toHaveBeenCalledTimes(1);
     expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "private_link", title: "Sales CRM", reviewedConfig: { data: {}, forms: [] } }), expect.any(AbortSignal));
     expect(api.createAccessLink).toHaveBeenCalledWith("sales-crm", { baseRevision: 1 }, expect.any(AbortSignal));
-    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Copy" })).toBeTruthy();
     // The secret itself is never rendered, only a masked label.
     expect(screen.queryByText(secretUrl)).toBeNull();
     expect(screen.getByLabelText("1 links")).toBeTruthy();

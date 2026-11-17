@@ -84,6 +84,7 @@ function Host({ api }: { api: ReturnType<typeof createSiteClient> }) {
   const share = useShareController({ appSlug: APP, appName: "Sales CRM", client: api, emailInvites });
   return <>
     <output data-testid="revision">{share.site?.revision}</output>
+    <output data-testid="site-title">{share.site?.title}</output>
     <button disabled={share.operation !== null || share.loading} onClick={() => void share.saveDetails({ title: "Saved", description: "", slug: null })}>Save details</button>
     <SharePanel share={share} appSlug={APP} appName="Sales CRM" client={api} ownerInitial="N" onClose={vi.fn()} />
   </>;
@@ -182,4 +183,63 @@ it("keeps successful mode changes visible when queuing an invitation fails, with
   await waitFor(() => expect(screen.getByTestId("revision").textContent).toBe("4"));
   expect(await screen.findByText("Only invited people can open it. They sign in with their email.")).toBeTruthy();
   expect(screen.getByRole("alert").textContent).toContain("Sharing is unavailable");
+});
+
+
+it("reloads the full site when the invitation read belongs to a newer publication revision", async () => {
+ const f=fixture(site,true,[invitation()]);
+ const normal=f.get.getMockImplementation()!;
+ let changed=false;
+ f.get.mockImplementation(async(path)=>{
+  if(path.includes('/invitations?')&&!changed){changed=true;f.state.site={...site,title:'Newer title',slug:'newer-path',revision:4};}
+  return normal(path);
+ });
+ render(<Host api={f.api}/>);await ready();
+ expect(screen.getByTestId('revision').textContent).toBe('4');
+ expect(screen.getByTestId('site-title').textContent).toBe('Newer title');
+ expect(f.get.mock.calls.filter(([path])=>path.endsWith('/site')).length).toBeGreaterThan(1);
+});
+
+it("never promotes stale site fields to a newer post-mutation list revision", async () => {
+ const f=fixture(site),fresh=deferred<unknown>();
+ const normal=f.get.getMockImplementation()!;
+ let held=false;
+ f.get.mockImplementation(async(path)=>{
+  if(path.endsWith('/site')&&f.state.site?.revision===5){held=true;return fresh.promise;}
+  if(path.includes('/invitations?')&&f.state.site?.revision===4){
+   f.state.site={...site,title:'Concurrent title',slug:'concurrent-path',revision:5};
+  }
+  return normal(path);
+ });
+ render(<Host api={f.api}/>);await ready();await invite();
+ await waitFor(()=>expect(held).toBe(true));
+ expect(screen.getByTestId('revision').textContent).toBe('4');
+ await act(async()=>fresh.resolve(f.state.site));
+ await waitFor(()=>expect(screen.getByTestId('site-title').textContent).toBe('Concurrent title'));
+ expect(screen.getByTestId('revision').textContent).toBe('5');
+});
+
+it("prevents paging from cancelling a pending newest-page reset", async () => {
+ const f=fixture(site,true,[invitation()]),fresh=deferred<unknown>();
+ const older=invitation({id:'55555555-5555-4555-8555-555555555555',emailAddress:'older@example.com'});
+ let reset=false,held=false;
+ f.get.mockImplementation(async(path)=>{
+  if(path.endsWith('/email-invitation-capabilities'))return {privateEmailInvitations:true};
+  if(path.endsWith('/site')){if(reset){held=true;return fresh.promise;}return site;}
+  if(path.includes('cursor=older'))return {invitations:[older],siteRevision:3,nextCursor:'last'};
+  return {invitations:[invitation()],siteRevision:3,nextCursor:'older'};
+ });
+ render(<Host api={f.api}/>);await ready();
+ fireEvent.click(screen.getByRole('button',{name:'Load more invitations'}));
+ expect(await screen.findByText('older@example.com')).toBeTruthy();
+ reset=true;
+ fireEvent.click(screen.getByRole('button',{name:'Show newest invitations'}));
+ await waitFor(()=>expect(held).toBe(true));
+ const paging=screen.getByRole('button',{name:'Load more invitations'});
+ expect(paging).toHaveProperty('disabled',true);
+ fireEvent.click(paging);
+ expect(f.get.mock.calls.some(([path])=>path.includes('cursor=last'))).toBe(false);
+ await act(async()=>fresh.resolve(site));
+ await waitFor(()=>expect(screen.queryByText('older@example.com')).toBeNull());
+ expect(screen.getByText('sara@example.com')).toBeTruthy();
 });

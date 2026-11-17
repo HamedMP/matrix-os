@@ -62,6 +62,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   const lifecycle = useRef<AbortController | null>(null);
   const busy = useRef(false);
   const mutationVersion = useRef(0);
+  const newestResetPending = useRef(false);
   const identityRef = useRef({ appSlug, client, emailInvites });
   if (identityRef.current.appSlug !== appSlug || identityRef.current.client !== client || identityRef.current.emailInvites !== emailInvites) {
     identityRef.current = { appSlug, client, emailInvites };
@@ -78,7 +79,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   // running mutation (it would leave `operation` set and the buttons disabled).
   useEffect(() => {
     const controller = new AbortController();
-    lifecycle.current = controller; busy.current = false;
+    lifecycle.current = controller; busy.current = false; newestResetPending.current = false;
     return () => { controller.abort(); };
   }, [appSlug, client, emailInvites]);
 
@@ -90,32 +91,47 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
     const version = mutationVersion.current;
     void (async () => {
       try {
-        const [site, emailAvailable] = await Promise.all([
+        const [initialSite, emailAvailable] = await Promise.all([
           client.get(appSlug, signal),
           emailInvites?.kind === "live" ? emailInvites.available(appSlug, signal).catch((error: unknown) => {
             console.warn("[share] invitation readiness unavailable", error instanceof Error ? error.name : "UnknownError");
             return false;
           }) : Promise.resolve(emailInvites?.kind === "preview"),
         ]);
-        const emailActive = emailInvites?.kind === "preview" ? emailInvites.active(appSlug)
-          : site?.status === "published" && site.accessMode === "private_email";
-        // react-doctor-disable-next-line react-doctor/async-defer-await -- the early return below is the effect-cancellation guard; it must follow the awaits.
-        const [links, page] = await Promise.all([
-          site?.status === "published" && site.accessMode === "private_link" ? client.accessLinks(appSlug, signal) : null,
-          emailActive && emailAvailable && emailInvites ? emailInvites.list(appSlug, signal) : null,
-        ]);
-        if (!current) return;
-        if (version !== mutationVersion.current || busy.current) return;
-        setCurrentView((previous) => ({
-          ...previous, site: site && page ? { ...site, revision: page.siteRevision } : site, loading: false, loadFailed: false, emailActive, emailAvailable,
-          links: links?.links ?? [], linksNextCursor: links?.nextCursor ?? null,
-          invitations: page?.invitations ?? [], emailRevision: page?.siteRevision ?? site?.revision ?? 0,
-          invitationsNextCursor: page?.nextCursor ?? null, invitationsPaged: false,
-        }));
+        let site = initialSite;
+        // Read once more after a concurrent change; never attach a newer token
+        // to metadata read at an older revision. Continued churn fails closed.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const emailActive = emailInvites?.kind === "preview" ? emailInvites.active(appSlug)
+            : site?.status === "published" && site.accessMode === "private_email";
+          // react-doctor-disable-next-line react-doctor/async-defer-await -- cancellation and revision guards must run after the in-flight reads settle.
+          const [links, page] = await Promise.all([
+            site?.status === "published" && site.accessMode === "private_link" ? client.accessLinks(appSlug, signal) : null,
+            emailActive && emailAvailable && emailInvites ? emailInvites.list(appSlug, signal) : null,
+          ]);
+          if (!current || version !== mutationVersion.current || busy.current) return;
+          if (emailInvites?.kind === "live" && page && page.siteRevision !== site?.revision) {
+            if (attempt === 1) throw Object.assign(new Error("Publication changed during read"), { status: 409 });
+            site = await client.get(appSlug, signal);
+            continue;
+          }
+          setCurrentView((previous) => ({
+            ...previous, site, loading: false, loadFailed: false, emailActive, emailAvailable,
+            links: links?.links ?? [], linksNextCursor: links?.nextCursor ?? null,
+            invitations: page?.invitations ?? [], emailRevision: page?.siteRevision ?? site?.revision ?? 0,
+            invitationsNextCursor: page?.nextCursor ?? null, invitationsPaged: false,
+          }));
+          return;
+        }
       } catch (error: unknown) {
         if (!current || version !== mutationVersion.current || busy.current) return;
         console.warn("[share] publication load failed", error instanceof Error ? error.name : "UnknownError");
         setCurrentView((previous) => ({ ...previous, loading: false, loadFailed: true, error: { operation: "load", message: "Sharing settings couldn’t load. Try again." } }));
+      } finally {
+        if (current && identityRef.current === identity && newestResetPending.current) {
+          newestResetPending.current = false;
+          patch({ operation: null });
+        }
       }
     })();
     return () => { current = false; controller.abort(); };
@@ -128,7 +144,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
    */
   async function run(operation: ShareOperation, work: (signal: AbortSignal) => Promise<void>): Promise<boolean> {
     const controller = lifecycle.current;
-    if (!controller || controller.signal.aborted || busy.current || view.loading || view.loadFailed) return false;
+    if (!controller || controller.signal.aborted || busy.current || newestResetPending.current || view.loading || view.loadFailed) return false;
     busy.current = true;
     mutationVersion.current += 1;
     patch({ operation, error: null, ...(operation === "invite" || operation === "switch" ? { inviteOutcome: null } : {}) });
@@ -210,6 +226,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       return;
     }
     if (!emailInvites || !view.emailAvailable) throw new Error("Email invitations unavailable");
+    let emailSiteRevision = view.site?.revision;
     if (emailInvites.kind === "preview") {
       if (!view.emailActive) {
         const site = view.site;
@@ -222,16 +239,20 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
         ? current.accessMode === "private_email" ? current
           : await client.update(appSlug, { title: current.title, description: current.description, slug: current.slug, accessMode: "private_email", baseRevision: current.revision }, signal)
         : await client.deploy(appSlug, { title: titleFor(current), description: current?.description ?? "", slug: current?.slug ?? null, accessMode: "private_email", baseRevision: current?.revision ?? 0, reviewedConfig: await client.getConfig(appSlug, signal) }, signal);
+      emailSiteRevision = site.revision;
       // The backend transaction revokes the old mode and activates the new one.
       patch({ site, emailActive: true, emailRevision: site.revision, links: [], linksNextCursor: null, freshLinks: {} });
     }
     const page = await emailInvites.list(appSlug, signal);
+    if (emailInvites.kind === "live" && page.siteRevision !== emailSiteRevision) {
+      throw Object.assign(new Error("Publication changed before invite"), { status: 409 });
+    }
     const result = await emailInvites.invite(appSlug, { emailAddresses: [request.email], baseRevision: page.siteRevision }, signal);
     syncEmailRevision(result.siteRevision);
     const outcome = result.results[0]?.outcome;
     patch({ emailActive: true, inviteOutcome: outcome === "queued" || outcome === "existing" ? outcome : null });
     const after = await emailInvites.list(appSlug, signal);
-    syncEmailPage(after);
+    syncEmailPage(after, result.siteRevision);
     if (outcome !== "queued" && outcome !== "existing") throw Object.assign(new Error("Invitation rejected"), { status: 400 });
   }
 
@@ -240,10 +261,12 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       site: current.site ? { ...current.site, revision } : null }));
   }
 
-  function syncEmailPage(page: EmailInvitationPage) {
+  function syncEmailPage(page: EmailInvitationPage, expectedRevision: number) {
+    if (emailInvites?.kind === "live" && page.siteRevision !== expectedRevision) {
+      throw Object.assign(new Error("Publication changed after invitation mutation"), { status: 409 });
+    }
     setCurrentView((current) => ({ ...current, invitations: page.invitations,
-      invitationsNextCursor: page.nextCursor ?? null, invitationsPaged: false, emailRevision: page.siteRevision,
-      site: current.site ? { ...current.site, revision: page.siteRevision } : null }));
+      invitationsNextCursor: page.nextCursor ?? null, invitationsPaged: false, emailRevision: page.siteRevision }));
   }
 
   function request(next: ShareModeRequest): Promise<boolean> {
@@ -325,18 +348,23 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
         invitations: [...current.invitations, ...page.invitations.filter((item) => !current.invitations.some((existing) => existing.id === item.id))].slice(-100),
         invitationsNextCursor: page.nextCursor ?? null, invitationsPaged: true }));
     }),
-    showNewestInvitations: () => { if (!busy.current) setReload((value) => value + 1); },
+    showNewestInvitations: () => {
+      if (busy.current || newestResetPending.current) return;
+      newestResetPending.current = true;
+      patch({ operation: "load" });
+      setReload((value) => value + 1);
+    },
     revokeInvite: (invitation: EmailInvitationSummary) => run("invite_change", async (signal) => {
       if (!emailInvites || !view.emailAvailable) return;
       const result = await emailInvites.revoke(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
       syncEmailRevision(result.siteRevision);
-      syncEmailPage(await emailInvites.list(appSlug, signal));
+      syncEmailPage(await emailInvites.list(appSlug, signal), result.siteRevision);
     }),
     resendInvite: (invitation: EmailInvitationSummary) => run("invite_change", async (signal) => {
       if (!emailInvites || !view.emailAvailable) return;
       const result = await emailInvites.resend(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
       syncEmailRevision(result.siteRevision);
-      syncEmailPage(await emailInvites.list(appSlug, signal));
+      syncEmailPage(await emailInvites.list(appSlug, signal), result.siteRevision);
     }),
     unpublish: () => run("unpublish", async (signal) => {
       const site = view.site;
