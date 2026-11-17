@@ -171,7 +171,7 @@ type CanonicalOpen = "opened" | "superseded" | "unowned";
  * render canonical Chats by Chat id. Resolve the Chat that owns the thread and
  * open exactly that conversation; "unowned" leaves the agent-thread route.
  */
-async function openCanonicalAgentChat(threadId: string): Promise<CanonicalOpen> {
+async function openCanonicalAgentChat(threadId: string, isLatest: () => boolean): Promise<CanonicalOpen> {
   const api = useConnection.getState().api;
   if (!api) return "unowned";
   const runtimeGeneration = captureRuntimeGeneration();
@@ -181,7 +181,7 @@ async function openCanonicalAgentChat(threadId: string): Promise<CanonicalOpen> 
   } catch (err: unknown) {
     console.warn("[project-chat] canonical chat lookup failed:", diagnosticErrorKind(err));
   }
-  if (!isCurrentRuntimeGeneration(runtimeGeneration) || useConnection.getState().api !== api) return "superseded";
+  if (!isLatest() || !isCurrentRuntimeGeneration(runtimeGeneration) || useConnection.getState().api !== api) return "superseded";
   if (!owner) return "unowned";
   const projectId = owner.projectId;
   const project = projectId
@@ -195,9 +195,16 @@ async function openCanonicalAgentChat(threadId: string): Promise<CanonicalOpen> 
   return "opened";
 }
 
+// Each open supersedes the ones before it, so a slow lookup for an earlier
+// click can never replace the conversation the user chose afterwards.
+let latestThreadOpen = 0;
+
 export async function openCodingAgentThread(threadId: string): Promise<void> {
+  const request = ++latestThreadOpen;
+  const isLatest = () => request === latestThreadOpen;
   // Without a connection there is nothing to resolve; keep the local route synchronous.
-  if (useConnection.getState().api && await openCanonicalAgentChat(threadId) !== "unowned") return;
+  if (useConnection.getState().api && await openCanonicalAgentChat(threadId, isLatest) !== "unowned") return;
+  if (!isLatest()) return;
   const workspace = useCodingAgentWorkspace.getState();
   const listed = [
     // Attention entries win the dedupe: they carry the actionable state.
@@ -231,7 +238,7 @@ export async function openCodingAgentThread(threadId: string): Promise<void> {
     // openProjectChat persists a thread selection, so committing after an
     // account or computer change would pin a thread that does not exist on the
     // machine now in view.
-    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
+    if (!isLatest() || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
     // Only guess when the runtime genuinely could not resolve it. The guess
     // opens the chat under whichever project is active and nothing reroutes.
     projectId = resolved ?? defaultProjectId() ?? undefined;

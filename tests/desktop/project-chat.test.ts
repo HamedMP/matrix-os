@@ -438,6 +438,32 @@ describe("openCodingAgentThread", () => {
     }
   });
 
+  it("keeps the newer choice when an earlier thread's lookup finishes last", async () => {
+    let releaseFirst: (value: unknown) => void = () => undefined;
+    const get = vi.fn((path: string) => {
+      if (path === "/api/chats/by-agent-thread/thread_first") {
+        return new Promise((resolve) => { releaseFirst = resolve; });
+      }
+      if (path === "/api/chats/by-agent-thread/thread_second") return Promise.resolve({ chatId: "chat_second", projectId: "proj_matrix" });
+      return Promise.reject(new AppError("notFound"));
+    });
+    const previous = useConnection.getState().api;
+    useConnection.setState({ api: { get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as never });
+    try {
+      useBoard.setState({ projects: [{ id: "proj_matrix", slug: "matrix-os", name: "Matrix OS", kind: "folder" }] });
+
+      const first = openCodingAgentThread("thread_first");
+      await openCodingAgentThread("thread_second");
+      releaseFirst({ chatId: "chat_first", projectId: "proj_matrix" });
+      await first;
+
+      const tabs = useTabs.getState();
+      expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.chatId).toBe("chat_second");
+    } finally {
+      useConnection.setState({ api: previous });
+    }
+  });
+
   it.each(["notFound", "timeout", "server"] as const)("keeps the agent-thread route when the owner lookup ends in %s", async (category) => {
     const previous = useConnection.getState().api;
     useConnection.setState({ api: { get: vi.fn(async () => { throw new AppError(category); }), post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as never });
