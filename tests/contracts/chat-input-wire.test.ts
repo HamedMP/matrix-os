@@ -7,6 +7,12 @@ const activities: CanonicalChatRunActivity[] = [
   { ...base, id: "evt_claim", type: "input.submitted", requestId: "input_wire", clientRequestId: "req_submit" },
   { ...base, id: "evt_resolved", type: "input.resolved", requestId: "input_wire", reason: "answered" },
 ];
+it("negotiates routine receipt metadata only for supporting consumers", () => {
+  const url = "/api/chats/chat_example?limit=10";
+  expect(chatMessageVersionUrl(url)).not.toContain("routineReceiptVersion");
+  expect(chatMessageVersionUrl(url, true)).toContain("&routineReceiptVersion=1");
+});
+
 it("projects asynchronous metadata away for strict input-v1 clients", () => {
   const asynchronous = activities.map(event => event.type === "input.requested" ? { ...event, asynchronous: true } : event);
   expect(projectChatMessageResponse({ activities: asynchronous }, "2", "1").activities).toEqual(activities);
@@ -25,5 +31,5 @@ it("preserves full structured requests for input-aware snapshots and live frames
   const frame = { type: "chat.content", event: { cursor: 1 }, content: { activities } } as CanonicalChatTransportFrame;
   expect(projectChatMessageFrame(frame, "2", "1", "0", "1")).toEqual(frame);
   expect(projectChatMessageFrame(frame, "2", "0", "0", "1")).toMatchObject({ content: { activities: [expect.not.objectContaining({ type: "input.submitted" }), expect.anything()] } });
-  expect(chatMessageVersionUrl("/api/chats/chat_wire?limit=20")).toBe("/api/chats/chat_wire?limit=20&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1");
+  expect(chatMessageVersionUrl("/api/chats/chat_wire?limit=20", true)).toBe("/api/chats/chat_wire?limit=20&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1");
 });

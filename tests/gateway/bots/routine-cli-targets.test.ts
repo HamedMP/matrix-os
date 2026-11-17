@@ -10,6 +10,9 @@ import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.j
 import { createRoutineCliPreferencesRepository } from "../../../packages/gateway/src/bots/repositories/routine-cli-preferences.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createRoutineCliTargetService, type RoutineCliSourceContext } from "../../../packages/gateway/src/bots/routine-cli-targets.js";
+import { isRoutineDirectBotId } from "../../../packages/gateway/src/bots/routine-direct-chat-identity.js";
+import { ROUTINE_DIRECT_CHAT_RECIPE } from "../../../packages/gateway/src/bots/recipe-catalog.js";
+import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { BOT, NOW, OWNER, OTHER_OWNER, at, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const scope = { ownerId: OWNER, computerId: "computer_one" };
@@ -65,9 +68,10 @@ describe("remembered routine target with current source authority", () => {
     { botId: "bot_normalrecipe", chatId: `chat_routine_${"b".repeat(32)}` },
   ])("denies a retained coordinator even with a live binding and default preference: $chatId", async target => {
     const owner = { type: "personal" as const, ownerId: OWNER };
+    const { recipeId, version, name, description, instructions } = isRoutineDirectBotId(target.botId) ? ROUTINE_DIRECT_CHAT_RECIPE
+      : { recipeId: "report", version: "1", name: "Retained Bot", description: "", instructions: "Read" };
     await agents.createRecipeBot(owner, { id: target.botId, createHash: "b".repeat(64),
-      fields: { name: "Retained Bot", description: "", instructions: "Read", selection: { instanceId: "matrix_pi_default", model: "auto" } },
-      recipeRef: { recipeId: "report", version: "1" } });
+      fields: { name, description, instructions, selection: MATRIX_BOT_SELECTION }, recipeRef: { recipeId, version } });
     await insertChat(db, target.chatId);
     await createBotBindingsRepository(db).bindDirect({ ...scope, ...target, now: NOW });
     const svc = service();

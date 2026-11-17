@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { bootstrapChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { insertChat } from "./bot-state-support.js";
 import { createBotRoutineScheduler } from "../../../packages/gateway/src/bots/routine-scheduler.js";
@@ -36,6 +37,7 @@ beforeAll(async () => {
   // Use the real Chat prerequisites for additive Bot receipt foreign keys.
   await bootstrapChatDatabase(db);
   await bootstrapBotDatabase(db);
+  await bootstrapCollaborationDatabase(db as never);
   await insertChat(db, CHAT, OWNER);
   await db.insertInto("bot_chat_bindings").values({
     owner_id: OWNER,
