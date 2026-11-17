@@ -1,6 +1,6 @@
 "use client";
 import { useState, type RefObject } from "react";
-import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController, SocialPreviewSection } from "@matrix-os/ui/share";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
 import { AppSiteSharePopover } from "./AppSiteSharePopover";
@@ -64,7 +64,7 @@ export function AppSiteButton({
           onClose={() => setOpen(false)}
           organization={organization.slot}
           submissions={share.site
-            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
+            ? <><SocialPreviewSection appSlug={appSlug} client={webSiteClient} site={share.site} /><SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /></> : null}
         />
       ) : null}
     </AppSiteSharePopover>
