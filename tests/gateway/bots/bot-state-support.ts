@@ -5,6 +5,7 @@ import { createTestPGlite } from "../../helpers/pglite-test-helper.js";
 import { singleSessionTestDialect } from "../../helpers/single-session-test-dialect.js";
 import pg from "pg";
 import { bootstrapChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import type { BotMigration } from "../../../packages/gateway/src/bots/database-migrations.js";
 import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 
 export const OWNER = "user_owner_1";
@@ -57,7 +58,7 @@ export async function insertChat(db: Kysely<OwnerBotDatabase>, id: string, owner
  */
 export async function createRealBotStateDatabase(
   connectionString = process.env.MATRIX_TEST_POSTGRES_URL,
-  options: { routineAuthority?: boolean } = {},
+  options: { migrations?: readonly BotMigration[]; routineAuthority?: boolean } = {},
 ) {
   if (!connectionString) throw new Error("MATRIX_TEST_POSTGRES_URL is required");
   if (!new URL(connectionString).pathname.toLowerCase().includes("test")) {
@@ -72,7 +73,7 @@ export async function createRealBotStateDatabase(
     }),
   });
   await bootstrapChatDatabase(db);
-  await bootstrapBotDatabase(db);
+  await bootstrapBotDatabase(db, options.migrations);
   if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
   return {
     db,

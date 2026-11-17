@@ -233,6 +233,10 @@ export interface BotDatabase {
     source_id: string; owner_id: string; computer_id: string; invocation_id: string;
     token_hash: string | null; operation_digest: string; issued_at: Timestamp; expires_at: Timestamp; consumed_at: NullableTimestamp;
   };
+  routine_direct_chat_contexts: {
+    owner_id: string; computer_id: string; source_chat_id: string; bot_id: string; chat_id: string;
+    activated_at: NullableTimestamp;
+  };
   routine_cli_preferences: {
     owner_id: string; computer_id: string; bot_id: string | null; chat_id: string | null;
     binding_created_at: NullableTimestamp; revision: Revision; updated_at: Timestamp;
@@ -242,10 +246,16 @@ export interface BotDatabase {
   bot_chat_bindings: BotChatBindingsTable;
   bot_agent_sessions: BotAgentSessionsTable;
   bot_tasks: BotTasksTable;
+  routine_chat_deliveries: {
+    owner_id: string; source_chat_id: string; routine_id: string; fire_id: string; attempt: number; kind: "status" | "output";
+    message_id: string; receipt: Json<import("@matrix-os/contracts").RoutineChatReceiptPart>; created_at: Timestamp;
+  };
   bot_routines: {
     routine_id: string; owner_id: string; bot_id: string; chat_id: string;
     proposal: Json<import("@matrix-os/contracts").BotRoutineProposal>;
     approved_source: Json<import("./routine-authorization.js").RoutineAuthorization> | null; approval_id: string | null;
+    origin_computer_id: ColumnType<string | null, string | null | undefined, string | null>;
+    origin_request_id: ColumnType<string | null, string | null | undefined, string | null>;
     status: import("@matrix-os/contracts").BotRoutineStatus;
     next_fire_at: NullableTimestamp; revision: Revision; created_at: Timestamp; updated_at: Timestamp;
   };
@@ -285,11 +295,18 @@ function assertOrdered(migrations: readonly BotMigration[]): void {
   }
 }
 
+const previewBaseVersion = RETAINED_ROUTINE_PREVIEW_VERSIONS[0].version - 1;
+
 /** Called under the migration lock before any pending DDL can run. */
 async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<boolean> {
-  const mayHaveRetainedPreview = migrations === BOT_MIGRATIONS && migrations.length === 15;
+  const mayHaveRetainedPreview = migrations.length === previewBaseVersion
+    && migrations.every((migration, index) => migration === BOT_MIGRATIONS[index]);
   const recorded = await db.selectFrom("bot_schema_migrations").select(["version", "name"])
     .orderBy("version").limit(migrations.length + 1 + (mayHaveRetainedPreview ? RETAINED_ROUTINE_PREVIEW_VERSIONS.length : 0)).execute();
+  const lastVersion = recorded.at(-1)?.version ?? 0;
+  if (migrations === BOT_MIGRATIONS && lastVersion > previewBaseVersion && lastVersion <= migrations.length && recorded.length !== lastVersion) {
+    throw new BotSchemaError("invalid_migrations");
+  }
   const retainedPreview = mayHaveRetainedPreview && recorded.length === migrations.length + RETAINED_ROUTINE_PREVIEW_VERSIONS.length && recorded.every((row, index) => {
     const expected = index < migrations.length ? migrations[index] : RETAINED_ROUTINE_PREVIEW_VERSIONS[index - migrations.length];
     return row.version === expected?.version && row.name === expected.name;
@@ -343,6 +360,11 @@ export async function bootstrapBotDatabase(
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
     await assertCompatibleSchema(trx, migrations);
+    // The additive migrations can adopt the preview ledger, but this runtime
+    // still requires the retained shape and dormant work before startup.
+    if (migrations === BOT_MIGRATIONS && !await canReadRetainedRoutinePreview(trx)) {
+      throw new BotSchemaError("newer_schema");
+    }
   });
   return { applied };
 }
