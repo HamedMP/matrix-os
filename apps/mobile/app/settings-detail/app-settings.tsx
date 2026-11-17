@@ -27,7 +27,7 @@ import {
   enablePushNotifications,
   isPushNotificationsEnabled,
 } from "@/lib/push";
-import { queuePushChange } from "@/lib/push-registration-sync";
+import { queuePushChange, subscribePushTurnedOff } from "@/lib/push-registration-sync";
 import { fetchActiveComputer, mobileQueryKeys } from "@/lib/requests";
 import { getSettings, HOSTED_GATEWAY_URL, saveSettings, type AppSettings } from "@/lib/storage";
 import { applyMobileThemePreference, type MobileThemePreference } from "@/lib/theme-preference";
@@ -81,6 +81,11 @@ export default function AppSettingsScreen() {
       active = false;
     };
   }, []);
+
+  // Re-registration turns push off when the phone refuses permission; follow it.
+  useEffect(() => subscribePushTurnedOff(() => {
+    setSettings((current) => current ? { ...current, notificationsEnabled: false } : current);
+  }), []);
 
   if (!settings) {
     return (

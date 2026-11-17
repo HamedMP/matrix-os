@@ -111,13 +111,13 @@ describe("queuePushChange", () => {
     expect(mockEnablePush).not.toHaveBeenCalled();
   });
 
-  it("stops waiting for a change that never finishes, so the switch is never stuck", async () => {
+  it("keeps a slow change ahead of the next one, so a late write cannot undo it", async () => {
     jest.useFakeTimers();
     try {
-      void queuePushChange(() => new Promise<void>(() => {}));
+      void queuePushChange(() => new Promise<void>((resolve) => { setTimeout(resolve, 60_000); }));
       const sync = syncPushRegistration(SESSION);
 
-      await jest.advanceTimersByTimeAsync(19_000);
+      await jest.advanceTimersByTimeAsync(59_000);
       expect(mockIsPushOn).not.toHaveBeenCalled();
       await jest.advanceTimersByTimeAsync(1_000);
 

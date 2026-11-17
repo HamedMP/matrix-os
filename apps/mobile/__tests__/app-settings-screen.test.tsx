@@ -2,9 +2,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { Alert } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
+import * as Notifications from "expo-notifications";
 
 import AppSettingsScreen from "../app/settings-detail/app-settings";
-import { queuePushChange } from "@/lib/push-registration-sync";
+import { isPushNotificationsEnabled } from "@/lib/push";
+import { queuePushChange, syncPushRegistration } from "@/lib/push-registration-sync";
 import { fetchActiveComputer } from "@/lib/requests";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
@@ -114,6 +116,27 @@ describe("App settings", () => {
       await registering;
     });
     await waitFor(() => expect(mockEnablePush).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows push off once re-registration turns it off while the screen is open", async () => {
+    jest.mocked(isPushNotificationsEnabled).mockResolvedValue(true);
+    jest.mocked(Notifications.getPermissionsAsync)
+      .mockResolvedValueOnce({ granted: false, status: "denied", canAskAgain: false } as Notifications.NotificationPermissionsStatus);
+    try {
+      renderScreen();
+      const push = await findEnabledSwitch("Push notifications");
+      expect(push.props.accessibilityState).toMatchObject({ checked: true });
+
+      await act(async () => {
+        await expect(syncPushRegistration({ clerkToken: "clerk-token", gatewayUrl: "https://app.example.test/vm/amin" }))
+          .resolves.toBe("denied");
+      });
+
+      expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+        .toMatchObject({ checked: false });
+    } finally {
+      jest.mocked(isPushNotificationsEnabled).mockResolvedValue(false);
+    }
   });
 
   it("puts the push switch back when push cannot be turned on", async () => {
