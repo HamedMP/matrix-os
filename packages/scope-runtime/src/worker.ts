@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { chmod } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -307,8 +308,8 @@ async function executeChat(
   }
 }
 
-async function removeCommandSocket(): Promise<void> {
-  await removeScopeRuntimeCommandSocket(COMMAND_SOCKET);
+async function removeCommandSocket(socketPath = COMMAND_SOCKET): Promise<void> {
+  await removeScopeRuntimeCommandSocket(socketPath);
 }
 
 interface SingleUseCommandSocketSlot<T extends { destroy(): void }> {
@@ -340,11 +341,12 @@ export function createSingleUseCommandSocketSlot<T extends { destroy(): void }>(
   };
 }
 
-async function startCommandServer(
+export async function startCommandServer(
   invocation: ReturnType<typeof parseScopeRuntimeWorkerArguments>,
   socketSlot: SingleUseCommandSocketSlot<Socket>,
+  socketPath = COMMAND_SOCKET,
 ): Promise<Server> {
-  await removeCommandSocket();
+  await removeCommandSocket(socketPath);
   const server = createServer({ allowHalfOpen: true }, (socket: Socket) => {
     if (!socketSlot.claim(socket, (listener) => socket.once("close", listener))) return;
     let input = "";
@@ -380,8 +382,19 @@ async function startCommandServer(
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(COMMAND_SOCKET, resolve);
+    server.listen(socketPath, resolve);
   });
+  // DynamicUser and UMask=0077 otherwise leave the capability-free supervisor
+  // unable to connect. The host's private 0700 runtime directory gates access;
+  // this single-use server still validates the exact runtime and generation.
+  try {
+    await chmod(socketPath, 0o666);
+  } catch (error: unknown) {
+    socketSlot.destroyActive();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await removeCommandSocket(socketPath);
+    throw error;
+  }
   return server;
 }
 

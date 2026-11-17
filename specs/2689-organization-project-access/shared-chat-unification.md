@@ -24,6 +24,11 @@ queue. Shared/private views reuse the existing composer and message primitives.
   passes when only private-namespace localhost is allowed.
 - Native Claude expands `opus` to a resolved wire model while the broker pins
   the alias; native-profile credentials also need an owner-side broker identity.
+- Exact-head live Codex submission reaches the owner and starts its worker, then
+  fails before inference. The Chat command socket inherits `UMask=0077`, making
+  it inaccessible to the different-UID supervisor with no DAC capabilities.
+  Apply the bot worker's existing socket publication contract inside the host's
+  private runtime directory; retain single-use and runtime/generation checks.
 
 ## Implementation boundaries
 
