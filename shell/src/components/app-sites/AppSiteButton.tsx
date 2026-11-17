@@ -64,9 +64,9 @@ export function AppSiteButton({
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          // Only apps that declare public forms can receive visitor submissions.
-          submissions={share.site?.config.forms.length
-            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
+          // Shown for apps with forms, or while responses saved by an earlier version remain.
+          submissions={share.site
+            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} formsDeclared={share.site.config.forms.length > 0} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

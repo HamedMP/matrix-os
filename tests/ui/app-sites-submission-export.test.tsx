@@ -21,7 +21,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 // Production path: the Share popover's Public tab renders SiteSubmissionsSection.
 function openSubmissions(api: SiteClient) {
-  render(<SiteSubmissionsSection appSlug="launch" client={api} />);
+  render(<SiteSubmissionsSection appSlug="launch" client={api} formsDeclared />);
   fireEvent.click(screen.getByRole("button", { name: "Visitor submissions" }));
 }
 async function openAndExport(api: SiteClient) {
