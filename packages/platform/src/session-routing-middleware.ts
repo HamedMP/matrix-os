@@ -86,6 +86,7 @@ import {
   applySandboxedAppAssetCorsHeaders,
   buildAppDomainProxyResponse,
   buildCodeDomainProxyHeaders,
+  buildForwardedProxyHeaders,
   hasValidExplicitVmAppAssetToken,
   isAppDomainStaticAssetPath,
   isCodeDomainStaticAssetPath,
@@ -784,12 +785,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (shouldForwardProxyHeader(key, value)) {
-          headers.set(key, value);
-        }
-      }
+      const headers = buildForwardedProxyHeaders(c.req.header());
       for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');
@@ -960,13 +956,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             host,
             platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
           )
-        : new Headers();
+        : buildForwardedProxyHeaders(c.req.header());
       if (!isCodeDomain) {
-        for (const [key, value] of Object.entries(c.req.header())) {
-          if (shouldForwardProxyHeader(key, value)) {
-            headers.set(key, value);
-          }
-        }
         for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
         if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
         const rawCookie = c.req.header('cookie');
