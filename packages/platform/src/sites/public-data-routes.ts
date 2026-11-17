@@ -8,6 +8,9 @@ import type { SiteDataOutcome, SiteDataTransport } from './data-transport.js';
 
 const UNAVAILABLE = 'Shared data is unavailable';
 const MAX_IN_FLIGHT = 32;
+// Locked writes hold a platform DB connection while the owner gateway answers (<= 10s).
+// Keep most of the shared pool (10 connections) free for reads, management and other users.
+const MAX_WRITES_IN_FLIGHT = 3;
 
 function respond(c: Context, outcome: SiteDataOutcome) {
     if (outcome.ok) return c.json({ result: outcome.result });
@@ -32,6 +35,7 @@ export function registerSitePublicDataRoute(app: Hono, options: {
     const perSite = createBoundedRateLimiter(options.limits?.perSite ?? 3000);
     const global = createBoundedRateLimiter(options.limits?.global ?? 30000);
     let flights = 0;
+    let writeFlights = 0;
     app.post('/:reference/data', bodyLimit({ maxSize: SITE_PUBLIC_DATA_REQUEST_MAX_BYTES, onError: c => c.json({ error: 'Invalid change' }, 413) }), async (c) => {
         // Operator kill switch, read per request: an env update stops data fleet-wide without a code deploy.
         if ((options.env ?? process.env).SITES_PUBLIC_DATA === 'off') return c.json({ error: UNAVAILABLE }, 503);
@@ -56,9 +60,15 @@ export function registerSitePublicDataRoute(app: Hono, options: {
                 return c.json({ error: 'Try again later' }, 429);
             const visitor = options.transport.visitorHash(site.id, source);
             // Writes re-check the publication under a row share lock held through forwarding.
-            const outcome = write
-                ? await options.transport.forwardWrite(site, visitor, input.data)
-                : await options.transport.forward(site, visitor, input.data);
+            let outcome: SiteDataOutcome;
+            if (write) {
+                if (writeFlights >= MAX_WRITES_IN_FLIGHT) return c.json({ error: 'Try again later' }, 429);
+                writeFlights++;
+                try { outcome = await options.transport.forwardWrite(site, visitor, input.data); }
+                finally { writeFlights--; }
+            } else {
+                outcome = await options.transport.forward(site, visitor, input.data);
+            }
             return respond(c, outcome);
         } catch (error: unknown) {
             if (error instanceof SiteError && error.code === 'not_found') return c.json({ error: 'Site unavailable' }, 404);

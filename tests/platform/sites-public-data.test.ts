@@ -92,6 +92,22 @@ describe('platform public site data route', () => {
     expect((await second).status).toBe(200);
   });
 
+  it('caps locked writes so slow gateways cannot hold the shared platform pool, while reads continue', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const forward = vi.fn(async () => { await gate; return Response.json({ result: { id: 'row' } }); });
+    vi.stubGlobal('fetch', forward);
+    const app = routes();
+    const writes = [0, 1, 2].map((i) => post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': `192.0.2.${30 + i}` }));
+    await vi.waitFor(() => expect(forward).toHaveBeenCalledTimes(3));
+    expect((await post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': '192.0.2.40' })).status).toBe(429);
+    const read = post(app, `/${publicSite.id}/data`, find, { 'x-matrix-sites-source': '192.0.2.41' });
+    await vi.waitFor(() => expect(forward).toHaveBeenCalledTimes(4));
+    release();
+    expect((await Promise.all(writes)).map((response) => response.status)).toEqual([200, 200, 200]);
+    expect((await read).status).toBe(200);
+  });
+
   it('re-checks the publication under the row lock before forwarding a write', async () => {
     const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
     vi.stubGlobal('fetch', forward);
