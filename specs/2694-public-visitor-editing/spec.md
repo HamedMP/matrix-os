@@ -77,7 +77,7 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 | --- | --- | --- |
 | Requests per visitor source + site | 300/min (any kind), 60/min writes | Platform, bounded LRU maps (10,000 keys, evicting) |
 | Requests per site | 3,000/min | Platform, bounded map |
-| Global | 30,000/min, 32 in-flight forwards | Platform |
+| Global | 30,000/min, 32 in-flight forwards, at most 3 in-flight locked writes (each holds a platform DB connection) | Platform |
 | Requests per site at the owner | 3,000/min | Gateway, bounded map (1,000 sites) |
 
 Exceeding a limit returns `429 Try again later`.
