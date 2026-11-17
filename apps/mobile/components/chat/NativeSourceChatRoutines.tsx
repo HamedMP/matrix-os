@@ -6,7 +6,7 @@ import { fetch as expoFetch } from "expo/fetch";
 import type { RoutineChatOriginHistoryItem } from "@matrix-os/contracts";
 import {
   createOwnerBrowserJsonRequest, createRoutineOriginClient, routineApprovalPlacement,
-  routineOriginBrowserUrl, routineOriginHistoryStatus, useRoutineOrigin,
+  routineOriginBrowserUrl, routineOriginExecutor, routineOriginHistoryStatus, useRoutineOrigin,
 } from "@matrix-os/ui/routine-origin";
 import { Button } from "@/components/ui";
 import { RoutineApprovalCard } from "@/components/agents/interactions/RoutineApprovalCard";
@@ -78,11 +78,13 @@ export function NativeSourceChatRoutines({ gatewayUrl, chatId, eligible, message
 
   const renderApprovals = (items: readonly RoutineChatOriginHistoryItem[]) => items.map(item => {
     const { interaction } = item;
+    const executor = routineOriginExecutor(item);
     const historicalStatus = routineOriginHistoryStatus(item);
     const review = () => void open(interaction.interactionId);
     return <View key={interaction.interactionId} style={styles.cards}>
       <RoutineApprovalCard preview={interaction.payload?.kind === "approval" ? interaction.payload.preview : ""}
-        botId={interaction.agentId} executionLabel="Matrix Schedules" testID={`origin-${interaction.interactionId}`} sending={null} error={null}
+        botId={interaction.agentId} executionLabel={executor.kind === "bot" ? `Bot: ${executor.label}` : executor.label}
+        testID={`origin-${interaction.interactionId}`} sending={null} error={null}
         stale={!state.fresh} closed="Review in your browser to respond." historicalStatus={historicalStatus}
         onAllow={review} onDeny={review} />
       {!historicalStatus ? <Button label="Review in browser" disabled={!state.fresh} onPress={review} /> : null}

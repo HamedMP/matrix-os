@@ -33,7 +33,7 @@ function largeSourceBatch() {
       },
     })),
     pending: Array.from({ length: 32 }, (_, index) => ({
-      sourceChatId: chatId, anchorMessageId: `msg_source_${index}`,
+      sourceChatId: chatId, anchorMessageId: `msg_source_${index}`, executorName: "Stored Fixture Bot",
       interaction: {
         interactionId: `in_fixture_${index}`, chatId: "chat_executor", agentId: "bot_fixture01",
         taskId: `task_fixture_${index}`, kind: "approval", status: "pending", blocking: true,
@@ -78,8 +78,9 @@ it.each([true, false])("renders 32 approvals from the real Native Mobile transpo
   render(<NativeSourceChatRoutines gatewayUrl={gatewayUrl} chatId={chatId} eligible />);
   expect(await screen.findAllByRole("button", { name: "Review in browser" })).toHaveLength(32);
   expect(screen.getByRole("header", { name: "Schedule Fixture 31" })).toBeTruthy();
+  expect(screen.getAllByText("Bot: Stored Fixture Bot")).toHaveLength(32);
   expect(expoFetch).toHaveBeenCalledWith(
-    "https://app.matrix-os.com/vm/fixture/~runtime/primary/api/chats/chat_source/routine-origin?timeline=1",
+    "https://app.matrix-os.com/vm/fixture/~runtime/primary/api/chats/chat_source/routine-origin?timeline=2",
     expect.objectContaining({ method: "GET", headers: { authorization: "Bearer fixture-token" } }),
   );
   expect(stream.cancel).not.toHaveBeenCalled();

@@ -1,5 +1,5 @@
 import {openRoutineHistory} from "../lib/open-routine-history";
-import type {BotInteraction,RoutineChatOriginView} from "@matrix-os/contracts";
+import { ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, type BotInteraction, type RoutineChatOriginView } from "@matrix-os/contracts";
 import {act,cleanup,fireEvent,render,screen,waitFor,within} from "@testing-library/react-native";
 import {FlatList,Linking,Text} from "react-native";
 import {NativeSourceChatRoutines} from "../components/chat/NativeSourceChatRoutines";
@@ -32,6 +32,21 @@ it("reviews an existing approval in the real source browser without submitting a
  fireEvent.press(await screen.findByRole("button",{name:"Review in browser"}));
  await screen.findByText("Continue in your browser to review this scheduled task.");
  expect(open).toHaveBeenCalledWith("https://app.matrix-os.com/vm/fixture/routine-cli/confirm?runtime=primary&originChat=chat_source&interaction=in_abcdefgh");expect(mockClient.resolve).not.toHaveBeenCalled();
+});
+it.each([
+ { agentId: "bot_existing", chatId: "chat_executor", executorName: "Morning Brief Bot", label: "Bot: Morning Brief Bot" },
+ { agentId: "bot_existing", chatId: "chat_executor", executorName: undefined, label: "Bot: bot_existing" },
+ { agentId: ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, chatId: "chat_source", executorName: undefined, label: "Matrix Schedules" },
+ { agentId: `bot_routine${"a".repeat(32)}`, chatId: `chat_routine_${"a".repeat(32)}`, executorName: undefined, label: "Matrix Schedules" },
+])("shows the bound executor as $label for $agentId", async ({ agentId, chatId, executorName, label }) => {
+ const pending = pendingView().pending[0]!;
+ mockClient.get.mockResolvedValueOnce({
+  ...emptyView(), pending: [{ ...pending, ...(executorName ? { executorName } : {}),
+   interaction: { ...pending.interaction, agentId, chatId } }],
+ });
+ render(<NativeSourceChatRoutines gatewayUrl="https://app.matrix-os.com/vm/fixture" chatId="chat_source" eligible />);
+ expect(await screen.findByText(label)).toBeTruthy();
+ expect(screen.getByRole("button", { name: "Review in browser" })).toBeTruthy();
 });
 it("renders an uncertain receipt distinctly and opens its actual canonical history",()=>{
  render(<NativeRoutineReceipt onOpenChat={id=>openRoutineHistory(id,mockSelectChat,mockShowChat)} text="Committed safe output" receipt={{type:"routine_receipt",engine:"matrix",kind:"status",routineId:`rt_${"a".repeat(24)}`,fireId:`fire_${"b".repeat(24)}`,attempt:1,status:"unknown",scheduledFor:"2026-11-06T09:00:00.000Z",canonicalChatId:"chat_executor",canonicalTaskId:"task_real_execution",model:"gpt-6-luna"}}/>);
