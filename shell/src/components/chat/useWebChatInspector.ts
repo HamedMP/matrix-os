@@ -180,8 +180,8 @@ export function useWebChatInspector({
         ...current,
         selected: "files",
         tabs: current.tabs.some((tab) => tab.kind === "files")
-          ? current.tabs
-          : [...current.tabs, FILES].slice(-MAX_TABS),
+          ? current.tabs.filter((tab) => tab.kind !== "new")
+          : [...current.tabs.filter((tab) => tab.kind !== "new"), FILES].slice(-MAX_TABS),
       }));
     }
   }, [filePath, fileOpenRequest]);

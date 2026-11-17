@@ -53,6 +53,7 @@ function InspectorContent({
 }: WebChatInspectorProps) {
   const theme = useTheme();
   const previewResource = toGatewayProjectFileResource(fileResource, project);
+  const previewBlocked = previewResource?.kind !== "home" && (projectLoading || projectError);
   const {
     layout,
     setLayout,
@@ -245,7 +246,7 @@ function InspectorContent({
                 />}
               </div>
             ) : null}
-            {filePath && !projectLoading && !projectError ? (
+            {filePath && !previewBlocked ? (
               <>
                 {!fileExpanded ? (
                   <div

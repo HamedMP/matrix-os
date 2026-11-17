@@ -55,6 +55,17 @@ it('does not offer an unavailable desktop inspector on phones',()=>{
  render(<ChatApp mobile messages={[]} sessionId="chat_mobile" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
  expect(screen.queryByRole('button',{name:'Toggle chat inspector'})).toBeNull();
 });
+it.each(['loading','error'])('opens a Home attachment while its chat project lookup is %s',async state=>{
+ const homePath=await realpath(await mkdtemp(join(tmpdir(),'eng461-home-attachment-')));
+ try {
+  await mkdir(join(homePath,'uploads'),{recursive:true});await writeFile(join(homePath,'uploads/attachment.txt'),'Owned attachment content');
+  const {filePreviewService}=createCodingAgentFilePreviewWiring({homePath,ownerId:'owner',projects:{getProjectBySlug:async()=>null}});
+  const app=new Hono().route('/api/file-previews',createFilePreviewRoutes({service:filePreviewService,getPrincipal:()=>({userId:'owner',source:'jwt'})}));
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{const parsed=new URL(url);return parsed.pathname.startsWith('/api/file-previews/')?app.request(parsed.pathname+parsed.search):Response.json({entries:[]});}));
+  render(<WebChatInspector {...inspectorProps({filePath:'uploads/attachment.txt',fileResource:{kind:'home',path:'uploads/attachment.txt'},projectLoading:state==='loading',projectError:state==='error'})}/>);
+  expect(await screen.findByText('Owned attachment content')).toBeTruthy();
+ } finally {cleanup();await rm(homePath,{recursive:true,force:true});}
+});
 
 it("covers the chat pane in a narrow floating window instead of leaving an unusable sliver", () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: [] })));
@@ -189,6 +200,16 @@ it('reopens the current file and saved Side chat from the New tab Recent list', 
  fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
  fireEvent.click(screen.getByRole('button',{name:'Side chatSaved conversation'}));
  expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
+ expect(screen.queryByRole('tab',{name:'New tab'})).toBeNull();
+});
+it('closes the temporary picker when another main-chat file link opens Files', async () => {
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[]})));
+ const props=inspectorProps({filePath:'preview.txt',fileOpenRequest:{}});
+ const view=render(<WebChatInspector {...props}/>);
+ fireEvent.keyDown(screen.getByRole('button',{name:'Add inspector tab'}),{key:'Enter'});
+ fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
+ view.rerender(<WebChatInspector {...props} fileOpenRequest={{}}/>);
+ expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
  expect(screen.queryByRole('tab',{name:'New tab'})).toBeNull();
 });
 function terminalApi(){
