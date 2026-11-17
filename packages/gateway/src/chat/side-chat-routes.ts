@@ -40,7 +40,8 @@ export function createSideChatRoutes(options: {
       return context.json(CanonicalSideChatSnapshotSchema.parse(await repository().create(owner(context), chatId)));
     } catch (error: unknown) { return failure(context, error); }
   });
-  routes.post("/api/chats/:chatId/side-chat/turns", bodyLimit({ maxSize: 16 * 1024 }), async context => {
+  // 8,000 UTF-16 units may use six bytes each when JSON-escaped, plus bounded metadata.
+  routes.post("/api/chats/:chatId/side-chat/turns", bodyLimit({ maxSize: 64 * 1024 }), async context => {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
       const request = CanonicalSideChatTurnRequestSchema.parse(await context.req.json());
