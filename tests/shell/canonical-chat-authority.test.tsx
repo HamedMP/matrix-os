@@ -56,6 +56,13 @@ it("includes a scheduled result in the displayed read boundary", async () => {
   expect(hook.result.current.displayedThroughSeq).toBe(2);
 });
 
+it("keeps the transcript when the active chat is selected from another rail placement", async () => {
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  act(() => hook.result.current.switchConversation("chat_same"));
+  expect(hook.result.current.messages[0]?.content).toBe("Old transcript");
+  expect(hook.result.current.sessionId).toBe("chat_same");
+});
 it("clears Bot names/approvals and library across same-store revoke/recovery without rotating normal action identity", async () => {
   const hook = renderHook(() => {
     const chat = useCanonicalChatState();
