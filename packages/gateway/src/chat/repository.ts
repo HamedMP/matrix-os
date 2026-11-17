@@ -1,6 +1,7 @@
-import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
+import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -22,6 +23,7 @@ import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-ac
 import { createOwnerToolOutputProjection, stripProtectedCommandPreviews } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
+  CanonicalChatContentSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
@@ -34,6 +36,7 @@ import {
   CollaborationIdSchema,
   TerminalSessionIdSchema,
   type CanonicalChatCollaboration,
+  type CanonicalChatContent,
   type CanonicalChatMessage,
   type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
@@ -527,6 +530,14 @@ export class ChatRepository {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
   }
 
+  /** Server-only source projection, committed independently of canonical target work. */
+  async appendRoutineReceipt(ownerId: string, input: AppendRoutineReceiptInput) {
+    return this.transact(trx => appendRoutineReceiptWithin(trx, ownerId, input,
+      (executor, owner, revision, message) => this.appendOutbox(
+        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, message,
+      )));
+  }
+
   async appendOutboxEvent(
     ownerInput: ChatOwner,
     chatId: string,
@@ -571,6 +582,7 @@ export class ChatRepository {
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
+    committedReceipt?: CanonicalChatMessage,
   ): Promise<void> {
     if (typeof payload.runId === "string") {
       const queuedRun = await executor.selectFrom("chat_queued_turns")
@@ -609,13 +621,16 @@ export class ChatRepository {
         }
       }
     }
-    const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
-      (projectionOwner, projectionChatId) => hydrateRecord(
-        executor,
-        projectionOwner,
-        projectionChatId,
-        collaborationProjection,
-      ));
+    const getRecord = (projectionOwner: ChatOwner, projectionChatId: string) =>
+      hydrateRecord(executor, projectionOwner, projectionChatId, collaborationProjection);
+    let captured: CanonicalChatContent | undefined;
+    if (committedReceipt) {
+      // Receipt messages have no foreground Run or turn. Publish the exact append.
+      const record = await getRecord(owner, chatId);
+      if (record) captured = CanonicalChatContentSchema.parse({ record, messages: [committedReceipt] });
+    } else {
+      captured = await captureChatContent(executor, owner, chatId, eventType, payload, getRecord);
+    }
     const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
       ? captured : undefined;
     const failureTelemetry = captureChatFailureMetadata(eventType, captured, payload.runId, payload.failureDiagnostic);

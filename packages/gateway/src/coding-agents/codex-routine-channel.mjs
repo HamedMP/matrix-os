@@ -10,7 +10,7 @@ const READ_TRANSPORT_TIMEOUT_MS = 50_000;
 const NATIVE_MUTATION_TIMEOUT_MS = 1_830_000;
 const unavailable = JSON.stringify({ v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } });
 export const CODEX_ROUTINE_TOOL = Object.freeze({ type: "function", name: "matrix_routines", deferLoading: false,
-  description: "Run the fixed Matrix routines CLI. Mutations require a request UUID. For a queued proposal, use request with that UUID while this turn is live to observe pending approval. Reconcile unknown outcomes by the same UUID and never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
+  description: "When the person asks to schedule work, use propose through the fixed Matrix routines CLI. A proposal awaits separate human approval. For a queued proposal, use request with that UUID while this turn is live to observe pending approval. Use a new UUID for a new mutation and the current revision for controls. Reconcile unknown outcomes with request and the original UUID. Never retry a mutation automatically. Activation and background permission remain separate owner decisions.",
   inputSchema: { type: "object", additionalProperties: false, required: ["args"], properties: {
     args: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 2048 } },
     stdin: { type: "string", maxLength: 32768 },

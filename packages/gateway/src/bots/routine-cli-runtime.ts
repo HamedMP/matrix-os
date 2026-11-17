@@ -17,6 +17,7 @@ import { RoutineCliTokenSchema } from "@matrix-os/contracts/routine-cli";
 import { createRoutineActionSourceRegistry, type RoutineSourceProducer } from "./routine-action-source-registry.js";
 import { createRoutineActionPlatformClient } from "./routine-action-platform-client.js";
 import { createRoutineCliActionController } from "./routine-action-controller.js";
+import type { RoutineDirectChatContexts } from "./routine-direct-chat-contexts.js";
 import { createRoutineCliCanonicalControl } from "./routine-cli-canonical-control.js";
 import { createRoutineCliProposals, type RoutineCliProposalRuntime } from "./routine-cli-proposals.js";
 import { createRoutineCliRequestService } from "./routine-cli-requests.js";
@@ -30,6 +31,7 @@ export function createRoutineCliRuntime(options: {
   repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "findQueuedAdmission">; transact: BotStateTransactions;
   approvals: Pick<BotRoutineApprovals, "proposeWithin">; control: BotRoutineControl; registry: Pick<BotRuntimeRegistry, "lookupRun" | "inferenceSignal">;
   platform: { platformUrl: string; handle: string; token: string; machineId: string; runtimeSlot: string };
+  directChatContexts?: RoutineDirectChatContexts;
   now?: () => Date;
 }) {
   const ownerIds = [...new Set(options.configuredOwnerIds)];
@@ -47,7 +49,7 @@ export function createRoutineCliRuntime(options: {
   const scopes = ownerIds.map(ownerId => {
     const scope = { ownerId, computerId: options.computerId };
     const controller = createRoutineCliActionController({ db: options.db, scope, agents: options.agents, registry: sourceRegistry,
-      platform: { ...options.platform, verify: platform.verify }, now: options.now ? () => options.now!().getTime() : undefined,
+      platform: { ...options.platform, verify: platform.verify }, directChatContexts: options.directChatContexts, now: options.now ? () => options.now!().getTime() : undefined,
       canAccessTarget: async (target, trx) => target.ownerId === ownerId && target.computerId === options.computerId && Boolean(await trx.selectFrom("chats").select("id")
         .where("id", "=", target.chatId).where("owner_id", "=", ownerId).where("owner_type", "=", "personal").where("lifecycle", "=", "active").where("collaboration", "is", null).executeTakeFirst()),
     });
@@ -72,11 +74,12 @@ export function createRoutineCliRuntime(options: {
       .finally(() => { cleaning = undefined; });
   }, 30_000); cleanupTimer.unref?.();
   const forOwner = (ownerId: string) => { const found = scopes.find(scope => scope.ownerId === ownerId); if (!found || closed) throw new RoutineCliError("permission_denied"); return found; };
-  type ChatRegistration = Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId" | "bindFullAccess">;
+  type ChatRegistration = Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId" | "bindFullAccess" | "lockRoutineDirectChatOrigin">;
   const registerChatSource = async (input: ChatRegistration) => {
     requireCanonical();
     const owner = forOwner(input.input.owner.ownerId);
     const actual = createChatRoutineSourceProducer({ ...input, computerId: options.computerId,
+      lockRoutineDirectChatOrigin: !!options.directChatContexts,
       bindFullAccess: source => owner.fullAccess.bindSource(source, input.input, input.signal) });
     const target = actual.fullAccess?.target;
     let ports: Awaited<ReturnType<typeof owner.controller.register>>;
