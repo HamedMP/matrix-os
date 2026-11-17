@@ -10,7 +10,9 @@ import {
   type AgentInboxAvatar, type AgentInboxGroup, type AgentInboxItem, type AgentInboxPill,
 } from "./agent-inbox-model.js";
 import type { TerminalTabFacts } from "./terminal-agents/attention.js";
-import { AgentLogo, isAgentLogoKind } from "./agent-logo.js";
+import { AgentLogo } from "./agent-logo.js";
+import { isAgentLogoKind } from "./agent-logo-kind.js";
+import { AGENT_INBOX_PILL_STYLE } from "./agent-inbox-pill-style.js";
 
 const colors: CSSProperties = {
   color: "var(--text-primary, var(--foreground))",
@@ -40,17 +42,6 @@ const EMPTY_COPY: Record<Filter, string> = {
   all: "No agent activity yet.", needs: "Nothing needs you right now.", running: "No agents are running.", done: "No finished agents yet.",
 };
 const STATUS_COLOR: Record<AgentInboxGroup, string> = { needs: "#E0A12E", running: "#3BA55D", done: "var(--text-tertiary, #8a8780)" };
-export const AGENT_INBOX_PILL_STYLE: Record<AgentInboxPill, CSSProperties> = {
-  Approval: { background: "rgba(214,69,65,0.12)", color: "#C2413B" },
-  Failed: { background: "rgba(214,69,65,0.12)", color: "#C2413B" },
-  Question: { background: "rgba(224,161,46,0.16)", color: "#A86F0D" },
-  "Needs you": { background: "rgba(224,161,46,0.16)", color: "#A86F0D" },
-  Stalled: { background: "rgba(224,161,46,0.16)", color: "#A86F0D" },
-  Running: { background: "rgba(59,165,93,0.14)", color: "#2E8A4C" },
-  Done: { border: "1px solid var(--border-subtle, var(--border))", ...muted },
-  Stopped: { border: "1px solid var(--border-subtle, var(--border))", ...muted },
-  App: { border: "1px solid var(--border-subtle, var(--border))", ...muted },
-};
 const AVATAR: Record<AgentInboxAvatar, { letter: string; background: string; color?: string }> = {
   claude: { letter: "C", background: "#D97757" }, codex: { letter: "X", background: "#1D1C1B" },
   hermes: { letter: "H", background: "#5C6BC0" }, pi: { letter: "π", background: "#3F7F6E" },

@@ -3,8 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "./coding-agent-artwork.js";
-
-export type AgentLogoKind = keyof typeof CODING_AGENT_ARTWORK;
+import type { AgentLogoKind } from "./agent-logo-kind.js";
 
 /** Crisp vector marks on a light tile where we ship them; raster marks sit inside
  * their brand tile with padding instead of being cropped to fill it. */
@@ -17,16 +16,15 @@ const LOGO: Record<AgentLogoKind, { src: string; tile: string; inset: number; bo
   pi: { src: CODING_AGENT_ARTWORK.pi.src, tile: CODING_AGENT_ARTWORK.pi.background, inset: 0.16 },
 };
 
-export function isAgentLogoKind(value: string): value is AgentLogoKind {
-  return Object.hasOwn(LOGO, value);
-}
-
 /** One agent mark used by every agent list, so the inbox and project rows always match. */
 export function AgentLogo({ kind, label, size = 30, dimmed = false, badge }: {
   kind?: AgentLogoKind; label: string; size?: number; dimmed?: boolean; badge?: ReactNode;
 }) {
-  const [failed, setFailed] = useState(false);
   const logo = kind ? LOGO[kind] : undefined;
+  const src = logo ? codingAgentArtworkSrc(logo.src) : null;
+  // Keyed by source, so a row that changes agent retries the new image.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = src !== null && failedSrc === src;
   const pad = logo ? Math.round(size * logo.inset) : 0;
   const tile: CSSProperties = {
     position: "relative", display: "grid", placeItems: "center", flex: "0 0 auto",
@@ -38,7 +36,7 @@ export function AgentLogo({ kind, label, size = 30, dimmed = false, badge }: {
   };
   return <span aria-hidden="true" style={tile}>
     {logo && !failed
-      ? <img src={codingAgentArtworkSrc(logo.src)} alt="" draggable={false} onError={() => setFailed(true)}
+      ? <img src={src ?? undefined} alt="" draggable={false} onError={() => setFailedSrc(src)}
         style={{ width: size - pad * 2, height: size - pad * 2, objectFit: "contain", display: "block" }} />
       : label.trim().slice(0, 1).toUpperCase() || "·"}
     {badge}
