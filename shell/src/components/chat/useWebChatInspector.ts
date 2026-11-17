@@ -98,6 +98,20 @@ export function useWebChatInspector({
   }, [layoutKey, layout]);
   const signal = () => AbortSignal.any([lifetime.current!.signal, AbortSignal.timeout(10_000)]);
   const bindings = terminalSessionIds.join("\0");
+  const commitDiscoveredSessions = useEffectEvent((available: Session[]) => {
+    const mounted = layout.tabs.flatMap((tab) => {
+      const session = available.find((item) => `terminal:${item.ref}` === tab.id);
+      return session ? [session] : [];
+    });
+    const remaining = MAX_TABS - mounted.length;
+    const boundRefs = bindings.split("\0");
+    const extras = remaining > 0 ? available.filter((session) =>
+      boundRefs.includes(session.ref) && !mounted.some((item) => item.ref === session.ref),
+    ).slice(-remaining) : [];
+    // Creation trims from the front: evict unmounted candidates before visible tabs.
+    setSessions([...extras, ...mounted]);
+    setRegistryReady(true);
+  });
   useEffect(() => {
     if (!bindings && !layout.tabs.some((tab) => tab.kind === "terminal")) {
       setRegistryReady(true);
@@ -134,7 +148,7 @@ export function useWebChatInspector({
       })
       .then(({ workspaces }) => {
         if (controller.signal.aborted || mutation !== registryMutation.current) return;
-        setSessions(
+        commitDiscoveredSessions(
           workspaces
             .flatMap((workspace) =>
               workspace.tabs.map((tab) => ({
@@ -143,15 +157,8 @@ export function useWebChatInspector({
                 cwd: tab.cwd ?? "",
                 attachable: !tab.status || ["running", "idle", "starting"].includes(tab.status),
               })),
-            )
-            .filter(
-              (session) =>
-                bindings.split("\0").includes(session.ref) ||
-                layout.tabs.some((tab) => tab.id === `terminal:${session.ref}`),
-            )
-            .slice(-MAX_TABS),
+            ),
         );
-        setRegistryReady(true);
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
