@@ -992,7 +992,8 @@ function ChatAppContent({
         </>}
       </main>
       {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} projectLoading={Boolean(activeFileProjectId && !activeFileProject)} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
+        active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject}
+        projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         fileResource={previewFile?.chatId === sessionId ? previewFile.resource : undefined}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}

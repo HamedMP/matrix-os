@@ -30,6 +30,7 @@ export function WebChatInspector(props: WebChatInspectorProps) {
   return <InspectorContent key={JSON.stringify([props.layoutKey, props.gatewayUrl, props.chatId])} {...props} />;
 }
 function InspectorContent({
+  active = true,
   chatId,
   chatTitle,
   gatewayUrl,
@@ -38,6 +39,8 @@ function InspectorContent({
   railWidth,
   project,
   projectLoading,
+  projectError,
+  onRetryProject,
   filePath,
   fileResource,
   onFilePathChange,
@@ -61,6 +64,9 @@ function InspectorContent({
     menuOpen,
     setMenuOpen,
     panelRef,
+    treeHeight,
+    treeMin,
+    treeMax,
     selected,
     overlay,
     maxWidth,
@@ -73,6 +79,7 @@ function InspectorContent({
     stopTerminal,
     drag,
   } = useWebChatInspector({
+    active,
     chatId,
     chatTitle,
     gatewayUrl,
@@ -214,11 +221,11 @@ function InspectorContent({
               <div
                 className="flex min-h-0 shrink-0 flex-col overflow-hidden"
                 style={{
-                  height: filePath ? layout.treeHeight : undefined,
+                  height: filePath ? treeHeight : undefined,
                   flex: filePath ? undefined : 1,
                 }}
               >
-                {projectLoading ? <p role="status" className="p-3 text-sm text-muted-foreground">Loading project files…</p> : <WebChatFileTree
+                {projectLoading ? <p role="status" className="p-3 text-sm text-muted-foreground">Loading project files…</p> : projectError ? <div className="p-3 text-sm"><p role="alert">Project files are unavailable.</p><Button variant="outline" size="sm" className="mt-2" onClick={onRetryProject}>Retry project files</Button></div> : <WebChatFileTree
                   key={JSON.stringify([gatewayUrl, project?.id, project?.slug])}
                   gatewayUrl={gatewayUrl}
                   project={project}
@@ -233,9 +240,9 @@ function InspectorContent({
                     role="separator"
                     aria-label="Resize file list"
                     aria-orientation="horizontal"
-                    aria-valuemin={120}
-                    aria-valuemax={1200}
-                    aria-valuenow={Math.round(layout.treeHeight)}
+                    aria-valuemin={treeMin}
+                    aria-valuemax={treeMax}
+                    aria-valuenow={Math.round(treeHeight)}
                     tabIndex={0}
                     className="relative h-2 shrink-0 cursor-row-resize"
                     onPointerDown={(event) => drag(event, "tree")}
@@ -245,10 +252,10 @@ function InspectorContent({
                         setLayout((current) => ({
                           ...current,
                           treeHeight: Math.max(
-                            120,
+                            treeMin,
                             Math.min(
-                              (panelRef.current?.clientHeight ?? 600) - 216,
-                              current.treeHeight + (event.key === "ArrowDown" ? 16 : -16),
+                              treeMax,
+                              treeHeight + (event.key === "ArrowDown" ? 16 : -16),
                             ),
                           ),
                         }));
@@ -315,7 +322,7 @@ function InspectorContent({
                     paneId={`chat-${chatId}-${tab.id}`}
                     cwd={session.cwd}
                     theme={theme}
-                    isFocused={selected.id === tab.id}
+                    isFocused={active && selected.id === tab.id}
                     sessionId={session.ref}
                     chatId={chatId}
                     shouldCacheOnUnmount={() => false}

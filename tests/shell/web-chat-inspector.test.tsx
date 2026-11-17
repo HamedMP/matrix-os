@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useWebChatInspector, type WebChatInspectorProps } from "../../shell/src/components/chat/useWebChatInspector";
+import { ChatApp } from "../../shell/src/components/ChatApp";
 import { WebChatInspector } from "../../shell/src/components/chat/WebChatInspector";
 
 const terminalProps = vi.hoisted(() => vi.fn());
 vi.mock("../../shell/src/components/terminal/TerminalPane", () => ({ TerminalPane: (props: unknown) => { terminalProps(props); return <div>Connected terminal</div>; } }));
 vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+vi.mock("@clerk/nextjs",()=>({useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
+vi.mock("../../shell/src/components/chat-provider-onboarding",()=>({ChatProviderOnboarding:({children}:{children:React.ReactNode})=><>{children}</>}));
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 it("covers the chat pane in a narrow floating window instead of leaving an unusable sliver", () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: [] })));
@@ -117,4 +121,78 @@ it("opens the verified project file root rather than listing Home for a project 
  expect(request).toHaveBeenCalledWith("http://localhost:4000/api/projects/matrix-os/files-location?projectId=project_matrix",expect.anything());
  expect(request).toHaveBeenCalledWith("http://localhost:4000/api/files/list?path=projects%2Fmatrix-os%2Frepo",expect.anything());
  expect(request.mock.calls.some(([url])=>url.endsWith("files/list?path="))).toBe(false);
+});
+
+function inspectorProps(overrides: Partial<WebChatInspectorProps> = {}): WebChatInspectorProps {
+ return {chatId:"chat_regression",gatewayUrl:"http://localhost:4000",layoutKey:null,rootWidth:1512,railWidth:240,filePath:null,onFilePathChange:vi.fn(),terminalSessionIds:[],sideChatClient:{getSideChat:vi.fn(),createSideChat:vi.fn(),askSideChat:vi.fn()},onSendToMain:vi.fn(),onClose:vi.fn(),...overrides};
+}
+function terminalApi(){
+ const workspaceId=`tws_${"a".repeat(32)}`;let created=0;
+ const tabs: {id:string;name:string;cwd:string;status:string}[]=[];
+ const request=vi.fn(async(url:string,init?:RequestInit)=>{
+  if(url.endsWith('/ensure'))return Response.json({workspace:{id:workspaceId}});
+  if(init?.method==='POST'){const tab={id:`tt_${(++created).toString(16).padStart(32,'0')}`,name:`Terminal ${created}`,cwd:'~/project',status:'running'};tabs.push(tab);return Response.json({tab});}
+  if(url.endsWith('/api/terminal/workspaces'))return Response.json({workspaces:[{id:workspaceId,tabs}]});
+  return Response.json({entries:[]});
+ });return{request,tabs,workspaceId};
+}
+it.each([{active:false,visible:true},{active:true,visible:false}])('does not create terminals from shortcuts while Chat is inactive (%o)',async state=>{
+ const api=terminalApi();vi.stubGlobal('fetch',api.request);
+ render(<ChatApp {...state} messages={[]} sessionId="chat_regression" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));
+ fireEvent.keyDown(window,{key:'`',ctrlKey:true});
+ await act(async()=>{await Promise.resolve();});
+ expect(api.request.mock.calls.some(([,init])=>init?.method==='POST')).toBe(false);
+});
+it('keeps a newly created terminal when an older discovery response arrives late',async()=>{
+ const api=terminalApi();let finish!: (value:Response)=>void;let lists=0;
+ const request=vi.fn((url:string,init?:RequestInit)=>url.endsWith('/api/terminal/workspaces')&&++lists===1?new Promise<Response>(resolve=>{finish=resolve;}):api.request(url,init));
+ vi.stubGlobal('fetch',request);
+ const hook=renderHook(()=>useWebChatInspector(inspectorProps({terminalSessionIds:[`${api.workspaceId}:tt_${"b".repeat(32)}`]})));
+ await act(async()=>{await hook.result.current.createTerminal();});
+ const created=hook.result.current.sessions[0]!;
+ await act(async()=>{finish(Response.json({workspaces:[]}));});
+ expect(hook.result.current.sessions.some(session=>session.ref===created.ref)).toBe(true);
+ act(()=>hook.result.current.closeTab(`terminal:${created.ref}`));
+ expect(hook.result.current.closeTarget?.id).toBe(`terminal:${created.ref}`);
+});
+it('creates more terminals than the bounded mounted-tab window without stopping older sessions',async()=>{
+ const api=terminalApi();vi.stubGlobal('fetch',api.request);
+ const hook=renderHook(()=>useWebChatInspector(inspectorProps()));
+ for(let i=0;i<14;i++)await act(async()=>{await hook.result.current.createTerminal();});
+ expect(api.tabs).toHaveLength(14);
+ expect(hook.result.current.layout.tabs.length).toBeLessThanOrEqual(12);
+ expect(hook.result.current.sessions.length).toBeLessThanOrEqual(12);
+ expect(api.request.mock.calls.some(([,init])=>init?.method==='DELETE')).toBe(false);
+});
+it('keeps the file preview visible when a saved split exceeds the resized panel height',()=>{
+ let resize!: ResizeObserverCallback;
+ let height=400;
+ vi.stubGlobal('ResizeObserver',class{constructor(callback:ResizeObserverCallback){resize=callback;}observe(){}disconnect(){}});
+ const original=Object.getOwnPropertyDescriptor(HTMLElement.prototype,'clientHeight');
+ Object.defineProperty(HTMLElement.prototype,'clientHeight',{configurable:true,get:()=>height});
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[]})));
+ localStorage.setItem('split-layout',JSON.stringify({width:400,treeHeight:1000,selected:'files',tabs:[{id:'files',kind:'files',label:'Files'}]}));
+ try{
+  render(<WebChatInspector {...inspectorProps({layoutKey:'split-layout',filePath:'note.txt'})}/>);
+  expect(Number(screen.getByRole('separator',{name:'Resize file list'}).getAttribute('aria-valuenow'))).toBeLessThanOrEqual(184);
+  height=300;
+  act(()=>resize?.([],{} as ResizeObserver));
+  expect(Number(screen.getByRole('separator',{name:'Resize file list'}).getAttribute('aria-valuenow'))).toBeLessThanOrEqual(84);
+ }finally{if(original)Object.defineProperty(HTMLElement.prototype,'clientHeight',original);else delete (HTMLElement.prototype as Partial<HTMLElement>).clientHeight;}
+});
+it.each(['failed','missing'])('shows a retryable project-file error when the project lookup is %s',async outcome=>{
+ let attempts=0;
+ const request=vi.fn(async(url:string)=>{
+  if(url.includes('/workspace/projects')){attempts++;if(attempts===1)return outcome==='failed'?new Response('{}',{status:503}):Response.json({projects:[]});return Response.json({projects:[{id:'project_matrix',slug:'matrix-os',name:'Matrix OS'}]});}
+  if(url.includes('/files-location'))return Response.json({path:'projects/matrix-os/repo'});
+  return Response.json({entries:[]});
+ });vi.stubGlobal('fetch',request);
+ render(<ChatApp messages={[]} sessionId="chat_regression" chatProjectId="project_matrix" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));
+ expect(await screen.findByText('Project files are unavailable.')).toBeTruthy();
+ expect(screen.queryByText('Loading project files…')).toBeNull();
+ expect(request.mock.calls.some(([url])=>url.endsWith('/files/list?path='))).toBe(false);
+ fireEvent.click(screen.getByRole('button',{name:'Retry project files'}));
+ await waitFor(()=>expect(request.mock.calls.some(([url])=>url.includes('/files/list?path=projects%2Fmatrix-os%2Frepo'))).toBe(true));
 });
