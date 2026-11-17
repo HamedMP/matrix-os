@@ -102,3 +102,9 @@ Documentation deliverable: a separate `FinnaAI/matrix-os-site` documentation PR
 under `content/docs/` explaining immediate shared Chat submission and automatic
 run ordering, linked to ENG-29. Human collaboration/provider review recommended.
 No merge is authorized.
+
+### Exact Claude harness compatibility
+
+Live validation on bundle 2060 established that the owner's current `opus` alias resolves to `claude-opus-5-5`. Anthropic rejects the isolated 2.1.240 harness with HTTP 400 and explicitly requires at least 2.1.280; the owner CLI is 2.1.301. Pin Agent SDK 0.3.301 and its bundled native 2.1.301 harness together, regenerate the profile digest, and assert the installed binary's actual version against the supervisor pin. The registry published 0.3.301 on 2026-10-15, preserving the seven-day package delay. Do not substitute another model or provider. Both SDK consumers use the same pin so the root host-bundle SDK/native pair is unambiguous.
+
+This is a dependent native stack layer under ENG-29; source review and full CI apply to both layers. Existing shared Codex and Claude replies must be reverified on the combined exact bundle before completion.

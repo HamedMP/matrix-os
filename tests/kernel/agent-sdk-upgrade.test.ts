@@ -36,8 +36,8 @@ describe("production Agent SDK upgrade", () => {
       readFileSync("packages/integrations-mcp/package.json", "utf8"),
     ) as { dependencies: Record<string, string> };
 
-    expect(kernelPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
-    expect(browserPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
+    expect(kernelPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.301");
+    expect(browserPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.301");
     expect(integrationsPackage.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.32.0");
   });
 
@@ -113,9 +113,10 @@ describe("production Agent SDK upgrade", () => {
     };
     const sdkTypes = readFileSync(join(sdkDirectory, "sdk.d.ts"), "utf8");
 
-    expect(sdkPackage).toMatchObject({ version: "0.3.240", claudeCodeVersion: "2.1.240" });
+    expect(sdkPackage).toMatchObject({ version: "0.3.301", claudeCodeVersion: "2.1.301" });
     expect(sdkTypes).toContain("Examples: 'claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5'");
-    expect(sdkTypes).toMatch(/`'max'` — Maximum effort \(Fable 5,/);
+    expect(sdkTypes).toMatch(/export declare type EffortLevel = 'low' \| 'medium' \| 'high' \| 'xhigh' \| 'max';/);
+    expect(sdkTypes).toContain("effort?: EffortLevel;");
     expect(sdkTypes).toContain("thinking?: ThinkingConfig;");
     expect(resolveKernelSdkControls("claude-fable-5", "max")).toEqual({
       effort: "max",
