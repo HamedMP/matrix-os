@@ -89,6 +89,11 @@ active state, re-point funded-AI rows to the target machine id, and mark the mig
 most one active `primary` row at every statement. Compute and the owner database are
 deleted after commit (User Story 5, scenario 3).
 
+**Read-only window.** From the start of the final sync (T063) until the switch commits or
+the migration rolls back, the container accepts no writes: they are refused, never queued.
+So the VPS restores exactly the state the final sync captured, and no write accepted
+during restore or verification can be left behind (User Story 5, scenario 1).
+
 **Rollback** (abandon or deadline): delete the staged target row and its VPS through the
 existing deletion path, and return the container to writable. The container row is not
 changed before the switch apart from its `migrating` status, so the source stays
