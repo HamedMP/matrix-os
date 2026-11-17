@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { FileCode2, ChevronRight as ChatChevron, Folder as ChatFolder, FolderOpen as ChatFolderOpen } from "lucide-react";
 import { ChatInspectorFileRoot } from "@matrix-os/ui";
 import { ChevronDown, ChevronRight, Folder, Search } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
@@ -193,8 +194,8 @@ export function ExpandableFileTree({
             onDragStart={resource ? event => beginMatrixFileDrag(event.dataTransfer, resource, dragConnection) : undefined}
             onDragEnd={resource ? endMatrixFileDrag : undefined}
             {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
-            className="flex w-full items-center gap-2.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-            style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)", background: entry.path === selectedPath ? "var(--bg-hover)" : undefined }}
+            className={`flex w-full items-center truncate rounded-md px-2.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${rootLabel ? "gap-2 py-1" : "gap-2.5 py-1.5"}`}
+            style={{ paddingLeft: rootLabel ? 12 + depth * 16 : 10 + depth * 20, color: "var(--text-primary)", background: entry.path === selectedPath ? "var(--bg-hover)" : undefined }}
             onClick={() => {
               if (entry.kind !== "directory") { onOpenFile(entry.path); return; }
               if (filter) {
@@ -206,7 +207,7 @@ export function ExpandableFileTree({
               } else toggleDirectory(entry.path);
             }}
           >
-            {entry.kind === "directory" ? (
+            {rootLabel ? entry.kind === "directory" ? <><ChatChevron size={12} aria-hidden className={expanded ? "shrink-0 rotate-90" : "shrink-0"}/>{expanded ? <ChatFolderOpen size={14} aria-hidden className="shrink-0"/> : <ChatFolder size={14} aria-hidden className="shrink-0"/>}</> : <><span className="w-3 shrink-0"/><FileCode2 size={14} aria-hidden className="shrink-0"/></> : entry.kind === "directory" ? (
               <>
                 {expanded ? <ChevronDown size={15} aria-hidden className="shrink-0" /> : <ChevronRight size={15} aria-hidden className="shrink-0" />}
                 <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />

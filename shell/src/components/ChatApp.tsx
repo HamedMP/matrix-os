@@ -38,7 +38,7 @@ import { WebProjectsNav, type ProjectTitleOverrides } from "./chat/WebProjectsNa
 import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { WebProjectHome } from "./chat/WebProjectHome";
 import { readWebProjectAgentContext } from "./chat/WebProjectAgentContext";
-import { projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
+import { toGatewayProjectFileResource, projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
@@ -327,7 +327,8 @@ function ChatAppContent({
     const root = rootRef.current?.getBoundingClientRect();
     const bounds = root?.width ? {left:root.left,right:root.right} : {left:0,right:window.innerWidth};
     setSearchBounds(bounds);
-    setSearchCenter(root?.width ? root.left + (root.width + (sidebarOpen ? 240 : 0)) / 2 : window.innerWidth / 2);
+    const main = rootRef.current?.querySelector("main")?.getBoundingClientRect();
+    setSearchCenter(main?.width ? (main.left + main.right) / 2 : root?.width ? root.left + (root.width + (sidebarOpen ? 240 : 0)) / 2 : window.innerWidth / 2);
     setSearchOpen(true);
   };
   const agentDraftSequence = useRef(0);
@@ -347,6 +348,7 @@ function ChatAppContent({
   const activeFileProjectId = chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId;
   const activeFileProject = webProjects.projects.find(project => project.id === activeFileProjectId || project.slug === activeFileProjectId);
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string; resource?: FileResourceRef } | null>(null);
+  const previewResource = toGatewayProjectFileResource(previewFile?.resource, activeFileProject);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [rootWidth, setRootWidth] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -995,12 +997,12 @@ function ChatAppContent({
         active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject}
         projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} fileOpenRequest={previewFile ?? undefined} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
-        fileResource={previewFile?.chatId === sessionId ? previewFile.resource : undefined}
+        fileResource={previewFile?.chatId === sessionId ? previewResource : undefined}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
         onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
-        ? <ChatFilePanel path={previewFile.path} resource={previewFile.resource} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
+        ? <ChatFilePanel path={previewFile.path} resource={previewResource} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider> : null}
     </div>
   );

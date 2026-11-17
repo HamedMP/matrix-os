@@ -6,6 +6,9 @@ import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, CanonicalS
 import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
+import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
+import { SideChatDraftContext } from "@desktop/renderer/src/features/work/SideChatDraftContext";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
 import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
 import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
@@ -886,4 +889,17 @@ describe("Work Files and Terminal inspector", () => {
       vi.useRealTimers();
     }
   });
+
+
+it('retains an unsent native side question through inspector tab switches',async()=>{
+ const connection=useConnection.getState();
+ const client={getSideChat:vi.fn(async()=>({threadId:null,messages:[]})),createSideChat:vi.fn(),askSideChat:vi.fn()} as unknown as CanonicalChatClient;
+ render(<CanonicalChatClientProvider api={connection.api} client={client} runtimeSlot={connection.runtimeSlot} authGeneration={connection.authGeneration}><SideChatDraftContext.Provider value={{pending:null,request:vi.fn(),consume:vi.fn()}}><WorkFilesInspector detail={detail('chat_side_draft')} projects={[]} active/></SideChatDraftContext.Provider></CanonicalChatClientProvider>);
+ fireEvent.click(screen.getByRole('button',{name:'Add inspector tab'}));fireEvent.click(screen.getByRole('button',{name:/Side chat/}));
+ await screen.findByText(/Ask about this chat/);
+ fireEvent.change(screen.getByRole('textbox',{name:'Ask side chat'}),{target:{value:'Unsent question'}});
+ fireEvent.click(screen.getByRole('tab',{name:'Files'}));fireEvent.click(screen.getByRole('tab',{name:'Side chat'}));
+ expect((screen.getByRole('textbox',{name:'Ask side chat'}) as HTMLTextAreaElement).value).toBe('Unsent question');
+});
+
 });
