@@ -3,6 +3,8 @@ import type { ZoomAction } from "./zoom";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
 
+export const STOP_BACKGROUND_MAC_CHECKS_MENU_ID = "stop-background-mac-checks";
+
 interface AppMenuTemplateOptions {
   appName: string;
   isPackaged: boolean;
@@ -15,6 +17,7 @@ interface AppMenuTemplateOptions {
   reloadWindow?(): void;
   /** Opens or focuses the native Terminal window (macOS and Linux only). */
   openTerminalWindow?(): void;
+  stopBackgroundMacChecks?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
 }
@@ -30,6 +33,7 @@ export function createAppMenuTemplate({
   quitApp,
   reloadWindow,
   openTerminalWindow,
+  stopBackgroundMacChecks,
   openThirdPartyNotices,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
@@ -128,6 +132,12 @@ export function createAppMenuTemplate({
             updateItem,
             { type: "separator" },
             settingsItem,
+            ...(stopBackgroundMacChecks ? [{
+              id: STOP_BACKGROUND_MAC_CHECKS_MENU_ID,
+              label: "Stop Background Mac Terminal Checks",
+              visible: false,
+              click: stopBackgroundMacChecks,
+            }] : []),
             { type: "separator" },
             { role: "services" },
             { type: "separator" },

@@ -39,16 +39,21 @@ const OUTPUT_INSPECTION_WINDOW = 30_000;
 export function createChatMacTerminalService(deps: Dependencies) {
   let preparing: { chatId: string; operation: AbortController } | null = null;
   let grant: Grant | null = null;
+  let disposing = false;
+  const isBusy = () => Boolean(preparing || grant || disposing);
 
   async function release(current: Grant): Promise<void> {
     if (grant !== current) return;
     grant = null;
+    disposing = true;
     clearTimeout(current.disposeTimer);
     current.operation.abort();
     try {
       await current.terminal.dispose();
     } catch (error: unknown) {
       deps.reportError?.(error);
+    } finally {
+      disposing = false;
     }
   }
 
@@ -60,7 +65,7 @@ export function createChatMacTerminalService(deps: Dependencies) {
 
   async function prepare(target: PrepareMacTerminalCheck): Promise<PrepareMacTerminalCheckReply> {
     if (!deps.enabled) return { status: "unavailable" };
-    if (preparing || grant) return { status: "busy" };
+    if (isBusy()) return { status: "busy" };
     const operation = new AbortController();
     preparing = { chatId: target.chatId, operation };
     try {
@@ -141,5 +146,5 @@ export function createChatMacTerminalService(deps: Dependencies) {
     if (grant) await release(grant);
   }
 
-  return { available: deps.enabled, prepare, run, cancel, cancelAll };
+  return { available: deps.enabled, prepare, run, cancel, cancelAll, isBusy };
 }

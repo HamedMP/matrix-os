@@ -37,6 +37,8 @@ const UploadReply = z.strictObject({ ok: z.literal(true), path: z.string(), size
 const RequestRef = z.strictObject({ chatId: CanonicalChatIdSchema, runId: CanonicalChatRunIdSchema });
 const TerminalContextRef = z.strictObject({ chatId: CanonicalChatIdSchema, worktreeId: WorktreeIdSchema });
 type MacTerminalContextRef = z.infer<typeof TerminalContextRef>;
+const TerminalGrant = z.strictObject({ targetId: z.uuid(), approvedAt: z.number().int().nonnegative() });
+type MacTerminalGrant = z.infer<typeof TerminalGrant>;
 const TerminalResult = z.strictObject({
   terminalId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   output: z.literal("Darwin"),
@@ -75,6 +77,8 @@ export interface MacTerminalRequest extends MacTerminalContext, MacTerminalProbe
   readonly runId: string;
   readonly expiresAt: number;
 }
+
+export class MacTerminalDeliveryRejectedError extends Error {}
 
 type Auth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
 interface RuntimeAuthority {
@@ -197,14 +201,18 @@ export function createChatElectronPreviewTransport(
   }
 
   async function request(authority: RuntimeAuthority, path: string, init: RequestInit = {}) {
+    init.signal?.throwIfAborted();
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${authority.token}`);
+    const deadline = AbortSignal.timeout(TIMEOUT_MS);
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
     const response = await fetchFn(new URL(path, authority.origin), {
-      ...init, headers, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS),
+      ...init, headers, redirect: "error", signal,
     });
-    if (!sameAuthority(authority, currentAuthority())) {
+    if (signal.aborted || !sameAuthority(authority, currentAuthority())) {
       await response.body?.cancel();
+      signal.throwIfAborted();
       throw new Error("Preview session changed");
     }
     return response;
@@ -217,13 +225,14 @@ export function createChatElectronPreviewTransport(
       return null;
     }
     const data = await readJson(response, maximum);
+    init?.signal?.throwIfAborted();
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     return data;
   }
 
-  async function readDetail(authority: RuntimeAuthority, chatId: string) {
+  async function readDetail(authority: RuntimeAuthority, chatId: string, signal?: AbortSignal) {
     const path = chatMessageVersionUrl(`/api/chats/${chatId}?limit=50`);
-    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path));
+    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path, undefined, { signal }));
     return parsed.success ? parsed.data : null;
   }
 
@@ -235,9 +244,9 @@ export function createChatElectronPreviewTransport(
     return result.success ? result.data.stdout : null;
   }
 
-  async function readWorktreeCheckout(authority: RuntimeAuthority, worktreeId: string) {
+  async function readWorktreeCheckout(authority: RuntimeAuthority, worktreeId: string, signal?: AbortSignal) {
     const cwd = `worktrees/${PROJECT_SLUG}/${worktreeId}`;
-    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024));
+    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024, { signal }));
     if (!inventory.success) return null;
     const matches = inventory.data.worktrees.filter(entry => entry.id === worktreeId);
     const checkout = matches[0]?.path;
@@ -267,10 +276,10 @@ export function createChatElectronPreviewTransport(
     return parsed.success && matchingBytes(preview, parsed.data);
   }
 
-  async function verifyTerminalWorktree(authority: RuntimeAuthority, projectId: string, worktreeId: string) {
-    const project = ProjectReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}`, 64 * 1024));
+  async function verifyTerminalWorktree(authority: RuntimeAuthority, projectId: string, worktreeId: string, signal?: AbortSignal) {
+    const project = ProjectReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}`, 64 * 1024, { signal }));
     return project.success && project.data.project.id === projectId
-      && (await readWorktreeCheckout(authority, worktreeId)) !== null;
+      && (await readWorktreeCheckout(authority, worktreeId, signal)) !== null;
   }
 
   function terminalContext(authority: RuntimeAuthority, chatId: string, projectId: string, worktreeId: string) {
@@ -287,18 +296,45 @@ export function createChatElectronPreviewTransport(
     return terminal.expiresAt > now() && isTerminalContextCurrent(terminal);
   }
 
+  async function readLatestTerminalRequest(
+    authority: RuntimeAuthority,
+    chatId: string,
+    expected: { runId: string } | { context: MacTerminalContext; grant: MacTerminalGrant },
+    signal?: AbortSignal,
+  ): Promise<MacTerminalRequest | null> {
+    const detail = await readDetail(authority, chatId, signal);
+    if (!detail || detail.record.activeRun) return null;
+    const latest = getLatestCompletedMacTerminalRun(detail);
+    if (!latest || ("runId" in expected && latest.id !== expected.runId)) return null;
+    const candidate = getPersonalWorktreeRun(detail, authority.ownerId, { chatId, runId: latest.id });
+    const marker = getMacTerminalProbeMarkerForRun(detail, latest.id);
+    if (!candidate || !marker || !isCurrentMacTerminalProbeRun(candidate.run, now())) return null;
+    const { projectId, worktreeId } = candidate.root;
+    const completedAt = Date.parse(candidate.run.completedAt!);
+    if ("grant" in expected && (marker.targetId !== expected.grant.targetId || completedAt < expected.grant.approvedAt
+      || projectId !== expected.context.projectId || worktreeId !== expected.context.worktreeId)) return null;
+    const expiresAt = completedAt + MAC_TERMINAL_PROBE_MAX_AGE_MS;
+    if (!(await verifyTerminalWorktree(authority, projectId, worktreeId, signal)) || expiresAt <= now()) return null;
+    signal?.throwIfAborted();
+    const terminal = Object.freeze({ ...terminalContext(authority, chatId, projectId, worktreeId),
+      runId: latest.id, ...marker, expiresAt });
+    terminalBindings.set(terminal, authority);
+    return terminal;
+  }
+
   return {
-    async readTerminalContext(ref: MacTerminalContextRef): Promise<MacTerminalContext | null> {
+    async readTerminalContext(ref: MacTerminalContextRef, signal?: AbortSignal): Promise<MacTerminalContext | null> {
       if (!TerminalContextRef.safeParse(ref).success) return null;
       const authority = currentAuthority();
       if (!authority) return null;
-      const detail = await readDetail(authority, ref.chatId);
+      const detail = await readDetail(authority, ref.chatId, signal);
       if (!detail || detail.record.activeRun) return null;
       const latest = getLatestCompletedMacTerminalRun(detail);
       const candidate = latest && getPersonalWorktreeRun(detail, authority.ownerId, { chatId: ref.chatId, runId: latest.id });
       if (!candidate || candidate.root.worktreeId !== ref.worktreeId) return null;
       const { projectId, worktreeId } = candidate.root;
-      if (!(await verifyTerminalWorktree(authority, projectId, worktreeId))) return null;
+      if (!(await verifyTerminalWorktree(authority, projectId, worktreeId, signal))) return null;
+      signal?.throwIfAborted();
       const context = Object.freeze(terminalContext(authority, ref.chatId, projectId, worktreeId));
       terminalBindings.set(context, authority);
       return context;
@@ -306,40 +342,36 @@ export function createChatElectronPreviewTransport(
 
     isTerminalContextCurrent,
 
-    async readTerminalRequest(ref: { chatId: string; runId: string }): Promise<MacTerminalRequest | null> {
+    async readTerminalRequest(ref: { chatId: string; runId: string }, signal?: AbortSignal): Promise<MacTerminalRequest | null> {
       if (!RequestRef.safeParse(ref).success) return null;
       const authority = currentAuthority();
-      if (!authority) return null;
-      const detail = await readDetail(authority, ref.chatId);
-      if (!detail || detail.record.activeRun || getLatestCompletedMacTerminalRun(detail)?.id !== ref.runId) return null;
-      const candidate = getPersonalWorktreeRun(detail, authority.ownerId, ref);
-      const marker = getMacTerminalProbeMarkerForRun(detail, ref.runId);
-      if (!candidate || !marker || !isCurrentMacTerminalProbeRun(candidate.run, now())) return null;
-      const { projectId, worktreeId } = candidate.root;
-      const expiresAt = Date.parse(candidate.run.completedAt!) + MAC_TERMINAL_PROBE_MAX_AGE_MS;
-      if (!(await verifyTerminalWorktree(authority, projectId, worktreeId)) || expiresAt <= now()) return null;
-      const terminal = Object.freeze({ ...terminalContext(authority, ref.chatId, projectId, worktreeId),
-        runId: ref.runId, ...marker, expiresAt });
-      terminalBindings.set(terminal, authority);
-      return terminal;
+      return authority ? readLatestTerminalRequest(authority, ref.chatId, ref, signal) : null;
+    },
+
+    async readBackgroundTerminalRequest(context: MacTerminalContext, grant: MacTerminalGrant, signal: AbortSignal) {
+      const authority = terminalBindings.get(context);
+      const approval = TerminalGrant.safeParse(grant);
+      if (!authority || !sameAuthority(authority, currentAuthority()) || !approval.success) return null;
+      return readLatestTerminalRequest(authority, context.chatId, { context, grant: approval.data }, signal);
     },
 
     isTerminalRequestCurrent,
 
-    async returnTerminalResult(terminal: MacTerminalRequest, resultInput: z.infer<typeof TerminalResult>): Promise<void> {
+    async returnTerminalResult(terminal: MacTerminalRequest, resultInput: z.infer<typeof TerminalResult>, signal?: AbortSignal): Promise<void> {
       const authority = terminalBindings.get(terminal);
       if (!authority || !isTerminalRequestCurrent(terminal)) throw new Error("Mac terminal request expired or session changed");
       const result = TerminalResult.parse(resultInput);
       const key = sha256(JSON.stringify([terminal.scopeKey, terminal.chatId, terminal.runId]));
 
       async function prepareTurn(binding: RuntimeAuthority) {
-        const detail = await readDetail(binding, terminal.chatId);
-        const candidate = detail && getPersonalWorktreeRun(detail, binding.ownerId, terminal);
-        const marker = detail && getMacTerminalProbeMarkerForRun(detail, terminal.runId);
-        if (!detail || !candidate || candidate.root.projectId !== terminal.projectId
+        const detail = await readDetail(binding, terminal.chatId, signal);
+        if (!detail) throw new Error("Mac terminal Chat could not be read");
+        const candidate = getPersonalWorktreeRun(detail, binding.ownerId, terminal);
+        const marker = getMacTerminalProbeMarkerForRun(detail, terminal.runId);
+        if (!candidate || candidate.root.projectId !== terminal.projectId
           || candidate.root.worktreeId !== terminal.worktreeId || marker?.targetId !== terminal.targetId
           || marker.action !== terminal.action || !isTerminalRequestCurrent(terminal)) {
-          throw new Error("Mac terminal Chat or request changed");
+          throw new MacTerminalDeliveryRejectedError("Mac terminal Chat or request changed");
         }
         const turn = CanonicalCreateChatTurnRequestSchema.parse({
           clientRequestId: `req_mac_terminal_${key}`, baseRevision: detail.record.chat.revision,
@@ -349,9 +381,10 @@ export function createChatElectronPreviewTransport(
           interactionMode: "default", permissionMode: "supervised",
         });
         if (hasReturned(detail, turn)) return null;
-        if (detail.record.activeRun || getLatestCompletedMacTerminalRun(detail)?.id !== terminal.runId) {
-          throw new Error("Mac terminal Chat has moved on");
+        if (getLatestCompletedMacTerminalRun(detail)?.id !== terminal.runId) {
+          throw new MacTerminalDeliveryRejectedError("Mac terminal Chat has moved on");
         }
+        if (detail.record.activeRun) throw new Error("Mac terminal Chat has moved on");
         return turn;
       }
 
@@ -359,7 +392,7 @@ export function createChatElectronPreviewTransport(
       if (!turn) return;
       const path = chatMessageVersionUrl(`/api/chats/${terminal.chatId}/turns`);
       const response = await request(authority, path, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn), signal,
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -367,6 +400,7 @@ export function createChatElectronPreviewTransport(
         throw new Error("Mac terminal result could not be posted");
       }
       const parsed = CanonicalChatTurnAdmissionResponseSchema.safeParse(await readJson(response));
+      signal?.throwIfAborted();
       if (!parsed.success) throw new Error("Mac terminal result receipt mismatch");
       const receipt = parsed.data;
       if (!sameAuthority(authority, currentAuthority()) || !isPersonalChat(receipt.record, authority.ownerId, terminal.chatId)
