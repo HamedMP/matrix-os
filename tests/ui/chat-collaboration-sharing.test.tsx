@@ -51,6 +51,67 @@ describe("Chat collaboration sharing", () => {
     expect(api.get).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}`);
   });
 
+  it("starts a pinned shared-app launch alongside the lookup and launches only once", async () => {
+    // Outcome: an org link pinned to a build opens one round trip sooner.
+    // Faults: serial lookup-then-launch, a second launch request for the same open,
+    // and a pre-started launch rendering an app the lookup did not confirm.
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const app = {
+      scopeId: appScopeId, runtimeId: "vps:50000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team", authorityGeneration: 2, appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "2",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    const launchId = "20000000-0000-4000-8000-000000000001";
+    let resolveLookup: (value: unknown) => void = () => undefined;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn((path: string) => {
+        if (path !== `/api/collaboration/shared-apps/${appScopeId}`) throw new Error(`Unexpected request: ${path}`);
+        return new Promise((resolve) => { resolveLookup = resolve; });
+      }),
+      post: vi.fn(async (_path: string, _body: unknown) => ({
+        target: { kind: "shared", scopeId: appScopeId, organizationId: app.organizationId,
+          appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, name: "Team tracker",
+          owner: app.owner, shareRevision: app.shareRevision },
+        launchId,
+        entryUrl: `/api/collaboration/shared-apps/${appScopeId}/runtime/${launchId}/index.html`,
+        expiresAt: "2026-11-05T10:05:00.000Z",
+      })),
+      delete: vi.fn(),
+      direct: { request: vi.fn(async () => ({ result: {}, revision: "1" })), subscribeEvents: vi.fn(() => vi.fn()), close: vi.fn() },
+    };
+    render(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId,
+      expectedBuildId: app.buildId, expectedShareRevision: app.shareRevision }} api={api} actorId="user_member" />);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}/launch`, {
+      clientRequestId: expect.any(String), expectedBuildId: app.buildId, expectedShareRevision: app.shareRevision,
+    }));
+    expect(screen.queryByTitle("Team tracker shared by Nima")).toBeNull();
+    await act(async () => { resolveLookup(app); });
+
+    expect(await screen.findByTitle("Team tracker shared by Nima")).toBeVisible();
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render a pre-started launch when the lookup says the app is not shared", async () => {
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const { CollaborationDirectError } = await import("../../packages/ui/src/collaboration/direct-client");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => { throw new CollaborationDirectError("not_found"); }),
+      post: vi.fn(async () => { throw new CollaborationDirectError("denied"); }),
+      delete: vi.fn(),
+      direct: { request: vi.fn(), subscribeEvents: vi.fn(() => vi.fn()), close: vi.fn() },
+    };
+    render(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId,
+      expectedBuildId: "b".repeat(64), expectedShareRevision: "2" }} api={api} actorId="user_member" />);
+    expect(await screen.findByText("Shared app unavailable")).toBeVisible();
+  });
+
   it("keeps app discovery out of Chat because shared apps belong in the launcher", async () => {
     const appScopeId = "10000000-0000-4000-8000-000000000099";
     const app = {
