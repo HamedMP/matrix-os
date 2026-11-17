@@ -45,7 +45,7 @@ import { WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from
 import { WorkFilesInspector } from "./WorkFilesInspector";
 import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
-import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
+import { OS_WINDOW_GESTURE_HEIGHT, OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/files-navigation";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
@@ -107,7 +107,9 @@ export function ResponsiveWorkInspector({
       className={!visible ? "hidden" : layout === "narrow"
         ? "absolute inset-0 z-20 flex w-full"
         : "relative flex min-h-0 shrink-0"}
-      style={layout === "narrow" ? undefined : { width }}
+      style={layout === "narrow"
+        ? showInlineControls ? undefined : { top: OS_WINDOW_GESTURE_HEIGHT }
+        : { width }}
     >
       {visible && layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} onReset={onResetWidth} /> : null}
       <WorkFilesInspector

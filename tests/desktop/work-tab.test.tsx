@@ -1157,6 +1157,16 @@ describe("WorkTab rail integration", () => {
 
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+
+    // A floating Chat can leave only 660px beside its hosted sidebar. The
+    // exclusive inspector must begin below the still-interactive window toolbar.
+    resizeWork(660);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const narrowInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement!;
+    expect(narrowInspector.style.top).toBe("48px");
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Hide inspector" }));
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 
   it("renames the active Chat from a single click on the center header", async () => {
