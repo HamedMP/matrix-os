@@ -798,7 +798,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} fallbackName={o.sharedAppTarget ? o.app.name : undefined} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"

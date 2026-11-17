@@ -3,8 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import { iconUrlForSlug } from "@/lib/app-launch";
 
-export function MobileAppIcon({ slug, iconUrl, size }: { slug: string; iconUrl?: string; size: number }) {
+/**
+ * `fallbackName` opts out of the Matrix-logo fallback: when the icon cannot load, the tile shows the
+ * name's initial instead, matching the Web Desktop and Electron Desktop launchers. Shared apps use it
+ * because their owner icon comes from an extensionless platform route the `.svg` retry cannot repair.
+ */
+export function MobileAppIcon({ slug, iconUrl, size, fallbackName }: {
+  slug: string; iconUrl?: string; size: number; fallbackName?: string;
+}) {
   const [src, setSrc] = useState(() => iconUrl ?? iconUrlForSlug(slug) ?? "/icon-192.png");
+  // Keyed by the URL that failed, so a new selection retries without a reset in the effect below.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const triedSvg = useRef(false);
   const selection = iconUrl ?? slug;
   const prevSelection = useRef(selection);
@@ -17,6 +26,30 @@ export function MobileAppIcon({ slug, iconUrl, size }: { slug: string; iconUrl?:
     setSrc(iconUrl ?? iconUrlForSlug(slug) ?? "/icon-192.png");
   }, [slug, iconUrl, selection]);
 
+  const radius = Math.round(size * 0.22);
+  if (fallbackName && failedSrc === src) {
+    return (
+      <span
+        data-testid="mobile-app-icon-initial"
+        aria-hidden
+        style={{
+          width: size,
+          height: size,
+          borderRadius: radius,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: Math.round(size * 0.4),
+          fontWeight: 600,
+          background: "var(--accent-muted)",
+          color: "var(--accent-text)",
+        }}
+      >
+        {fallbackName.charAt(0).toUpperCase()}
+      </span>
+    );
+  }
+
   return (
     // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- icon src is swapped at runtime via onError fallback chain (.png -> .svg -> /icon-192.png), which next/image does not support; <img> preserves the graceful-degradation behavior.
     <img
@@ -27,11 +60,15 @@ export function MobileAppIcon({ slug, iconUrl, size }: { slug: string; iconUrl?:
       style={{
         width: size,
         height: size,
-        borderRadius: Math.round(size * 0.22),
+        borderRadius: radius,
         background: "transparent",
         objectFit: "contain",
       }}
       onError={() => {
+        if (fallbackName) {
+          setFailedSrc(src);
+          return;
+        }
         const svgUrl = src.replace(/\.[^.]+$/, ".svg");
         if (!triedSvg.current && src !== svgUrl) {
           triedSvg.current = true;
