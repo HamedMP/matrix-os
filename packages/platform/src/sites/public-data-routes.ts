@@ -45,13 +45,15 @@ export function registerSitePublicDataRoute(app: Hono, options: {
         if (!input.success) return c.json({ error: 'Invalid change' }, 400);
         const write = isSitePublicDataWrite(input.data);
         const source = (c.req.header('x-matrix-sites-source') ?? 'unknown').slice(0, 128);
-        if (!perSource.check(source) || (write && !perSourceWrites.check(source)) || !global.check('all') || flights >= MAX_IN_FLIGHT)
-            return c.json({ error: 'Try again later' }, 429);
+        if (!global.check('all') || flights >= MAX_IN_FLIGHT) return c.json({ error: 'Try again later' }, 429);
         flights++;
         try {
             const site = await options.service.resolve(reference.data);
             if (!site || site.accessMode !== 'public' || !site.activeVersion) return c.json({ error: 'Site unavailable' }, 404);
-            if (!perSite.check(site.id)) return c.json({ error: 'Try again later' }, 429);
+            // Visitor budgets are per source and site, so one site's traffic never spends another's.
+            const visitorKey = `${site.id}\0${source}`;
+            if (!perSource.check(visitorKey) || (write && !perSourceWrites.check(visitorKey)) || !perSite.check(site.id))
+                return c.json({ error: 'Try again later' }, 429);
             const visitor = options.transport.visitorHash(site.id, source);
             // Writes re-check the publication under a row share lock held through forwarding.
             const outcome = write

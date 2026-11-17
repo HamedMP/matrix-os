@@ -142,6 +142,16 @@ describe('platform public site data route', () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it('keeps a visitor\'s budget for one site separate from another site', async () => {
+    const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
+    vi.stubGlobal('fetch', forward);
+    const other = await service.deploy({ ownerId: 'user_tasks_host', machineId: identity.machineId, appSlug: 'second-app' }, { title: 'Second', config: {}, files });
+    const app = routes();
+    for (let i = 0; i < 60; i++) await post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': '198.51.100.20' });
+    expect((await post(app, `/${publicSite.id}/data`, insert, { 'x-matrix-sites-source': '198.51.100.20' })).status).toBe(429);
+    expect((await post(app, `/${other.id}/data`, insert, { 'x-matrix-sites-source': '198.51.100.20' })).status).toBe(200);
+  });
+
   it('rate-limits each visitor source, with a stricter write window', async () => {
     const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
     vi.stubGlobal('fetch', forward);
