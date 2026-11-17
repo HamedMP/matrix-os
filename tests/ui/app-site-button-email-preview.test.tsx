@@ -26,7 +26,13 @@ const { AppSiteButton } = await import("../../shell/src/components/app-sites/App
 const { AppSiteOwnerIdentityProvider } = await import("../../shell/src/components/app-sites/AppSiteOwnerIdentity");
 const { DesktopAppSiteButton } = await import("../../desktop/src/renderer/src/features/app-sites/DesktopAppSiteButton");
 
-afterEach(cleanup);
+// Radix FocusScope restores focus in a setTimeout(0) on unmount; let it run
+// while jsdom is still alive so it can't fire after the file's environment
+// is torn down (an unhandled error that fails the CI shard).
+afterEach(async () => {
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 
 async function openPrivateTab() {
   fireEvent.click(screen.getByRole("button", { name: "Share" }));
