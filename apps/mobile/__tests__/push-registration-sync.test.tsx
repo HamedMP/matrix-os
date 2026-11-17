@@ -3,7 +3,7 @@ import { AppState, type AppStateStatus } from "react-native";
 import * as Notifications from "expo-notifications";
 
 import { PushRegistrationSync } from "../components/PushRegistrationSync";
-import { syncPushRegistration } from "../lib/push-registration-sync";
+import { queuePushChange, syncPushRegistration } from "../lib/push-registration-sync";
 
 const mockIsPushOn = jest.fn<Promise<boolean>, []>();
 const mockEnablePush = jest.fn<Promise<void>, [unknown]>();
@@ -17,7 +17,9 @@ jest.mock("@/lib/push", () => ({
 
 const mockGateway = {
   gatewayUrl: null as string | null,
-  session: jest.fn(async () => (mockGateway.gatewayUrl ? { token: "clerk-token", gatewayUrl: mockGateway.gatewayUrl } : null)),
+  session: jest.fn(async (): Promise<{ token: string; gatewayUrl: string } | null> => (
+    mockGateway.gatewayUrl ? { token: "clerk-token", gatewayUrl: mockGateway.gatewayUrl } : null
+  )),
 };
 
 jest.mock("@/lib/queries/use-active-gateway", () => ({
@@ -89,6 +91,49 @@ describe("syncPushRegistration", () => {
   });
 });
 
+describe("queuePushChange", () => {
+  it("lets a switch change finish before re-registering, so the sync cannot undo it", async () => {
+    let finishTurningOff: () => void = () => {};
+    const turningOff = queuePushChange(() => new Promise<void>((resolve) => {
+      finishTurningOff = () => {
+        mockIsPushOn.mockResolvedValue(false);
+        resolve();
+      };
+    }));
+
+    const sync = syncPushRegistration(SESSION);
+    await act(async () => {});
+    expect(mockIsPushOn).not.toHaveBeenCalled();
+
+    finishTurningOff();
+    await turningOff;
+    await expect(sync).resolves.toBe("off");
+    expect(mockEnablePush).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting for a change that never finishes, so the switch is never stuck", async () => {
+    jest.useFakeTimers();
+    try {
+      void queuePushChange(() => new Promise<void>(() => {}));
+      const sync = syncPushRegistration(SESSION);
+
+      await jest.advanceTimersByTimeAsync(19_000);
+      expect(mockIsPushOn).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(sync).resolves.toBe("registered");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps going after a change that failed", async () => {
+    await expect(queuePushChange(() => Promise.reject(new Error("offline")))).rejects.toThrow("offline");
+
+    await expect(syncPushRegistration(SESSION)).resolves.toBe("registered");
+  });
+});
+
 describe("PushRegistrationSync", () => {
   let appStateListener: ((state: AppStateStatus) => void) | undefined;
   const removeAppStateListener = jest.fn();
@@ -140,6 +185,7 @@ describe("PushRegistrationSync", () => {
     await act(async () => finish());
     await act(async () => appStateListener?.("active"));
     expect(mockEnablePush).toHaveBeenCalledTimes(2);
+    await act(async () => finish());
   });
 
   it("logs a failed registration without throwing, and stops listening once unmounted", async () => {

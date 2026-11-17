@@ -1,8 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { Alert } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 
 import AppSettingsScreen from "../app/settings-detail/app-settings";
+import { queuePushChange } from "@/lib/push-registration-sync";
 import { fetchActiveComputer } from "@/lib/requests";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
@@ -68,7 +70,7 @@ describe("App settings", () => {
     return row;
   }
 
-  it("turns push on from a tap anywhere on its row, with the selection tick", async () => {
+  it("turns push on from a tap on its switch, with the selection tick", async () => {
     renderScreen();
     const push = await findEnabledSwitch("Push notifications");
     expect(push.props.accessibilityState).toMatchObject({ checked: false });
@@ -81,7 +83,56 @@ describe("App settings", () => {
     expect(mockEnablePush).toHaveBeenCalledTimes(1);
   });
 
-  it("turns the biometric lock on from a tap on its row", async () => {
+  it("shows push on as soon as its switch is tapped, while the computer answers", async () => {
+    let answer: () => void = () => {};
+    mockEnablePush.mockImplementationOnce(() => new Promise<boolean>((resolve) => { answer = () => resolve(true); }));
+    renderScreen();
+    const push = await findEnabledSwitch("Push notifications");
+
+    fireEvent.press(push);
+
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: true, disabled: true });
+    await waitFor(() => expect(mockEnablePush).toHaveBeenCalledTimes(1));
+    await act(async () => answer());
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: true, disabled: false }));
+  });
+
+  it("waits for a push registration already under way before changing push", async () => {
+    let finishRegistering: () => void = () => {};
+    const registering = queuePushChange(() => new Promise<void>((resolve) => { finishRegistering = resolve; }));
+    renderScreen();
+    const push = await findEnabledSwitch("Push notifications");
+
+    fireEvent.press(push);
+    await act(async () => {});
+    expect(mockEnablePush).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishRegistering();
+      await registering;
+    });
+    await waitFor(() => expect(mockEnablePush).toHaveBeenCalledTimes(1));
+  });
+
+  it("puts the push switch back when push cannot be turned on", async () => {
+    const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mockEnablePush.mockImplementationOnce(() => Promise.reject(new Error("Push notification permission was not granted.")));
+    renderScreen();
+    const push = await findEnabledSwitch("Push notifications");
+
+    fireEvent.press(push);
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: false, disabled: false });
+    alert.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("turns the biometric lock on from a tap on its switch", async () => {
     renderScreen();
     const biometric = await findEnabledSwitch("Face ID lock");
 
@@ -90,6 +141,19 @@ describe("App settings", () => {
     await waitFor(() => expect(screen.getByRole("switch", { name: "Face ID lock" }).props.accessibilityState)
       .toMatchObject({ checked: true }));
     expect(mockSaveSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the switch alone when the row's text is tapped", async () => {
+    renderScreen();
+    await findEnabledSwitch("Push notifications");
+
+    fireEvent.press(screen.getByText("Push notifications"));
+    fireEvent.press(screen.getByText("Notifications from this computer"));
+
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: false });
+    expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+    expect(mockEnablePush).not.toHaveBeenCalled();
   });
 
   it("keeps the push row off until a computer is connected", async () => {
