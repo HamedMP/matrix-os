@@ -13,7 +13,7 @@ Non-goals (V1): visitor accounts or identity, private-link and email-invite visi
 ## Decisions (encoded)
 
 1. **Owner opt-in, view-only by default.** Publishing a collaborative app makes declared data viewable. The Public tab adds a **Visitors can edit** toggle that starts off. Copy is `Live · view only` or `Live · visitors can edit`. No edit copy ships before the write path does (see the PR stack).
-2. **No visitor deletes by default.** A table permits delete only when its manifest declares `delete: true`. Even then, the owner toggle gates it and the write log keeps a before-image.
+2. **No visitor deletes by default.** A table permits delete only when its manifest declares `delete: true`. Even then, the owner toggle gates it and the write log keeps an owner-only full before-image (see Audit). Q3 may defer delete entirely.
 3. **Manifest allowlist, conservative default.** Only tables and columns declared under `publishing.collaboration` are readable or writable. With no declaration, nothing is exposed and the frame shows a clear "This app doesn't share data publicly" state, not the current runtime error. (Product must sign off: open question Q1.)
 4. **Public access is independent of org sharing.** Private, Org and Public are independent systems (2693, 2691). Public data access never needs an active 2689 org share, `collaboration_scopes` row, or member. Stopping an org share does not change public access, and the reverse also holds.
 
@@ -40,7 +40,7 @@ The public adapter never constructs a collaboration context and never reuses the
 ```
 
 - At most 8 tables and 32 columns per table. Every name must match `isSafeName` and exist in the registry table definition at publish time.
-- Write columns must be a subset of read columns. `id`, `created_at` and `updated_at` are server-set and never writable.
+- Write columns must be a subset of read columns. `id`, `created_at`, `updated_at` and `row_version` are server-set and never writable. `id` and `row_version` are always projected so clients can send preconditions.
 - Writable column types are limited to `text` (≤ 2,000 chars, no C0 control characters except `\n` and `\t`), `integer`, `real`, `boolean`, `date`/`timestamp` and declared enums. JSON/object, binary and owner-identity columns (`created_by`, actor ids, emails) can never be writable. Identity columns are never readable unless explicitly listed, and the publish preflight warns about them.
 - At publish, the platform stores the config with the version. The gateway computes `schemaDigest = sha256(canonical(declared tables' registry definitions))` and returns it for the version record.
 
@@ -60,6 +60,7 @@ frame (opaque origin, connect-src 'none')
 - **Parent page.** It checks `event.source === frame.contentWindow`, `origin === 'null'`, exactly one port, a known type and per-type bounded shapes (mirroring the existing submit handler). It serializes the body to ≤ 64 KB. The body carries the `versionId` the page was rendered with; this comes from server-rendered parent code, never from the frame. It returns only allowlisted coarse errors.
 - **Realtime via polling.** The parent polls `revision` every 5 s while `document.visibilityState === 'visible'`. When hidden it stops. On errors it backs off exponentially to 60 s, and resets on success. When the revision increases, it fires `onChange` and the app rereads. The platform coalesces revision reads per site (single flight plus a 2 s TTL in an LRU map capped at 10,000 sites), so N visitors cost about one gateway call per 2 s per site.
 - **App data revision.** Owner, org-member and visitor writes all change the same tables. A per-app counter `public_app_data_revisions(app_id, revision)` is bumped by `AFTER INSERT OR UPDATE OR DELETE … FOR EACH STATEMENT` triggers. These triggers are installed only on read-allowlisted tables, when public data is first enabled for the version. That covers the owner's direct `MatrixOS.db` writes too. Trigger DDL follows 551's owned one-connection setup pool limits (5 s acquire, 2 s DDL lock). If setup fails, public data stays unavailable and the site keeps rendering.
+- **Org members see visitor writes.** The public counter only drives visitor polling. 2689 org apps check `collaboration_app_bindings.data_revision` (or the project app catalog revision when unbound) and learn of changes from `collaboration_events` (`app-instance-adapter.ts`). So visitor mutates and reverts call one shared `recordAppDataChange(trx, appSlug, action)` helper, extracted from the 2689 adapter, inside the same transaction as the write. For each active scope bound to the app it advances that revision and appends a `resource.app.changed` event; delivery (`onCommitted`) runs after commit, failures logged. With no org share it touches only the public counter, so public access still never depends on org state (Decision 4).
 
 ## Authorization model
 
@@ -91,14 +92,15 @@ frame (opaque origin, connect-src 'none')
 - **Against declared columns.** The gateway builds the Zod schema for each request from the signed allowlist intersected with the live registry types.
   - Filters accept only `filterable` columns and `$eq/$ne/$in(≤50)/$lt/$lte/$gt/$gte`. `$like/$ilike` are not allowed, to avoid scan-heavy patterns.
   - `orderBy` accepts only `orderable` columns, at most 2.
-  - `limit` must be ≤ 100 and `offset` ≤ 5,000. Writes need ≥ 1 field. `update`/`delete` need an `id` (UUID) and the row's last seen `updatedAt`.
+  - `limit` must be ≤ 100 and `offset` ≤ 5,000. Writes need ≥ 1 field. `update`/`delete` need an `id` (UUID) and the row's last seen `rowVersion`.
 - **Responses.** Rows are projected to read columns server-side, never `SELECT *` (unlike the 2689 bridge). Results are capped at 256 KB serialized; anything over that returns `invalid_request`, not truncated data.
 - **Postgres.** Each request runs in one transaction with `SET LOCAL statement_timeout = '2s'` and `lock_timeout = '1s'`. Identifiers go through `sql.id` after the allowlist check. Values are always bound.
 
 ## Revisions and idempotency
 
 - **Request id.** The visitor's app provides `idempotencyKey` (≤ 128 chars), or the frame generates one. The platform derives a server-side `clientRequestId = uuidv5(HMAC(siteSecret, sourceHash ‖ idempotencyKey))`. Visitors therefore cannot collide with, or replay, another source's operations. The gateway stores `payload_hash` (sha256 of canonical action JSON) in `public_app_operations(site_id, client_request_id UNIQUE, payload_hash, result, revision, created_at)` using `INSERT … ON CONFLICT DO NOTHING`, then selects. The same id with a different hash returns `conflict`, and a matching replay returns the stored result with `replayed: true`.
-- **No app-wide write precondition for visitors.** If the whole-app revision were the precondition, every visitor write would conflict with every other. Instead, `update`/`delete` enforce `WHERE id = :id AND updated_at = :expectedUpdatedAt` in the write statement, and zero rows means `conflict`. `insert` has no precondition. `mutate(action, expectedRevision)` keeps its signature, and the public path returns the new app revision for reconciliation. The owner and org path keeps 2689 semantics unchanged. (Q4)
+- **Row version, not `updated_at`.** `updated_at` has only an insert default, and the 2689 scoped `update`/`bulkUpdate` never advance it, so it cannot detect org edits. Enabling public data adds `row_version bigint NOT NULL DEFAULT 0` to each read-allowlisted table plus a `BEFORE UPDATE … FOR EACH ROW` trigger setting `NEW.row_version = OLD.row_version + 1`. Every write path (owner `MatrixOS.db`, org bridge, visitor, revert) advances it, and callers can never set it. Same setup pool and lock limits as the revision triggers.
+- **No app-wide write precondition for visitors.** If the whole-app revision were the precondition, every visitor write would conflict with every other. Instead, `update`/`delete` enforce `WHERE id = :id AND row_version = :expectedRowVersion` in the write statement, and zero rows means `conflict`. `insert` has no precondition. `mutate(action, expectedRevision)` keeps its signature, and the public path returns the new app revision for reconciliation. The owner and org path keeps 2689 semantics unchanged. (Q4)
 - **One transaction.** The grant row lock (`FOR SHARE`), quota check, row write, write log, operation record and revision bump (by trigger) all run in a single owner Postgres transaction.
 
 ## Abuse controls and quotas
@@ -120,14 +122,15 @@ When a limit is exceeded the response is `429 Try again later`. The kill switch 
 
 ## Audit, history and vandalism undo
 
-- `public_app_write_log(id, site_id, app_id, table, row_id, op, before jsonb, after jsonb, source_hash, client_request_id, created_at)` stores only declared columns. Retention is 30 days or 50,000 rows per site, whichever comes first, purged by the gateway's recurring cleanup job. It is included in owner export and erasure.
+- `public_app_write_log(id, site_id, app_id, table, row_id, op, before jsonb, after jsonb, row_version, source_hash, client_request_id, created_at)` stores only declared columns in `before`/`after`. Retention is 30 days or 50,000 rows per site, whichever comes first, purged by the gateway's recurring cleanup job. It is included in owner export and erasure.
+- **Deletes keep an owner-only full before-image.** A declared-column log cannot restore a deleted row's private fields. For `delete`, the same transaction stores the complete row in `public_app_delete_images(write_log_id PK → write_log ON DELETE CASCADE, row jsonb)` in owner Postgres. It is readable only by the owner revert path, never returned by visitor routes or the activity list, and shares the log's retention, export and erasure. If the image cannot be written, the delete fails.
 - `source_hash = HMAC(per-owner rotating key, cf-connecting-ip)`, rotated every 30 days. Raw IPs are never stored on the owner VPS or in platform logs.
 - **Owner Visitor activity view** (inside the Public tab, progressive disclosure) lists recent visitor changes with three actions:
   - **Undo** one change.
   - **Undo all from this visitor** (same `source_hash`, chosen window).
   - **Undo since time T.**
 
-  A revert runs in one transaction, applies only where the row still matches the logged `after` (otherwise it is skipped and reported), and bumps the revision.
+  A revert runs in one transaction. It applies only where the row's `row_version` still equals the logged one (otherwise it is skipped and reported); an undone delete re-inserts the full before-image, skipped if the `id` exists. It advances revisions through `recordAppDataChange`.
 - Audit events: grant changes, kill switch use, reverts, quota trips and denied write classes. Telemetry stays coarse (`access_mode`, `visitor_access`, outcome), with no row content.
 
 ## Stored XSS and content safety
@@ -141,7 +144,8 @@ Visitor-written text is later rendered by the owner's **private** app, which hol
 
 ## SSRF and errors
 
-- There is no visitor-influenced upstream. The gateway URL comes only from the machine registry (`buildCustomerVpsProxyUrl`). All fetches use `redirect: 'error'` and `AbortSignal.timeout(10_000)`. No URL value is ever fetched or unfurled server-side.
+- There is no visitor-influenced upstream. The gateway URL comes only from the machine registry (`buildCustomerVpsProxyUrl`). Platform → gateway fetches use `redirect: 'error'` and `AbortSignal.timeout(10_000)`. No URL value is ever fetched or unfurled server-side.
+- **Worker exception.** The Cloudflare Worker keeps its existing `redirect: 'manual'` (`packages/edge-router/src/sites.ts`) and rejects every redirect itself except the canonical GET site redirect, returning 503. Data routes are POST, so any upstream redirect there fails closed.
 - Clients only ever see one of: `Shared data is unavailable right now`, `Try again later`, `Editing is turned off`, `This app was updated. Reload to continue.`, `Someone else changed this. Refresh and try again.`, or `Invalid change`. Server logs record error class names only, never Postgres messages, paths or provider names.
 
 ## Owner offline and failure modes
@@ -155,7 +159,7 @@ Visitor-written text is later rendered by the owner's **private** app, which hol
 
 - **Worker** (`packages/edge-router/src/sites.ts`): extend the `write` regex with `data/(revision|query|mutate)`, require the Origin and `Sec-Fetch-Site` check on these paths (as for `access/claim`), and forward the source hash, not the raw IP (Q7).
 - **Platform**: `createSitePublicDataRoutes` (a new module under 500 LOC) is mounted beside `createSitePublicRoutes`. `createSiteDataTransport` mirrors `submission-transport.ts`. Visitor-access management joins `management-routes.ts`. The `public_sites` migration adds the visitor-access columns. `renderer.ts` gets the bridge and parent handler, kept as separate builder functions so the file stays small.
-- **Gateway**: `createPublicAppDataAdapter` reuses the identifier and filter builders split out of `scoped-app-bridge.ts`, with projection. A Kysely owner migration adds `public_app_grants`, `public_app_operations`, `public_app_write_log`, `public_app_data_revisions` and the trigger function. Routes are registered from `server.ts` with dependencies injected (registry, owner DB, service secret) and resolved at registration time.
+- **Gateway**: `createPublicAppDataAdapter` reuses the identifier and filter builders split out of `scoped-app-bridge.ts`, with projection. A Kysely owner migration adds `public_app_grants`, `public_app_operations`, `public_app_write_log`, `public_app_delete_images`, `public_app_data_revisions` and the revision and `row_version` trigger functions. `recordAppDataChange` is extracted from `app-instance-adapter.ts` and reused by both paths. Routes are registered from `server.ts` with dependencies injected (registry, owner DB, service secret) and resolved at registration time.
 - **Shared UI**: a toggle, indicator, disclosure ("Visitors can see: tasks — title, done") and Visitor activity live in `packages/ui/src/share/`, consumed by the Web shell and Electron with no duplicated logic.
 
 ## Surfaces
@@ -190,11 +194,11 @@ Deploy surfaces: the Cloudflare Worker (edge-router), platform Cloud Run (routes
 - A published Shared Tasks Lab with a read allowlist shows owner tasks to an anonymous visitor with only declared columns. The network log shows no frame-originated requests, and the frame CSP still has `connect-src 'none'`.
 - With edit off, a forged `mutate` returns `Editing is turned off` at both the platform and the gateway (each gate tested alone).
 - With edit on, a visitor adds and checks a task. The owner (Web Desktop and Electron) and an org member see it within 10 s, and another visitor sees it within one poll.
-- A retry with the same key creates one row. The same key with a different payload returns a conflict. Two visitors editing one row: one succeeds, the other gets a conflict and no data is lost.
+- A retry with the same key creates one row. The same key with a different payload returns a conflict. Two visitors editing one row: one succeeds, the other gets a conflict and no data is lost. An org-member edit through the 2689 bridge makes a visitor update with the old `rowVersion` return a conflict.
 - Republishing with a migrated schema causes an old open tab's writes to return `Reload to continue`, with no write landing.
 - Turning editing off denies the next write within one request. Unpublish closes reads and writes. Stopping the org share leaves public access unchanged, and vice versa.
 - With the owner VPS stopped, visitors see the unavailable state and unsaved edits stay marked. After restart, the same data returns.
-- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else.
+- Undo all from a visitor restores the rows the vandal changed and skips rows later edited by someone else. Undoing a visitor delete restores the full row, including undeclared columns.
 - Quota or rate breaches return 429 and the maps stay at their caps under a load test. A visitor `<img onerror>` title renders as text in the owner app. Errors never include Postgres, path or provider text.
 - Integration test: the real Worker handler → platform routes → HMAC → gateway → Postgres (551 harness), with fault injection for timeout, digest drift and revoke races.
 
@@ -204,7 +208,7 @@ Deploy surfaces: the Cloudflare Worker (edge-router), platform Cloud Run (routes
 - **Stored XSS into the owner's privileged app.** Mitigated by preflight and types, but owner-built code can still render unsafely.
 - **Owner database load from polling.** Mitigated by coalescing and the trigger counter. Trigger DDL on large tables needs lock limits.
 - **Privacy.** Visitors see every row's declared columns, including other visitors' entries. The owner disclosure must be clear.
-- **Semantics split.** Owner and org writes use the app-wide revision while visitors use row predicates; apps must handle both conflict shapes.
+- **Semantics split.** Owner and org writes use the app-wide revision while visitors use `row_version` predicates; apps must handle both conflict shapes. Visitor writes also advance the org revision, so busy public edit raises org-member conflict retries.
 - **Five-layer rollout across four deploy surfaces.** A partial rollout must stay fail-closed. This is covered by the ordering above.
 
 ## Open questions (product/security sign-off)
@@ -212,7 +216,7 @@ Deploy surfaces: the Cloudflare Worker (edge-router), platform Cloud Run (routes
 - **Q1.** If there is no `publishing.collaboration` declaration, should nothing be exposed (current proposal), or every declared table's non-identity columns view-only?
 - **Q2.** Should viewing need its own owner toggle, or is publishing a declared app consent enough, given that 2693 removed the publish review step?
 - **Q3.** May a manifest ever enable visitor delete in V1, or should visitor delete be deferred entirely?
-- **Q4.** Should visitors use row-level `updated_at` preconditions instead of the 2689 app-wide revision?
+- **Q4.** Should visitors use row-level `row_version` preconditions instead of the 2689 app-wide revision?
 - **Q5.** Should private-link and email-invite visitors get the same data access in V1 or a follow-up?
 - **Q6.** Should the unsafe-HTML preflight block publishing or only warn when edit is declared?
 - **Q7.** Is a source-hash-only identity (no visitor cookie) acceptable for rate limiting and undo, and what HMAC key rotation and retention do privacy and legal require?
