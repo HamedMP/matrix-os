@@ -139,6 +139,21 @@ it("opens the verified project file root rather than listing Home for a project 
 function inspectorProps(overrides: Partial<WebChatInspectorProps> = {}): WebChatInspectorProps {
  return {chatId:"chat_regression",gatewayUrl:"http://localhost:4000",layoutKey:null,rootWidth:1512,railWidth:240,filePath:null,onFilePathChange:vi.fn(),terminalSessionIds:[],sideChatClient:{getSideChat:vi.fn(async()=>({threadId:null,messages:[]})),createSideChat:vi.fn(),askSideChat:vi.fn()},onSendToMain:vi.fn(),onClose:vi.fn(),...overrides};
 }
+it('reopens the current file and saved Side chat from the New tab Recent list', async () => {
+ vi.stubGlobal('fetch', vi.fn(async () => Response.json({entries:[]})));
+ render(<WebChatInspector {...inspectorProps({filePath:'desktop/src/nav/MobileNav.tsx'})}/>);
+ fireEvent.keyDown(screen.getByRole('button',{name:'Add inspector tab'}),{key:'Enter'});
+ fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
+ fireEvent.click(screen.getByRole('button',{name:'MobileNav.tsxdesktop/src/nav/MobileNav.tsx'}));
+ expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
+ fireEvent.keyDown(screen.getByRole('button',{name:'Add inspector tab'}),{key:'Enter'});
+ fireEvent.click(await screen.findByRole('menuitem',{name:/^Side chat/}));
+ await screen.findByRole('note');
+ fireEvent.keyDown(screen.getByRole('button',{name:'Add inspector tab'}),{key:'Enter'});
+ fireEvent.click(await screen.findByRole('menuitem',{name:'New tab'}));
+ fireEvent.click(screen.getByRole('button',{name:'Side chatSaved conversation'}));
+ expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
+});
 function terminalApi(){
  const workspaceId=`tws_${"a".repeat(32)}`;let created=0;
  const tabs: {id:string;name:string;cwd:string;status:string}[]=[];
