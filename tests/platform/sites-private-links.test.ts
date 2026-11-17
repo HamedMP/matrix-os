@@ -51,13 +51,15 @@ describe('private Matrix.page access links', () => {
     const { siteId } = await publishedPrivateSite();
     const service = createSitesService({ db: db.db, emailCapability: async () => true,
       emailSessionSecret: 'mode-independence-secret-long-enough' });
-    const created = await service.createAccessLink(owner, { baseRevision: 1 });
-    const token = created.url.split('.').at(-1)!;
+    const legacy = await seedLegacyAccessLink(db.db, siteId);
+    await service.claimAccessLink(siteId, { linkId: legacy.linkId, token: legacy.secret });
     await service.patch(owner, { accessMode: 'private_email', baseRevision: 1 });
     expect(await db.db.executor.selectFrom('public_site_access_links').select('id')
       .where('site_id', '=', siteId).execute()).toHaveLength(0);
-    await service.patch(owner, { accessMode: 'private_link', baseRevision: 2 });
-    await expect(service.claimAccessLink(siteId, { linkId: created.link.id, token }))
+    await expect(service.patch(owner, { accessMode: 'private_link', baseRevision: 2 }))
+      .rejects.toMatchObject({ code: 'gone' });
+    expect(await service.get(owner)).toMatchObject({ accessMode: 'private_email', revision: 2 });
+    await expect(service.claimAccessLink(siteId, { linkId: legacy.linkId, token: legacy.secret }))
       .rejects.toMatchObject({ code: 'not_found' });
   });
   it('refuses to publish email mode while the backend capability is disabled', async () => {
