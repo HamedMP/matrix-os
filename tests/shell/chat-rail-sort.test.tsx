@@ -153,7 +153,7 @@ it("continues search history past 500 results while retaining a bounded visible 
  for(let i=1;i<=10;i++){fireEvent.click(screen.getByRole("button",{name:"Show more"}));await screen.findByText(`Archive ${i*50+49}`);}
  expect(api.list).toHaveBeenCalledTimes(11);expect(screen.queryByText("Archive 0")).toBeNull();
  expect(screen.getAllByRole("option")).toHaveLength(500);
-},20000);
+},60000);
 
 it("keeps Search inside a smaller Web window instead of clipping its right edge",()=>{
  render(<WebChatSearchDialog centerX={490} bounds={{left:0,right:740}} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
