@@ -76,6 +76,28 @@ describe("scope runtime broker protocol", () => {
 });
 
 describe("scope runtime broker", () => {
+  it("uses the exact owner Claude profile only inside the broker after authorization", async () => {
+    const identity = vi.fn(async () => ({ authorization: "Bearer owner-native-secret" }));
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer owner-native-secret");
+      expect(headers.get("x-api-key")).toBeNull();
+      expect(headers.get("anthropic-beta")).toContain("oauth-2025-04-20");
+      return new Response("event: message_stop\ndata: {}\n\n", { headers: { "content-type": "text/event-stream" } });
+    });
+    let allowed = true;
+    const broker = createScopeRuntimeBroker({ homePath: "/home/matrix/home",
+      authorize: async () => allowed ? { allowed: true, accessSourceId: "owner_claude_profile",
+        allowedModelIds: [MODEL], allowedEgressOrigins: [] } : { allowed: false },
+      resolveCredentials: async () => ({ env: { HOME: "/home/matrix/home" } }),
+      resolveClaudeIdentity: identity, fetchImpl });
+    expect(await broker.handle(inferenceRequest)).toMatchObject({ ok: true });
+    allowed = false;
+    expect(await broker.handle(inferenceRequest)).toMatchObject({ ok: false, error: "action_denied" });
+    expect(identity).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    await broker.close();
+  });
   it("reauthorizes the runtime, applies the trusted access source, and never returns credentials", async () => {
     const authorize = vi.fn(async () => ({
       allowed: true as const,

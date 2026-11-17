@@ -39,6 +39,23 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe("shared Chat AI controls", () => {
+  it("lets project members compose immediately while status refresh is pending or offline", async () => {
+    let reject!: (error: Error) => void;
+    const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(() => new Promise((_, fail) => { reject = fail; })),
+      post: vi.fn(async () => ({ request: request(), resourceRevision: "5" })), delete: vi.fn() };
+    const { container } = render(<SharedChatControls api={api} scope={{ ...baseScope, membershipMode: "inherited" }}
+      actorId="user_editor" resourceRevision="4" draft={{ text: "Hello", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
+    expect(screen.getByLabelText("Message Chat")).toBeEnabled();
+    expect(container.querySelector('[data-slot="prompt-input-toolbar"]')).not.toBeNull();
+    expect(screen.queryByText("Checking shared AI…")).toBeNull();
+    reject(new Error("offline"));
+    await waitFor(() => expect(screen.getByLabelText("Message Chat")).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("region", { name: "Shared AI queue" })).toBeNull();
+    expect(screen.queryByText("AI requests")).toBeNull();
+  });
   it("describes project inheritance separately from legacy standalone Chat access", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
@@ -123,7 +140,7 @@ describe("shared Chat AI controls", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("uses the Figma shared-project composer treatment and explains its audience", async () => {
+  it("uses the ordinary Chat prompt component and explains its audience", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
@@ -136,8 +153,8 @@ describe("shared Chat AI controls", () => {
 
     expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
     expect(screen.getByText("Project members see this Chat · AI uses the project’s files")).toBeVisible();
-    expect(container.querySelector('[data-slot="shared-chat-composer"]')).toHaveClass("rounded-2xl");
-    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("title", "Send");
+    expect(container.querySelector('[data-slot="prompt-input-toolbar"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("data-slot", "prompt-input-send");
   });
 
   it("disables the ordinary AI composer when the Chat's bound Provider is unsupported", async () => {
@@ -272,8 +289,8 @@ describe("shared Chat AI controls", () => {
       changeDraftMode={vi.fn()}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
 
-    expect(await screen.findByText("1 · Ada")).toBeVisible();
-    expect(screen.getByText("2 · Nima")).toBeVisible();
+    expect(await screen.findByText("Ada")).toBeVisible();
+    expect(screen.getByText("Nima")).toBeVisible();
     expect(screen.getByRole("button", { name: "Cancel request 1" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Retry request 2" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel request 1" }));

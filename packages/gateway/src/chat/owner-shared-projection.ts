@@ -31,20 +31,23 @@ export function sharedBindingScopeId(value: unknown): string | undefined {
 export async function ownerSharedProjection(
   executor: Executor,
   owner: ChatOwner,
-  scopeId: string,
+  scopeId: string | undefined,
   chatId: string,
+  projectId?: string | null,
 ): Promise<CanonicalChatCollaboration | undefined> {
+  if (!scopeId && !projectId) return undefined;
   const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
-  const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
+  let query = collaborationExecutor.selectFrom("collaboration_scopes")
     .select(["id", "parent_scope_id", "membership_mode", "lifecycle", "authority_runtime_id"])
-    .where("id", "=", scopeId)
     .where("owner_type", "=", owner.type)
     .where("owner_id", "=", owner.ownerId)
     .where("kind", "=", "chat")
     .where("resource_id", "=", chatId)
     .where("lifecycle", "in", ["shared", "archived", "deleting"])
-    .where("deleted_at", "is", null)
-    .executeTakeFirst();
+    .where("deleted_at", "is", null);
+  query = scopeId ? query.where("id", "=", scopeId)
+    : query.where("membership_mode", "=", "inherited");
+  const scope = await query.executeTakeFirst();
   if (!scope) return undefined;
 
   let membershipScopeId: string;
@@ -53,7 +56,7 @@ export async function ownerSharedProjection(
     membershipScopeId = scope.id;
   } else {
     if (!scope.parent_scope_id) return undefined;
-    const parent = await collaborationExecutor.selectFrom("collaboration_scopes")
+    let parentQuery = collaborationExecutor.selectFrom("collaboration_scopes")
       .select("id")
       .where("id", "=", scope.parent_scope_id)
       .where("owner_type", "=", owner.type)
@@ -63,8 +66,9 @@ export async function ownerSharedProjection(
       .where("parent_scope_id", "is", null)
       .where("lifecycle", "=", scope.lifecycle)
       .where("authority_runtime_id", "=", scope.authority_runtime_id)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
+      .where("deleted_at", "is", null);
+    if (projectId) parentQuery = parentQuery.where("resource_id", "=", projectId);
+    const parent = await parentQuery.executeTakeFirst();
     if (!parent) return undefined;
     membershipScopeId = parent.id;
   }
@@ -80,7 +84,10 @@ export async function ownerSharedProjection(
       eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
     ]))
     .executeTakeFirst();
-  if (!ownerMember) return undefined;
+  // Organization project sharing has no recipient/owner membership rows.
+  // Ownership and the live parent relation above are the projection authority.
+  // Legacy standalone scopes still require their accepted owner member.
+  if (!ownerMember && scope.membership_mode === "direct") return undefined;
   const members = await collaborationExecutor.selectFrom("collaboration_members")
     .select(({ fn }) => fn.countAll<number>().as("count"))
     .where("scope_id", "=", membershipScopeId)
@@ -90,5 +97,5 @@ export async function ownerSharedProjection(
       eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
     ]))
     .executeTakeFirstOrThrow();
-  return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
+  return { mode: "shared", membership: { role: "owner", memberCount: Math.max(1, Number(members.count)) } };
 }

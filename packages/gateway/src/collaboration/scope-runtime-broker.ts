@@ -5,6 +5,7 @@ import {
   type ScopeRuntimeBrokerResponse,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { Agent } from "undici";
+import { createClaudeOwnerIdentityResolver, type ResolveClaudeOwnerIdentity } from "./claude-owner-identity.js";
 import { z } from "zod/v4";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
@@ -207,11 +208,13 @@ export function createScopeRuntimeBroker(options: {
   fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: ResolveCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
+  resolveClaudeIdentity?: ResolveClaudeOwnerIdentity;
   resolveEgress?: ResolveEgress;
   fetchImpl?: typeof fetch;
   maxInFlight?: number;
 }) {
   const resolveCredentials = options.resolveCredentials ?? buildKernelCredentialLaunch;
+  const resolveClaudeIdentity = options.resolveClaudeIdentity ?? createClaudeOwnerIdentityResolver(options.homePath);
   const resolveCodexIdentity = options.resolveCodexIdentity
     ?? createCodexOwnerIdentityResolver({ homePath: options.homePath, fetchImpl: options.fetchImpl });
   const resolveEgress = options.resolveEgress ?? defaultResolveEgress;
@@ -270,19 +273,29 @@ export function createScopeRuntimeBroker(options: {
       const env = credentialLaunch.env;
       const apiKey = env?.ANTHROPIC_API_KEY;
       const authToken = env?.ANTHROPIC_AUTH_TOKEN;
-      if ((!apiKey && !authToken) || (apiKey && authToken)) {
+      const nativeProfile = authorization.accessSourceId === "owner_claude_profile"
+        || authorization.accessSourceId === "owner_anthropic_profile";
+      // A selected native account cannot silently use an ambient/key route.
+      if (nativeProfile && (apiKey || authToken)) return failure(request.requestId, "provider_unavailable");
+      const nativeIdentity = nativeProfile
+        ? await resolveClaudeIdentity(AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)])) : null;
+      if ((!apiKey && !authToken && !nativeIdentity) || (apiKey && authToken)) {
         return failure(request.requestId, "provider_unavailable");
       }
-      const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+      const baseUrl = nativeProfile ? "https://api.anthropic.com"
+        : env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
       const headers = new Headers({
         accept: "text/event-stream",
         "content-type": "application/json",
       });
       if (apiKey) headers.set("x-api-key", apiKey);
       if (authToken) headers.set("authorization", `Bearer ${authToken}`);
+      if (nativeIdentity) headers.set("authorization", BearerHeaderSchema.parse(nativeIdentity.authorization));
       for (const [name, value] of Object.entries(request.headers)) {
         if (value) headers.set(name, value);
       }
+      if (nativeIdentity) headers.set("anthropic-beta",
+        [headers.get("anthropic-beta"), "oauth-2025-04-20"].filter(Boolean).join(","));
       const funded = authorization.accessSourceId === "matrix_included" ? options.fundedAdmission : undefined;
       // The runtime handle is authenticated and unique per shared run, so it keeps each turn's place in line.
       if (authorization.accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);

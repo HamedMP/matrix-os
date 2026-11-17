@@ -70,6 +70,28 @@ function fixture(driver: "codex" | "claude_code", probeMs = 0) {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("existing project Chat availability through the relay", () => {
+  it("allows composing before the owner's first model binding, which is resolved on submit", async () => {
+    const f = fixture("claude_code");
+    f.options.repository.getSharedAiCapability = async () => ({ status: "owner_binding_required" });
+    await expect(new CollaborationChatExecutionAdapter(f.options).capability(context, []))
+      .resolves.toMatchObject({ capability: { status: "available" } });
+    expect(f.authority).not.toHaveBeenCalled();
+  });
+  it("opens a project Chat without provider discovery; execution authority is not a read dependency", async () => {
+    const f = fixture("codex");
+    f.options.resolveCanonicalProviderAuthority = vi.fn(async () => { throw new Error("native discovery offline"); });
+    const adapter = new CollaborationChatExecutionAdapter(f.options);
+    await expect(adapter.capability(context, [])).resolves.toMatchObject({
+      capability: { status: "available", effectiveSelection: f.selection },
+    });
+    expect(f.options.resolveCanonicalProviderAuthority).not.toHaveBeenCalled();
+    expect(f.authority).not.toHaveBeenCalled();
+    expect(f.getCatalog).not.toHaveBeenCalled();
+    await expect(adapter.submit({ ...context, capability: "request_ai" }, {
+      clientRequestId: "10000000-0000-4000-8000-000000000009", expectedRevision: "9", text: "Hello",
+    })).rejects.toMatchObject({ code: "unavailable" });
+    expect(f.options.repository.enqueueSharedQueuedTurn).not.toHaveBeenCalled();
+  });
   it.each(["codex", "claude_code"] as const)("enables %s within the unchanged relay deadline", async driver => {
     vi.useFakeTimers();
     // Exercise the actual relay deadline with a deterministic clock, including cancellation.
@@ -97,17 +119,21 @@ describe("existing project Chat availability through the relay", () => {
     await vi.runAllTimersAsync();
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({ capability: { status: "available", effectiveSelection: f.selection } });
-    expect(f.authority).toHaveBeenCalledOnce();
-    expect(f.getCatalog).toHaveBeenCalledWith({ userId: context.ownerId, source: "jwt" }, f.selection);
+    expect(f.authority).not.toHaveBeenCalled();
+    expect(f.getCatalog).not.toHaveBeenCalled();
     relay.close();
   });
 
-  it("rechecks owner authority on the next availability read", async () => {
+  it("rechecks disabled owner authority at submission rather than locking the read-only composer", async () => {
     const f = fixture("codex");
     const adapter = new CollaborationChatExecutionAdapter(f.options);
     await expect(adapter.capability(context, [])).resolves.toMatchObject({ capability: { status: "available" } });
     f.disable();
-    await expect(adapter.capability(context, [])).resolves.toMatchObject({ capability: { status: "unavailable" } });
+    await expect(adapter.capability(context, [])).resolves.toMatchObject({ capability: { status: "available" } });
+    await expect(adapter.submit({ ...context, capability: "request_ai" }, {
+      clientRequestId: "10000000-0000-4000-8000-000000000009", expectedRevision: "9", text: "Hello",
+    })).rejects.toMatchObject({ code: "unavailable" });
+    expect(f.options.repository.enqueueSharedQueuedTurn).not.toHaveBeenCalled();
   });
 
   it("keeps inherited AI unavailable without a canonical authority resolver", async () => {

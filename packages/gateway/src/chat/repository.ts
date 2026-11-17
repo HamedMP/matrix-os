@@ -341,7 +341,8 @@ async function toPrincipalRecord(
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
     latestSuccessfulCompletionQuery(executor, row.id),
-    internalScopeId ? ownerSharedProjection(executor, owner, internalScopeId, row.id) : undefined,
+    !collaborationProjection && (internalScopeId || row.project_id)
+      ? ownerSharedProjection(executor, owner, internalScopeId, row.id, row.project_id) : undefined,
   ]);
   const effectiveProjection = collaborationProjection ?? internalProjection;
   const providerConsistentRow = await projectPersonalProviderSelection(executor, row);

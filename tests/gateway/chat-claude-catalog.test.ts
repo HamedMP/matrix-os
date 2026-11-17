@@ -30,6 +30,19 @@ function catalogService(overrides: Partial<Parameters<typeof createChatProviderC
 }
 
 describe("Claude catalog selection and CLI handoff", () => {
+  it("keeps the selectable alias but resolves isolated execution to the native wire model", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },
+    ] });
+    const service = catalogService({ codingModelCatalogSource: source });
+    expect(await service.resolveExecutionModel?.(principal, { instanceId: "claude_code_default", model: "opus" }))
+      .toBe("claude-opus-5");
+    expect(await service.resolveExecutionModel?.(principal, { instanceId: "claude_code_default", model: "invented" }))
+      .toBeNull();
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find(instance => instance.id === "claude_code_default")?.models.some(model => model.id === "opus")).toBe(true);
+    expect(JSON.stringify(catalog)).not.toContain("executionModels");
+  });
   afterEach(() => vi.useRealTimers());
   it("shows resolved versions for moving aliases and a pinned Opus 5.5 only when the runtime reports it", async () => {
     const source = createClaudeModelCatalogSource({ discover: async () => [
