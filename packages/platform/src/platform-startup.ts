@@ -52,6 +52,8 @@ import type { BillingEntitlement } from './billing.js';
 import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
+import { createConfiguredContainerSubstrate } from './substrates/container-substrate-config.js';
+import type { LambdaMicrovmsApi } from './substrates/container-provider.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   PlatformStartupConfigError,
@@ -285,6 +287,8 @@ export interface StartPlatformServerOptions {
   codeServerPort: number;
   containerProxyDispatcher: Agent;
   customerVpsProxyDispatcher: Agent;
+  /** Container substrate provider client; the substrate stays unregistered without it. */
+  containerProviderClient?: LambdaMicrovmsApi;
   createApp: CreatePlatformApp;
   checkUnsafeDefaultSecrets(): string[];
   checkCustomerVpsPrimaryStorageEnv(): string[];
@@ -1123,6 +1127,8 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
+  const containerSubstrate = createConfiguredContainerSubstrate({ db, env: appEnv, microvmsApi: opts.containerProviderClient });
+  registerCustomMcpStartupCleanup(async () => { await containerSubstrate?.shutdown(); });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1158,7 +1164,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db),
+    substrateRegistry: createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []),
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({

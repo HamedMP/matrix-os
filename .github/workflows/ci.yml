@@ -612,6 +612,11 @@ jobs:
           : "${MATRIX_ROUTINE_PROCESS_BUILD:?Exact-source process artifact required}"
           pnpm exec vitest run tests/gateway/bots/routine-process-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Container substrate and free tier PostgreSQL
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/platform/container-owner-database.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Qualify remaining real PostgreSQL suites
         run: node scripts/ci/remaining-postgres.mjs
 
