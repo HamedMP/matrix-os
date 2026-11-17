@@ -9,6 +9,7 @@ import {
   isCurrentChatElectronPreviewRun,
 } from "../../../../shared/chat-electron-preview";
 import { invoke } from "../../lib/operator";
+import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type PreviewStatus = InvokeResponse<"chat:electron-preview-run">["status"];
 const PREVIEW_STATUS: Record<PreviewStatus, string> = {
@@ -51,11 +52,17 @@ export function chatElectronPreviewWorktree(detail: CanonicalChatDetailResponse)
   return root;
 }
 
+type Worktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
+
+export type StageChatWorktreeDraft = (
+  text: string, worktree: Worktree, queryDraft: string, expiresAt?: number, backgroundTargetId?: string,
+) => boolean;
+
 interface ChatElectronPreviewProps {
   active: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
-  onDraft?: (text: string) => void;
+  onDraft?: StageChatWorktreeDraft;
 }
 
 interface PreviewAttempt {
@@ -63,14 +70,14 @@ interface PreviewAttempt {
   promise: Promise<PreviewStatus>;
 }
 
-export function ChatElectronPreview({ active, actorId, detail, onDraft }: ChatElectronPreviewProps) {
+export function useChatElectronPreview({ active, actorId, detail, onDraft }: ChatElectronPreviewProps) {
   const { chat, activeRun, projectId } = detail.record;
   const eligible = active && !!projectId && chat.lifecycle === "active" && !chat.collaboration
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId;
   const latestRun = detail.runs.at(-1);
-  const hasWorktree = chatElectronPreviewWorktree(detail) !== null;
+  const worktree = chatElectronPreviewWorktree(detail);
   const marker = latestRun && getChatElectronPreviewMarkerForRun(detail, latestRun.id);
-  const runId = eligible && !activeRun && hasWorktree && latestRun && isCurrentChatElectronPreviewRun(latestRun)
+  const runId = eligible && !activeRun && worktree && latestRun && isCurrentChatElectronPreviewRun(latestRun)
     && marker && !marker.backgroundTargetId ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -110,22 +117,22 @@ export function ChatElectronPreview({ active, actorId, detail, onDraft }: ChatEl
     return () => { current = false; };
   }, [available, chat.id, key, runId]);
 
-  if (!available || !eligible) return null;
+  const canPreview = available && eligible && worktree !== null;
+  const action: ComposerMentionAction | undefined = canPreview && !activeRun && onDraft ? {
+    label: "Request Electron preview",
+    kind: "preview",
+    keywords: "mac",
+    select: (queryDraft) => { onDraft(CHAT_ELECTRON_PREVIEW_DRAFT, worktree, queryDraft); },
+  } : undefined;
   const status = result?.key === key ? result?.status : null;
-  return (
+  const feedback = canPreview && key ? (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[var(--text-secondary)]">
-      {key ? (
-        <span role="status">{status ? PREVIEW_STATUS[status] : "Electron preview pending on this Mac…"}</span>
-      ) : null}
+      <span role="status">{status ? PREVIEW_STATUS[status] : "Electron preview pending on this Mac…"}</span>
       {status === "busy" || status === "unavailable" ? (
         <button type="button" className="rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]"
           onClick={() => setRetry(value => value + 1)}>Retry preview</button>
       ) : null}
-      {onDraft && hasWorktree ? (
-        <button type="button" className="rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]"
-          onClick={() => onDraft(CHAT_ELECTRON_PREVIEW_DRAFT)}>Request Electron preview</button>
-      ) : null}
-      {!hasWorktree ? <span>Open a Chat with a run in an isolated worktree to request an Electron preview.</span> : null}
     </div>
-  );
+  ) : null;
+  return { action, available: canPreview, feedback };
 }

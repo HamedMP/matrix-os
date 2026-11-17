@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React, { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse, CanonicalChatMessage } from "@matrix-os/contracts";
-import { ChatElectronPreview } from "@desktop/renderer/src/features/chat/ChatElectronPreview";
+import { type StageChatWorktreeDraft, useChatElectronPreview } from "@desktop/renderer/src/features/chat/ChatElectronPreview";
 import {
   CHAT_ELECTRON_PREVIEW_MAX_AGE_MS,
   getChatElectronPreviewMarkerForRun,
@@ -49,8 +49,15 @@ function detailWithPreview(message: Partial<CanonicalChatMessage> = {}): Canonic
 const initialProps = {
   active: true,
   actorId: chat.ownerScope.ownerId,
-  onDraft: vi.fn(),
+  onDraft: vi.fn<StageChatWorktreeDraft>(() => true),
 };
+
+function ChatElectronPreview(props: Parameters<typeof useChatElectronPreview>[0]) {
+  const { action, feedback } = useChatElectronPreview(props);
+  return <>{feedback}
+    {action ? <button type="button" onClick={() => action.select("@electron")}>{action.label}</button> : null}
+  </>;
+}
 
 function previewBridge(firstStatus = "returned") {
   const invoke = vi.fn().mockResolvedValueOnce({ available: true }).mockResolvedValueOnce({ status: firstStatus });
@@ -119,7 +126,8 @@ describe("Electron Chat preview", () => {
         await screen.findByRole("button", { name: "Request Electron preview" });
       }
       if (reason === "wrong-root") {
-        await screen.findByText(/Open a Chat with a run in an isolated worktree/);
+        await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat:electron-preview-available", {}));
+        expect(screen.queryByRole("button", { name: "Request Electron preview" })).toBeNull();
       }
       expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
     },
