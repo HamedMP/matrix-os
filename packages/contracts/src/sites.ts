@@ -93,6 +93,9 @@ export function validateSiteForm(form: SiteForm, input: unknown) {
 const title = z.string().trim().min(1).max(200);
 const description = z.string().trim().max(1000);
 const baseRevision = z.number().int().min(0).max(2_147_483_647);
+// `private_link` (one-time links, spec 2690) is retired for new use (ENG-490). It stays
+// readable for legacy records, and write schemas still accept it so older clients that
+// echo a legacy site's current mode keep working; the platform rejects any change INTO it.
 export const SiteAccessModeSchema = z.enum(["public", "private_link"]);
 export const SiteOwnerMutationSchema = z.object({
   title: title.optional(), description: description.optional(),
