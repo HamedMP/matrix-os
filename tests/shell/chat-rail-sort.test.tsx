@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { createBotClient } from "../../packages/ui/src/chat-agents/bots/client";
+import { ChatAgentsWorkspace } from "@matrix-os/ui";
 import { RenameableConversationRow } from "../../shell/src/components/chat/ChatTitleRename";
 import { WebChatSearchDialog } from "../../shell/src/components/chat/WebChatSearchDialog";
 import { useGlobalShortcuts } from "../../shell/src/hooks/useGlobalShortcuts";
@@ -9,6 +11,7 @@ import { ChatApp } from "../../shell/src/components/ChatApp";
 import { useWebChatRailOrder } from "../../shell/src/components/chat/useWebChatRailOrder";
 import { clientFixture } from "../desktop/chat-agents-fixture";
 vi.mock("@clerk/nextjs",async original=>({...await original<typeof import("@clerk/nextjs")>(),useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
+vi.mock("../../shell/src/components/chat/SharedWithMeNav",()=>({SharedWithMeNav:({onOpen}:{onOpen():void})=><button onClick={onOpen}>Shared with me</button>}));
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 it("shows Web search without filter or sorting controls",async()=> {
   vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
@@ -168,4 +171,38 @@ it.each(["Projects", "Shared"])("finishes local %s filtering without an unissued
   expect(screen.queryByText("Searching all chats…")).toBeNull();
   expect(search).not.toHaveBeenCalled();
   if(scope==="Projects") expect(screen.getByRole("option",{name:/Local project/})).toBeTruthy();
+});
+
+it.each(['Agents','Schedules','Shared with me','Shared from Search'])('leaves the archive when opening %s',async destination=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ const client={...clientFixture(),bots:createBotClient(async()=>{throw new Error('ScheduleFixtureUnavailable');})};vi.stubGlobal('fetch',vi.fn(async()=>Response.json(await client.catalog())));
+ const shared=vi.fn();const api={list:vi.fn(async()=>({items:[]})),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
+ render(<ChatAgentsWorkspace><ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} archiveClient={api} onOpenSharedHome={shared}/></ChatAgentsWorkspace>);
+ await screen.findByRole("button",{name:"Agents",exact:true});
+ fireEvent.click(screen.getByRole('button',{name:'Search chats'}));fireEvent.click(screen.getByRole('tab',{name:'Archived',exact:true}));fireEvent.click(screen.getByRole('button',{name:'Open archived list'}));
+ expect(screen.getByRole('region',{name:'Archived chats'})).toBeTruthy();
+ if(destination==='Shared from Search'){
+  fireEvent.click(screen.getByRole('button',{name:'Search chats'}));fireEvent.click(screen.getByRole('tab',{name:'Shared',exact:true}));
+  fireEvent.click(screen.getByRole('button',{name:'Shared with me',exact:true}));
+ }else fireEvent.click(screen.getByRole('button',{name:destination,exact:true}));
+ expect(screen.queryByRole('region',{name:'Archived chats'})).toBeNull();
+ if(destination.startsWith('Shared'))expect(shared).toHaveBeenCalledOnce();
+});
+
+it.each(['keyboard','drag'])('reorders independently paged status and project rows using %s, including chats outside the initial rail',async action=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({projects:[{id:'proj_local',slug:'local',name:'Local project'}]})));
+ const items=['a','b'].map(id=>({chat:{id,title:id.toUpperCase(),revision:1,lifecycle:'active',attention:'none',messageCount:1,createdAt:'2026-11-17T00:00:00Z',updatedAt:'2026-11-17T00:00:00Z'},projectId:'proj_local',readState:{unread:false,markedUnread:false,readThroughSeq:0},classification:'done'}));
+ const load=vi.fn(async({group}:{group:string})=>({items:group==='done'||group==='project'?items:[],totalCount:group==='done'||group==='project'?2:0}));
+ render(<ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} loadNavigationPage={load as never}/>);
+ const done=await screen.findByRole('region',{name:'Done'});
+ await within(done).findByRole('button',{name:'B',exact:true});
+ fireEvent.click(await screen.findByRole('button',{name:'Expand Local project chats'}));
+ const projects=screen.getByRole('navigation',{name:'Projects'});await within(projects).findByRole('button',{name:'B',exact:true});
+ const ids=(root:HTMLElement)=>[...root.querySelectorAll<HTMLElement>('[data-rail-order-kind="chat"]')].map(row=>row.dataset.railOrderId);
+ expect(ids(done)).toEqual(['a','b']);
+ if(action==='keyboard')fireEvent.keyDown(within(done).getByRole('button',{name:'B',exact:true}),{key:'ArrowUp',altKey:true});
+ else{const values=new Map<string,string>();const dataTransfer={effectAllowed:'',dropEffect:'',types:['application/x-matrix-chat-rail'],setData:(key:string,value:string)=>values.set(key,value),getData:(key:string)=>values.get(key)??''};fireEvent.dragStart(done.querySelector('[data-rail-order-id="b"]')!,{dataTransfer});fireEvent.drop(done.querySelector('[data-rail-order-id="a"]')!,{dataTransfer});}
+ await waitFor(()=>expect(ids(done)).toEqual(['b','a']));
+ expect(ids(projects)).toEqual(['b','a']);
 });

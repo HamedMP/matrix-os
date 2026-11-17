@@ -1,7 +1,8 @@
-import React, { Fragment, useState, type ReactNode } from 'react';
-import { ChatRailSection, filterChatsByImportSource, resolveCanonicalChatLifecycleGroup, type ChatImportSourceFilterValue } from '@matrix-os/ui';
+import React, { Fragment, useContext, useState, type ReactNode } from 'react';
+import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, resolveCanonicalChatLifecycleGroup, type ChatImportSourceFilterValue } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from '@matrix-os/contracts';
+import { orderWebChatRows } from "./web-chat-row-order";
 import { usePagedStatusGroup } from './usePagedStatusGroup';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
@@ -27,6 +28,7 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
   sourceFilter?: ChatImportSourceFilterValue;
   conversations: readonly RenameableConversation[]; projects?: ReactNode; attention?: ReactNode; renderRow(item: RenameableConversation): ReactNode;
 }) {
+  const order = useContext(ChatRailOrderContext);
   const groups = groupWebChats(conversations);
   const pinnedPage = usePagedStatusGroup('pinned', loadPage, scopeKey, navigationUpdatedAt);
   const needsPage = usePagedStatusGroup('needsYou', loadPage, scopeKey, navigationUpdatedAt);
@@ -38,9 +40,10 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
   if (current.scopeKey !== scopeKey) { current = {scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}; setState(current); }
   const section = (key: GroupKey, label: string, extra?: ReactNode) => {
     const page = pages[key];
-    const rows = page && loadPage && !page.loading && !page.error || page && loadPage && page.rows.length
+    const unordered = page && loadPage && !page.loading && !page.error || page && loadPage && page.rows.length
       ? filterChatsByImportSource(page!.rows.filter(row => !excludedChatIds?.includes(row.id) && (!unreadOnly || row.readState?.unread)), sourceFilter, row => row.canonicalRecord?.importSource)
       : loadPage ? groups[key].slice(0, 10) : groups[key];
+    const rows = orderWebChatRows(unordered, order.chatIds, row=>row.id);
     const count = page && loadPage && (page.rows.length > 0 || !page.loading && !page.error) ? page.count : groups[key].length;
     return rows.length || extra || key !== "pinned" || Boolean(page?.cursor && loadPage) ? <ChatRailSection key={key} label={label}
     count={count + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}

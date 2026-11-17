@@ -524,7 +524,7 @@ it("keeps known project chats keyboard reorderable inside their project", async 
   const row = within(nav).getByRole("button", { name: "Chat 1" }).closest<HTMLElement>("[data-rail-order-id]");
   expect(row?.dataset.railOrderGroup).toBe("project:proj_france");
   fireEvent.keyDown(row!, { altKey: true, key: "ArrowDown" });
-  expect(move).toHaveBeenCalledWith("chat", "chat_1", "chat_2");
+  expect(move).toHaveBeenCalledWith("chat", "chat_1", "chat_2", ["chat_1", "chat_2"]);
 });
 
 it("pages past known chats and retries a failed older-chat page", async () => {

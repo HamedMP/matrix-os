@@ -613,7 +613,7 @@ function ChatAppContent({
         </ShellNotificationPortal>
       )}
       {/* Sidebar */}
-      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
+      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,chatIds:railOrder.manualIds,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
         className={`z-20 flex flex-col border-r border-sidebar-border bg-background text-foreground backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[240px]"
@@ -664,10 +664,12 @@ function ChatAppContent({
           && webProjects.projects.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {onOpenSharedHome && !focusedProject ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
+          if (isCurrentAuthority && !isCurrentAuthority()) return;
+          setArchivesOpen(false);
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2" hidden={Boolean(focusedProject)}><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={openProviderSettings} /></div>
+        <div className="px-2 pb-2" hidden={Boolean(focusedProject)}><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { setArchivesOpen(false); if (mobile) setSidebarOpen(false); }} onSetup={openProviderSettings} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -719,7 +721,7 @@ function ChatAppContent({
 
       {!mobile && searchOpen ? <WebChatSearchDialog key={JSON.stringify([authorityKey, projectGatewayUrl])} client={pageClient} search={searchConversations}
         recent={conversations.flatMap(item => item.canonicalRecord ? [item.canonicalRecord] : [])} projects={webProjects.projects} centerX={searchCenter} bounds={searchBounds}
-        onClose={() => setSearchOpen(false)} onSelect={onSwitchConversation} onProject={openProjectHome} onShared={onOpenSharedHome}
+        onClose={() => setSearchOpen(false)} onSelect={onSwitchConversation} onProject={openProjectHome} onShared={onOpenSharedHome ? () => { if (isCurrentAuthority && !isCurrentAuthority()) return; setArchivesOpen(false); onOpenSharedHome(); } : undefined}
         onOpenArchived={() => setArchivesOpen(true)} onRestored={onRestored}/> : null}
       {!mobile && archivesOpen && archiveClient ? <div className="relative flex min-w-0 flex-1">{!sidebarOpen ? <div className="absolute left-2 top-2 z-10">{sidebarToggle}</div> : null}<ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
         client={pageClient!} projects={webProjects.projects} onChanged={historyChanged}/></div> : null}

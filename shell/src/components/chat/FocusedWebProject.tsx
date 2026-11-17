@@ -1,13 +1,14 @@
 "use client";
 
-import { ChatRailSection, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { ChevronLeft } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
 import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus, withRenamedProjectTitles } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
+import { orderWebChatRows } from "./web-chat-row-order";
 import { WebProjectArchiveAction } from "./WebProjectArchiveAction";
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
@@ -40,8 +41,10 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();
   // Paged rows only fill in Chats outside navigation; listed ones keep their lifecycle section.
-  const older = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
+  const order = useContext(ChatRailOrderContext);
+  const unorderedOlder = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
+  const older = orderWebChatRows(unorderedOlder, order.chatIds, row=>row.id);
   const empty = chats.length === 0 && older.length === 0;
   return <>
     <div className="matrix-web-project-header" data-mobile={mobile || undefined}>
