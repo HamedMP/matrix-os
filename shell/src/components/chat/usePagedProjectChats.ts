@@ -1,5 +1,5 @@
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import type { WebProject } from "./web-projects";
 import type { CanonicalChatNavigationItem, CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
@@ -28,8 +28,8 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0) {
-  const initialCursors = (): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) });
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0, membershipVersion = "") {
+  const initialCursors = useCallback((): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) }), [project.id, project.slug]);
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
   const [pageCursors, setPageCursors] = useState<PageCursors>(initialCursors);
@@ -47,7 +47,17 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
     setLoading(expanded);
     setError(false);
     setRetryCount(value => value + 1);
-  }, [refreshVersion, expanded]);
+  }, [refreshVersion, expanded, initialCursors]);
+
+  const previousMembership = useRef(membershipVersion);
+  useEffect(() => {
+    if (previousMembership.current === membershipVersion) return;
+    previousMembership.current = membershipVersion;
+    setPageCursors(initialCursors());
+    setError(false);
+    setLoading(expanded);
+    setRetryCount(value => value + 1);
+  }, [membershipVersion, expanded, initialCursors]);
 
   // Each project source is paged independently, and closing or changing the
   // authority aborts both reads.
@@ -78,6 +88,10 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
           if (!previous.some(item => item.id === row.id) && !additions.some(item => item.id === row.id)) additions.push(row);
         }
         // Keep a bounded window while the cursor continues through full history.
+        if (sources.some(source => source.cursor === null)) {
+          const uniqueRows = rows.filter((row, index) => rows.findIndex(item => item.id === row.id) === index);
+          return [...uniqueRows, ...previous.filter(row => !uniqueRows.some(item => item.id === row.id))].slice(0, MAX_RETAINED_PROJECT_ROWS);
+        }
         return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};

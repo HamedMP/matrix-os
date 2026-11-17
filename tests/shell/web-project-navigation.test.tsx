@@ -737,3 +737,16 @@ it("continues paging older project chats beyond 1,000 rows with a bounded window
   expect(result.current.hasMore).toBe(true);
   expect(request).toHaveBeenCalledTimes(22);
 });
+
+it("refreshes an expanded server-paged project when a new live chat joins it", async()=>{
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[{id:"proj_new",slug:"proj_new",name:"New project"}]})));
+ const row=(id:string,title:string)=>({chat:{id,title,revision:1,titleVersion:1,lifecycle:"active",attention:"none",messageCount:1,createdAt:"2026-11-17T00:00:00Z",updatedAt:"2026-11-17T00:00:00Z"},projectId:"proj_new",classification:"done",persistence:"durable"});
+ let items=[row("chat_first","First project chat")];const load=vi.fn(async()=>({items,totalCount:items.length}));
+ const view=render(<Nav gatewayUrl="https://runtime.test" scopeKey="owner/main" loadNavigationPage={load as never}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"Expand New project chats"}));await screen.findByRole("button",{name:"First project chat"});
+ items=[row("chat_new","New live chat"),...items];
+ const live={id:"chat_new",title:"New live chat",preview:"",messageCount:1,updatedAt:2,canonicalRecord:items[0]} as never;
+ view.rerender(<Nav gatewayUrl="https://runtime.test" scopeKey="owner/main" loadNavigationPage={load as never} chats={[live]}/>);
+ expect(await screen.findByRole("button",{name:"New live chat"})).toBeTruthy();
+ expect(load.mock.calls.length).toBeGreaterThan(1);
+});

@@ -156,7 +156,7 @@ export function RenameableConversationRow({
             onRenameStart();
           }, 0);
         },
-    }] : []), ...(moveItems ? [{label:"Move to project",disabled:Boolean(conversation.canonicalRecord?.activeRun),children:moveItems}] : []), ...(onArchive ? [{
+    }] : []), ...(moveItems ? [{label:"Move to project",disabled:Boolean(conversation.canonicalRecord?.activeRun),children:moveItems}] : []), ...(onToggleRead ? [{ label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead }] : []), ...(onArchive ? [{
         label: "Archive", disabled: Boolean(conversation.canonicalRecord?.activeRun), onSelect: onArchive,
     }] : []), ...(onDelete ? [{
         // Open after the menu closes so the dialog receives focus.

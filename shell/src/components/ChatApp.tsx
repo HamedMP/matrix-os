@@ -319,9 +319,12 @@ function ChatAppContent({
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCenter, setSearchCenter] = useState<number>();
+  const [searchBounds, setSearchBounds] = useState<{left:number;right:number}>();
   const revealSearch = () => {
     const root = rootRef.current?.getBoundingClientRect();
-    setSearchCenter(root ? root.left + (root.width + (sidebarOpen ? 240 : 0)) / 2 : undefined);
+    const bounds = root?.width ? {left:root.left,right:root.right} : {left:0,right:window.innerWidth};
+    setSearchBounds(bounds);
+    setSearchCenter(root?.width ? root.left + (root.width + (sidebarOpen ? 240 : 0)) / 2 : window.innerWidth / 2);
     setSearchOpen(true);
   };
   const agentDraftSequence = useRef(0);
@@ -714,11 +717,11 @@ function ChatAppContent({
       </aside></ChatRailOrderContext.Provider>
 
       {!mobile && searchOpen ? <WebChatSearchDialog key={JSON.stringify([authorityKey, projectGatewayUrl])} client={pageClient} search={searchConversations}
-        recent={conversations.flatMap(item => item.canonicalRecord ? [item.canonicalRecord] : [])} projects={webProjects.projects} centerX={searchCenter}
+        recent={conversations.flatMap(item => item.canonicalRecord ? [item.canonicalRecord] : [])} projects={webProjects.projects} centerX={searchCenter} bounds={searchBounds}
         onClose={() => setSearchOpen(false)} onSelect={onSwitchConversation} onProject={openProjectHome} onShared={onOpenSharedHome}
         onOpenArchived={() => setArchivesOpen(true)} onRestored={onRestored}/> : null}
-      {!mobile && archivesOpen && archiveClient ? <ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
-        client={pageClient!} projects={webProjects.projects} onChanged={historyChanged}/> : null}
+      {!mobile && archivesOpen && archiveClient ? <div className="relative flex min-w-0 flex-1">{!sidebarOpen ? <div className="absolute left-2 top-2 z-10">{sidebarToggle}</div> : null}<ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
+        client={pageClient!} projects={webProjects.projects} onChanged={historyChanged}/></div> : null}
       {/* Main content */}
       {!archivesOpen || mobile ? <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
         providerCatalog={agentProviderCatalog} headerLeading={sidebarToggle}>

@@ -35,7 +35,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
   refreshVersion?: number;
 }) {
-  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion);
+  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"));
   const [olderExpanded, setOlderExpanded] = useState(true);
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();

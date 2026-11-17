@@ -3,6 +3,8 @@ import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RenameableConversationRow } from "../../shell/src/components/chat/ChatTitleRename";
+import { WebChatSearchDialog } from "../../shell/src/components/chat/WebChatSearchDialog";
+import { useGlobalShortcuts } from "../../shell/src/hooks/useGlobalShortcuts";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { useWebChatRailOrder } from "../../shell/src/components/chat/useWebChatRailOrder";
 import { clientFixture } from "../desktop/chat-agents-fixture";
@@ -122,4 +124,38 @@ it("archives the selected idle chat with the displayed desktop shortcut", async 
   await act(async()=>{render(<ChatApp messages={[]} sessionId="chat_shortcut" busy={false} connected conversations={[{id:"chat_shortcut",title:"Shortcut chat",preview:"",messageCount:1,updatedAt:1}]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} onArchiveConversation={archive} agentClient={client}/>);await Promise.resolve();});
   fireEvent.keyDown(window,{key:"a",metaKey:true,shiftKey:true});
   await waitFor(()=>expect(archive).toHaveBeenCalledWith("chat_shortcut"));
+});
+
+it.each([false,true])("keeps the read-state action available in the Web row menu (unread=%s)", async unread=>{
+ const toggle=vi.fn();
+ render(<RenameableConversationRow conversation={{id:"chat_read",title:"Read chat",preview:"",messageCount:1,updatedAt:1,readState:{unread,version:1,latestIncomingSeq:1,readThroughSeq:0,markedUnread:unread}}} active={false} mobile={false} editing={false} renamePending={false} onSelect={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onToggleRead={toggle}/>);
+ fireEvent.pointerDown(screen.getByRole("button",{name:"Actions for Read chat"}),{button:0,ctrlKey:false});
+ fireEvent.click(await screen.findByRole("menuitem",{name:unread?"Mark as read":"Mark as unread",exact:true}));
+ expect(toggle).toHaveBeenCalledOnce();
+});
+it("keeps archive navigation visible when Search was opened with the sidebar collapsed", async()=>{
+ vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[]})));
+ const api={list:vi.fn(async()=>({items:[]})),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
+ function Harness(){useGlobalShortcuts(()=>{},false);return <ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} archiveClient={api}/>;}
+ render(<Harness/>);
+ fireEvent.click(screen.getByRole("button",{name:"Close Chat sidebar"}));
+ fireEvent.keyDown(window,{key:"k",metaKey:true});
+ fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+ fireEvent.click(screen.getByRole("button",{name:"Open Chat sidebar"}));
+ expect(screen.getByRole("button",{name:"Search chats"})).toBeTruthy();
+});
+it("continues search history past 500 results while retaining a bounded visible window", async()=>{
+ let page=0;
+ const api={list:vi.fn(async()=>{const start=page++*50;return{items:Array.from({length:50},(_,i)=>({chat:{id:`chat_${start+i}`,title:`Archive ${start+i}`,revision:1,lifecycle:"archived",updatedAt:"2026-11-17T00:00:00Z",createdAt:"2026-11-17T00:00:00Z"}})),nextCursor:`cursor_${page}`};}),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
+ render(<WebChatSearchDialog client={api as never} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
+ fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));await screen.findByText("Archive 49");
+ for(let i=1;i<=10;i++){fireEvent.click(screen.getByRole("button",{name:"Show more"}));await screen.findByText(`Archive ${i*50+49}`);}
+ expect(api.list).toHaveBeenCalledTimes(11);expect(screen.queryByText("Archive 0")).toBeNull();
+ expect(screen.getAllByRole("option")).toHaveLength(500);
+},20000);
+
+it("keeps Search inside a smaller Web window instead of clipping its right edge",()=>{
+ render(<WebChatSearchDialog centerX={490} bounds={{left:0,right:740}} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
+ expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('424px');
 });
