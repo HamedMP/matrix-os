@@ -9,8 +9,9 @@ export const MAX_RELEASE_NOTES_ITEMS = 30;
 export const MAX_RELEASE_NOTES_HIDDEN = 300;
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-// A bare file name inside release-notes/media/. No URLs, paths or SVG.
-const RELEASE_MEDIA_PATTERN = /^[a-z0-9][a-z0-9._-]{0,94}\.(?:webp|png|jpe?g|avif)$/i;
+// A bare, lowercase file name inside release-notes/media/. No URLs, paths or
+// SVG. Lowercase only, because the renderer bundles exactly these extensions.
+const RELEASE_MEDIA_PATTERN = /^[a-z0-9][a-z0-9._-]{0,94}\.(?:webp|png|jpe?g|avif)$/;
 
 export const RELEASE_NOTES_CHANNELS = ["dev", "canary", "beta", "stable"] as const;
 export const RELEASE_NOTES_SURFACES = [

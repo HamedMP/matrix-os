@@ -66,6 +66,17 @@ describe("release notes validator", () => {
     expect((await validateReleaseNotesDirectory(dir)).errors).toEqual([]);
   });
 
+  it("rejects an uppercase media extension even when the file exists", async () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, "media"));
+    writeFileSync(join(dir, "media", "status.PNG"), "");
+    writeFileSync(
+      join(dir, "0.2.0.json"),
+      JSON.stringify(notes("0.2.0", { highlights: [{ title: "x", body: "y", media: "status.PNG" }] })),
+    );
+    expect((await validateReleaseNotesDirectory(dir)).errors).not.toEqual([]);
+  });
+
   it("exits non-zero from the command line when a file is invalid", () => {
     const dir = tempDir();
     writeFileSync(join(dir, "0.1.1.json"), "{ not json");

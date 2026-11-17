@@ -157,6 +157,26 @@ describe("What's New dialog", () => {
     });
   });
 
+  it("links a channel entry without a build stamp to the channel's releases", async () => {
+    const channelCatalog = buildReleaseNotesCatalog(
+      { "/r/0.1.24-canary.json": { ...catalog[0], version: "0.1.24-canary" } },
+      vi.fn(),
+    );
+    useDesktopUpdate.setState({ release: null, whatsNewOpen: true });
+    render(
+      <Tooltip.Provider>
+        <WhatsNewDialog catalog={channelCatalog} />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Technical release notes ↗" }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("shell:open-external", {
+        url: "https://github.com/HamedMP/matrix-os/releases?q=desktop-v0.1.24-canary&expanded=true",
+      });
+    });
+  });
+
   it("opens on demand from the account menu without an update", () => {
     renderDialog();
     expect(screen.queryByRole("dialog", { name: "What's New" })).toBeNull();

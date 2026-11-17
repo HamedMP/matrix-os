@@ -19,7 +19,11 @@ body, which the dialog links as "Technical release notes".
 
 ## Scope
 
-- Version: the argument, or `desktop/package.json` `version` when omitted.
+- Version: the argument, or derived from `desktop/package.json` `version`
+  when omitted. Drop any prerelease suffix to get the base `X.Y.Z`. On
+  `canary` the version is `X.Y.Z-canary`: canary builds ship as
+  `X.Y.Z-canary.<stamp>` and only a `-canary` entry matches every one of
+  them. On `dev`, `beta`, and `stable` use the exact release version.
 - Channel: `canary` by default; also `dev`, `beta`, or `stable`.
 - Range: everything merged to `main` since the previous release on that
   channel. Desktop releases are tagged `desktop-v<version>` (immutable) and
@@ -64,7 +68,7 @@ body, which the dialog links as "Technical release notes".
 
    ```json
    {
-     "version": "0.1.24",
+     "version": "0.1.24-canary",
      "channel": "canary",
      "date": "2026-11-16",
      "locale": "en",
@@ -95,7 +99,7 @@ body, which the dialog links as "Technical release notes".
    - `tone`: `lime`, `teal`, `sand`, or `ink`. Give neighbouring highlights
      different tones; `ink` suits terminal and developer features.
    Omitted values fall back by position, so set them explicitly. An optional
-   `media` image (a bare file name in `release-notes/media/`: webp, png, jpg,
+   `media` image (a bare, lowercase file name in `release-notes/media/`: webp, png, jpg,
    or avif, ideally under 300 KB) replaces the illustration. Take screenshots
    from the live running build, never mockups.
 5. **Validate.** `bun run release-notes:validate` (or

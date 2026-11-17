@@ -6,11 +6,10 @@ import { Dialog } from "../../design/primitives";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { useDesktopUpdate } from "../../stores/desktop-update";
-import { BUNDLED_RELEASE_NOTES, whatsNewEntries, type WhatsNewEntry } from "./release-notes-catalog";
+import { BUNDLED_RELEASE_NOTES, technicalReleaseNotesUrl, whatsNewEntries, type WhatsNewEntry } from "./release-notes-catalog";
 import { whatsNewPreviewRequested } from "./whats-new-preview";
 import { MarkdownReleaseBody, ReleaseHero, StructuredReleaseBody, tint } from "./WhatsNewRelease";
 
-const RELEASES_URL = "https://github.com/HamedMP/matrix-os/releases/tag/desktop-v";
 
 const CHANNELS: Record<ReleaseNotesChannel, { label: string; color: string }> = {
   dev: { label: "Dev", color: "var(--status-todo)" },
@@ -117,7 +116,7 @@ function ReleaseView({ entry, installedVersion, onClose }: {
 
   const openTechnicalNotes = () => {
     void invoke("shell:open-external", {
-      url: `${RELEASES_URL}${encodeURIComponent(entry.version)}`,
+      url: technicalReleaseNotesUrl(entry.version),
     }).catch((err: unknown) => {
       console.warn("[whats-new] could not open technical release notes:", diagnosticErrorKind(err));
     });

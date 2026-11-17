@@ -10,6 +10,7 @@ import {
   BUNDLED_RELEASE_NOTES,
   buildReleaseNotesCatalog,
   releaseNotesForVersion,
+  technicalReleaseNotesUrl,
   whatsNewEntries,
 } from "../../desktop/src/renderer/src/features/updates/release-notes-catalog";
 import { resolveHighlightArt } from "../../desktop/src/renderer/src/features/updates/highlight-art";
@@ -55,6 +56,14 @@ describe("release notes schema", () => {
     expect(withMedia("agent-status.webp")).toBe(true);
     expect(withMedia("https://tracker.example/pixel.png")).toBe(false);
     expect(withMedia("../secret.png")).toBe(false);
+  });
+
+  it("rejects uppercase media names the renderer would not bundle", () => {
+    const withMedia = (media: string) =>
+      ReleaseNotesSchema.safeParse({ ...valid, highlights: [{ title: "x", body: "y", media }] }).success;
+    expect(withMedia("status.png")).toBe(true);
+    expect(withMedia("status.PNG")).toBe(false);
+    expect(withMedia("Status.webp")).toBe(false);
   });
 
   it("orders versions numerically, with prereleases before their release", () => {
@@ -176,6 +185,21 @@ describe("release notes catalog", () => {
 
   it("orders history by release date, so a newer canary on an older base comes first", () => {
     expect(canaryCatalog().map((entry) => entry.version)).toEqual(["0.1.24-canary", "0.1.29", "0.1.24"]);
+  });
+});
+
+describe("technical release notes link", () => {
+  it("links an exact release to its immutable tag", () => {
+    expect(technicalReleaseNotesUrl("0.1.24")).toBe("https://github.com/HamedMP/matrix-os/releases/tag/desktop-v0.1.24");
+    expect(technicalReleaseNotesUrl("0.1.24-canary.20261116212926")).toBe(
+      "https://github.com/HamedMP/matrix-os/releases/tag/desktop-v0.1.24-canary.20261116212926",
+    );
+  });
+
+  it("links a channel entry without a build stamp to that channel's releases", () => {
+    expect(technicalReleaseNotesUrl("0.1.24-canary")).toBe(
+      "https://github.com/HamedMP/matrix-os/releases?q=desktop-v0.1.24-canary&expanded=true",
+    );
   });
 });
 

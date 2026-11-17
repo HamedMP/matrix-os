@@ -137,6 +137,20 @@ const BUNDLED_MEDIA: Record<string, string> = Object.fromEntries(
   ).map(([path, url]) => [fileName(path), url]),
 );
 
+const RELEASES_URL = "https://github.com/HamedMP/matrix-os/releases";
+
+/**
+ * GitHub page with the engineering notes for a version. A channel entry such
+ * as `0.1.24-canary` has no release of its own (each build is tagged
+ * `desktop-v0.1.24-canary.<stamp>`), so it opens that channel's releases.
+ */
+export function technicalReleaseNotesUrl(version: string): string {
+  if (/^\d+\.\d+\.\d+-(?:dev|canary|beta)$/.test(version)) {
+    return `${RELEASES_URL}?q=${encodeURIComponent(`desktop-v${version}`)}&expanded=true`;
+  }
+  return `${RELEASES_URL}/tag/desktop-v${encodeURIComponent(version)}`;
+}
+
 export function releaseNotesMediaUrl(media: string | undefined): string | null {
   if (!media) return null;
   return BUNDLED_MEDIA[media] ?? null;
