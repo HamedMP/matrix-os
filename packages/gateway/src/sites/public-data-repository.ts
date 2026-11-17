@@ -209,7 +209,14 @@ export class SitePublicDataRepository {
       await sql`SET LOCAL lock_timeout = '2s'`.execute(trx);
       const log: LogEntry[] = [];
       const outcome = await work(trx, log);
-      if (log.length > 0) await this.writeLog(trx, capability, log);
+      if (log.length > 0) {
+        try { await this.writeLog(trx, capability, log); }
+        catch (error: unknown) {
+          // A log failure is a server fault, never the visitor's payload; the write rolls back with it.
+          console.warn("[sites] Public data write log failed", error instanceof Error ? error.name : "UnknownError", sqlState(error) ?? "");
+          throw new SitePublicDataError("unavailable");
+        }
+      }
       return outcome;
     });
   }

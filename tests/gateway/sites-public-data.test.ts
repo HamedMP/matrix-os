@@ -102,7 +102,7 @@ describe("public site visitor data at the owner gateway", () => {
     await sql`ALTER TABLE public._site_visitor_writes ADD CONSTRAINT reject_all CHECK (false) NOT VALID`.execute(created.kysely);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await call(db({ action: "insert", table: "tasks", data: { title: "Plan" } }));
-    expect(result.status).toBe(400);
+    expect(result).toEqual({ status: 503, body: { error: "Shared data is unavailable" } });
     expect((await sql<any>`SELECT count(*)::int AS count FROM "tasks-lab".tasks`.execute(created.kysely)).rows[0].count).toBe(0);
     expect(changes).toEqual([]);
     warn.mockRestore();
