@@ -1137,7 +1137,7 @@ describe("WorkTab rail integration", () => {
     const hostedMain = within(hostedMainElement);
     expect(hostedMain.queryByRole("heading", { name: "Global chat" })).toBeNull();
     expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
-    expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(hostedMainElement.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
     expect(screen.getByTestId("right-pane-width").textContent).toBe("400");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
@@ -1278,7 +1278,7 @@ describe("WorkTab rail integration", () => {
     await screen.findByText("Chat center");
 
     expect(screen.getByTestId("draft-chrome").textContent).toBe("");
-    expect(document.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(document.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
   });
 
   it("returns a stale narrow inspector to Chat when Work becomes inactive", async () => {

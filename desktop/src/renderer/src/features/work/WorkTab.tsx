@@ -754,6 +754,7 @@ function WorkTabContent({
       ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
       : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
+    actionsBeforeRightPane: true,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: archiveNavigation?.open || agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
@@ -789,17 +790,11 @@ function WorkTabContent({
     <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}`} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${hostedChrome && hasInspector ? "[&_[data-slot=shared-chat-surface]]:pt-12" : ""}`}
+      data-chat-header-reserved={hostedChrome && hasInspector || undefined}
       data-layout={layout}
       data-pane={layout === "narrow" ? narrowPane : undefined}
     >
-      {hostedChrome && hasInspector ? (
-        <div
-          data-work-main-header
-          aria-hidden="true"
-          className="h-12 shrink-0"
-        />
-      ) : null}
       {renameChatError ? (
         <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
           {renameChatError}

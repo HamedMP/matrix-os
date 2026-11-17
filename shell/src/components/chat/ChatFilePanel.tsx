@@ -10,6 +10,7 @@ import {
   type FileResourceRef,
 } from "@matrix-os/contracts";
 import {
+  ChatInspectorFileHeader,
   FilePreviewContent,
   filePreviewContentUrl,
   filePreviewMetadataUrl,
@@ -57,7 +58,7 @@ async function loadPreviewText(url: string, maxBytes: number, gatewayUrl?: strin
   return (await loadPreviewBlob(url, maxBytes, gatewayUrl)).text();
 }
 
-export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl }: { path: string; onClose: () => void; embedded?: boolean; gatewayUrl?: string }) {
+export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onExpand }: { path: string; onClose: () => void; embedded?: boolean; gatewayUrl?: string; onExpand?(): void }) {
   // These identities control FilePreviewContent's fetch/object-URL lifetime.
   const loadBlob = useCallback((url: string, maxBytes: number) => loadPreviewBlob(url, maxBytes, gatewayUrl), [gatewayUrl]);
   const loadText = useCallback((url: string, maxBytes: number) => loadPreviewText(url, maxBytes, gatewayUrl), [gatewayUrl]);
@@ -81,8 +82,8 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl }: {
   }, [attempt, path, gatewayUrl]);
   const retry = () => setAttempt((value) => value + 1);
   return <aside aria-label="Chat file preview" className={embedded ? "flex min-h-0 w-full flex-1 flex-col bg-background" : "absolute inset-y-0 right-0 z-30 flex w-[min(100%,520px)] flex-col border-l bg-background shadow-xl"} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
-    <header className="flex items-center justify-between gap-2 border-b p-3"><span className="truncate text-sm">{path.split("/").at(-1)}</span><button ref={closeButton} type="button" onClick={onClose} className="rounded px-2 py-1 hover:bg-muted">Close preview</button></header>
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+    {embedded ? <ChatInspectorFileHeader name={path.split("/").at(-1) ?? path} path={path} onCopy={() => navigator.clipboard.writeText(path)} onExpand={onExpand}/> : <header className="flex items-center justify-between gap-2 border-b p-3"><span className="truncate text-sm">{path.split("/").at(-1)}</span><button ref={closeButton} type="button" onClick={onClose} className="rounded px-2 py-1 hover:bg-muted">Close preview</button></header>}
+    <div className={embedded ? "flex min-h-0 flex-1 overflow-auto" : "flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"}>
       {state.status === "failed" ? <div role="alert">File preview unavailable. The file may have moved or been removed.<button type="button" className="ml-2 underline" onClick={retry}>Retry</button></div>
         : state.status === "loading" ? <p role="status">Loading preview…</p>
           : <FilePreviewContent
