@@ -45,6 +45,36 @@ it("keeps Web manual order in the current client and rejects stale identity call
   act(()=>stale("chat","a","b"));
   expect(hook.result.current.chats.map(item=>item.id)).toEqual(["b","a"]);
 });
+it('preserves unrelated manual positions when moving within a project subset',()=>{
+ const items=['a','b','c','d'].map((id,index)=>({id,preview:id,messageCount:1,updatedAt:4-index}));const client={};
+ const hook=renderHook(()=>useWebChatRailOrder(items,client));
+ act(()=>hook.result.current.setMode('manual'));
+ act(()=>hook.result.current.move('chat','d','b',['b','d']));
+ expect(hook.result.current.manualIds).toEqual(['a','d','b','c']);
+});
+it('admits newly paged IDs into the bounded manual preference without evicting the active group',()=>{
+ const items=Array.from({length:1000},(_,index)=>({id:`chat_${index}`,preview:'Chat',messageCount:1,updatedAt:1000-index}));const client={};
+ const hook=renderHook(()=>useWebChatRailOrder(items,client));
+ act(()=>hook.result.current.setMode('manual'));
+ act(()=>hook.result.current.move('chat','chat_new','chat_0',['chat_new','chat_0']));
+ expect(hook.result.current.manualIds?.length).toBeLessThanOrEqual(1000);
+ expect(hook.result.current.manualIds?.slice(0,2)).toEqual(['chat_0','chat_new']);
+});
+
+it('uses the displayed group order for the first manual move when automatic server order differs',()=>{
+ const items=['a','b','c','d'].map((id,index)=>({id,preview:id,messageCount:1,updatedAt:4-index}));const client={};
+ const hook=renderHook(()=>useWebChatRailOrder(items,client));
+ act(()=>hook.result.current.move('chat','b','d',['d','b']));
+ expect(hook.result.current.mode).toBe('manual');
+ expect(hook.result.current.manualIds).toEqual(['a','b','c','d']);
+});
+it('rejects a stale reorder whose target has left the visible group',()=>{
+ const items=['a','b'].map((id,index)=>({id,preview:id,messageCount:1,updatedAt:2-index}));const client={};
+ const hook=renderHook(()=>useWebChatRailOrder(items,client));
+ act(()=>hook.result.current.move('chat','b','a',['b']));
+ expect(hook.result.current.mode).toBe('lastUpdated');
+});
+
 it("keeps legacy conversations visible when an update timestamp is outside the Date range",()=> {
   const items=[{id:"invalid",preview:"Invalid date",messageCount:1,updatedAt:1e30},{id:"valid",preview:"Valid date",messageCount:1,updatedAt:2}];
   const client={};
