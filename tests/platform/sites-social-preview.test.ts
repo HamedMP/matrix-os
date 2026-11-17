@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { Kysely, sql } from 'kysely';
+import { Kysely, sql, type KyselyPlugin } from 'kysely';
 import { KyselyPGlite } from 'kysely-pglite';
 import { JSDOM } from 'jsdom';
 import type { SiteRecord } from '@matrix-os/contracts';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import { insertUserMachine, type PlatformDatabase } from '../../packages/platform/src/db.js';
+import { insertUserMachine, type PlatformDatabase, type PlatformDB } from '../../packages/platform/src/db.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
@@ -171,6 +171,39 @@ describe('public page and management routes', () => {
     const after = meta(await (await visit(siteId)).text());
     expect(after.read('og:image')).toBeNull();
     expect(after.read('twitter:card')).toBe('summary');
+  });
+
+  it('never reads the build file list on a public page request, only a yes/no for the chosen image', async () => {
+    // Largest allowed build: 200 file entries, the chosen image last.
+    const files = [...Array.from({ length: 199 }, (_, index) => ({ path: `chunk-${index}.png`, contentType: 'image/png', bytes: 50_000 })),
+      { path: 'og/card.png', contentType: 'image/png', bytes: 10 }];
+    const { siteId, versionId } = await publishedSite('public', files);
+    await service().updateSocial(owner, { title: null, description: null, imagePath: 'og/card.png' });
+    const rows: Record<string, unknown>[] = [];
+    const spy: KyselyPlugin = {
+      transformQuery: args => args.node,
+      transformResult: async args => { rows.push(...(args.result.rows as Record<string, unknown>[])); return args.result; },
+    };
+    const spied: PlatformDB = { ...db.db, executor: (db.db.executor as Kysely<PlatformDatabase>).withPlugin(spy) };
+    const app = new Hono();
+    app.route('/', createSitePublicRoutes({ service: createSitesService({ db: spied, env: { NODE_ENV: 'test' } }), edgeSecret, submit: async () => ({ accepted: true }) }));
+    const html = await (await app.request(`/${siteId}`, { headers: { 'x-matrix-sites-edge': edgeSecret } })).text();
+    expect(meta(html).read('og:image')).toBe(`https://matrix.page/${siteId}/assets/${versionId}/og/card.png`);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter(row => 'files' in row)).toEqual([]);
+    expect(JSON.stringify(rows)).not.toContain('chunk-');
+  });
+
+  it('follows rollbacks and builds that change the chosen image type', async () => {
+    const { siteId, versionId } = await publishedSite();
+    await service().updateSocial(owner, { title: null, description: null, imagePath: 'og/card.png' });
+    const previous = randomUUID();
+    await db.db.executor.insertInto('public_site_versions').values({ id: previous, site_id: siteId, created_at: new Date().toISOString(),
+      config: { data: {}, forms: [] }, files: [FILES[0]!, { path: 'og/card.png', contentType: 'image/svg+xml', bytes: 10 }] }).execute();
+    await db.db.executor.updateTable('public_sites').set({ active_version: previous }).where('id', '=', siteId).execute();
+    expect(meta(await (await visit(siteId)).text()).read('og:image')).toBeNull();
+    await db.db.executor.updateTable('public_sites').set({ active_version: versionId }).where('id', '=', siteId).execute();
+    expect(meta(await (await visit(siteId)).text()).read('og:image')).toBe(`https://matrix.page/${siteId}/assets/${versionId}/og/card.png`);
   });
 
   it('keeps the unauthenticated link-gated response free of preview tags', async () => {
