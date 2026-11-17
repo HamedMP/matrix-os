@@ -212,6 +212,12 @@ it('closes the temporary picker when another main-chat file link opens Files', a
  expect(screen.getByRole('tab',{name:'Files'}).getAttribute('aria-selected')).toBe('true');
  expect(screen.queryByRole('tab',{name:'New tab'})).toBeNull();
 });
+it('opens Side chat when macOS Option changes the shortcut character',()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[]})));
+ render(<WebChatInspector {...inspectorProps()}/>);
+ fireEvent.keyDown(window,{key:'ß',code:'KeyS',metaKey:true,altKey:true});
+ expect(screen.getByRole('tab',{name:'Side chat'}).getAttribute('aria-selected')).toBe('true');
+});
 function terminalApi(){
  const workspaceId=`tws_${"a".repeat(32)}`;let created=0;
  const tabs: {id:string;name:string;cwd:string;status:string}[]=[];
