@@ -37,7 +37,9 @@ function InspectorContent({
   rootWidth,
   railWidth,
   project,
+  projectLoading,
   filePath,
+  fileResource,
   onFilePathChange,
   terminalSessionIds,
   sideChatClient,
@@ -216,12 +218,12 @@ function InspectorContent({
                   flex: filePath ? undefined : 1,
                 }}
               >
-                <WebChatFileTree
+                {projectLoading ? <p role="status" className="p-3 text-sm text-muted-foreground">Loading project files…</p> : <WebChatFileTree
                   key={JSON.stringify([gatewayUrl, project?.id, project?.slug])}
                   gatewayUrl={gatewayUrl}
                   project={project}
                   onOpenFile={onFilePathChange}
-                />
+                />}
               </div>
             ) : null}
             {filePath ? (
@@ -259,6 +261,7 @@ function InspectorContent({
                 ) : null}
                 <ChatFilePanel
                   path={filePath}
+                  resource={fileResource}
                   gatewayUrl={gatewayUrl}
                   embedded
                   onExpand={() => setFileExpanded((value) => !value)}

@@ -44,7 +44,7 @@ import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { normalizeChatFileReference, type FileResourceRef, resolveChatMessageLink } from "@matrix-os/contracts";
 import { ChatFilePanel, loadChatFile } from "./chat/ChatFilePanel";
 import type {
   CanonicalChatApprovalDecision,
@@ -344,7 +344,9 @@ function ChatAppContent({
     if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
     else onComposerDraftConsumed?.(id);
   };
-  const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
+  const activeFileProjectId = chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId;
+  const activeFileProject = webProjects.projects.find(project => project.id === activeFileProjectId || project.slug === activeFileProjectId);
+  const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string; resource?: FileResourceRef } | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [rootWidth, setRootWidth] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -358,11 +360,12 @@ function ChatAppContent({
     return () => observer.disconnect();
   }, []);
   const previewTrigger = useRef<HTMLElement | null>(null);
-  const openMessageFile = (path: string) => {
-    const target = resolveChatMessageLink(path);
-    if (!sessionId || target?.kind !== "file") return false;
+  const openMessageFile = (path: string, ownerRelative = false) => {
+    if (isCurrentAuthority && !isCurrentAuthority()) return false;
+    const target = normalizeChatFileReference(path, activeFileProjectId && !ownerRelative ? { root: "project", projectId: activeFileProject?.id ?? activeFileProjectId, baseDirectory: "" } : { root: "home", baseDirectory: "" });
+    if (!sessionId || !target || target.kind === "artifact") return false;
     previewTrigger.current = document.activeElement as HTMLElement | null;
-    setPreviewFile({ chatId: sessionId, path: target.path });
+    setPreviewFile({ chatId: sessionId, path: target.path, resource: target });
     setInspectorOpen(true);
     return true;
   };
@@ -615,7 +618,7 @@ function ChatAppContent({
       const target = resolveChatMessageLink(raw);
       if (target?.kind === "file" && (anchor || /[/.]/.test(raw))) {
         event.preventDefault();
-        openMessageFile(target.path);
+        openMessageFile(raw);
       }
     }}>
       {archiveToast}
@@ -869,7 +872,7 @@ function ChatAppContent({
                       {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" || msg.scheduledMessage ? (
                         <Message from="user">
                           {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
-                          {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
+                          {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={path => openMessageFile(path, true)} loadImage={loadShellChatImage} /> : null}
                           {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
                             <BotScheduledInputText text={msg.content} scheduled={Boolean(scheduled || msg.scheduledMessage)}/>
                           </MessageContent> : null}
@@ -907,7 +910,8 @@ function ChatAppContent({
                     <AssistantBubble
                       content={msg.content}
                       attachments={msg.attachments}
-                      openAttachment={openMessageFile}
+                      openAttachment={path => openMessageFile(path, true)}
+                      openFile={openMessageFile}
                       loadImage={loadShellChatImage}
                       onAction={submitWithHermesSetup}
                     />
@@ -988,13 +992,14 @@ function ChatAppContent({
         </>}
       </main>
       {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        chatId={sessionId} chatTitle={activeConversationTitle} project={webProjects.projects.find(project => project.id === (chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId) || project.slug === (chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId))} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
+        chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} projectLoading={Boolean(activeFileProjectId && !activeFileProject)} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
-        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
+        fileResource={previewFile?.chatId === sessionId ? previewFile.resource : undefined}
+        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
         onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
-        ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
+        ? <ChatFilePanel path={previewFile.path} resource={previewFile.resource} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider> : null}
     </div>
   );
