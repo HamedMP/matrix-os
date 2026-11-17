@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
+import { Kysely, sql } from 'kysely';
+import { KyselyPGlite } from 'kysely-pglite';
 import { JSDOM } from 'jsdom';
 import type { SiteRecord } from '@matrix-os/contracts';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import { insertUserMachine } from '../../packages/platform/src/db.js';
+import { insertUserMachine, type PlatformDatabase } from '../../packages/platform/src/db.js';
+import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
@@ -131,6 +134,16 @@ describe('owner social settings', () => {
     await expect(service().updateSocial(owner, { title: 'x'.repeat(201), description: null, imagePath: null })).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
+  it('keeps an already-saved image a redeploy dropped while other fields change', async () => {
+    const { versionId } = await publishedSite();
+    await service().updateSocial(owner, { title: null, description: null, imagePath: 'og/card.png' });
+    await db.db.executor.updateTable('public_site_versions').set({ files: [FILES[0]!] }).where('id', '=', versionId).execute();
+    expect(await service().updateSocial(owner, { title: 'Renamed', description: null, imagePath: 'og/card.png' }))
+      .toEqual({ title: 'Renamed', description: null, imagePath: 'og/card.png', imageOptions: [] });
+    await expect(service().updateSocial(owner, { title: 'Renamed', description: null, imagePath: 'photo.jpg' })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(await service().updateSocial(owner, { title: 'Renamed', description: null, imagePath: null })).toMatchObject({ imagePath: null });
+  });
+
   it('is scoped to the owner app', async () => {
     await publishedSite();
     await expect(service().social({ ...owner, appSlug: 'other' })).rejects.toMatchObject({ code: 'not_found' });
@@ -182,4 +195,21 @@ describe('public page and management routes', () => {
     expect((await app.request(path, { method: 'PATCH', headers, body: JSON.stringify({ title: null, description: null, imagePath: 'logo.svg' }) })).status).toBe(400);
     expect((await app.request(path, { method: 'PATCH', headers, body: 'x'.repeat(9000) })).status).toBe(413);
   });
+});
+
+describe('sites schema upgrade', () => {
+  it('adds the social columns to a platform already at the private-links sites revision', async () => {
+    const instance = await KyselyPGlite.create();
+    const upgraded = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
+    try {
+      await runPlatformStartupMigrations(upgraded);
+      // Simulate a platform deployed before this change: columns absent, sites marker at generation 2.
+      await sql`ALTER TABLE public_sites DROP COLUMN social_title, DROP COLUMN social_description, DROP COLUMN social_image_path`.execute(upgraded);
+      await sql`UPDATE platform_schema_revisions SET generation = 2, fingerprint = 'public-app-sites-private-links-v2' WHERE scope = 'sites'`.execute(upgraded);
+      await runPlatformStartupMigrations(upgraded);
+      const columns = await sql<{ column_name: string }>`SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'public_sites' AND column_name LIKE 'social_%' ORDER BY column_name`.execute(upgraded);
+      expect(columns.rows.map(row => row.column_name)).toEqual(['social_description', 'social_image_path', 'social_title']);
+    } finally { await upgraded.destroy(); }
+  }, 60_000);
 });
