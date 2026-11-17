@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  DesktopPairingActionProofSchema,
   DesktopPairingChallengeSchema,
   DesktopPairingCompleteSchema,
   DesktopPairingStateSchema,
+  desktopPairingActionProofMessage,
   desktopPairingProofMessage,
 } from "../../packages/contracts/src/index";
 
@@ -16,6 +18,16 @@ describe("Mac pairing contract", () => {
     expect(DesktopPairingChallengeSchema.parse(challenge)).toEqual(challenge);
     expect(JSON.parse(desktopPairingProofMessage({ ownerId: "user_alice", ...challenge })))
       .toEqual(["matrix-desktop-pairing-v1", "user_alice", machineId, deviceId, 3, nonce]);
+  });
+
+  it("keeps action proof distinct from enrollment and uses the stored public key", () => {
+    const challenge = { ownerId: "user_alice", machineId, deviceId, revision: 3, nonce };
+    expect(JSON.parse(desktopPairingActionProofMessage(challenge)))
+      .toEqual(["matrix-desktop-pairing-action-v1", "user_alice", machineId, deviceId, 3, nonce]);
+    expect(desktopPairingActionProofMessage(challenge)).not.toBe(desktopPairingProofMessage(challenge));
+    const proof = { nonce, signature: "A".repeat(86) };
+    expect(DesktopPairingActionProofSchema.parse(proof)).toEqual(proof);
+    expect(DesktopPairingActionProofSchema.safeParse({ ...proof, publicKey: "A".repeat(59) }).success).toBe(false);
   });
 
   it("rejects ambiguous inputs, invalid keys and unsafe revisions", () => {

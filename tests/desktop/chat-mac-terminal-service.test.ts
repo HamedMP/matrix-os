@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { MacActionPairing } from "@desktop/main/desktop-pairing/action";
 import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
 
 const context = { chatId: "chat_origin", projectId: "proj_test", worktreeId: "wt_test", scopeKey: "owner-scope" };
@@ -9,11 +10,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(acquireActionPairing?: MacActionPairing) {
   const terminal = { id: "t7", run: vi.fn().mockResolvedValue("Darwin"), dispose: vi.fn().mockResolvedValue(undefined) };
   const activity = { update: vi.fn(), finish: vi.fn() };
   const deps = {
     enabled: true,
+    acquireActionPairing,
     readTerminalContext: vi.fn().mockResolvedValue(context),
     isTerminalContextCurrent: vi.fn(() => true),
     readTerminalRequest: vi.fn(),
@@ -35,6 +37,50 @@ function setup() {
 }
 
 describe("approved Matrix Chat Mac terminal grant", () => {
+  it("requires the paired key after consent before preparing a terminal", async () => {
+    const acquireActionPairing = vi.fn(async () => null);
+    const { activity, deps, service } = setup(acquireActionPairing);
+    expect(await service.prepare(context)).toEqual({ status: "unavailable" });
+    expect(deps.approve).toHaveBeenCalledOnce();
+    expect(acquireActionPairing).toHaveBeenCalledOnce();
+    expect(deps.prepareTerminal).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+  });
+
+  it("disposes an idle terminal immediately when its pairing is revoked", async () => {
+    const close = vi.fn();
+    const { promise: acquired, resolve } = deferred<AbortController>();
+    const { activity, service, terminal, prepare } = setup(async operation => {
+      resolve(operation);
+      return { check: vi.fn().mockResolvedValue(true), close };
+    });
+    await prepare();
+    const operation = await acquired;
+    operation.abort("revoked");
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(await service.run({ chatId: context.chatId, runId: "run_probe" })).toEqual({ status: "unavailable" });
+    expect(terminal.run).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+  });
+
+  it("checks the device again before sending terminal output", async () => {
+    const { promise: acquired, resolve } = deferred<AbortController>();
+    const check = vi.fn().mockResolvedValue(true);
+    const { deps, service, terminal, prepare } = setup(async operation => {
+      resolve(operation);
+      return { check, close: vi.fn() };
+    });
+    await prepare();
+    const operation = await acquired;
+    terminal.run.mockImplementationOnce(async () => {
+      check.mockImplementationOnce(async () => { operation.abort("revoked"); return false; });
+      return "Darwin";
+    });
+    expect(await service.run({ chatId: context.chatId, runId: "run_probe" })).toEqual({ status: "unavailable" });
+    expect(deps.returnTerminalResult).not.toHaveBeenCalled();
+  });
+
   it("prepares one dedicated terminal and dispatches and returns without a second approval", async () => {
     const { deps, activity, service, terminal, prepare } = setup();
     const grant = await prepare();

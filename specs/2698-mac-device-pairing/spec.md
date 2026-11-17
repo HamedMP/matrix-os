@@ -18,7 +18,7 @@ A signed-in macOS Matrix client offers **Mac Pairing…** in its application men
 | `POST /api/desktop-pairing/pair` | Same authority, live unconsumed challenge, matching public key and signature, current revision |
 | `DELETE /api/desktop-pairing/:deviceId` | Same authority, exact device ID and revision, with a mandatory `If-Match` value bound to the machine UUID |
 
-All mutation bodies use bounded JSON and strict schemas. HTTPS requests reject redirects and time out. Account, Computer or credential changes invalidate the native operation in progress. Server errors use coarse codes. Pairing proves possession of the enrolled key. The prototype Chat paths still authorize actions independently and do not consult this registry. Disconnecting the pairing removes the binding. **Stop Mac Activity** revokes the current local action grant.
+All mutation bodies use bounded JSON and strict schemas. HTTPS requests reject redirects and time out. Account, Computer or credential changes invalidate the native operation in progress. Server errors use coarse codes. Pairing proves possession of the enrolled key. The Chat action paths require [proof from the paired Mac](./action-authorization.md) as well as an operation-specific native approval. Disconnecting invalidates current action grants by changing the pairing revision. **Stop Mac Activity** revokes the local action grant and retains the pairing.
 
 ## Acceptance
 

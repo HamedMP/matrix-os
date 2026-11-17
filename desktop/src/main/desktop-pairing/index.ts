@@ -1,12 +1,10 @@
 import { sign } from "node:crypto";
-import { desktopPairingProofMessage, type DesktopPairingStateSchema } from "@matrix-os/contracts";
+import { desktopPairingProofMessage } from "@matrix-os/contracts";
 import type { BaseWindow } from "electron";
-import type { z } from "zod/v4";
 import { showMacActivityDialog } from "../mac-activity/dialog";
+import { createMacActionPairing, type MacActionPairing } from "./action";
 import { createPairingKeyStore, type PairingSafeStorage } from "./key-store";
-import { createPairingTransport, type PairingAuth } from "./transport";
-
-type PairingState = z.infer<typeof DesktopPairingStateSchema>;
+import { createPairingTransport, matchingPairingState, type PairingAuth, type PairingState } from "./transport";
 
 interface DesktopPairingOptions {
   auth: PairingAuth;
@@ -16,13 +14,14 @@ interface DesktopPairingOptions {
   fetchFn?: typeof fetch;
 }
 
-function matchingState(a: PairingState, b: PairingState) {
-  return a.machineId === b.machineId && a.deviceId === b.deviceId && a.revision === b.revision;
-}
-
 export function createDesktopPairing(options: DesktopPairingOptions) {
   const keys = createPairingKeyStore(options.userData, options.safeStorage);
+  const fetchFn = options.fetchFn ?? fetch;
+  const actions = createMacActionPairing({ auth: options.auth, keys, fetchFn });
   let active: AbortController | undefined;
+  let disconnecting = false;
+  const acquireActionPairing: MacActionPairing = async (operation, signal) =>
+    disconnecting ? null : actions.acquire(operation, signal);
 
   function show(message: string, signal: AbortSignal, detail?: string) {
     return showMacActivityDialog(options.window(), {
@@ -31,7 +30,7 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
   }
 
   async function run(signal: AbortSignal) {
-    const transport = createPairingTransport(options.auth, options.fetchFn ?? fetch, signal);
+    const transport = createPairingTransport(options.auth, fetchFn, signal);
     if (!transport) {
       await show("Sign in to your primary Computer to manage Mac pairing.", signal);
       return;
@@ -51,7 +50,7 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
       type: "question",
       message: disconnect ? "Disconnect this Mac?" : "Pair this Mac?",
       detail: disconnect
-        ? `Remove this Mac’s pairing with ${origin}. You can pair it again later.`
+        ? `Remove this Mac’s pairing with ${origin} and stop active Mac Chat actions. You can pair it again later.`
         : `Pair this Mac with ${origin}. Chat actions still require their own approval.`,
       buttons: ["Cancel", disconnect ? "Disconnect This Mac" : "Pair This Mac"],
       defaultId: 0,
@@ -64,20 +63,26 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
     const verifyMutation = async (mutate: () => Promise<PairingState>, deviceId: string | null) => {
       const expected = { ...state, deviceId, revision: state.revision + 1 };
       try {
-        if (matchingState(await mutate(), expected)) return;
+        if (matchingPairingState(await mutate(), expected)) return;
       } catch (error: unknown) {
         if (signal.aborted) throw error;
         transport.assertCurrent();
       }
       // Only a fresh read can reconcile a lost or malformed mutation reply.
       // Automatic resubmission is never safe after the request crossed the wire.
-      if (!matchingState(await transport.read(), expected)) throw new Error("Pairing outcome unconfirmed");
+      if (!matchingPairingState(await transport.read(), expected)) throw new Error("Pairing outcome unconfirmed");
     };
 
     const deviceId = state.deviceId;
     if (deviceId !== null) {
-      if (!matchingState(await transport.read(), state)) throw new Error("Pairing changed during approval");
-      await verifyMutation(() => transport.revoke({ ...state, deviceId }), null);
+      disconnecting = true;
+      actions.revokeAll();
+      try {
+        if (!matchingPairingState(await transport.read(), state)) throw new Error("Pairing changed during approval");
+        await verifyMutation(() => transport.revoke({ ...state, deviceId }), null);
+      } finally {
+        disconnecting = false;
+      }
       await show("This Mac is disconnected.", signal);
       return;
     }
@@ -116,6 +121,10 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
         active = undefined;
       }
     },
-    cancel() { active?.abort(); },
+    acquireActionPairing,
+    cancel() {
+      active?.abort();
+      actions.revokeAll();
+    },
   };
 }

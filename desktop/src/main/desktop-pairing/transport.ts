@@ -1,8 +1,10 @@
 import {
+  type DesktopPairingActionProofSchema,
   DesktopPairingChallengeSchema,
   DesktopPairingStateSchema,
   desktopPairingRevisionTag,
 } from "@matrix-os/contracts";
+import type { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
 
 const PAIRING_PATH = "/api/desktop-pairing";
@@ -11,6 +13,11 @@ const MAX_REPLY_BYTES = 4096;
 const MAX_REPLY_CHUNKS = 256;
 
 export type PairingAuth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
+export type PairingState = z.infer<typeof DesktopPairingStateSchema>;
+
+export function matchingPairingState(a: PairingState, b: PairingState): boolean {
+  return a.machineId === b.machineId && a.deviceId === b.deviceId && a.revision === b.revision;
+}
 
 interface Authority {
   origin: string;
@@ -77,9 +84,15 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
     }
   }
 
-  async function request(path: string, method: string, body?: object, ifMatch?: string) {
+  async function request(path: string, method: string, options: {
+    body?: object; ifMatch?: string; signal?: AbortSignal;
+  } = {}) {
     assertCurrent();
-    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]);
+    const { body, ifMatch } = options;
+    const signals = [signal, AbortSignal.timeout(TIMEOUT_MS)];
+    if (options.signal) signals.push(options.signal);
+    const requestSignal = AbortSignal.any(signals);
+    requestSignal.throwIfAborted();
     const response = await fetchFn(new URL(path, origin), {
       method,
       headers: {
@@ -93,6 +106,7 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
       signal: requestSignal,
     });
     try {
+      requestSignal.throwIfAborted();
       assertCurrent();
     } catch (error: unknown) {
       await response.body?.cancel();
@@ -107,19 +121,27 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
     origin,
     ownerId,
     assertCurrent,
-    async read() {
-      return DesktopPairingStateSchema.parse(await request(PAIRING_PATH, "GET"));
+    async read(signal?: AbortSignal) {
+      return DesktopPairingStateSchema.parse(await request(PAIRING_PATH, "GET", { signal }));
     },
     async challenge(deviceId: string, revision: number) {
-      return DesktopPairingChallengeSchema.parse(await request(`${PAIRING_PATH}/challenge`, "POST", { deviceId, revision }));
+      return DesktopPairingChallengeSchema.parse(await request(`${PAIRING_PATH}/challenge`, "POST", { body: { deviceId, revision } }));
     },
     async pair(proof: { nonce: string; publicKey: string; signature: string }) {
-      return DesktopPairingStateSchema.parse(await request(`${PAIRING_PATH}/pair`, "POST", proof));
+      return DesktopPairingStateSchema.parse(await request(`${PAIRING_PATH}/pair`, "POST", { body: proof }));
+    },
+    async actionChallenge(deviceId: string, revision: number, signal?: AbortSignal) {
+      return DesktopPairingChallengeSchema.parse(await request(
+        `${PAIRING_PATH}/action-challenge`, "POST", { body: { deviceId, revision }, signal },
+      ));
+    },
+    async verifyAction(proof: z.infer<typeof DesktopPairingActionProofSchema>, signal?: AbortSignal) {
+      return DesktopPairingStateSchema.parse(await request(`${PAIRING_PATH}/verify-action`, "POST", { body: proof, signal }));
     },
     async revoke(state: { machineId: string; deviceId: string; revision: number }) {
       return DesktopPairingStateSchema.parse(await request(
-        `${PAIRING_PATH}/${encodeURIComponent(state.deviceId)}`, "DELETE", { revision: state.revision },
-        desktopPairingRevisionTag(state),
+        `${PAIRING_PATH}/${encodeURIComponent(state.deviceId)}`, "DELETE",
+        { body: { revision: state.revision }, ifMatch: desktopPairingRevisionTag(state) },
       ));
     },
   };

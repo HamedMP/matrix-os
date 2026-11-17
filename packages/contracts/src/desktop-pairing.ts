@@ -24,6 +24,7 @@ export const DesktopPairingCompleteSchema = z.strictObject({
   publicKey: z.string().regex(/^[A-Za-z0-9_-]{58}[AEIMQUYcgkosw048]$/),
   signature: z.string().regex(/^[A-Za-z0-9_-]{85}[AQgw]$/),
 });
+export const DesktopPairingActionProofSchema = DesktopPairingCompleteSchema.pick({ nonce: true, signature: true });
 export const DesktopPairingRevokeSchema = z.strictObject({ revision });
 
 /** Binds an approved mutation to one Computer even if its HTTPS origin is reassigned. */
@@ -31,14 +32,22 @@ export function desktopPairingRevisionTag(input: { machineId: string; deviceId: 
   return `"desktop-pairing-${input.machineId}-${input.deviceId}-${input.revision}"`;
 }
 
-export function desktopPairingProofMessage(input: {
+interface DesktopPairingProof {
   ownerId: string;
   machineId: string;
   deviceId: string;
   revision: number;
   nonce: string;
-}): string {
-  return JSON.stringify([
-    "matrix-desktop-pairing-v1", input.ownerId, input.machineId, input.deviceId, input.revision, input.nonce,
-  ]);
+}
+
+function proofMessage(domain: string, input: DesktopPairingProof): string {
+  return JSON.stringify([domain, input.ownerId, input.machineId, input.deviceId, input.revision, input.nonce]);
+}
+
+export function desktopPairingProofMessage(input: DesktopPairingProof): string {
+  return proofMessage("matrix-desktop-pairing-v1", input);
+}
+
+export function desktopPairingActionProofMessage(input: DesktopPairingProof): string {
+  return proofMessage("matrix-desktop-pairing-action-v1", input);
 }

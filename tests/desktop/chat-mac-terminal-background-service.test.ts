@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MacActionPairing } from "@desktop/main/desktop-pairing/action";
 import { createMacTerminalBackgroundService } from "@desktop/main/chat-mac-terminal/background-service";
 import {
   MacTerminalDeliveryRejectedError,
@@ -23,12 +24,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture() {
+function fixture(acquireActionPairing?: MacActionPairing) {
   const first = { id: "t1", run: vi.fn(async (): Promise<MacTerminalProbeOutput> => "Darwin"), dispose: vi.fn(async () => {}) };
   const second = { id: "t2", run: vi.fn(async (): Promise<MacTerminalProbeOutput> => "Darwin"), dispose: vi.fn(async () => {}) };
   const activity = { update: vi.fn(), finish: vi.fn() };
   const deps = {
     enabled: true,
+    acquireActionPairing,
     oneTimeBusy: vi.fn(() => false),
     approve: vi.fn(async (_context: MacTerminalContext, _signal: AbortSignal) => true),
     readTerminalContext: vi.fn(async () => context),
@@ -73,6 +75,57 @@ afterEach(() => {
 });
 
 describe("approved background Mac terminal checks", () => {
+  it("does not open a background grant for an unpaired Mac", async () => {
+    const { activity, deps, service } = fixture(async () => null);
+    expect(await service.start(ref)).toEqual({ status: "unavailable" });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deps.approve).toHaveBeenCalledOnce();
+    expect(deps.readBackgroundTerminalRequest).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+  });
+
+  it("drops a pending receipt and retires the grant when pairing is revoked", async () => {
+    const close = vi.fn();
+    const { promise: acquired, resolve } = deferred<AbortController>();
+    const { deps, first, activity, service, approve, request } = fixture(async operation => {
+      resolve(operation);
+      return { check: vi.fn().mockResolvedValue(true), close };
+    });
+    const { targetId } = await approve();
+    deps.readBackgroundTerminalRequest.mockResolvedValue(request(targetId, "run_batch"));
+    deps.returnTerminalResult.mockRejectedValueOnce(new Error("temporary receipt failure"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(service.status(ref)).toMatchObject({ active: true, phase: "returning" });
+    const operation = await acquired;
+    operation.abort("revoked");
+    expect(service.status(ref)).toEqual({ active: false });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deps.returnTerminalResult).toHaveBeenCalledOnce();
+    expect(first.run).toHaveBeenCalledOnce();
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+  });
+
+  it("checks pairing again after PTY allocation and never sends input after revocation", async () => {
+    const check = vi.fn().mockResolvedValue(true);
+    const { deps, first, service, approve, request } = fixture(async operation => {
+      check.mockResolvedValueOnce(true).mockImplementationOnce(async () => {
+        operation.abort("revoked");
+        return false;
+      });
+      return { check, close: vi.fn() };
+    });
+    const { targetId } = await approve();
+    deps.readBackgroundTerminalRequest.mockResolvedValue(request(targetId, "run_batch"));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deps.prepareTerminal).toHaveBeenCalledOnce();
+    expect(first.run).not.toHaveBeenCalled();
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(deps.returnTerminalResult).not.toHaveBeenCalled();
+    expect(service.status(ref)).toEqual({ active: false });
+  });
+
   it("dispatches one fixed system-checks batch in the approved scope and reuses its receipt on retry", async () => {
     const { deps, first, service, approve, request } = fixture();
     const { targetId } = await approve();
@@ -104,7 +157,7 @@ describe("approved background Mac terminal checks", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(deps.tryBackgroundPreview).toHaveBeenCalledExactlyOnceWith(context, {
       targetId, approvedAt: expect.any(Number),
-    }, expect.any(AbortSignal), expect.any(Function));
+    }, expect.any(AbortSignal), expect.any(Function), undefined);
     expect(deps.prepareTerminal).not.toHaveBeenCalled();
     expect(service.status(ref)).toMatchObject({ active: true, remaining: 3 });
     const settled = vi.fn();
