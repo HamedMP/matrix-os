@@ -52,7 +52,7 @@ function LivePublic({ share, draft, setDraft, slugState, onSaveDetails, submissi
         <ShareButton variant="ghost" className="h-9 px-2.5 font-semibold text-[var(--share-fg)]" onClick={() => copy.copy("public", `https://${host}`)}>{copy.label("public", "Copy link")}</ShareButton>
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-[var(--share-success-fg)]">Live · visitors can use, not edit</span>
+        <span className="text-xs font-medium text-[var(--share-success-fg)]">Live · Anyone with the link can view and edit</span>
         <ShareButton variant="link" className="text-[13px] text-[var(--share-muted-fg)]" disabled={busy} onClick={() => void share.unpublish()}>
           {share.operation === "unpublish" ? <Spinner /> : null}Unpublish
         </ShareButton>

@@ -75,9 +75,9 @@ export function shareHelperText({ tab, pageMode, organizationName = "", orgShare
     if (collaborativeStep === "required") return "This app saves data, so sharing takes two quick steps.";
     return "Members open and use the live app from their launcher.";
   }
-  if (pageMode === "public") return "Anyone with the link can use it.";
+  if (pageMode === "public") return "Anyone with the link can view and edit.";
   if (pageMode === "private_email" || pageMode === "private_link") return "Publishing makes it public and replaces private access.";
-  return "Get a public link anyone can use.";
+  return "Get a public link anyone can view and edit.";
 }
 
 /** Tab dots: green when that tab's sharing is on. Tabs never change access. */

@@ -66,7 +66,7 @@ describe("Share popover shell", () => {
     expect(screen.getByText("Invite people by email, or create one-time links.")).toBeTruthy();
     selectTab(/Public/);
     expect(screen.getByRole("tab", { name: /Public/ }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("Get a public link anyone can use.")).toBeTruthy();
+    expect(screen.getByText("Get a public link anyone can view and edit.")).toBeTruthy();
     expect(api.update).not.toHaveBeenCalled();
     expect(api.deploy).not.toHaveBeenCalled();
   });
@@ -86,7 +86,7 @@ describe("Share popover shell", () => {
     expect(publicTab.getAttribute("aria-selected")).toBe("true");
     expect(within(publicTab).getByRole("img", { name: "on" })).toBeTruthy();
     expect(screen.getByText("matrix.page/sales-crm")).toBeTruthy();
-    expect(screen.getByText("Live · visitors can use, not edit")).toBeTruthy();
+    expect(screen.getByText("Live · Anyone with the link can view and edit")).toBeTruthy();
     expect(screen.getByTestId("trigger").textContent).toBe("Live");
   });
 
@@ -218,7 +218,7 @@ describe("Mode switch confirm", () => {
     expect(screen.queryByRole("button", { name: /Publish to web/ })).toBeNull();
     expect(emailInvites.active("sales-crm")).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "Make public" }));
-    await screen.findByText("Live · visitors can use, not edit");
+    await screen.findByText("Live · Anyone with the link can view and edit");
     expect(emailInvites.active("sales-crm")).toBe(false);
     expect((await emailInvites.list("sales-crm", new AbortController().signal)).invitations).toEqual([]);
     expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "public", slug: null }), expect.any(AbortSignal));
@@ -290,7 +290,7 @@ describe("Public tab", () => {
     expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "public", slug: "sales-crm", title: "Sales CRM", description: "Track deals" }), expect.any(AbortSignal));
     fireEvent.click(screen.getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(api.unpublish).toHaveBeenCalledWith("sales-crm", 1, expect.any(AbortSignal)));
-    expect(await screen.findByText("Get a public link anyone can use.")).toBeTruthy();
+    expect(await screen.findByText("Get a public link anyone can view and edit.")).toBeTruthy();
   });
 
   it("maps a lost alias race at publish time to Taken", async () => {
