@@ -4,7 +4,7 @@ import { isCurrentDirectRoutineOrigin } from "./routine-direct-chat-lifecycle.js
 import { routineChatOriginApprovalIds } from "./routine-chat-origin-approval-ids.js";
 import { createHash } from "node:crypto";
 import { type Kysely } from "kysely";
-import { CanonicalChatIdSchema, RoutineChatOriginViewSchema, RoutineOriginDecisionSubmitSchema, type RoutineChatOriginHistoryItem, type RoutineChatOriginView } from "@matrix-os/contracts";
+import { CanonicalChatIdSchema, isRoutineDirectScheduleDisplayBotId, RoutineChatOriginViewSchema, RoutineOriginDecisionSubmitSchema, type RoutineChatOriginHistoryItem, type RoutineChatOriginView } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotStateTransactions } from "./events.js";
 import { BotInteractionError, projectBotInteraction, type BotInteractionService } from "./interactions.js";
@@ -13,6 +13,7 @@ import type { BotExecutor } from "./repositories/shared.js";
 import { initialRoutineChatOrigin, routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
 import type { VerifiedRoutineOriginApproval } from "./routine-origin-platform-client.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
+import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { pendingRoutineChatDeliveries, hasPendingRoutineChatOutput } from "./routine-chat-origin-delivery.js";
 
@@ -20,6 +21,7 @@ export interface RoutineChatOriginDependencies {
   db: Kysely<OwnerBotDatabase>; transact: BotStateTransactions;
   chats: Pick<ChatRepository, "appendRoutineReceipt">;
   interactions: Pick<BotInteractionService, "resolveWithin">;
+  agents?: Pick<ChatAgentStore, "get">;
   computerId: string;
   expectedMachine: { machineId: string; handle: string; runtimeSlot: string };
   now?: () => Date; intervalMs?: number;
@@ -87,6 +89,29 @@ function boundedHistory(view: RoutineChatOriginView, candidates: RoutineChatOrig
   }
   return history;
 }
+
+/** Resolve labels only for the already verified, owner-scoped approvals, outside the transaction. */
+async function nameApprovalExecutors(view: RoutineChatOriginView, ownerId: string, agents: Pick<ChatAgentStore, "get">) {
+  const owner = { type: "personal", ownerId } as const;
+  // The two bounded approval pages have at most 64 distinct IDs per read.
+  const names = new Map<string, string | undefined>();
+  for (const { interaction: { agentId } } of [...view.pending, ...(view.history ?? [])]) {
+    if (isRoutineDirectScheduleDisplayBotId(agentId) || names.has(agentId)) continue;
+    names.set(agentId, undefined);
+    try {
+      const agent = await agents.get(owner, agentId);
+      if (agent?.id === agentId) names.set(agentId, agent.name);
+    } catch (error: unknown) {
+      console.warn("[routine-origin] Executor name unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  const applyName = (item: RoutineChatOriginHistoryItem) => {
+    const executorName = names.get(item.interaction.agentId);
+    return executorName ? { ...item, executorName } : item;
+  };
+  return { ...view, pending: view.pending.map(applyName), history: view.history?.map(applyName) };
+}
+
 /** Source presentation and delivery only. This service has no scheduled-work admission/dispatch port. */
 export function createRoutineChatOriginService(deps: RoutineChatOriginDependencies) {
   const now = () => deps.now?.() ?? new Date();
@@ -128,10 +153,10 @@ export function createRoutineChatOriginService(deps: RoutineChatOriginDependenci
     return pending;
   }
   return {
-    read(ownerId: string, sourceChatId: string, includeHistory = false): Promise<RoutineChatOriginView> { return track(async () => {
+    read(ownerId: string, sourceChatId: string, includeHistory = false, includeExecutorNames?: true): Promise<RoutineChatOriginView> { return track(async () => {
       if (!CanonicalChatIdSchema.safeParse(sourceChatId).success) throw new BotInteractionError("invalid_request");
       await reconcile(ownerId, sourceChatId);
-      return deps.transact(ownerId, async tx => {
+      const view = await deps.transact(ownerId, async tx => {
         await beginOriginTransaction(tx.db, ownerId);
         if (closed || !await privateSource(tx.db, ownerId, sourceChatId)) throw new BotInteractionError("not_found");
         const observedAt = now().toISOString();
@@ -144,8 +169,11 @@ export function createRoutineChatOriginService(deps: RoutineChatOriginDependenci
         if (!includeHistory) return view;
         const candidates = await readApprovalItems(tx.db, ownerId, deps.computerId, sourceChatId, observedAt, "history");
         const pending = view.pending.filter(item => !candidates.some(candidate => candidate.interaction.interactionId === item.interaction.interactionId));
-        return RoutineChatOriginViewSchema.parse({ ...view, pending, history: boundedHistory({ ...view, pending }, candidates) });
+        return { ...view, pending, history: candidates };
       });
+      if (!includeHistory) return view;
+      const { history, ...summary } = includeExecutorNames && deps.agents ? await nameApprovalExecutors(view, ownerId, deps.agents) : view;
+      return RoutineChatOriginViewSchema.parse({ ...summary, history: boundedHistory(summary, history ?? []) });
     }); },
     resolve(ownerId: string, sourceChatId: string, interactionId: string, raw: unknown, verifiedDecision: VerifiedRoutineOriginApproval) { return track(async () => {
       const request = RoutineOriginDecisionSubmitSchema.safeParse(raw);
