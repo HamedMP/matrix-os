@@ -461,6 +461,29 @@ describe("web getting started status", () => {
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
   });
 
+  it("keeps the Setup pill reachable when a status request times out on the first load", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/github/status")) {
+        // A slow gateway: this request only ends when the loader gives up on it.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        });
+      }
+      return new Response(JSON.stringify(responseFor(url)), { status: 200 });
+    });
+
+    render(<GettingStartedPopover onOpenSettings={() => {}} onOpenFirstWork={() => {}} />);
+    await act(async () => Promise.resolve());
+    expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByRole("button", { name: "Getting started — 4 of 5" })).toBeTruthy();
+  });
+
   it("refreshes completion while the persistent popover remains open", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("PointerEvent", MouseEvent);

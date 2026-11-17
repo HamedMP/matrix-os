@@ -337,11 +337,15 @@ function GettingStartedPopoverContent({
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- checklist state is sourced from independent authenticated APIs and refreshed when the popover opens.
   useEffect(() => {
     const controller = new AbortController();
+    let superseded = false;
+    // A timed-out request still applies: its steps show as unavailable, so the
+    // Setup pill stays reachable instead of waiting on a load that never lands.
     const timeoutId = window.setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
     void loadWebGettingStartedSnapshot(fetch, controller.signal).then((next) => {
-      if (!controller.signal.aborted) setSnapshot(next);
+      if (!superseded) setSnapshot(next);
     });
     return () => {
+      superseded = true;
       window.clearTimeout(timeoutId);
       controller.abort();
     };
