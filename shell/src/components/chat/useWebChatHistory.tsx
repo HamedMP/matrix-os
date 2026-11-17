@@ -58,11 +58,16 @@ export function useWebChatHistory({
   const [projectArchiveVersion, setProjectArchiveVersion] = useState(0),
     [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
   const [archivesOpen, setArchivesOpen] = useState(false),
-    [undo, setUndo] = useState<Undo | null>(null),
+    [undo, setUndoState] = useState<Undo | null>(null),
     [pending, setPending] = useState(false),
     [error, setError] = useState(false);
   const generation = useRef(0),
     lock = useRef(false);
+  const undoRef = useRef<Undo | null>(null);
+  const setUndo = (value: Undo | null) => {
+    undoRef.current = value;
+    setUndoState(value);
+  };
   useEffect(() => {
     generation.current++;
     setDeletedChatIds([]);
@@ -147,14 +152,15 @@ export function useWebChatHistory({
         changed();
         const remaining = target.chats.filter((row) => !completed.includes(row.chatId));
         const records = target.restoreRecords?.filter((row) => !completed.includes(row.chat.id));
+        if (undoRef.current !== target) return;
         if (remaining.length || records?.length) {
           setUndo({ ...target, chats: remaining, restoreRecords: records });
           setError(true);
-        } else setUndo((value) => (value === target ? null : value));
+        } else setUndo(null);
       })
       .catch((cause: unknown) => {
         console.warn("[chat-history] Undo failed:", cause instanceof Error ? cause.name : "UnknownError");
-        if (current === generation.current) setError(true);
+        if (current === generation.current && undoRef.current === target) setError(true);
       })
       .finally(() => {
         lock.current = false;

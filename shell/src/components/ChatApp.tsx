@@ -308,6 +308,7 @@ function ChatAppContent({
   const onNewChat = () => { setArchivesOpen(false); startNewChat(mobile ? undefined : focusedProject?.id); };
   const openProjectHome = (project: WebProject) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
+    setArchivesOpen(false);
     setProjectFocus({ identity: webProjects.identity, id: project.id });
     if (!mobile && projectHome?.id !== project.id) startNewChat(project.id);
   };

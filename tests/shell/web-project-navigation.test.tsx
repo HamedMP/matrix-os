@@ -750,3 +750,18 @@ it("refreshes an expanded server-paged project when a new live chat joins it", a
  expect(await screen.findByRole("button",{name:"New live chat"})).toBeTruthy();
  expect(load.mock.calls.length).toBeGreaterThan(1);
 });
+
+it("leaves the archive when a project is selected from Search", async()=>{
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[{id:"proj_local",slug:"local",name:"Local project"}]})));
+ const api={list:vi.fn(async()=>({items:[]})),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
+ render(<ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} archiveClient={api}/>);
+ await screen.findByRole("button",{name:"Expand Local project chats"});
+ fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
+ fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
+ fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+ expect(screen.getByRole("region",{name:"Archived chats"})).toBeTruthy();
+ fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
+ fireEvent.click(screen.getByRole("tab",{name:"Projects",exact:true}));
+ fireEvent.click(screen.getByRole("option",{name:/Local project/}));
+ expect(screen.queryByRole("region",{name:"Archived chats"})).toBeNull();
+});
