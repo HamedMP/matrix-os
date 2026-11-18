@@ -4,10 +4,12 @@ import { invoke } from "../../lib/operator";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type StartRequest = InvokeRequest<"chat:mac-terminal-watch-start">;
-type WatchRef = InvokeRequest<"chat:mac-terminal-watch-stop">;
+type StopRequest = InvokeRequest<"chat:mac-terminal-watch-stop">;
+type WatchRef = InvokeRequest<"chat:mac-terminal-watch-read">;
 type WatchApproval = Extract<InvokeResponse<"chat:mac-terminal-watch-start">, { status: "ready" }>;
-type WatchScope = StartRequest & { actorId: string; projectId: string };
+type WatchScope = Omit<StartRequest, "requestId"> & { actorId: string; projectId: string };
 type WatchOperation = {
+  request: StartRequest;
   ref?: WatchRef;
   released?: boolean;
   pollTimer?: ReturnType<typeof setTimeout>;
@@ -35,7 +37,7 @@ function logFailure(error: unknown) {
   console.warn("[mac-terminal-watch] request failed", error instanceof Error ? error.name : "UnknownError");
 }
 
-async function stopNativeWatch(ref: WatchRef) {
+async function stopNativeWatch(ref: StopRequest) {
   try {
     return await invoke("chat:mac-terminal-watch-stop", ref);
   } catch (error: unknown) {
@@ -49,7 +51,7 @@ function release(operation: WatchOperation) {
   operation.released = true;
   clearTimeout(operation.pollTimer);
   clearTimeout(operation.expiryTimer);
-  return operation.ref ? stopNativeWatch(operation.ref) : undefined;
+  return stopNativeWatch(operation.ref ?? operation.request);
 }
 
 export function useChatMacTerminalWatch(scope: WatchScope | null) {
@@ -72,13 +74,13 @@ export function useChatMacTerminalWatch(scope: WatchScope | null) {
   async function start() {
     if (!scope || !key || activeScope.current !== key || operation.current) return;
     const target = { chatId: scope.chatId, worktreeId: scope.worktreeId };
-    const watch: WatchOperation = {};
+    const watch: WatchOperation = { request: { ...target, requestId: crypto.randomUUID() } };
     operation.current = watch;
     const isCurrent = () => !watch.released && operation.current === watch && activeScope.current === key;
     setView({ key, status: "Choose a terminal and approve watching on this Mac…", busy: true });
 
     try {
-      const reply = await invoke("chat:mac-terminal-watch-start", target);
+      const reply = await invoke("chat:mac-terminal-watch-start", watch.request);
       if (reply.status !== "ready") {
         if (isCurrent()) {
           operation.current = null;

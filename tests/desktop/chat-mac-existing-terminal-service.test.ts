@@ -110,6 +110,24 @@ describe("read a selected existing Mac terminal", () => {
     expect(activity.finish).toHaveBeenCalledWith("revoked");
   });
 
+  it("discards an approved snapshot if the pinned terminal connection closes during the final pairing check", async () => {
+    const { activity, reader, lease, run } = setup();
+    const checking = Promise.withResolvers<void>();
+    const pairingCurrent = Promise.withResolvers<boolean>();
+    lease.check.mockResolvedValueOnce(true).mockImplementationOnce(() => {
+      checking.resolve();
+      return pairingCurrent.promise;
+    });
+    const result = run();
+    await checking.promise;
+    expect(reader.assertCurrent).toHaveBeenCalledExactlyOnceWith(terminal.id, expect.any(AbortSignal));
+    reader.assertConnected.mockImplementation(() => { throw new Error("Local terminal connection changed"); });
+    pairingCurrent.resolve(true);
+    expect(await result).toEqual({ status: "failed" });
+    expect(lease.close).toHaveBeenCalledOnce();
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("failed");
+  });
+
   it("keeps cancellation scoped and blocks another request while the picker is active", async () => {
     const { native, reader, service, activity, run } = setup();
     let picking!: () => void;

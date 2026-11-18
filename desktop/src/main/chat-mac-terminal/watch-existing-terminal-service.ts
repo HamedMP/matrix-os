@@ -13,6 +13,7 @@ const MIN_POLL_MS = 1_000;
 type StartRequest = InvokeRequest<"chat:mac-terminal-watch-start">;
 type StartReply = InvokeResponse<"chat:mac-terminal-watch-start">;
 type WatchRef = InvokeRequest<"chat:mac-terminal-watch-read">;
+type StopRequest = InvokeRequest<"chat:mac-terminal-watch-stop">;
 type ReadReply = InvokeResponse<"chat:mac-terminal-watch-read">;
 type EndReason = "revoked" | "stopped" | "expired" | "declined" | "failed";
 type Terminal = ExistingTerminalReader["terminals"][number];
@@ -175,11 +176,13 @@ export function createMacTerminalWatch(deps: Dependencies) {
     }
   }
 
-  function find(ref: WatchRef, sender: object) {
+  function find(ref: StopRequest, sender: object) {
     const operation = active;
-    if (operation?.watch?.watchId !== ref.watchId || operation.native.sender !== sender
-      || operation.target.chatId !== ref.chatId || operation.target.worktreeId !== ref.worktreeId) return null;
-    return operation;
+    if (!operation || operation.native.sender !== sender || operation.target.chatId !== ref.chatId
+      || operation.target.worktreeId !== ref.worktreeId) return null;
+    const matches = "requestId" in ref ? operation.target.requestId === ref.requestId
+      : operation.watch?.watchId === ref.watchId;
+    return matches ? operation : null;
   }
 
   async function cancel(operation: Operation, reason: EndReason) {
@@ -225,7 +228,7 @@ export function createMacTerminalWatch(deps: Dependencies) {
         return { status: "ended" };
       });
     },
-    async stop(ref: WatchRef, sender: object): Promise<{ ok: boolean }> {
+    async stop(ref: StopRequest, sender: object): Promise<{ ok: boolean }> {
       const operation = find(ref, sender);
       return { ok: operation ? await cancel(operation, "stopped") : false };
     },

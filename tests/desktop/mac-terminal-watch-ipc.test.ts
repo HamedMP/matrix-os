@@ -2,15 +2,23 @@ import { describe, expect, it } from "vitest";
 import { MAC_TERMINAL_PROBE_INVOKE } from "../../desktop/src/shared/mac-terminal-probe-ipc";
 
 const scope = { chatId: "chat_selected", worktreeId: "wt_00000000000a" };
+const request = { ...scope, requestId: "171bfdcf-b784-4130-ac41-d112a5ade502" };
 const reference = { ...scope, watchId: "8aed9e59-aacc-492f-915a-0f0dc0ff47d0" };
 const start = () => MAC_TERMINAL_PROBE_INVOKE["chat:mac-terminal-watch-start"];
 const read = () => MAC_TERMINAL_PROBE_INVOKE["chat:mac-terminal-watch-read"];
 const stop = () => MAC_TERMINAL_PROBE_INVOKE["chat:mac-terminal-watch-stop"];
 
 describe("live Mac terminal watch IPC", () => {
-  it("accepts only Chat and worktree on start, and binds read and stop to the issued handle", () => {
-    expect(start().request.parse(scope)).toEqual(scope);
-    expect(start().request.safeParse({ ...scope, terminalId: "t3" }).success).toBe(false);
+  it("validates a scoped Start, allows exact cancellation before approval, and requires the issued handle for reads", () => {
+    expect(start().request.parse(request)).toEqual(request);
+    expect(start().request.safeParse(scope).success).toBe(false);
+    expect(start().request.safeParse({ ...request, terminalId: "t3" }).success).toBe(false);
+    expect(start().request.safeParse({ ...request, requestId: "x".repeat(200) }).success).toBe(false);
+    expect(stop().request.parse(request)).toEqual(request);
+    expect(stop().request.safeParse({ ...request, requestId: "t3" }).success).toBe(false);
+    expect(stop().request.safeParse({ ...request, worktreeId: "../other" }).success).toBe(false);
+    expect(stop().request.safeParse({ ...request, watchId: reference.watchId }).success).toBe(false);
+    expect(read().request.safeParse(request).success).toBe(false);
     for (const boundary of [read(), stop()]) {
       expect(boundary.request.parse(reference)).toEqual(reference);
       expect(boundary.request.safeParse(scope).success).toBe(false);

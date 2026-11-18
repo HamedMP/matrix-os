@@ -15,6 +15,7 @@ const { snapshot } = createCanonicalChatFixture("completed");
 const { project, providerBinding, ...chat } = snapshot.chat;
 const target = { chatId: chat.id, worktreeId: "wt_00000000000a" };
 const ref = { ...target, watchId };
+const requestId = expect.stringMatching(/^[a-f0-9-]{36}$/);
 const worktree = { kind: "worktree", projectId: project!.projectId, worktreeId: target.worktreeId } as const;
 const detail: CanonicalChatDetailResponse = {
   record: { chat, projectId: worktree.projectId, providerBinding },
@@ -93,7 +94,7 @@ describe("watch an existing Mac terminal", () => {
 
     clickWatch();
     await flush();
-    expect(invoke).toHaveBeenCalledWith(start, target);
+    expect(invoke).toHaveBeenCalledWith(start, { ...target, requestId });
     expect(within(output()!).getByText("CURRENT_SCREEN")).toBeTruthy();
     expect(within(output()!).getByText("Worktree tests")).toBeTruthy();
     await advance(2_000);
@@ -168,7 +169,7 @@ describe("watch an existing Mac terminal", () => {
     expect(screen.queryByText("Mac terminal watch stopped.")).toBeNull();
   });
 
-  it("stops a late grant when the original worktree changes during approval", async () => {
+  it("cancels before Start replies when the original worktree changes and discards a late grant", async () => {
     const pendingStart = Promise.withResolvers<unknown>();
     const invoke = bridge({ [start]: () => pendingStart.promise });
     const view = render(<Harness />);
@@ -178,6 +179,9 @@ describe("watch an existing Mac terminal", () => {
       executionRoot: { ...worktree, worktreeId: "wt_00000000000b" },
     }] };
     view.rerender(<Harness value={changed} />);
+    const originalRequest = invoke.mock.calls.find(([channel]) => channel === start)?.[1];
+    expect(originalRequest).toEqual({ ...target, requestId });
+    expect(invoke).toHaveBeenCalledWith(stop, originalRequest);
     await act(async () => { pendingStart.resolve(ready()); });
 
     expect(invoke).toHaveBeenCalledWith(stop, ref);
@@ -199,7 +203,7 @@ describe("watch an existing Mac terminal", () => {
     view.rerender(<Harness />);
     await advance(4_000);
     expect(output()).toBeNull();
-    expect(invoke.mock.calls.filter(([channel]) => channel === start)).toEqual([[start, target]]);
+    expect(invoke.mock.calls.filter(([channel]) => channel === start)).toEqual([[start, { ...target, requestId }]]);
   });
 
   it("stops on Chat close and clears an expired screen even if its next poll has not settled", async () => {

@@ -4,13 +4,13 @@ Tracking ENG-495. In an eligible private worktree Chat on the paired Mac, choose
 
 | Local IPC | Authority and input |
 | --- | --- |
-| `chat:mac-terminal-watch-start` | Trusted Electron main renderer frame, same signed-in owner and primary Computer, eligible idle personal Chat and registered worktree. Takes Chat and worktree IDs. Native approval and paired-device proof bind the selected live Terminal and original window. |
+| `chat:mac-terminal-watch-start` | Trusted Electron main renderer frame, same signed-in owner and primary Computer, eligible idle personal Chat and registered worktree. Takes Chat and worktree IDs and a new request UUID. Native approval and paired-device proof bind the selected live Terminal and original window. |
 | `chat:mac-terminal-watch-read` | Same trusted window, Chat, worktree and opaque watch ID. One read in flight. Recheck the authoritative Chat placement and pairing before releasing screen text. |
-| `chat:mac-terminal-watch-stop` | Same trusted window, Chat, worktree and watch ID. Succeeds without a network authorization check so the owner can stop after losing connectivity. |
+| `chat:mac-terminal-watch-stop` | Same trusted renderer frame, Chat and worktree. Takes the main-issued watch ID or the original request UUID if the renderer has not received the watch ID. Succeeds without a network authorization check so the owner can stop after losing connectivity. |
 
 Only one Terminal watch or terminal-check operation can be active per app. Allow up to one minute for approval and five minutes of observation after approval. Poll approximately every two seconds from the originating Chat. Reuse the pinned Herdr Core visible-screen reader with no history, input, resize, or attachment. Render at most 2,000 sanitized Unicode code points at a time, replacing the previous screen. Terminal text never enters a Chat draft, transcript, provider request, or activity log. Retain only the operation outcome in Mac Activity.
 
-End the watch and clear its screen when the original Chat loses eligibility or closes, the user stops it, the app/account/Computer changes, the paired device is revoked, the Terminal connection or incarnation changes, a read fails, or the session expires. Reopening the Chat or reconnecting requires a fresh selection and native approval. In-flight results are discarded after cancellation. Watching can resume once the Chat is idle and still has an eligible worktree run. The watch never closes the original Terminal.
+End the watch and clear its screen when the original Chat loses eligibility or closes, the user stops it, the app/account/Computer changes, the paired device is revoked, the Terminal connection or incarnation changes, a read fails, or the session expires. Reopening the Chat or reconnecting requires a fresh selection and native approval. Leaving the Chat during startup cancels that request without waiting for the picker or approval. In-flight results are discarded after cancellation. Watching can resume once the Chat is idle and still has an eligible worktree run. The watch never closes the original Terminal.
 
 ## Validation
 
