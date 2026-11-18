@@ -71,6 +71,9 @@ describe("watch an existing Mac Terminal", () => {
     reader.read.mockResolvedValueOnce("Second screen from t7");
     expect(await service.read(ref, native.sender)).toEqual({ status: "ready", output: "Second screen from t7" });
     expect(reader.read.mock.calls.map(args => args[0])).toEqual([selected.id, selected.id]);
+    expect(deps.readTerminalContext.mock.calls).toEqual(
+      Array.from({ length: 4 }, () => [target, expect.any(AbortSignal)]),
+    );
     expect(deps.beginActivity).toHaveBeenCalledWith("terminal-watch", target.worktreeId);
     expect(service.isBusy()).toBe(true);
     expect(await service.stop(ref, native.sender)).toEqual({ ok: true });

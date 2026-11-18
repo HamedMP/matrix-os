@@ -8,13 +8,14 @@ import {
   MAC_TERMINAL_PROBE_PREFIX,
   type MacTerminalProbeAction,
 } from "../../../../shared/mac-terminal-probe";
-import type { InvokeResponse } from "../../../../shared/ipc-contract";
+import type { InvokeRequest, InvokeResponse } from "../../../../shared/ipc-contract";
 import { invoke } from "../../lib/operator";
 import { backgroundElectronPreviewDraft, chatElectronPreviewWorktree, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type Preparation = InvokeResponse<"chat:mac-terminal-prepare">;
 type RunStatus = InvokeResponse<"chat:mac-terminal-run">["status"];
+type SnapshotRequest = InvokeRequest<"chat:mac-terminal-read-existing">;
 type SnapshotPhase = InvokeResponse<"chat:mac-terminal-read-existing">["status"] | "waiting" | "changed";
 type BackgroundStatus = InvokeResponse<"chat:mac-terminal-background-status">;
 type ActiveBackground = Extract<BackgroundStatus, { active: true }>;
@@ -132,13 +133,15 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
   const attempt = useRef<string | null>(null);
   const mounted = useRef(false);
   const stageDraft = useRef(onDraft);
-  const snapshotScope = useRef<symbol | null>(null);
+  const snapshotScope = useRef<string | null>(null);
+  const snapshotRequest = useRef<SnapshotRequest | null>(null);
   const changingGrant = useRef(false);
   const backgroundRevision = useRef(0);
   const previousBackground = useRef<{ scope: string; targetId: string } | null>(null);
   const worktreeId = root?.worktreeId;
   const scope = JSON.stringify([chat.id, worktreeId]);
-  const idle = !activeRun;
+  const snapshotKey = readyToCheck && !activeRun && onDraft
+    ? JSON.stringify([actorId, chat.id, root.projectId, root.worktreeId]) : null;
   const backgroundStatus = background?.scope === scope ? background.status : null;
   const activeBackground = backgroundStatus?.active ? backgroundStatus : null;
   const backgroundTarget = activeBackground?.targetId;
@@ -154,9 +157,16 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
   }, [activeRun, onDraft, readyToCheck]);
 
   useLayoutEffect(() => {
-    snapshotScope.current = readyToCheck && idle ? Symbol() : null;
-    return () => { snapshotScope.current = null; };
-  }, [actorId, idle, readyToCheck, root?.projectId, scope]);
+    snapshotScope.current = snapshotKey;
+    setPreparation(current => current?.status === "snapshot" ? null : current);
+    return () => {
+      snapshotScope.current = null;
+      const request = snapshotRequest.current;
+      if (!request) return;
+      snapshotRequest.current = null;
+      void invoke("chat:mac-terminal-read-existing-cancel", request).catch(logFailure);
+    };
+  }, [snapshotKey]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Reads the native developer-only capability.
   useEffect(() => {
@@ -226,7 +236,7 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
 
   async function prepare(mode: PreparationMode, queryDraft: string) {
     const stage = stageDraft.current;
-    if (!root || !stage || changingGrant.current) return;
+    if (!root || !stage || changingGrant.current || snapshotRequest.current) return;
     changingGrant.current = true;
     backgroundRevision.current++;
     setPreparation({ status: "preparing", mode });
@@ -269,13 +279,14 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
 
   async function readExisting(queryDraft: string) {
     const stage = stageDraft.current;
-    const originalScope = snapshotScope.current;
-    if (!root || !stage || !originalScope || changingGrant.current) return;
-    changingGrant.current = true;
+    if (!root || !stage || !snapshotKey || snapshotScope.current !== snapshotKey
+      || changingGrant.current || snapshotRequest.current) return;
+    const request = { chatId: chat.id, worktreeId: root.worktreeId, requestId: crypto.randomUUID() };
+    snapshotRequest.current = request;
     setPreparation({ status: "snapshot", phase: "waiting" });
     try {
-      const reply = await invoke("chat:mac-terminal-read-existing", { chatId: chat.id, worktreeId: root.worktreeId });
-      if (snapshotScope.current !== originalScope) return;
+      const reply = await invoke("chat:mac-terminal-read-existing", request);
+      if (snapshotRequest.current !== request) return;
       if (reply.status !== "ready") {
         setPreparation({ status: "snapshot", phase: reply.status });
         return;
@@ -287,22 +298,22 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
       setPreparation({ status: "snapshot", phase: staged ? "ready" : "changed" });
     } catch (error: unknown) {
       logFailure(error);
-      if (snapshotScope.current === originalScope) setPreparation({ status: "snapshot", phase: "unavailable" });
+      if (snapshotRequest.current === request) setPreparation({ status: "snapshot", phase: "unavailable" });
     } finally {
-      changingGrant.current = false;
-      if (mounted.current && snapshotScope.current !== originalScope) setPreparation(null);
+      if (snapshotRequest.current === request) snapshotRequest.current = null;
     }
   }
 
   function stageAnother(kind: "terminal" | "preview", queryDraft: string) {
-    if (!root || !activeBackground || activeBackground.expiresAt <= Date.now() || changingGrant.current) return;
+    if (!root || !activeBackground || activeBackground.expiresAt <= Date.now()
+      || changingGrant.current || snapshotRequest.current) return;
     const { targetId, expiresAt } = activeBackground;
     const draft = kind === "preview" ? backgroundElectronPreviewDraft(targetId) : makeDraft(targetId, "background");
     stageDraft.current?.(draft, root, queryDraft, expiresAt, targetId);
   }
 
   async function stopBackground() {
-    if (!activeBackground || changingGrant.current) return;
+    if (!activeBackground || changingGrant.current || snapshotRequest.current) return;
     changingGrant.current = true;
     backgroundRevision.current++;
     setPreparation({ status: "stopping" });

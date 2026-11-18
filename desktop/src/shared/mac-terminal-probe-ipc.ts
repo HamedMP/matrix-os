@@ -24,7 +24,7 @@ const ExistingTerminalReadReply = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("ready"), ...TerminalSnapshot, output: TerminalScreen.refine(text => text.length > 0) }),
   TerminalSelectionFailure,
 ]);
-const TerminalWatchRequest = Prepare.extend({ requestId: z.uuid() });
+const TerminalObservationRequest = Prepare.extend({ requestId: z.uuid() });
 const TerminalWatchReference = Prepare.extend({ watchId: z.uuid() });
 const TerminalWatchStartReply = z.discriminatedUnion("status", [
   z.strictObject({
@@ -58,11 +58,15 @@ const BackgroundStatus = z.discriminatedUnion("active", [
 export const MAC_TERMINAL_PROBE_INVOKE = {
   "chat:mac-terminal-available": { request: z.strictObject({}), response: z.strictObject({ available: z.boolean() }) },
   "chat:mac-terminal-prepare": { request: Prepare, response: PrepareReply },
-  "chat:mac-terminal-read-existing": { request: Prepare, response: ExistingTerminalReadReply },
-  "chat:mac-terminal-watch-start": { request: TerminalWatchRequest, response: TerminalWatchStartReply },
+  "chat:mac-terminal-read-existing": { request: TerminalObservationRequest, response: ExistingTerminalReadReply },
+  "chat:mac-terminal-read-existing-cancel": {
+    request: TerminalObservationRequest,
+    response: z.strictObject({ ok: z.boolean() }),
+  },
+  "chat:mac-terminal-watch-start": { request: TerminalObservationRequest, response: TerminalWatchStartReply },
   "chat:mac-terminal-watch-read": { request: TerminalWatchReference, response: TerminalWatchReadReply },
   "chat:mac-terminal-watch-stop": {
-    request: z.union([TerminalWatchReference, TerminalWatchRequest]),
+    request: z.union([TerminalWatchReference, TerminalObservationRequest]),
     response: z.strictObject({ ok: z.boolean() }),
   },
   "chat:mac-terminal-run": { request: Run, response: RunReply },

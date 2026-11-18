@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
+import type { PrepareMacTerminalCheck } from "../../shared/mac-terminal-probe-ipc";
 import type { MacTerminalContext } from "../chat-electron-preview/transport";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { ExistingTerminalReader } from "../local-terminals/existing-terminal";
@@ -21,7 +22,7 @@ type Terminal = ExistingTerminalReader["terminals"][number];
 interface Dependencies {
   enabled: boolean;
   terminalBusy(): boolean;
-  readTerminalContext(target: StartRequest, signal: AbortSignal): Promise<MacTerminalContext | null>;
+  readTerminalContext(target: PrepareMacTerminalCheck, signal: AbortSignal): Promise<MacTerminalContext | null>;
   isTerminalContextCurrent(context: MacTerminalContext): boolean;
   openReader(): Promise<ExistingTerminalReader>;
   acquireActionPairing: MacActionPairing;
@@ -48,7 +49,8 @@ interface Watch {
 }
 
 interface Operation {
-  target: StartRequest;
+  target: PrepareMacTerminalCheck;
+  requestId: string;
   native: NativeWatchApproval;
   controller: AbortController;
   pending?: Promise<unknown>;
@@ -180,7 +182,7 @@ export function createMacTerminalWatch(deps: Dependencies) {
     const operation = active;
     if (!operation || operation.native.sender !== sender || operation.target.chatId !== ref.chatId
       || operation.target.worktreeId !== ref.worktreeId) return null;
-    const matches = "requestId" in ref ? operation.target.requestId === ref.requestId
+    const matches = "requestId" in ref ? operation.requestId === ref.requestId
       : operation.watch?.watchId === ref.watchId;
     return matches ? operation : null;
   }
@@ -193,10 +195,10 @@ export function createMacTerminalWatch(deps: Dependencies) {
 
   return {
     isBusy: () => active !== null,
-    async start(target: StartRequest, native: NativeWatchApproval): Promise<StartReply> {
+    async start({ chatId, worktreeId, requestId }: StartRequest, native: NativeWatchApproval): Promise<StartReply> {
       if (!deps.enabled) return { status: "unavailable" };
       if (active || deps.terminalBusy()) return { status: "busy" };
-      const operation: Operation = { target, native, controller: new AbortController() };
+      const operation: Operation = { target: { chatId, worktreeId }, requestId, native, controller: new AbortController() };
       active = operation;
       operation.controller.signal.addEventListener("abort", () => release(operation), { once: true });
       setExpiry(operation, Date.now() + APPROVAL_MS);
