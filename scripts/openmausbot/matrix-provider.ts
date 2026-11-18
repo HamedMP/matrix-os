@@ -3,14 +3,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { request, type IncomingMessage } from "node:http";
 import type { RuntimeEvent, RuntimeEventListener } from "../../shared/runtime-events.ts";
-import { newEventId, type InstanceConfigMap, type ProviderAdapter, type ProviderDriver } from "../contracts.ts";
+import { newEventId, type InstanceConfigMap, type ModelCatalog, type ProviderAdapter, type ProviderDriver } from "../contracts.ts";
 
 export const MATRIX_HOSTED_INSTANCE = "matrix-hosted-ai";
 export const MATRIX_HOSTED_MODEL = "@cf/zai-org/glm-5.3-flash";
-const DISPLAY = "Matrix AI · Text only";
+const DISPLAY = "Matrix providers";
 const MODEL_SOCKET = "/matrix-drive/model.sock";
 const RESPONSE_LIMIT = 256_000;
-const SEND_NOTICE = "Matrix AI accepts a new, direct text message from the paired Matrix Bots window. Queued messages, attachments, and automated turns are not supported.";
+const SEND_NOTICE = "Send a new, direct text message from the paired Matrix Bots window to use Matrix providers.";
+const MAX_MODELS = 128;
+const TEXT_TURN_TIMEOUT = 35_000;
+const MANAGED_TURN_TIMEOUT = 150_000;
 
 type TurnIdentity = { botId: string; threadId: string; sendId: string };
 export type MatrixHostedTurnTicket = TurnIdentity & { token: string };
@@ -93,21 +96,39 @@ async function query(
   }
 }
 
-const models = {
-  default: MATRIX_HOSTED_MODEL,
-  options: [{ id: MATRIX_HOSTED_MODEL, label: "GLM 5.3 Flash · Text only" }],
-};
+const emptyModels: ModelCatalog = { default: "", options: [] };
+function matrixModelId(value: unknown): value is string {
+  return typeof value === "string" && (value === MATRIX_HOSTED_MODEL || /^matrix-route-[a-f0-9]{64}$/.test(value));
+}
+function matrixModelCatalog(value: unknown): { models: ModelCatalog; tools: ReadonlySet<string> } | null {
+  if (!value || typeof value !== "object" || !("available" in value) || value.available !== true
+    || !("default" in value) || !matrixModelId(value.default)
+    || !("models" in value) || !Array.isArray(value.models) || value.models.length > MAX_MODELS) return null;
+  const options: ModelCatalog["options"] = [];
+  const seen = new Set<string>();
+  const tools = new Set<string>();
+  for (const option of value.models) {
+    if (!option || typeof option !== "object" || !matrixModelId(option.id) || seen.has(option.id)
+      || typeof option.label !== "string" || !option.label.trim() || option.label.length > 320
+      || typeof option.tools !== "boolean") return null;
+    seen.add(option.id);
+    options.push({ id: option.id, label: option.label });
+    if (option.tools) tools.add(option.id);
+  }
+  return seen.has(value.default) ? { models: { default: value.default, options }, tools } : null;
+}
 
 export const matrixHostedDriver: ProviderDriver<null> = {
   driverKind: MATRIX_HOSTED_INSTANCE,
   metadata: { displayName: DISPLAY, access: "subscription" },
-  models,
+  models: emptyModels,
   defaultConfig: () => null,
   decodeConfig: () => null,
   async create({ instanceId, enabled }) {
     if (!process.env.OMB_MATRIX_PAIR_SOCKET || instanceId !== MATRIX_HOSTED_INSTANCE) throw new Error("Matrix AI unavailable");
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { turnId: string; abort: AbortController }>();
+    let catalog: ReturnType<typeof matrixModelCatalog> = null;
     let stopped = false;
     const stopAll = async () => {
       for (const turn of active.values()) turn.abort.abort();
@@ -119,7 +140,8 @@ export const matrixHostedDriver: ProviderDriver<null> = {
       async sendTurn(input) {
         const dispatch = modelTurn.getStore();
         const ticket = dispatch?.ticket;
-        if (stopped || !enabled || !dispatch || !ticket?.token || input.model !== MATRIX_HOSTED_MODEL
+        const selected = input.model;
+        if (stopped || !enabled || !dispatch || !ticket?.token || !matrixModelId(selected)
           || ticket.botId !== input.botId || ticket.threadId !== input.threadId
           || input.guestConfined || input.mentionTurn || input.images?.length) throw new Error(SEND_NOTICE);
         if (active.has(input.threadId) || active.size >= 8) throw new Error("Matrix AI is busy. Send a new message when the turn finishes.");
@@ -136,15 +158,16 @@ export const matrixHostedDriver: ProviderDriver<null> = {
           for (const listener of listeners) listener(event);
         };
         emit({ ...base(), type: "turn.started" });
-        emit({ ...base(), type: "session.started", sessionId: null, model: MATRIX_HOSTED_MODEL });
+        emit({ ...base(), type: "session.started", sessionId: null, model: selected });
         void (async () => {
           let ok = false;
           let stopReason = "error";
           try {
             // The gateway supplies the exact latest user text from its
             // authorized request, not mutable turn input or private context.
-            const result = await query("/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(35_000)]), JSON.stringify({
-              botId: ticket.botId, threadId: ticket.threadId, sendId: ticket.sendId, modelId: MATRIX_HOSTED_MODEL, history: dispatch.history,
+            const timeout = catalog?.tools.has(selected) ? MANAGED_TURN_TIMEOUT : TEXT_TURN_TIMEOUT;
+            const result = await query("/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]), JSON.stringify({
+              botId: ticket.botId, threadId: ticket.threadId, sendId: ticket.sendId, modelId: selected, history: dispatch.history,
             }), token);
             abort.signal.throwIfAborted();
             const text = result && typeof result === "object" && "text" in result ? result.text : null;
@@ -180,20 +203,20 @@ export const matrixHostedDriver: ProviderDriver<null> = {
       },
     };
     return {
-      instanceId, driverKind: MATRIX_HOSTED_INSTANCE, displayName: DISPLAY, enabled, models, adapter,
+      instanceId, driverKind: MATRIX_HOSTED_INSTANCE, displayName: DISPLAY, enabled, adapter,
+      get models() { return catalog?.models ?? emptyModels; },
       async snapshot() {
         if (!enabled || stopped) return { state: "unavailable", reason: "Matrix AI unavailable" };
         try {
-          const status = await query("/status", AbortSignal.timeout(5_000));
-          if (status && typeof status === "object" && "available" in status && status.available === true) {
-            return { state: "available", authenticated: true, billing: "metered" };
-          }
+          catalog = matrixModelCatalog(await query("/status", AbortSignal.timeout(14_000)));
+          if (catalog) return { state: "available", authenticated: true, billing: "metered" };
         } catch (error) {
+          catalog = null;
           console.warn("[matrix-ai] Status unavailable", error instanceof Error ? error.name : "UnknownError");
         }
         return { state: "unavailable", reason: "Matrix AI unavailable for this Matrix Computer" };
       },
-      async dispose() { stopped = true; await stopAll(); listeners.clear(); },
+      async dispose() { stopped = true; catalog = null; await stopAll(); listeners.clear(); },
     };
   },
 };

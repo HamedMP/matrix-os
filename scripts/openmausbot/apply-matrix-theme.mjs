@@ -134,7 +134,7 @@ const icon = await readFile(new URL("../../shell/public/system-app-icons/v2/bots
 await Promise.all([
   writeFile(brandPath, brand
     .replace('export const PRODUCT_NAME = "MausBot";', 'export const PRODUCT_NAME = "Matrix Bots";')
-    .replace('DEFAULT_BRAND: Brand = { name: "OpenMausBot" };', 'DEFAULT_BRAND: Brand = { name: "Matrix Bots" };')),
+    .replace('DEFAULT_BRAND: Brand = { name: "OpenMausBot" };', 'DEFAULT_BRAND: Brand = { name: "Matrix Bots", logo: "/app-icon.svg" };')),
   writeFile(htmlPath, html
     .replace("<title>MausBot</title>", "<title>Matrix Bots</title>")
     .replace('content="OpenMausBot" />', 'content="Matrix Bots" />')
@@ -146,31 +146,113 @@ await Promise.all([
   writeFile(resolve(sourceRoot, "public/app-icon.svg"), icon),
 ]);
 
-async function patchPinnedComponent(file, replacements) {
-  const path = resolve(sourceRoot, "src/components", file);
+async function patchPinnedSource(file, replacements) {
+  const path = resolve(sourceRoot, "src", file);
   let component = await readFile(path, "utf8");
   for (const [needle, replacement] of replacements) {
     if (component.includes(replacement)) continue;
-    if (component.split(needle).length !== 2) throw new Error("The pinned OpenMausBot component changed: " + file);
+    if (component.split(needle).length !== 2) throw new Error("The pinned OpenMausBot UI changed: " + file);
     component = component.replace(needle, replacement);
   }
   await writeFile(path, component);
 }
 
 await Promise.all([
-  patchPinnedComponent("AttachmentPreview.tsx", [
+  patchPinnedSource("components/AttachmentPreview.tsx", [
     ['className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80', 'data-matrix-image-scrim\n      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80'],
     ['ref={dialogRef}\n        role="dialog"', 'ref={dialogRef}\n        data-matrix-image-dialog\n        role="dialog"'],
   ]),
-  patchPinnedComponent("ThemeRow.tsx", [
+  patchPinnedSource("lib/brand.ts", [
+    ['  current = status;', '  current = isMatrixHostedBots() && status.source === "default" ? { ...status, brand: DEFAULT_BRAND } : status;'],
+    ['export interface Brand {', 'import { isMatrixHostedBots } from "./matrix-hosted-settings";\n\nexport interface Brand {'],
+  ]),
+  patchPinnedSource("components/ThemeRow.tsx", [
     ['<SettingRow\n      title={t(simple', '<SettingRow\n      className="matrix-hosted-bots-theme-control"\n      title={t(simple'],
   ]),
-  patchPinnedComponent("SettingsSimplePages.tsx", [
+  patchPinnedSource("components/SettingsSimplePages.tsx", [
     ['<SettingRow title={t("settings.theme.title")} subtitle={hint}>', '<SettingRow className="matrix-hosted-bots-theme-control" title={t("settings.theme.title")} subtitle={hint}>'],
   ]),
-  patchPinnedComponent("SettingsModal.tsx", [
+  patchPinnedSource("components/SettingsModal.tsx", [
     ['<Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n              <SkinPicker />\n            </Card>', '<div className="matrix-hosted-bots-theme-control">\n              <Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n                <SkinPicker />\n              </Card>\n            </div>'],
   ]),
+  patchPinnedSource("components/Avatar.tsx", [
+    ['import { MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";',
+      'import { DEFAULT_MASCOT_BODY, MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\nimport { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";'],
+    ['  if (outcome !== "flatImage") {', `  if (isMatrixHostedBots() && !profile.avatarUrl && !bot.mascotFaceColor
+    && (!bot.mascotBody || bot.mascotBody === DEFAULT_MASCOT_BODY)) {
+    return <img src="/app-icon.svg" alt={label ?? bot.name ?? ""} width={size} height={size}
+      draggable={false} className="block shrink-0 object-contain" style={{ width: size, height: size }} />;
+  }
+
+  if (outcome !== "flatImage") {`],
+  ]),
+  patchPinnedSource("state/store.tsx", [
+    ['import { cloudAsleep, onCloudPower }', 'import { openMatrixBotsSettings } from "@/lib/matrix-hosted-settings";\nimport { cloudAsleep, onCloudPower }'],
+    ['    const wrapped: React.Dispatch<Action> = (action) => {', `    const wrapped: React.Dispatch<Action> = (action) => {
+      if (action.type === "togglePlugins" && (action.open ?? !stateRef.current.pluginsOpen)
+        && openMatrixBotsSettings(action.surface === "mcp" ? "mcps" : "services")) return;
+      if (action.type === "toggleAppSettings" && action.section === "engines"
+        && (action.open ?? !stateRef.current.appSettingsOpen) && openMatrixBotsSettings("agents-providers")) return;`],
+  ]),
+  patchPinnedSource("components/SidebarConnectApps.tsx", [
+    ['import { useStore } from "@/state/store";',
+      'import { useStore } from "@/state/store";\nimport { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";'],
+    ['    if (state.pluginsOpen) return;', '    if (isMatrixHostedBots() || state.pluginsOpen) return;'],
+    ['        <span aria-hidden="true" data-app-faces=""', '        {!isMatrixHostedBots() && <span aria-hidden="true" data-app-faces=""'],
+    ['        </span>\n      </>}', '        </span>}\n      </>}'],
+  ]),
+  patchPinnedSource("components/ModelPicker.tsx", [
+    ['import { ApiKeyHint,', 'import { isMatrixHostedBots, openMatrixBotsSettings } from "@/lib/matrix-hosted-settings";\nimport { ApiKeyHint,'],
+    ['    dispatch(openKeysFor(railInstance));', '    if (!openMatrixBotsSettings("agents-providers")) dispatch(openKeysFor(railInstance));'],
+    ['onManage={remote ? undefined : openEngines}', 'onManage={remote && !isMatrixHostedBots() ? undefined : openEngines}'],
+  ]),
+  patchPinnedSource("components/bot-panel/pages.tsx", [
+    ['import { appSwitchPatch }', 'import { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";\nimport { MatrixManagedToolSettings } from "../MatrixManagedToolSettings";\nimport { appSwitchPatch }'],
+    ['export function AppsPage({ bot, derived }: PageContext) {', `export function AppsPage(props: PageContext) {
+  return isMatrixHostedBots() ? <MatrixManagedToolSettings /> : <UpstreamAppsPage {...props} />;
+}
+
+function UpstreamAppsPage({ bot, derived }: PageContext) {`],
+  ]),
+  patchPinnedSource("components/bot-settings/AccessSection.tsx", [
+    ['import { useBotApps }', 'import { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";\nimport { MatrixManagedToolSettings } from "../MatrixManagedToolSettings";\nimport { useBotApps }'],
+    ['export function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {', `export function McpServersCard(props: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {
+  return isMatrixHostedBots() ? <MatrixManagedToolSettings apps={false} /> : <UpstreamMcpServersCard {...props} />;
+}
+
+function UpstreamMcpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {`],
+    ['{shows("apps") && <div className="rounded-xl bg-card p-4">', `{shows("apps") && isMatrixHostedBots() && <MatrixManagedToolSettings mcp={false} />}
+      {shows("apps") && !isMatrixHostedBots() && <div className="rounded-xl bg-card p-4">`],
+  ]),
+  writeFile(resolve(sourceRoot, "src/components/MatrixManagedToolSettings.tsx"), `import { Blocks, Server } from "lucide-react";
+import { openMatrixBotsSettings } from "@/lib/matrix-hosted-settings";
+
+export function MatrixManagedToolSettings({ apps = true, mcp = true }: { apps?: boolean; mcp?: boolean }) {
+  const button = "flex items-center gap-2 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover";
+  return (
+    <section className="space-y-3 rounded-xl bg-card p-4 text-[13px] text-ink-secondary">
+      <p>Connections and tool permissions are managed in Matrix Settings for this Computer.</p>
+      <div className="flex flex-wrap gap-2">
+        {apps && <button type="button" className={button} onClick={() => openMatrixBotsSettings("services")}><Blocks size={15} aria-hidden="true" /> Connect Apps</button>}
+        {mcp && <button type="button" className={button} onClick={() => openMatrixBotsSettings("mcps")}><Server size={15} aria-hidden="true" /> Manage MCPs</button>}
+      </div>
+    </section>
+  );
+}
+`),
+  writeFile(resolve(sourceRoot, "src/lib/matrix-hosted-settings.ts"), [
+    'export function isMatrixHostedBots(): boolean {',
+    '  return typeof window !== "undefined" && window.location.origin === "https://matrix-bots.invalid";',
+    '}',
+    '',
+    'export function openMatrixBotsSettings(section: "services" | "mcps" | "agents-providers"): boolean {',
+    '  if (!isMatrixHostedBots()) return false;',
+    '  // The isolated native view consumes this navigation and opens Matrix Settings.',
+    '  window.location.assign("https://matrix-bots-settings.invalid/" + section);',
+    '  return true;',
+    '}',
+    '',
+  ].join("\n")),
 ]);
 
 async function replaceStreamEndpoint(file, needle, replacement) {

@@ -136,6 +136,9 @@ import { admitsOpenMausBotHostBundle } from "./hosted-bots/oss-host-bundle.js";
 import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
 import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
 import { initializeHostedBotsMatrixModel } from "./hosted-bots/matrix-model.js";
+import { createHostedBotsManagedTools } from "./hosted-bots/managed-tool-catalog.js";
+import { generateHostedBotsManagedText } from "./hosted-bots/managed-tools.js";
+import { requestAppAiApiPayload } from "./app-ai/api-completion.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1305,6 +1308,10 @@ export async function createGateway(config: GatewayConfig) {
     admitted: openMausBotAdmitted,
     isOwner: isOpenMausBotOwner,
     ownerId: process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim() || "",
+    customMcp: managedPiMcpDependencies({
+      env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+      clerkOwnerId: process.env.MATRIX_CLERK_USER_ID?.trim(),
+    }),
     ...(openMausBotAdmitted ? { github: createHostedBotsGithubRead({ homePath }) } : {}),
     ...(internalIntegrationBaseUrl && internalPlatformToken ? {
       integration: createBotIntegrationClient(createPlatformIntegrationTransport({
@@ -1314,6 +1321,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   app.route(HOSTED_BOTS_DRIVE_BASE, hostedBotsDrive.routes);
   app.route(HOSTED_BOTS_INTEGRATIONS_BASE, hostedBotsDrive.integrationRoutes);
+  app.route("/api/chats/hosted-bots", hostedBotsDrive.mcpDecisionRoutes);
   const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
   app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
@@ -1525,10 +1533,6 @@ export async function createGateway(config: GatewayConfig) {
       accessSourceId: "owner_openai_profile",
     }) } : {}),
   });
-  const hostedBotsMatrixModel = await initializeHostedBotsMatrixModel({
-    admitted: openMausBotAdmitted, homePath, fundedCredentialProvider, fundedAdmission,
-    inventory: () => aiProviderService.getSnapshot({ admissionScope: "managed_matrix", signal: AbortSignal.timeout(5_000) }),
-  });
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     codexExecutable: codexExecutable ?? undefined,
     profileGuard: nativeProviderProfileGuard,
@@ -1576,6 +1580,20 @@ export async function createGateway(config: GatewayConfig) {
     nativeProfileGuard: nativeProviderProfileGuard,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     chatGptPlanSource: appSubscriptionSource,
+  });
+  const hostedBotsToolRoutes = hostedBotsDrive.toolRoutes;
+  const hostedBotsMatrixModel = await initializeHostedBotsMatrixModel({
+    admitted: openMausBotAdmitted, providers: appAiRuntime.hostedBots,
+    ...(hostedBotsToolRoutes ? {
+      generateManaged: options => generateHostedBotsManagedText({
+        ...options,
+        tools: createHostedBotsManagedTools(hostedBotsToolRoutes),
+        transport: body => requestAppAiApiPayload({
+          homePath, fundedCredentialProvider, fundedAdmission,
+          route: options.route, signal: options.signal, revalidate: options.revalidate,
+        }, body),
+      }),
+    } : {}),
   });
   const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
   const chatDriveContext = await registerGatewayProjectDriveRoutes(app, { repository: chatRepository, collaborationReady: gatewayCollaboration !== null });

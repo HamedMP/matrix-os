@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHostedBotsProtocolHandler, hostedBotsIdentity, hostedBotsSocketAllowed, hostedBotsProviderLoginAllowed, HOSTED_BOTS_ORIGIN } from "@desktop/main/embeds/hosted-bots-transport";
+import { createHostedBotsProtocolHandler, hostedBotsIdentity, hostedBotsSocketAllowed, hostedBotsProviderLoginAllowed, resolveHostedBotsNavigation, HOSTED_BOTS_ORIGIN } from "@desktop/main/embeds/hosted-bots-transport";
 
 const auth = { signedIn: true, platformHost: "https://app.matrix-os.com", userId: "owner", handle: "pv-202-0123abcd", runtimeSlot: "pv-202-0123abcd" };
 const cookieName = "omb_session_8799_abc";
@@ -26,6 +26,23 @@ function setup(initialAuth = auth) {
 }
 
 describe("hosted Bots Electron transport", () => {
+  it("consumes only the fixed Matrix settings links without opening an external page", () => {
+    const openSettings = vi.fn();
+    const prefix = "https://matrix-bots-settings.invalid/";
+    for (const section of ["services", "mcps", "agents-providers"]) {
+      expect(resolveHostedBotsNavigation(prefix + section, openSettings)).toEqual({ disposition: "block" });
+    }
+    expect(openSettings.mock.calls).toEqual([["services"], ["mcps"], ["agents-providers"]]);
+    for (const address of [
+      prefix + "account", prefix + "services?runtime=other", prefix + "mcps#target", prefix + "mcps/",
+      "https://matrix-bots-settings.invalid.outside.test/services", "https://guest@matrix-bots-settings.invalid/services",
+      "http://matrix-bots-settings.invalid/mcps", "https://matrix-bots.invalid/services",
+    ]) expect(resolveHostedBotsNavigation(address, openSettings)).toEqual({ disposition: "block" });
+    expect(openSettings).toHaveBeenCalledTimes(3);
+    const login = "https://auth.openai.com/codex/device";
+    expect(resolveHostedBotsNavigation(login, openSettings)).toEqual({ disposition: "external" });
+  });
+
   it("scopes the persistent partition to the authenticated owner and selected Computer", () => {
     const primary = hostedBotsIdentity({ ...auth, handle: "owner", runtimeSlot: "primary" });
     const dev = hostedBotsIdentity({ ...auth, handle: "owner-dev", runtimeSlot: "dev" });

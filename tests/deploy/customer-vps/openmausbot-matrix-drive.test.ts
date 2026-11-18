@@ -28,7 +28,7 @@ async function withBroker(
 describe("OpenMausBot Matrix integration MCP", () => {
   const githubRead = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
 
-  it("advertises both read-only tools over stdio without an available broker", () => {
+  it("advertises Matrix integration reads and Custom MCP over stdio without an available broker", () => {
     const requests = [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
@@ -40,10 +40,15 @@ describe("OpenMausBot Matrix integration MCP", () => {
     expect(child.stderr).toBe("");
     const [initialized, listed] = child.stdout.trim().split("\n").map((line) => JSON.parse(line));
     expect(initialized).toMatchObject({ id: 1, result: { protocolVersion: "2025-06-18" } });
-    expect(listed.result.tools).toHaveLength(2);
+    expect(listed.result.tools).toHaveLength(5);
     expect(listed.result.tools).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "matrix_read_drive_document", annotations: { readOnlyHint: true } }),
       expect.objectContaining({ name: "matrix_read_integration", annotations: { readOnlyHint: true } }),
+      expect.objectContaining({ name: "matrix_list_integrations", annotations: { readOnlyHint: true } }),
+      expect.objectContaining({ name: "matrix_list_mcp_tools", annotations: { readOnlyHint: true } }),
+      expect.objectContaining({ name: "matrix_call_mcp_tool", inputSchema: expect.objectContaining({
+        required: ["serverId", "tool", "arguments"],
+      }) }),
     ]));
   });
 

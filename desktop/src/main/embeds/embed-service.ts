@@ -6,6 +6,7 @@
 // native principal (L1).
 import { net, session, type BaseWindow } from "electron";
 import type { HostedBotsAppearance } from "../../shared/hosted-bots-appearance";
+import type { HostedBotsSettingsSection } from "../../shared/hosted-bots-settings";
 import { randomUUID } from "node:crypto";
 import {
   startPortForward as startMatrixPortForward,
@@ -33,7 +34,7 @@ import type { NativeAppBridge } from "./native-app-bridge";
 import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { browserProductLaunchUrl } from "./browser-product-launch";
-import { createHostedBotsTransport, hostedBotsIdentity, hostedBotsProviderLoginAllowed, HOSTED_BOTS_ORIGIN, type HostedBotsAuth } from "./hosted-bots-transport";
+import { createHostedBotsTransport, hostedBotsIdentity, resolveHostedBotsNavigation, HOSTED_BOTS_ORIGIN, type HostedBotsAuth } from "./hosted-bots-transport";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed";
@@ -44,6 +45,7 @@ interface EmbedServiceDeps {
   getToken: () => string | null;
   getHostedBotsAuth?: () => HostedBotsAuth;
   emitState: (embedId: string, state: EmbedState) => void;
+  openHostedBotsSettings?: (embedId: string, runtimeSlot: string, section: HostedBotsSettingsSection) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
   browserLabViewerAuth?: BrowserLabViewerAuth;
@@ -183,9 +185,12 @@ export class EmbedService {
         botsAppearance: request.appearance,
         active: request.active ?? true,
         allowedOrigins: [HOSTED_BOTS_ORIGIN],
-        resolveNavigation: (url) => hostedBotsProviderLoginAllowed(url)
-          ? { disposition: "external", url }
-          : { disposition: "block" },
+        resolveNavigation: (url) => resolveHostedBotsNavigation(url, (section) => {
+          const current = this.deps.getHostedBotsAuth?.();
+          if (current && this.deps.getToken() && hostedBotsIdentity(current)?.partition === identity.partition) {
+            this.deps.openHostedBotsSettings?.(embedId, identity.runtimeSlot, section);
+          }
+        }),
         onState: (state) => this.deps.emitState(embedId, state),
       });
       return { embedId, state: "loading" };

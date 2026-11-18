@@ -2,14 +2,17 @@ import { randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { BotIntegrationError, type BotIntegrationClient } from "../bots/integration-client.js";
+import { BotIntegrationError, type BotIntegrationAction, type BotIntegrationClient } from "../bots/integration-client.js";
 import { validateActionParams } from "../integrations/parameter-validation.js";
 import { getService } from "../integrations/registry.js";
+import { createHostedBotsCustomMcpApproval, type HostedBotsCustomMcpDependencies } from "./custom-mcp-approval.js";
 import { validateHostedBotsGithubReadParams, type createHostedBotsGithubRead } from "./github-developer-read.js";
+import { HostedToolArguments, readHostedToolJson } from "./tool-bridge-json.js";
 
 const MAX_REQUESTS = 4;
 const MAX_ACCOUNTS = 16;
 const MAX_CONTENT_BYTES = 24 * 1024;
+const MAX_CATALOG_BYTES = 128 * 1024;
 const DEADLINE_MS = 90_000;
 const AccountId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const AccountLabel = z.string().min(1).max(100).refine((label) => label === label.trim() && !/[\x00-\x1f\x7f]/.test(label));
@@ -19,8 +22,7 @@ const IntegrationId = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const IntegrationRead = z.strictObject({
   service: IntegrationId,
   action: IntegrationId,
-  params: z.custom<Record<string, unknown>>(value =>
-    value !== null && typeof value === "object" && !Array.isArray(value) && safeJson(value)),
+  params: HostedToolArguments,
 });
 const Decision = z.discriminatedUnion("decision", [
   z.strictObject({ decision: z.literal("allow"), accountId: AccountId }),
@@ -46,18 +48,6 @@ interface ReadRequest {
   settle: (outcome: Outcome) => void;
 }
 
-// The body is JSON at the wire. Bound nesting before provider schema checks
-// and reject prototype keys even in nested component properties.
-function safeJson(value: unknown, depth = 0): boolean {
-  if (depth > 8) return false;
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(item => safeJson(item, depth + 1));
-  if (typeof value !== "object") return false;
-  return Object.entries(value).every(([key, item]) => key.length <= 128
-    && key !== "__proto__" && key !== "prototype" && key !== "constructor" && safeJson(item, depth + 1));
-}
-
 function isGithubReadAction(action: string): action is "get_pr" | "list_prs" {
   return action === "get_pr" || action === "list_prs";
 }
@@ -65,9 +55,18 @@ function isGithubReadAction(action: string): action is "get_pr" | "list_prs" {
 function supportedRegistryRead(input: Pick<RequestedRead, "service" | "action">) {
   const service = getService(input.service);
   if (service?.id !== input.service || !Object.hasOwn(service.actions, input.action)) return;
-  if (input.service !== "github" && (service.connectorKind !== "pipedream" || !service.pipedreamApp)) return;
+  if (input.service === "github" && !isGithubReadAction(input.action)) return;
   const action = service.actions[input.action];
   if (action?.risk === "read") return action;
+}
+
+function catalogRead(service: string, projected: BotIntegrationAction) {
+  const reviewed = supportedRegistryRead({ service, action: projected.id });
+  if (!reviewed || projected.risk !== "read") return;
+  const params = Object.fromEntries(Object.entries(reviewed.params)
+    .filter(([name, param]) => Object.hasOwn(projected.params, name) && projected.params[name]?.type === param.type));
+  if (Object.entries(reviewed.params).some(([name, param]) => param.required && !Object.hasOwn(params, name))) return;
+  return { id: projected.id, description: reviewed.description, params };
 }
 
 function approvalResponse(input: RequestedRead, value: unknown): Outcome {
@@ -84,17 +83,6 @@ function approvalResponse(input: RequestedRead, value: unknown): Outcome {
   return { data: envelope };
 }
 
-async function json<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T> | null> {
-  if (!/^application\/json(?:\s*;|$)/i.test(c.req.header("content-type") ?? "")) return null;
-  try {
-    const parsed = schema.safeParse(await c.req.json());
-    return parsed.success ? parsed.data : null;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) throw error;
-    return null;
-  }
-}
-
 function integrationFailure(error: unknown): Failure {
   if (error instanceof BotIntegrationError && error.code !== "unavailable") return "forbidden";
   console.warn("[hosted-bots-drive] Integration unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -106,12 +94,14 @@ export function createHostedBotsDriveApproval(options: {
   ownerId: string;
   isOwner: (c: Context) => boolean;
   github?: ReturnType<typeof createHostedBotsGithubRead>;
-  integration?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
+  integration?: Pick<BotIntegrationClient, "inventory" | "describe" | "call"> & Partial<Pick<BotIntegrationClient, "catalog">>;
+  customMcp?: HostedBotsCustomMcpDependencies;
   timeoutMs?: number;
 }) {
   const ownerRoutes = new Hono();
   const integrationOwnerRoutes = new Hono();
   const guestRoutes = new Hono();
+  const customMcp = options.admitted && options.customMcp ? createHostedBotsCustomMcpApproval({ ...options, ...options.customMcp }) : undefined;
   // The cap and per-request deadline bound waiting connections and in-memory state.
   const requests = new Map<string, ReadRequest>();
   let closed = false;
@@ -159,8 +149,9 @@ export function createHostedBotsDriveApproval(options: {
       if (!integration) return request.settle({ error: "unavailable" });
       if (!input.legacy) {
         const actions = await integration.describe(options.ownerId, { service: input.service, readOnly: true }, signal);
-        if (signal.aborted || !supportedRegistryRead(input)
-          || !actions.some(action => action.id === input.action && action.risk === "read")) {
+        const selected = actions.find(action => action.id === input.action);
+        const reviewed = selected && catalogRead(input.service, selected);
+        if (signal.aborted || !reviewed || Object.keys(input.params).some(key => !Object.hasOwn(reviewed.params, key))) {
           return request.settle({ error: "forbidden" });
         }
       }
@@ -200,7 +191,7 @@ export function createHostedBotsDriveApproval(options: {
 
     routes.post("/:requestId/decision", limit, async (c) => {
       const id = z.uuid().safeParse(c.req.param("requestId"));
-      const decision = await json(c, Decision);
+      const decision = await readHostedToolJson(c, Decision);
       if (!id.success || !decision || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
       const request = requests.get(id.data);
       if (!request || !visible(request)) return c.json({ error: "not_found" }, 404);
@@ -226,6 +217,10 @@ export function createHostedBotsDriveApproval(options: {
 
   configureOwnerRoutes(ownerRoutes, true);
   configureOwnerRoutes(integrationOwnerRoutes, false);
+  if (customMcp) {
+    integrationOwnerRoutes.route("/mcp", customMcp.ownerRoutes);
+    guestRoutes.route("/mcp", customMcp.guestRoutes);
+  }
 
   async function waitForApproval(c: Context, input: RequestedRead) {
     if (closed || c.req.raw.signal.aborted) return c.json({ error: "forbidden" }, 403);
@@ -256,14 +251,38 @@ export function createHostedBotsDriveApproval(options: {
   }
 
   guestRoutes.post("/read", limit, async (c) => {
-    const params = await json(c, Read);
+    const params = await readHostedToolJson(c, Read);
     if (!params || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
     if (!options.integration) return c.json({ error: "unavailable" }, 503);
     return waitForApproval(c, { legacy: true, service: "google_drive", action: "read_file", params });
   });
 
+  guestRoutes.get("/integration/catalog", async (c) => {
+    if (new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+    const signal = c.req.raw.signal;
+    const integration = options.integration;
+    const [accounts, available, github] = await Promise.all([
+      integration?.catalog && integration.inventory(options.ownerId, signal),
+      integration?.catalog?.(options.ownerId, { readOnly: true }, signal),
+      options.github?.account(signal),
+    ]);
+    const connected = new Set(accounts?.map(({ service }) => service));
+    const services = (available ?? []).flatMap(({ id, actions }) => {
+      if (id === "github" || !connected.has(id)) return [];
+      const projected = actions.flatMap(action => catalogRead(id, action) ?? []);
+      return projected.length ? [{ id, actions: projected }] : [];
+    });
+    if (github) services.push({ id: "github", actions: ["get_pr", "list_prs"].flatMap(id => {
+      const action = supportedRegistryRead({ service: "github", action: id });
+      return action ? [{ id, description: action.description, params: action.params }] : [];
+    }) });
+    const result = { services };
+    if (Buffer.byteLength(JSON.stringify(result)) > MAX_CATALOG_BYTES) return c.json({ error: "unavailable" }, 503);
+    return c.json(result);
+  });
+
   guestRoutes.post("/integration/read", bodyBound(4096), async (c) => {
-    const input = await json(c, IntegrationRead);
+    const input = await readHostedToolJson(c, IntegrationRead);
     if (!input || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
     const action = supportedRegistryRead(input);
     if (!action) return c.json({ error: "forbidden" }, 403);
@@ -281,8 +300,9 @@ export function createHostedBotsDriveApproval(options: {
     return waitForApproval(c, { ...input, legacy: false });
   });
 
-  return { ownerRoutes, integrationOwnerRoutes, guestRoutes, close() {
+  return { ownerRoutes, integrationOwnerRoutes, guestRoutes, mcpDecisionRoutes: customMcp?.decisionRoutes ?? new Hono(), close() {
     closed = true;
+    customMcp?.close();
     for (const request of requests.values()) request.settle({ error: "forbidden" });
   } };
 }

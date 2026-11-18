@@ -77,12 +77,14 @@ export async function bindHostedBotsDriveSocket(path: string, app: Hono): Promis
 
 export async function initializeHostedBotsDrive(options: Parameters<typeof createHostedBotsDriveApproval>[0]
   & { socketPath?: string }) {
-  if (!options.admitted) return { routes: new Hono(), integrationRoutes: new Hono(), close: async () => {} };
-  if ((options.github || options.integration) && options.ownerId) {
+  if (!options.admitted) return { routes: new Hono(), integrationRoutes: new Hono(), mcpDecisionRoutes: new Hono(), toolRoutes: undefined, close: async () => {} };
+  if ((options.github || options.integration || options.customMcp) && options.ownerId) {
     const broker = createHostedBotsDriveApproval(options);
     try {
       const stop = await bindHostedBotsDriveSocket(options.socketPath ?? HOSTED_BOTS_DRIVE_SOCKET, broker.guestRoutes);
-      return { routes: broker.ownerRoutes, integrationRoutes: broker.integrationOwnerRoutes, close: async () => { broker.close(); await stop(); } };
+      return { routes: broker.ownerRoutes, integrationRoutes: broker.integrationOwnerRoutes,
+        mcpDecisionRoutes: broker.mcpDecisionRoutes, toolRoutes: broker.guestRoutes,
+        close: async () => { broker.close(); await stop(); } };
     } catch (error: unknown) {
       broker.close();
       console.warn("[hosted-bots-drive] Could not start Drive broker", errorCode(error) ?? (error instanceof Error ? error.name : "UnknownError"));
@@ -93,5 +95,5 @@ export async function initializeHostedBotsDrive(options: Parameters<typeof creat
     c.header("cache-control", "no-store");
     return options.isOwner(c) ? c.json({ error: "unavailable" }, 503) : c.json({ error: "forbidden" }, 403);
   });
-  return { routes: unavailable, integrationRoutes: unavailable, close: async () => {} };
+  return { routes: unavailable, integrationRoutes: unavailable, mcpDecisionRoutes: new Hono(), toolRoutes: undefined, close: async () => {} };
 }

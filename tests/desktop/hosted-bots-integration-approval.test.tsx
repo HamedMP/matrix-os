@@ -19,11 +19,22 @@ const GITHUB_ACCOUNT = { id: "github-developer:octocat", label: "GitHub Develope
 const PIPEDREAM_GITHUB_ACCOUNT = { id: "github-connection", label: "GitHub work account", service: "github" };
 const DRIVE = { service: "google_drive", action: "read_file", params: { fileId: FILE } };
 const GITHUB = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
+const MCP_PATH = `${PATH}/mcp`;
+const MCP_RUN = "hosted-bots-7da48e02-068d-4afb-af50-fab92aa96bbf";
+const MCP_SERVER = "3b84eabb-3dfc-49ac-995e-57ade42de770";
 
-function setup(accounts = [ACCOUNT], request: { service: string; action: string; params: Record<string, string | number> } = DRIVE, legacy = false) {
+function setup(accounts = [ACCOUNT], request: { service: string; action: string; params: Record<string, string | number> } = DRIVE, legacy = false, mcp = false) {
   let status: "pending" | "reading" | "finished" = "pending";
+  let mcpStatus: "pending" | "reading" | "finished" = "pending";
   const expiresAt = Date.now() + 60_000;
   const get = vi.fn(async (path: string, _options?: JsonRequestOptions) => {
+    if (path === MCP_PATH) {
+      if (!mcp) throw new AppError("notFound", { httpStatus: 404 });
+      return {
+        requests: mcpStatus === "finished" ? [] : [{ runId: MCP_RUN, id: ID, serverId: MCP_SERVER,
+          server: "Dev notes", tool: "read_note", params: { slug: "test" }, status: mcpStatus, expiresAt }],
+      };
+    }
     if (legacy && path === PATH) throw new AppError("notFound", { httpStatus: 404 });
     return {
       requests: status === "finished" ? [] : [{ id: ID, ...(legacy ? { fileId: FILE } : request), expiresAt, status }],
@@ -33,7 +44,8 @@ function setup(accounts = [ACCOUNT], request: { service: string; action: string;
     };
   });
   const post = vi.fn(async (_path: string, body: { decision: string }) => {
-    status = body.decision === "allow" ? "reading" : "finished";
+    if (_path.startsWith("/api/chats/")) mcpStatus = body.decision === "approve" ? "reading" : "finished";
+    else status = body.decision === "allow" ? "reading" : "finished";
     return { ok: true };
   });
   const remove = vi.fn(async () => {
@@ -57,11 +69,28 @@ afterEach(() => {
 });
 
 describe("Hosted Bots integration approvals", () => {
+  it("reviews the exact Custom MCP operation and reuses the native one-time decision endpoint", async () => {
+    const { post, workspace } = setup([ACCOUNT], DRIVE, false, true);
+    render(workspace(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Review MCP request" }));
+    expect(screen.getByText("read_note")).toBeTruthy();
+    expect(screen.getByText(/"slug": "test"/)).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`/api/chats/hosted-bots/runs/${MCP_RUN}/approvals/${ID}`, {
+      decision: "approve", clientRequestId: expect.stringMatching(/^req_[0-9a-f-]{36}$/),
+    }, expect.any(Object)));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel tool call" }));
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith(`/api/chats/hosted-bots/runs/${MCP_RUN}/approvals/${ID}`, {
+      decision: "cancel", clientRequestId: expect.any(String),
+    }, expect.any(Object)));
+  });
+
   it("displays the exact GitHub action and parameters and offers the GitHub Developer account", async () => {
     const { get, post, workspace } = setup([ACCOUNT, PIPEDREAM_GITHUB_ACCOUNT, GITHUB_ACCOUNT], GITHUB);
     render(workspace(true));
     fireEvent.click(await screen.findByRole("button", { name: "Review GitHub Developer request" }));
-    expect(get.mock.calls.map(([path]) => path)).toEqual([PATH, `${PATH}?includeAccounts=1`]);
+    expect(get.mock.calls.map(([path]) => path).filter(path => path !== MCP_PATH)).toEqual([PATH, `${PATH}?includeAccounts=1`]);
     expect(screen.getByText("list_prs")).toBeTruthy();
     expect(screen.getByText(/"repo": "HamedMP\/matrix-os"/).textContent).toContain('"per_page": 1');
     expect(screen.getByText(/results will be shared with the requesting conversation/i)).toBeTruthy();
@@ -109,7 +138,7 @@ describe("Hosted Bots integration approvals", () => {
     const { get, post, workspace } = setup([ACCOUNT], DRIVE, true);
     render(workspace(true));
     fireEvent.click(await screen.findByRole("button", { name: "Review Drive request" }));
-    expect(get.mock.calls.map(([path]) => path)).toEqual([PATH, LEGACY_PATH, `${LEGACY_PATH}?includeAccounts=1`]);
+    expect(get.mock.calls.map(([path]) => path).filter(path => path !== MCP_PATH)).toEqual([PATH, LEGACY_PATH, `${LEGACY_PATH}?includeAccounts=1`]);
     const account = await screen.findByRole("combobox", { name: "Google Drive account" });
     fireEvent.change(account, { target: { value: ACCOUNT.id } });
     fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
@@ -123,7 +152,7 @@ describe("Hosted Bots integration approvals", () => {
     render(workspace(true));
     expect(screen.getByText("Hosted Bots conversation")).toBeTruthy();
     const review = await screen.findByRole("button", { name: "Review Drive request" });
-    expect(get.mock.calls.map(([path]) => path)).toEqual([PATH]);
+    expect(get.mock.calls.map(([path]) => path).filter(path => path !== MCP_PATH)).toEqual([PATH]);
     expect(post).not.toHaveBeenCalled();
     fireEvent.click(review);
     expect(await screen.findByText(FILE)).toBeTruthy();
@@ -161,11 +190,11 @@ describe("Hosted Bots integration approvals", () => {
     expect(get).not.toHaveBeenCalled();
     rerender(workspace(true));
     await act(async () => {});
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(2);
     rerender(workspace(false));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.every(([, options]) => options?.signal?.aborted)).toBe(true);
     expect(screen.queryByRole("button", { name: "Review Drive request" })).toBeNull();
   });
 });

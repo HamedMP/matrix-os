@@ -11,14 +11,18 @@ const run = promisify(execFile);
 const script = "scripts/openmausbot/apply-matrix-theme.mjs";
 const source = '[data-skin="daylight"] {\n  --color-app: #ffffff;\n}\n[data-skin="midnight"] {\n  --color-app: #000000;\n}\n';
 const marker = "/* Matrix OS palettes for OpenMausBot */";
+const rabbitAsset = "shell/public/matrix-logo.svg";
 
 async function withFixture(styles: string, fn: (root: string, css: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "matrix-openmausbot-theme-"));
   const css = join(root, "src", "styles.css");
   try {
     await mkdir(join(root, "src", "lib"), { recursive: true });
+    await mkdir(join(root, "src", "state"));
     await mkdir(join(root, "public"));
     await mkdir(join(root, "src", "components"));
+    await mkdir(join(root, "src", "components", "bot-panel"));
+    await mkdir(join(root, "src", "components", "bot-settings"));
     await writeFile(join(root, "src", "components", "AttachmentPreview.tsx"), `<div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6"
     >
@@ -31,7 +35,13 @@ async function withFixture(styles: string, fn: (root: string, css: string) => Pr
     await writeFile(join(root, "src", "components", "SettingsSimplePages.tsx"), '<SettingRow title={t("settings.theme.title")} subtitle={hint}>');
     await writeFile(join(root, "src", "components", "SettingsModal.tsx"), '<Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n              <SkinPicker />\n            </Card>');
 
-    await writeFile(join(root, "src", "lib", "brand.ts"), 'export const PRODUCT_NAME = "MausBot";\n');
+    await writeFile(join(root, "src", "lib", "brand.ts"), 'export interface Brand { name: string; }\nexport const PRODUCT_NAME = "MausBot";\nconst DEFAULT_BRAND: Brand = { name: "OpenMausBot" };\n  current = status;\n');
+    await writeFile(join(root, "src", "state", "store.tsx"), 'import { cloudAsleep, onCloudPower } from "../lib/cloud-power";\n    const wrapped: React.Dispatch<Action> = (action) => {\n    };\n');
+    await writeFile(join(root, "src", "components", "Avatar.tsx"), 'import { MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\n  if (outcome !== "flatImage") {\n    return (\n      <MausAvatar />\n    );\n  }\n');
+    await writeFile(join(root, "src", "components", "SidebarConnectApps.tsx"), 'import { useStore } from "@/state/store";\n    if (state.pluginsOpen) return;\n        <span aria-hidden="true" data-app-faces="">\n        </span>\n      </>}');
+    await writeFile(join(root, "src", "components", "ModelPicker.tsx"), 'import { ApiKeyHint, openKeysFor } from "./EngineSetup";\n    dispatch(openKeysFor(railInstance));\n    onManage={remote ? undefined : openEngines}\n');
+    await writeFile(join(root, "src", "components", "bot-panel", "pages.tsx"), 'import { appSwitchPatch } from "@/lib/bot-app-access";\nexport function AppsPage({ bot, derived }: PageContext) {\n}\n');
+    await writeFile(join(root, "src", "components", "bot-settings", "AccessSection.tsx"), 'import { useBotApps } from "./useBotApps";\nexport function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {\n}\n      {shows("apps") && <div className="rounded-xl bg-card p-4">');
     await writeFile(join(root, "index.html"), '<title>MausBot</title><meta name="apple-mobile-web-app-title" content="OpenMausBot" />\n');
     await writeFile(join(root, "public", "manifest.webmanifest"), '{"name":"OpenMausBot","short_name":"OpenMausBot","icons":[]}');
     await writeFile(join(root, "public", "app-icon.svg"), "<svg/>");
@@ -64,7 +74,27 @@ describe("OpenMausBot Matrix skin", () => {
       const manifest = JSON.parse(await readFile(join(root, "public", "manifest.webmanifest"), "utf8")) as { name: string; icons: Array<{ src: string }> };
       expect(manifest.name).toBe("Matrix Bots");
       expect(manifest.icons[0]?.src).toBe("/app-icon.svg");
-      expect(await readFile(join(root, "public", "app-icon.svg"), "utf8")).toContain("M48 31");
+      const artwork = await readFile(join(root, "public", "app-icon.svg"), "utf8");
+      const rabbit = await readFile(rabbitAsset, "utf8");
+      for (const path of rabbit.matchAll(/<path d="[^"]+"/g)) expect(artwork).toContain(path[0]);
+      const brand = await readFile(join(root, "src", "lib", "brand.ts"), "utf8");
+      expect(brand).toContain('logo: "/app-icon.svg"');
+      expect(brand).toContain('status.source === "default" ? { ...status, brand: DEFAULT_BRAND } : status');
+      const avatars = await readFile(join(root, "src", "components", "Avatar.tsx"), "utf8");
+      expect(avatars).toContain("!profile.avatarUrl");
+      expect(avatars).toContain('src="/app-icon.svg"');
+      expect(avatars).toContain('if (outcome !== "flatImage")');
+      const store = await readFile(join(root, "src", "state", "store.tsx"), "utf8");
+      expect(store).toContain('action.type === "togglePlugins"');
+      expect(store).toContain('action.surface === "mcp" ? "mcps" : "services"');
+      expect(store).toContain('action.section === "engines"');
+      const settingLinks = await readFile(join(root, "src", "lib", "matrix-hosted-settings.ts"), "utf8");
+      expect(settingLinks).toContain("https://matrix-bots-settings.invalid/");
+      const tools = await readFile(join(root, "src", "components", "MatrixManagedToolSettings.tsx"), "utf8");
+      expect(tools).toContain('openMatrixBotsSettings("services")');
+      expect(tools).toContain('openMatrixBotsSettings("mcps")');
+      expect(await readFile(join(root, "src", "components", "bot-panel", "pages.tsx"), "utf8"))
+        .toContain("isMatrixHostedBots() ? <MatrixManagedToolSettings />");
       expect(await readFile(join(root, "src", "lib", "browser-stream-client.ts"), "utf8"))
         .toContain("new WebSocket(matrixHostedWebSocketUrl(streamUrl()))");
       expect(await readFile(join(root, "src", "lib", "desktop-connection.ts"), "utf8"))
@@ -95,7 +125,8 @@ describe("OpenMausBot Matrix skin", () => {
       });
       expect(await readFile(css, "utf8")).toContain(marker);
       expect(await readFile(css, "utf8")).toContain("--color-app: #fafafa");
-      expect(await readFile(join(root, "public", "app-icon.svg"), "utf8")).toContain("M48 31");
+      expect(await readFile(join(root, "public", "app-icon.svg"), "utf8"))
+        .toBe(await readFile("shell/public/system-app-icons/v2/bots.svg", "utf8"));
     });
   });
 

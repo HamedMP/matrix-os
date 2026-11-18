@@ -65,7 +65,7 @@ it.skipIf(!existsSync(main)).each([
             : {}),
         });
         outgoing.end(
-          '<!doctype html><html><head></head><body><main id="bots">Opening upstream fixture</main><script src="/assets/fixture.js"></script></body></html>',
+          '<!doctype html><html><head></head><body><main id="bots">Opening upstream fixture</main><button data-settings="services">Connect Apps</button><button data-settings="mcps">MCPs</button><button data-settings="agents-providers">Manage AI accounts</button><script src="/assets/fixture.js"></script></body></html>',
         );
         return;
       }
@@ -76,6 +76,7 @@ it.skipIf(!existsSync(main)).each([
           'const socketBase = document.querySelector(\'meta[name="matrix-bots-websocket-base"]\').content;',
           'const socket = new WebSocket(socketBase + "/api/bots/bot-1/browser/stream");',
           'socket.onmessage = event => document.body.dataset.socket = event.data;',
+          'for (const button of document.querySelectorAll("[data-settings]")) button.addEventListener("click", () => location.assign("https://matrix-bots-settings.invalid/" + button.dataset.settings));',
           'fetch("/api/bots").then(res => res.json()).then(data => document.querySelector("#bots").textContent = data.name);',
         ].join("\n"));
         return;
@@ -194,6 +195,28 @@ it.skipIf(!existsSync(main)).each([
       expect(readinessRequests).toBeGreaterThanOrEqual(2);
       expect(embeddedRequests).toBeGreaterThanOrEqual(3);
       expect(socketRequests).toBe(1);
+
+      if (runtimeSlot === "dev") {
+        for (const { section, label } of [
+          { section: "services", label: "Connect Apps" },
+          { section: "mcps", label: "MCPs" },
+          { section: "agents-providers", label: "Agents & providers" },
+        ]) {
+          await app.evaluate(async ({ BrowserWindow }, section) => {
+            const browserWindow = BrowserWindow.getAllWindows()[0];
+            const contents = browserWindow?.contentView.children
+              .flatMap(view => "webContents" in view ? [view.webContents as typeof browserWindow.webContents] : [])
+              .find(child => child.getURL() === "https://matrix-bots.invalid/");
+            if (!contents) throw new Error("Bots is not attached");
+            await contents.executeJavaScript(`document.querySelector(${JSON.stringify('[data-settings="' + section + '"]')}).click()`, true);
+          }, section);
+          const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
+          const navigation = settings.getByRole("navigation", { name: "Settings sections" });
+          await expect.poll(() => navigation.locator('button[aria-current="page"]').allTextContents()).toEqual([label]);
+          await settings.getByRole("button", { name: "Close", exact: true }).click();
+          await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture", "daylight", light]);
+        }
+      }
 
       // Changing Appearance in the Matrix shell must update the already-open
       // upstream view without opening another document or losing its socket.

@@ -148,6 +148,14 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
   }
 
   type CallInput = { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean };
+  async function catalog(ownerId: string, input: { readOnly: boolean }, signal?: AbortSignal) {
+    return send(ownerId, { method: "GET", path: "/agent-catalog", ...(input.readOnly ? { readScope: true } : {}) }, LIST_TIMEOUT_MS, async (response, bounded) => {
+      const parsed = CatalogSchema.safeParse(await readJson(response, MAX_CATALOG_BYTES, bounded));
+      if (!parsed.success) throw new BotIntegrationError("unavailable");
+      return parsed.data.map(service => ({ id: service.id, actions: Object.entries(service.actions)
+        .filter(([, action]) => !input.readOnly || action.risk === "read").map(([id, action]) => ({ id, ...action })) }));
+    }, signal);
+  }
   async function call(ownerId: string, input: CallInput, maxBytes: number, signal?: AbortSignal) {
     return send(ownerId, {
       method: "POST",
@@ -162,6 +170,7 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
   }
 
   return {
+    catalog,
     /** The owner's active connected accounts. */
     async inventory(ownerId: string, signal?: AbortSignal): Promise<BotIntegrationConnection[]> {
       return send(ownerId, { method: "GET", path: "/" }, LIST_TIMEOUT_MS, async (response, bounded) => {
@@ -173,14 +182,8 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
     },
     /** Owner-authenticated catalog, narrowed by the current server projection. */
     async describe(ownerId: string, input: { service: string; readOnly: boolean }, signal?: AbortSignal): Promise<BotIntegrationAction[]> {
-      return send(ownerId, { method: "GET", path: "/agent-catalog", ...(input.readOnly ? { readScope: true } : {}) }, LIST_TIMEOUT_MS, async (response, bounded) => {
-        const parsed = CatalogSchema.safeParse(await readJson(response, MAX_CATALOG_BYTES, bounded));
-        if (!parsed.success) throw new BotIntegrationError("unavailable");
-        const services = parsed.data.filter(service => service.id === input.service);
-        if (services.length !== 1) return [];
-        return Object.entries(services[0]!.actions).filter(([, action]) => !input.readOnly || action.risk === "read")
-          .map(([id, action]) => ({ id, ...action }));
-      }, signal);
+      const services = (await catalog(ownerId, input, signal)).filter(service => service.id === input.service);
+      return services.length === 1 ? services[0]!.actions : [];
     },
     /** A provider-hosted consent URL for connecting a new account of `service`. */
     async connect(ownerId: string, service: string, signal?: AbortSignal): Promise<string> {

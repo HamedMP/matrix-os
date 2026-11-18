@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Cookies, Session, WebContents } from "electron";
 import { MatrixComputerHandleSchema, MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
+import { HostedBotsSettingsSectionSchema, type HostedBotsSettingsSection } from "../../shared/hosted-bots-settings";
+import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 import { parseSetCookieHeaders } from "./app-session";
 
 export const HOSTED_BOTS_ORIGIN = "https://matrix-bots.invalid";
+const settingsOrigin = "https://matrix-bots-settings.invalid/";
 const proxyPath = "/api/hosted-bots/runtime";
 const brokerCookieHeader = "x-matrix-hosted-bots-set-session";
 const cookieName = /^omb_session_[0-9]{1,5}_[a-zA-Z0-9]{0,12}$/;
@@ -108,6 +111,18 @@ export function hostedBotsProviderLoginAllowed(value: string): boolean {
       && /^[\w-]{0,80}$/u.test(url.searchParams.get("redirectTarget") ?? "");
   }
   return false;
+}
+
+export function resolveHostedBotsNavigation(
+  url: string,
+  openSettings: (section: HostedBotsSettingsSection) => void,
+): RuntimeBrowserNavigationDecision {
+  if (url.startsWith(settingsOrigin)) {
+    const section = HostedBotsSettingsSectionSchema.safeParse(url.slice(settingsOrigin.length));
+    if (section.success) openSettings(section.data);
+    return { disposition: "block" };
+  }
+  return hostedBotsProviderLoginAllowed(url) ? { disposition: "external" } : { disposition: "block" };
 }
 
 async function readCookieHeader(cookies: HostedBotsProtocolDeps["cookies"]): Promise<string> {

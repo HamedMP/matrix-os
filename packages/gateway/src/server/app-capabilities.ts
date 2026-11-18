@@ -1,13 +1,13 @@
 import type { Hono } from "hono";
 import { createAppCapabilityRoutes } from "../app-capabilities/routes.js";
-import { createRuntimeAppAiRoutes, isAppAiAllowed } from "../app-ai/runtime.js";
+import { createRuntimeAppAiService, isAppAiAllowed } from "../app-ai/runtime.js";
 import { createPiSdkAppCompletion } from "../app-ai/pi-sdk-completion.js";
 import { createHermesAppCompletion } from "../app-ai/hermes-completion.js";
 import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { createAppAiLifecycle } from "./app-ai-lifecycle.js";
 
-type RuntimeOptions = Parameters<typeof createRuntimeAppAiRoutes>[0];
+type RuntimeOptions = Parameters<typeof createRuntimeAppAiService>[0];
 type SubscriptionSource = NonNullable<RuntimeOptions["chatGptPlanSource"]>;
 
 export function createAppAiSubscriptionObservation(source: SubscriptionSource) {
@@ -41,7 +41,7 @@ export function registerAppAiCapabilities(app: Hono, options:
   const lifecycle = createAppAiLifecycle();
   const pi = createPiSdkAppCompletion({ homePath: options.homePath });
   const hermes = createHermesAppCompletion({ homePath: options.homePath, runtimeSource: hermesRuntimeSource });
-  app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
+  const runtime = createRuntimeAppAiService({
     ...runtimeOptions, lifecycle, piSdkCompletion: pi, hermesCompletion: hermes,
     // The paired adapter races caller cancellation. Retain the authority's
     // underlying work too, until real completion/cancellation settles.
@@ -56,8 +56,10 @@ export function registerAppAiCapabilities(app: Hono, options:
         infer: (binding, body, signal) => lifecycle.track(() => authority.infer(binding, body, signal)),
       } };
     } : undefined,
-  }));
+  });
+  app.route("/api/bridge/ai", runtime.routes);
   return {
+    hostedBots: runtime.hostedBots,
     async close(): Promise<void> {
       // Start every abort before awaiting any adapter. A failure must not skip
       // another drain; never interpret an exhausted grace window as completion.

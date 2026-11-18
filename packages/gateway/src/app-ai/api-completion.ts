@@ -50,17 +50,18 @@ async function readResult(response: Response, signal: AbortSignal): Promise<unkn
         finally { reader.releaseLock(); }
     }
 }
-/** Only text messages are sent. The existing relay owns budget holds and exact usage settlement. */
-export async function generateApiAppText(options: {
+interface AppAiApiOptions {
     homePath: string;
     route: AppAiRouteSelection;
-    prompt: string;
     signal: AbortSignal;
     revalidate: () => Promise<boolean>;
     fundedCredentialProvider?: MatrixFundedCredentialProvider;
     fundedAdmission?: FundedAdmissionQueue;
     fetchImpl?: typeof fetch;
-}): Promise<AppAiResult> {
+}
+
+/** API transport shared by apps and the owner-gated hosted Bots service. */
+export async function requestAppAiApiPayload(options: AppAiApiOptions, body: object): Promise<unknown> {
     const signal = AbortSignal.any([options.signal, AbortSignal.timeout(30000)]);
     signal.throwIfAborted();
     const funded = options.route.accessSourceId === "matrix_cloudflare" || options.route.accessSourceId === "matrix_included";
@@ -85,9 +86,6 @@ export async function generateApiAppText(options: {
             throw new Error("App AI credentials unavailable");
         headers.set("x-api-key", key.key);
     }
-    const system = "Answer using only the supplied text. You have no tools or access to files.";
-    const body = anthropic ? { model: options.route.modelId, max_tokens: 8192, stream: false, system, messages: [{ role: "user", content: options.prompt }] } :
-        { model: options.route.modelId, max_tokens: 8192, stream: false, tool_choice: "none", store: false, messages: [{ role: "system", content: system }, { role: "user", content: options.prompt }] };
     if (anthropic)
         headers.set("anthropic-version", "2023-06-01");
     const send = async () => {
@@ -112,6 +110,16 @@ export async function generateApiAppText(options: {
     const payload = await readResult(response, signal);
     if (!await options.revalidate())
         throw new Error("App AI access revoked");
+    return payload;
+}
+
+/** Only text messages are sent through the regular App AI API. */
+export async function generateApiAppText(options: AppAiApiOptions & { prompt: string }): Promise<AppAiResult> {
+    const anthropic = options.route.accessSourceId !== "matrix_cloudflare";
+    const system = "Answer using only the supplied text. You have no tools or access to files.";
+    const body = anthropic ? { model: options.route.modelId, max_tokens: 8192, stream: false, system, messages: [{ role: "user", content: options.prompt }] } :
+        { model: options.route.modelId, max_tokens: 8192, stream: false, tool_choice: "none", store: false, messages: [{ role: "system", content: system }, { role: "user", content: options.prompt }] };
+    const payload = await requestAppAiApiPayload(options, body);
     const text = anthropic ? AnthropicResult.parse(payload).content.map(part => part.text).join("") : OpenAiResult.parse(payload).choices[0]!.message.content;
     return AppAiResultSchema.parse({ text });
 }

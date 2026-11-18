@@ -11,6 +11,7 @@ import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { openSettingsSection } from "../settings/open-provider-settings";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
@@ -148,6 +149,13 @@ export default function EmbedHost({
       }
       pendingStates.set(payload.embedId, payload.state);
     });
+    const offSettings = kind === "hosted-bots" ? onEvent("embed:open-bots-settings", (payload) => {
+      const connection = useConnection.getState();
+      if (payload.embedId === embedIdRef.current && activeRef.current
+        && payload.runtimeSlot === connection.runtimeSlot && authGeneration === connection.authGeneration) {
+        openSettingsSection(payload.section);
+      }
+    }) : undefined;
 
     const bounds = readNativeEmbedBounds(host, visualScale);
 
@@ -199,6 +207,7 @@ export default function EmbedHost({
       observer.disconnect();
       window.removeEventListener("resize", onWindowResize);
       offState?.();
+      offSettings?.();
       const id = embedIdRef.current;
       embedIdRef.current = null;
       if (id) void invoke("embed:close", { embedId: id });

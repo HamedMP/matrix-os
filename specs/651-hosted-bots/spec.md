@@ -71,16 +71,16 @@ Electron Desktop uses the trusted selected Computer handle and slot to route bot
 
 The hosted Bots view follows the effective Matrix Electron Desktop theme, including single-variant and custom palettes. The app window supplies the effective `light` or `dark` mode and bounded palette values when it opens the view and when appearance changes. Apply updates only to the dedicated `https://matrix-bots.invalid` view, keep the current conversation mounted, and apply the current palette again when the view navigates or reopens. Standalone OpenMausBot retains its own appearance controls. The hosted attachment preview uses Matrix surface, border and foreground colors in both modes. Verify both themes and the attachment preview with the same running conversation.
 
-Connected Apps and custom MCP use upstream configuration on the selected Computer. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
+Use the Matrix rabbit on the launcher and the default Bots brand surfaces. Preserve owner-set artwork. The embedded Bots controls open Matrix Connect Apps, MCPs, and Agents & providers for the current Computer. Account connection management and credentials belong to Matrix. The separate origin submits no arbitrary navigation target or credentials. Test an approved connected-app read and one approved custom MCP call on the matching runtime.
 
 ### Matrix AI for a direct Bots conversation
 
-The owner-only Electron Bots app offers **Matrix AI · Text only** for direct messages using an eligible managed Matrix AI model. The picker reflects the existing Matrix provider catalog and readiness. The Gateway uses the existing App AI text completion, funded admission, Relay and usage settlement. The selected provider and its result appear in the upstream Bots conversation. This first route supports direct, unqueued text messages. Other provider connections, attachments, tools and unattended execution need their own authorization and acceptance.
+The owner-only Electron Bots app lists runnable Matrix routes under **Matrix providers**. The same App AI discovery and completion code verifies managed models and compatible connected accounts from the selected Computer. An opaque model choice binds the exact harness, account, access source, and model. Existing GLM selections keep their original identifier. Matrix routes require an immediate direct paired-owner message. Managed routes with tool support can call the scoped Apps and MCP broker. The picker marks native routes that only support text. Scheduled turns, attachments and harnesses without a supported App AI inference route need their own execution contract.
 
 | Boundary | Authorization |
 | --- | --- |
 | Matrix owner → `POST /api/hosted-bots/runtime/api/bots/:botId/messages` | Existing exact Computer owner admission and upstream paired session. The Gateway issues an expiring, single-use turn authorization linked to the Bot, conversation and send ID for an eligible text message. |
-| Upstream provider → `GET /status`, `POST /turn` on the private model socket | Readiness projects a boolean. Inference consumes the matching turn authorization before dispatch and rechecks the selected model in the current catalog. The upstream provider receives bounded text output. |
+| Upstream provider → `GET /status`, `POST /turn` on the private model socket | Status returns bounded runnable choices and the default. Inference consumes the matching turn authorization before dispatch and rechecks the selected route in the current catalog. The upstream provider receives bounded text output. |
 
 The Gateway owns the original user text, supported model and provider credentials. The adapter includes a bounded set of direct text messages from the selected conversation branch. Saved steps, Bot memory and replayed automation context stay local to the Bots workload. The turn authorization stays in server memory and is discarded on use, expiry or Gateway shutdown. The model socket is local to the isolated Computer runtime. No Matrix or vendor credentials reach the renderer or the upstream workload. A real Computer acceptance must select Matrix AI inside Pebble, submit one identifiable test message, confirm the Relay model and usage classification, and reopen the same conversation to read the saved result. A catalog entry or local provider fixture alone does not establish live acceptance.
 
@@ -108,6 +108,14 @@ Hosted Bots supports GitHub `get_pr` and `list_prs`. The list accepts page 1, on
 **Verification.** Test exact parameters through the socket, owner review, and the relevant native GitHub or Platform transport. Cover wrong owner, mismatched or disconnected accounts, stale approval, unsupported actions, expiry, size limits, and cancellation after dispatch. Assert that native GitHub dispatch makes zero Pipedream calls. Exercise a bounded public read through Pebble on the live test Computer and check the saved tool outcome. Repeat the existing Drive contract tests.
 
 **Authority rule.** Bind each approval to the selected immutable connection ID. Use the native GitHub Developer query for GitHub and the dedicated `/read-call` route for Pipedream. An upstream approval, account label alone, or a model-supplied request is insufficient authority to dispatch.
+
+### Matrix Custom MCP and managed model tools
+
+On the private tool socket, `GET /integration/catalog` projects supported connected-app reads. `GET /mcp/catalog` projects enabled custom tools from the existing Matrix MCP broker. `POST /mcp/call` accepts the exact server, tool and bounded arguments. Platform's existing signed decision binds the Matrix owner to a reserved hosted-Bots run and approval identifier. The broker's receipt binds the server revision, tool, and exact arguments. Disabled or revoked tools fail closed. The MCP broker retains its existing server, per-tool policy, owner, approval and output checks.
+
+For a managed tool-capable model, Gateway binds model-visible function names to a bounded catalog snapshot for that turn. It sends at most three serial calls through the same Apps/MCP broker. It checks the model route again after each wait and before returning tool data to the model. An unrecognized or replayed function call fails without dispatch. Use the existing Relay transport for requests and usage settlement. A normal App AI request continues to have text-only completion.
+
+Verification covers exact tool/argument binding, owner approval, cancellation, and a live denial with no dispatch. A successful call returns an identifiable fixture result into the initiating conversation. Record each capability separately from the mere presence of its catalog entry.
 
 ### Event delivery and tool approval
 
