@@ -25,6 +25,11 @@ describe("OpenMausBot gateway transport", () => {
     socketServer = createServer(async (req, res) => {
       const body = (await Array.fromAsync(req)).join("");
       received.push({ path: req.url, headers: req.headers, body });
+      if (req.url === "/api/routines" && req.method === "POST" && req.headers["x-matrix-hosted-bots-schedule"]) {
+        res.writeHead(body.includes("missing-thread") ? 409 : 201, { "content-type": "application/json" });
+        res.end("{}");
+        return;
+      }
       if (req.url === "/api/health") {
         res.setHeader("content-type", "application/json");
         res.end('{"app":"openmausbot"}');
@@ -86,6 +91,57 @@ describe("OpenMausBot gateway transport", () => {
     expect(issueModelTurn).toHaveBeenCalledWith({ botId: "pebble", threadId: "chat", sendId: "send-0123456789abcdef" }, "summarize");
     expect(received[1]?.headers["x-matrix-hosted-bots-model-turn"]).toBe("c".repeat(64));
     expect(response.headers.get("x-matrix-hosted-bots-model-turn")).toBeNull();
+  });
+
+  it("issues a schedule claim through owner + native pairing and revokes refused or deleted saves", async () => {
+    const routineId = "550e8400-e29b-41d4-a716-446655440000";
+    const token = "d".repeat(64);
+    const schedules = { issue: vi.fn(async () => ({ routineId, token })), revoke: vi.fn(async () => {}) };
+    const model = "@cf/zai-org/glm-5.3-flash";
+    const at = Date.now() + 120_000;
+    const payload = { botId: "pebble", name: "Test", prompt: "Do the synthetic test",
+      resultsThreadId: "original-thread", schedule: { type: "once", at },
+      modelSelection: { instanceId: "matrix-hosted-ai", model },
+    };
+    const paired = { ...proxyHeaders, "content-type": "application/json", "x-matrix-hosted-bots-schedule": "spoof",
+      "x-matrix-hosted-bots-session": "omb_session_8799_abc123=omb_sess_existing" };
+    const endpoint = OPENMAUSBOT_PROXY_BASE + "/api/routines";
+    const mountOwner = (owner: boolean) => {
+      const gateway = createOpenMausBotGateway({ socketPath, admitted: true, isOwner: () => owner, schedules });
+      const app = new Hono();
+      app.route(OPENMAUSBOT_PROXY_BASE, gateway.routes);
+      return { app, gateway };
+    };
+    const owner = mountOwner(true), guest = mountOwner(false);
+    const save = (app: Hono, data = payload, headers: Record<string, string> = paired) =>
+      app.request(endpoint, { method: "POST", headers, body: JSON.stringify(data) });
+    try {
+      expect((await save(guest.app)).status).toBe(403);
+      expect((await save(owner.app, payload, { ...proxyHeaders, "content-type": "application/json" })).status).toBe(403);
+      expect((await save(owner.app, { ...payload, schedule: { type: "daily", at } })).status).toBe(400);
+      expect(schedules.issue).not.toHaveBeenCalled();
+      expect(received).toHaveLength(0);
+      const accepted = await save(owner.app);
+      expect(accepted.status).toBe(201);
+      expect(accepted.headers.get("x-matrix-hosted-bots-schedule")).toBeNull();
+      await accepted.text();
+      expect(received[0]?.headers["x-matrix-hosted-bots-schedule"]).toBe(routineId + ":" + token);
+      expect(schedules.issue).toHaveBeenCalledWith({
+        botId: "pebble", threadId: "original-thread", scheduledFor: at, prompt: payload.prompt, modelId: model,
+      });
+      const rejected = await save(owner.app, { ...payload, resultsThreadId: "missing-thread" });
+      expect(rejected.status).toBe(409);
+      await rejected.text();
+      expect(schedules.revoke).toHaveBeenCalledWith(routineId);
+      const deletion = await owner.app.request(endpoint + "/" + routineId, { method: "DELETE", headers: paired });
+      expect(deletion.status).toBe(200);
+      await deletion.text();
+      expect(schedules.revoke).toHaveBeenCalledTimes(2);
+      expect(received[2]?.headers["x-matrix-hosted-bots-schedule"]).toBeUndefined();
+    } finally {
+      owner.gateway.close();
+      guest.gateway.close();
+    }
   });
 
   it("exposes only owner readiness from the real Unix HTTP service", async () => {

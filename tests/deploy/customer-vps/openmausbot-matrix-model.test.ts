@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
+import { openMatrixSchedule, sealMatrixSchedule, setMatrixScheduleSealKey } from "../../../scripts/openmausbot/matrix-schedule.js";
 // @ts-expect-error Build-only patch applied to pinned upstream source.
 import { patchMatrixProviderDispatch, patchMatrixProviderRegistry } from "../../../scripts/openmausbot/apply-private-host.mjs";
 
@@ -41,4 +42,22 @@ it("registers the served Matrix model as an actual upstream provider only in the
   expect(provider).toContain('type: "item.completed", itemType: "assistant_text"');
   expect(provider).toContain('type: "turn.completed"');
   expect(provider).not.toContain("generateText");
+});
+
+it("seals a routine's broker capability across daemon restart and denies copied or modified seals", () => {
+  const id = "550e8400-e29b-41d4-a716-446655440000";
+  const token = "aa".repeat(32);
+  setMatrixScheduleSealKey(Buffer.alloc(64, "b"));
+  expect(sealMatrixSchedule("malformed")).toBeUndefined();
+  const record = sealMatrixSchedule(id + ":" + token)!;
+  expect(record).toEqual({ routineId: id, sealedGrant: expect.stringMatching(/^[A-Za-z0-9_-]{80}$/) });
+  expect(record.sealedGrant).not.toContain(token);
+  expect(openMatrixSchedule(id, record.sealedGrant)).toBe(token);
+  expect(openMatrixSchedule("550e8400-e29b-41d4-a716-446655440001", record.sealedGrant)).toBeUndefined();
+  const first = record.sealedGrant[0] === "a" ? "b" : "a";
+  expect(openMatrixSchedule(id, first + record.sealedGrant.slice(1))).toBeUndefined();
+  setMatrixScheduleSealKey(Buffer.alloc(64, "c"));
+  expect(openMatrixSchedule(id, record.sealedGrant)).toBeUndefined();
+  setMatrixScheduleSealKey(Buffer.alloc(64, "b"));
+  expect(openMatrixSchedule(id, record.sealedGrant)).toBe(token);
 });

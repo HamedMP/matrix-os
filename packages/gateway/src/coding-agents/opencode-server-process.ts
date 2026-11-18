@@ -9,9 +9,11 @@ import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 import { createOpenCodeInputController } from "./opencode-input.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import type { OpenCodeProcess, OpenCodeSpawnFn } from "./opencode-provider.js";
+import { AppAiResultSchema } from "@matrix-os/contracts";
 
+const DENY_ALL = [{ permission: "*", pattern: "*", action: "deny" }] as const;
 export const OPENCODE_READ_ONLY_PERMISSIONS = [
-  { permission: "*", pattern: "*", action: "deny" },
+  ...DENY_ALL,
   ...["read", "glob", "grep", "list", "question"].map(permission => ({ permission, pattern: "*", action: "allow" })),
 ];
 const MAX_BODY = 1024 * 1024;
@@ -34,12 +36,13 @@ async function boundedJson(response: Response): Promise<unknown> {
 /** Per-run loopback server, with a child-process-shaped stream for the existing bounded collector. */
 export function createOpenCodeServerProcess(
   command: string, args: string[], options: { cwd: string; env: Record<string, string> },
-  dependencies: { spawn?: OpenCodeSpawnFn; fetch?: typeof fetch } = {},
+  dependencies: { spawn?: OpenCodeSpawnFn; fetch?: typeof fetch; textOnly?: { revalidate(): Promise<boolean> } } = {},
 ): OpenCodeProcess {
   const events = new EventEmitter(); const stdout = new EventEmitter(); const stderr = new EventEmitter();
   const controller = new AbortController(); const requestFetch = dependencies.fetch ?? fetch;
   const password = randomBytes(32).toString("hex");
-  const routine = nativeOpenCodeRoutineSource();
+  const textOnly = dependencies.textOnly;
+  const routine = textOnly ? undefined : nativeOpenCodeRoutineSource();
   let bootstrap: OpenCodeRoutineBootstrap | undefined;
   let cleanup: Promise<void> | undefined;
   const endRoutine = () => routine?.end();
@@ -48,8 +51,9 @@ export function createOpenCodeServerProcess(
   };
   const headers = { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`, "x-opencode-directory": encodeURIComponent(options.cwd), "content-type": "application/json" };
   const prompt = args.at(-1) ?? "";
-  const sessionArg = args.indexOf("--session"); let sessionId = sessionArg < 0 ? undefined : args[sessionArg + 1];
-  const modelArg = args.indexOf("--model"); const model = modelArg < 0 ? undefined : args[modelArg + 1];
+  const opts = textOnly ? args.slice(0, -1) : args;
+  const sessionArg = opts.indexOf("--session"); let sessionId = sessionArg < 0 ? undefined : opts[sessionArg + 1];
+  const modelArg = opts.indexOf("--model"); const model = modelArg < 0 ? undefined : opts[modelArg + 1];
   let origin = ""; let child: OpenCodeProcess | undefined; let stopped = false; let ended = false;
   let desiredExit: number | null = null; let killTimer: ReturnType<typeof setTimeout> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -149,15 +153,17 @@ export function createOpenCodeServerProcess(
     if (part.type === "tool" && (status === "completed" || status === "error")) emit({ type: "tool_use", sessionID: sessionId, part });
   }
   async function run() {
+    const separator = model?.indexOf("/") ?? -1;
+    if (textOnly && (sessionArg >= 0 || !model || separator < 1)) throw new Error("OpenCode text route unavailable");
     if (routine?.current()) {
       try { bootstrap = await prepareOpenCodeRoutineBootstrap({ command, cwd: options.cwd, env: options.env }); }
       catch (error) { endRoutine(); logCodingAgentWarning("OpenCode routines unavailable", error); }
     }
     if (stopped) { endRoutine(); cleanupBootstrap(); return; }
-    const permissions = bootstrap ? [...OPENCODE_READ_ONLY_PERMISSIONS, { permission: "matrix_routines", pattern: "*", action: "allow" }] : OPENCODE_READ_ONLY_PERMISSIONS;
-    const spawn = dependencies.spawn ?? ((cmd, argv, opts) => spawnIsolatedProviderProcess(cmd, argv, { ...opts, stdio: opts.stdio ?? ["ignore", "pipe", "pipe"] }));
+    const permissions = textOnly ? DENY_ALL : bootstrap ? [...OPENCODE_READ_ONLY_PERMISSIONS, { permission: "matrix_routines", pattern: "*", action: "allow" }] : OPENCODE_READ_ONLY_PERMISSIONS;
+    const spawn = dependencies.spawn ?? ((cmd, argv, opts) => spawnIsolatedProviderProcess(cmd, argv, { ...opts, stdio: opts.stdio ?? ["ignore", "pipe", "pipe"], requireIsolation: Boolean(textOnly) }));
     const ready = new Promise<void>((resolve, reject) => {
-      child = spawn(command, ["serve", "--hostname", "127.0.0.1", "--port", "0"], { ...options, ...(bootstrap ? { stdio: ["ignore", "pipe", "pipe", "pipe"] as const } : {}), env: { ...options.env, ...bootstrap?.environment, OPENCODE_SERVER_USERNAME: "opencode", OPENCODE_SERVER_PASSWORD: password, OPENCODE_PURE: "1", OPENCODE_ENABLE_QUESTION_TOOL: "1" } });
+      child = spawn(command, ["serve", "--hostname", "127.0.0.1", "--port", "0"], { ...options, ...(bootstrap ? { stdio: ["ignore", "pipe", "pipe", "pipe"] as const } : {}), env: { ...options.env, ...bootstrap?.environment, OPENCODE_SERVER_USERNAME: "opencode", OPENCODE_SERVER_PASSWORD: password, OPENCODE_PURE: "1", ...(textOnly ? {} : { OPENCODE_ENABLE_QUESTION_TOOL: "1" }) } });
       if (bootstrap) {
         const pipe = child.stdio?.[3];
         if (pipe instanceof Duplex) routine!.attach(pipe);
@@ -182,7 +188,7 @@ export function createOpenCodeServerProcess(
     await ready; if (stopped) return;
     if (sessionId && !SESSION_ID.test(sessionId)) throw new Error("OpenCode session unavailable");
     if (!sessionId) {
-      const created = object(await boundedJson(await request("/session", { title: "Matrix Chat", permission: permissions })));
+      const created = object(await boundedJson(await request("/session", { title: textOnly ? "Matrix Bots" : "Matrix Chat", permission: permissions })));
       if (typeof created?.id !== "string" || !SESSION_ID.test(created.id)) throw new Error("OpenCode session unavailable");
       sessionId = created.id;
     }
@@ -193,10 +199,30 @@ export function createOpenCodeServerProcess(
     if (verified?.id !== sessionId || verified.directory !== options.cwd || (!Array.isArray(verified.permission) || verified.permission.length !== permissions.length
       || verified.permission.some((value, index) => { const rule = object(value); const expected = permissions[index]!;
         return rule?.permission !== expected.permission || rule.pattern !== expected.pattern || rule.action !== expected.action; }))) throw new Error("OpenCode read-only session verification failed");
+    if (textOnly && model) {
+      const providerID = model.slice(0, separator);
+      const modelID = model.slice(separator + 1);
+      if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
+      const result = object(await boundedJson(await executionRequest(`${path}/message`, {
+        agent: "build", model: { providerID, modelID }, parts: [{ type: "text", text: prompt }],
+      })));
+      const info = object(result?.info);
+      if (info?.error || info?.role !== "assistant" || info.sessionID !== sessionId || info.providerID !== providerID
+        || info.modelID !== modelID || info.finish !== "stop" || !Array.isArray(result?.parts)
+        || result.parts.length > 128) throw new Error("OpenCode text completion unavailable");
+      const parts = result.parts.map(object);
+      if (parts.some(part => !part || !["text", "reasoning", "step-start", "step-finish"].includes(String(part.type))
+        || part.type === "text" && (typeof part.text !== "string" || typeof object(part.time)?.end !== "number")))
+        throw new Error("OpenCode text completion contains unsupported parts");
+      const { text } = AppAiResultSchema.parse({ text: parts.filter(part => part?.type === "text").map(part => part!.text).join("") });
+      if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
+      emit({ type: "text", sessionID: sessionId, part: { type: "text", text } });
+      stop(0);
+      return;
+    }
     emit({ type: "step_start", sessionID: sessionId });
     const subscribed = await executionRequest("/event", undefined, true);
     const eventStream = stream(subscribed).catch(fail);
-    const separator = model?.indexOf("/") ?? -1;
     const messageID = `msg_${randomBytes(16).toString("hex")}`;
     if (bootstrap) {
       const project = object(await boundedJson(await request("/project/current")));

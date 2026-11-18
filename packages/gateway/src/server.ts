@@ -135,6 +135,7 @@ import { createOpenMausBotOwnerCheck } from "./hosted-bots/oss-owner.js";
 import { admitsOpenMausBotHostBundle } from "./hosted-bots/oss-host-bundle.js";
 import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
 import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
+import { initializeHostedBotsScheduleStore } from "./hosted-bots/matrix-schedule-store.js";
 import { initializeHostedBotsMatrixModel } from "./hosted-bots/matrix-model.js";
 import { createHostedBotsManagedTools } from "./hosted-bots/managed-tool-catalog.js";
 import { generateHostedBotsManagedText } from "./hosted-bots/managed-tools.js";
@@ -1301,6 +1302,10 @@ export async function createGateway(config: GatewayConfig) {
     isOwner: isOpenMausBotOwner,
     upgradeWebSocket,
     issueModelTurn: (identity, text) => hostedBotsMatrixModel.issue?.(identity, text),
+    schedules: {
+      issue: async intent => hostedBotsMatrixModel.schedule?.issue(intent) ?? null,
+      revoke: async routineId => { await hostedBotsMatrixModel.schedule?.revoke(routineId); },
+    },
   });
   app.route(OPENMAUSBOT_PROXY_BASE, openMausBotGateway.routes);
 
@@ -1581,9 +1586,20 @@ export async function createGateway(config: GatewayConfig) {
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     chatGptPlanSource: appSubscriptionSource,
   });
+  const hostedBotsScheduleOwner = process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim();
+  const hostedBotsScheduleMachine = process.env.MATRIX_MACHINE_ID?.trim();
+  const hostedBotsSchedules = openMausBotAdmitted && kyselyInstance && hostedBotsScheduleOwner && hostedBotsScheduleMachine
+    ? await initializeHostedBotsScheduleStore(kyselyInstance, {
+      ownerId: hostedBotsScheduleOwner, machineId: hostedBotsScheduleMachine,
+    }).catch((error: unknown) => {
+      console.warn("[hosted-bots] Schedule authorization unavailable", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
+    })
+    : undefined;
   const hostedBotsToolRoutes = hostedBotsDrive.toolRoutes;
   const hostedBotsMatrixModel = await initializeHostedBotsMatrixModel({
     admitted: openMausBotAdmitted, providers: appAiRuntime.hostedBots,
+    schedules: hostedBotsSchedules,
     ...(hostedBotsToolRoutes ? {
       generateManaged: options => generateHostedBotsManagedText({
         ...options,

@@ -26,7 +26,7 @@ function fixture(docker: string) {
   mkdirSync(join(root, "scripts/openmausbot"));
   const imageSources = [
     "Dockerfile", "build-host-image.mjs", "prepare-host-package.sh", "apply-private-host.mjs",
-    "apply-matrix-theme.mjs", "matrix-provider.ts", "matrix-drive-mcp.mjs", "runtime-pnpm-lock.yaml",
+    "apply-matrix-theme.mjs", "matrix-provider.ts", "matrix-schedule.ts", "matrix-drive-mcp.mjs", "runtime-pnpm-lock.yaml",
   ];
   for (const file of imageSources) cpSync(join(repo, "scripts/openmausbot", file), join(root, "scripts/openmausbot", file));
   for (const file of ["shell/public/system-app-icons/v2/bots.svg", "packages/brand/src/tokens.ts",
@@ -259,7 +259,7 @@ it("uses only clean exact tracked source and public metadata, exporting only nam
     "packages/ui", "packages/ui/src", "packages/ui/src/chat-agents",
     "packages/ui/src/chat-agents/RecipeRabbit.tsx",
     "scripts", "scripts/openmausbot",
-    ...["apply-matrix-theme.mjs", "apply-private-host.mjs", "matrix-drive-mcp.mjs", "matrix-provider.ts",
+    ...["apply-matrix-theme.mjs", "apply-private-host.mjs", "matrix-drive-mcp.mjs", "matrix-provider.ts", "matrix-schedule.ts",
       "prepare-host-package.sh", "runtime-pnpm-lock.yaml"].map(file => "scripts/openmausbot/" + file),
     "shell", "shell/public", "shell/public/system-app-icons", "shell/public/system-app-icons/v2",
     "shell/public/system-app-icons/v2/bots.svg",

@@ -4,6 +4,10 @@ import type { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { issueHostedBotsMatrixTurn, MATRIX_BOTS_TURN_HEADER } from "./matrix-model.js";
+import {
+  MATRIX_BOTS_ROUTINE_ID, MATRIX_BOTS_SCHEDULE_HEADER, MATRIX_BOTS_SCHEDULE_REFUSAL, readHostedBotsScheduleRequest,
+  type HostedBotsScheduleGrantStore, type HostedBotsScheduleIntent,
+} from "./matrix-schedule.js";
 import { createOpenMausBotSockets, openMausBotWebSocketPath } from "./oss-sockets.js";
 
 export const OPENMAUSBOT_PROXY_BASE = "/api/hosted-bots/runtime";
@@ -183,6 +187,10 @@ export function createOpenMausBotGateway(options: {
   upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   eventsWindowMs?: number;
   issueModelTurn?: Parameters<typeof issueHostedBotsMatrixTurn>[0];
+  schedules?: {
+    issue: (intent: HostedBotsScheduleIntent) => ReturnType<HostedBotsScheduleGrantStore["issue"]>;
+    revoke: HostedBotsScheduleGrantStore["revoke"];
+  };
 }) {
   const app = new Hono();
   const active = new Set<AbortController>();
@@ -256,6 +264,8 @@ export function createOpenMausBotGateway(options: {
 
     const lifetime = new AbortController();
     active.add(lifetime);
+    let pendingRoutineId: string | undefined;
+    let pendingReply: IncomingMessage | undefined;
     try {
       const headers = toOpenMausBotRequestHeaders(c.req.raw.headers);
       const events = method === "GET" && path.split("?")[0] === "/api/events";
@@ -272,14 +282,43 @@ export function createOpenMausBotGateway(options: {
         const ticket = issueHostedBotsMatrixTurn(options.issueModelTurn, path, method, body, c.req.header("content-type"));
         if (ticket) headers[MATRIX_BOTS_TURN_HEADER] = ticket;
       }
+      const routineIntent = readHostedBotsScheduleRequest(path, method, body, c.req.header("content-type"));
+      if (routineIntent !== undefined) {
+        if (!headers.cookie || !routineIntent) {
+          active.delete(lifetime);
+          return c.json({ error: MATRIX_BOTS_SCHEDULE_REFUSAL }, headers.cookie ? 400 : 403);
+        }
+        const grant = await options.schedules?.issue(routineIntent);
+        if (!grant) {
+          active.delete(lifetime);
+          return c.json({ error: "The selected Matrix model cannot run this schedule." }, 409);
+        }
+        pendingRoutineId = grant.routineId;
+        headers[MATRIX_BOTS_SCHEDULE_HEADER] = grant.routineId + ":" + grant.token;
+      }
       const reply = await requestUnix(options.socketPath, path, {
         method, headers, body, signal: AbortSignal.any([c.req.raw.signal, lifetime.signal]),
       });
+      pendingReply = reply;
+      // The paired upstream is responsible for checking the selected task is
+      // a live, exact source. A refused upstream save cannot leave a grant.
+      if (pendingRoutineId && reply.statusCode !== 201) await options.schedules?.revoke(pendingRoutineId);
+      const revoke = /^(?:\/api\/routines\/)([\da-f-]{36})$/u.exec(path)?.[1];
+      if (revoke && (method === "PATCH" || method === "DELETE") && headers.cookie
+        && reply.statusCode === 200 && MATRIX_BOTS_ROUTINE_ID.safeParse(revoke).success) {
+        await options.schedules?.revoke(revoke);
+      }
       reply.once("close", () => active.delete(lifetime));
       return openResponse(reply, method, eventsDeadline === null ? null : eventsDeadline - Date.now());
     } catch (error) {
       active.delete(lifetime);
       lifetime.abort();
+      pendingReply?.destroy();
+      if (pendingRoutineId && options.schedules) {
+        await options.schedules.revoke(pendingRoutineId).catch((revokeError: unknown) => {
+          console.warn("[hosted-bots] Schedule authorization cleanup failed", revokeError instanceof Error ? revokeError.name : "UnknownError");
+        });
+      }
       if (error instanceof Error && error.name === "BodyLimitError") return c.json({ error: "too_large" }, 413);
       console.warn("[hosted-bots] OSS transport failed", { errorName: error instanceof Error ? error.name : "UnknownError" });
       return c.json({ error: "unavailable" }, 502);

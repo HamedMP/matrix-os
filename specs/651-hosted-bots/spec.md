@@ -75,7 +75,7 @@ Use the teal variant of the original Chat Bot rabbit on the launcher and the def
 
 ### Matrix AI for a direct Bots conversation
 
-The owner-only Electron Bots app lists runnable Matrix routes under **Matrix providers**. The same App AI discovery and completion code verifies managed models and compatible connected accounts from the selected Computer. An opaque model choice binds the exact harness, account, access source, and model. Existing GLM selections keep their original identifier. Matrix routes require an immediate direct paired-owner message. Managed routes with tool support can call the scoped Apps and MCP broker. The picker marks native routes that only support text. Scheduled turns, attachments and harnesses without a supported App AI inference route need their own execution contract.
+The owner-only Electron Bots app lists runnable Matrix routes under **Matrix providers**. The same App AI discovery and completion code verifies managed models and compatible connected accounts from the selected Computer. An opaque model choice binds the exact harness, account, access source, and model. Existing GLM selections keep their original identifier. Interactive Matrix routes require an immediate direct paired-owner message. Managed routes with tool support can call the scoped Apps and MCP broker. The picker marks native routes that only support text. Attachments and harnesses without a supported App AI inference route need their own execution contract.
 
 | Boundary | Authorization |
 | --- | --- |
@@ -83,6 +83,28 @@ The owner-only Electron Bots app lists runnable Matrix routes under **Matrix pro
 | Upstream provider → `GET /status`, `POST /turn` on the private model socket | Status returns bounded runnable choices and the default. Inference consumes the matching turn authorization before dispatch and rechecks the selected route in the current catalog. The upstream provider receives bounded text output. |
 
 The Gateway owns the original user text, supported model and provider credentials. The adapter includes a bounded set of direct text messages from the selected conversation branch. Saved steps, Bot memory and replayed automation context stay local to the Bots workload. The turn authorization stays in server memory and is discarded on use, expiry or Gateway shutdown. The model socket is local to the isolated Computer runtime. No Matrix or vendor credentials reach the renderer or the upstream workload. A real Computer acceptance must select Matrix AI inside Pebble, submit one identifiable test message, confirm the Relay model and usage classification, and reopen the same conversation to read the saved result. A catalog entry or local provider fixture alone does not establish live acceptance.
+
+#### Native Codex and OpenCode
+
+Project native Codex and OpenCode choices from the same selected Computer admission and exact App AI selection. A successful installation probe, a model in discovery, and a connected status do not independently grant execution authority. Recheck the precise native route and owner authorization immediately before starting a turn. An unavailable executable, unsupported protocol, disabled connection or lost model authorization fails closed. Never switch to a managed model or a different account on failure.
+
+Use a fresh, bounded text-only native turn. The runtime must prevent model-driven commands, arbitrary file reads, MCP, skills and plugins, including inherited configuration. Stdin and provider stdout stay host-side. Return only bounded assistant text, using the existing error projection and cancellation. Test each native runtime against a distinct synthetic prompt on the selected Dev Computer. Verify the expected reply in its Bots conversation.
+
+Codex uses the selected Computer’s enabled terminal account with current native consent and an exact eligible model. The initial implementation qualifies Codex `0.162.1`. Launch the App Server inside the host filesystem sandbox with a read-only mount of the exact native credential file and no inherited workspace, global or project configuration. The ephemeral thread and turn have no execution environments. Assert the effective config, fixed model and provider, empty MCP catalog and text-only protocol before accepting the result. OpenCode initially qualifies the installed `1.19.5` native runtime’s anonymous built-in free models. Use a fresh process and scratch home with a verified deny-all session. Require the exact provider and model in its reply. An explicit Off setting revokes either route. Keep these initial routes text-only.
+
+#### Matrix-funded scheduled text
+
+**Scope.** The paired owner can save a one-time automation for an existing conversation that currently uses a Matrix-managed model. The stock RoutineManager owns timing, run identity and transcript persistence. The Matrix grant authorizes one bounded background completion. A browser or Electron connection is unnecessary after saving.
+
+| Boundary | Signature and authority |
+| --- | --- |
+| Calendar Save | `POST /api/hosted-bots/runtime/api/routines` carries `botId`, `resultsThreadId`, `modelSelection`, `schedule: {type: "once", at}` and `prompt`. The Gateway verifies the selected Computer owner. The paired upstream verifies the named Bot, live conversation and exact model before it saves. |
+| Grant | The Gateway scopes the owner PostgreSQL row to the Computer and binds the routine, Bot, conversation, model, due time and saved instructions. It forwards a one-purpose secret on private transport. The ledger stores its hash. The workload seals the secret using its daemon-only pairing proof and excludes it from public routine and event projections. |
+| Due turn | `POST /schedule/turn` on the private model socket consumes the exact bound grant atomically, then uses current Matrix funding and exact model admission with request class `background`. The workload dispatches from the durable scheduled occurrence and publishes the completion in the same conversation. |
+
+**Validation.** Bound the schedule to 31 days ahead and reject early claims or claims after the 12-hour catch-up window. A malformed or unsupported request is rejected before dispatch. An absent, consumed, expired or mismatched grant cannot spend. Pausing and deleting revoke it. Save a new automation when changing the selected model, time or prompt. Missing current authority or provider failure gives the routine a failure result. A grant consumed by an interrupted or ambiguous call is never automatically issued again.
+
+**Cases and verification.** An approved one-shot on a Matrix-managed conversation emits one text result even when Electron has exited. A tool request, manual trigger, different model or conversation, disabled routine, duplicate claim and failed save cannot start another completion. Test the private socket, PostgreSQL claim, host image packaging, and pinned routine execution with the original conversation. On Dev, record the scheduled time, process exit, server run timestamps and result after reopening. Keep the scheduled grant out of UI state and credentials. Pass the actual timer’s bound identity, rather than minting a direct-message ticket after the client disconnects.
 
 ### Matrix-managed integration reads
 

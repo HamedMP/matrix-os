@@ -9,6 +9,7 @@ const sourceFiles = [
   "scripts/openmausbot/apply-private-host.mjs",
   "scripts/openmausbot/apply-matrix-theme.mjs",
   "scripts/openmausbot/matrix-provider.ts",
+  "scripts/openmausbot/matrix-schedule.ts",
   "scripts/openmausbot/matrix-drive-mcp.mjs",
   "scripts/openmausbot/runtime-pnpm-lock.yaml",
   "packages/brand/src/tokens.ts",

@@ -24,7 +24,10 @@ if (matrixPairSocket) {
   process.stdin.on("data", (chunk: string) => {
     proof += chunk;
     if (proof.length <= 65 && !proof.includes("\\n")) return;
-    if (/^[a-f0-9]{64}\\n$/.test(proof)) expectedProof = Buffer.from(proof.trim());
+    if (/^[a-f0-9]{64}\\n$/.test(proof)) {
+      expectedProof = Buffer.from(proof.trim());
+      setMatrixScheduleSealKey(expectedProof);
+    }
     proof = "";
     process.stdin.destroy();
   });
@@ -115,11 +118,149 @@ export function patchMatrixProviderDispatch(source) {
         }`);
 }
 
+
+export function patchMatrixScheduleIndex(source) {
+  let patched = replacePinned(source, 'import { basename, join } from "node:path";',
+    'import { basename, join } from "node:path";\nimport { openMatrixSchedule, sealMatrixSchedule, setMatrixScheduleSealKey } from "./drivers/matrix-schedule.ts";');
+  const sourceAnchor = 'function routineSourceThread(run: RoutineRun): string | null {';
+  patched = replacePinned(patched, sourceAnchor, `// Matrix's owner-confirmed routine is joined only to the exact existing direct conversation.
+function matrixHostedScheduleSource(botId: string, threadId: unknown) {
+  if (typeof threadId !== "string" || cloudGuestOpened(threadId) || store.groupByThread(threadId)) return null;
+  const profile = store.bot(botId);
+  const task = store.taskByThread(botId, threadId);
+  if (!profile || profile.hidden || !task || task.archivedAt || task.routineRunId) return null;
+  return store.projectBotForTask(botId, threadId);
+}
+
+function matrixHostedScheduleRun(run: RoutineRun) {
+  if (!routines?.hostedScheduleGrant(run.routineId)) return null;
+  const routine = routines.listRoutines().find(candidate => candidate.id === run.routineId);
+  const model = routine?.modelSelection;
+  const current = matrixHostedScheduleSource(run.botId, run.resultsThreadId)?.modelSelection;
+  const valid = run.target === "bot" && !run.manual && run.triggerSource === "schedule" && !run.retried && !run.eventSource
+    && run.runOn === "maus" && !run.attachments?.length && !run.access && !run.deliver
+    && routine?.botId === run.botId && routine.schedule.type === "once" && routine.schedule.at === run.scheduledFor
+    && typeof run.resultsThreadId === "string" && run.resultsThreadId === routine.resultsThreadId
+    && model?.instanceId === MATRIX_HOSTED_INSTANCE
+    && current?.instanceId === model.instanceId && current.model === model.model;
+  if (!valid || !model || !run.resultsThreadId) return false;
+  return { threadId: run.resultsThreadId, schedule: { routineId: run.routineId, scheduledFor: run.scheduledFor, modelId: model.model } };
+}
+
+${sourceAnchor}`);
+  const joins = '  joinConversation: (run) => {\n    if (run.eventSource === "wait")';
+  patched = replacePinned(patched, joins, '  joinHostedSchedule: (run) => {\n    const matrix = matrixHostedScheduleRun(run);\n    return matrix ? matrix.threadId : matrix;\n  },\n' + joins);
+  const turn = '  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {\n    if (!companyShutdown) await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });\n  },';
+  patched = replacePinned(patched, turn, `  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError, run) => {
+    if (companyShutdown) return;
+    const matrix = matrixHostedScheduleRun(run);
+    if (matrix !== null) {
+      const grant = routines?.hostedScheduleGrant(run.routineId);
+      const token = matrix && grant ? openMatrixSchedule(run.routineId, grant) : undefined;
+      if (!matrix || matrix.threadId !== threadId || !token) {
+        onDispatchError("This scheduled Matrix model or conversation is no longer available.");
+        return;
+      }
+      await startTurn(botId, prompt, {
+        threadId, runOn: "maus", automationSource: triggerSource, onDispatchError, unattended: true,
+        matrixHostedTurn: { botId, threadId, sendId: run.id, token, schedule: matrix.schedule },
+      });
+      return;
+    }
+    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+  },`);
+  const create = '      const routine = withRoutineWriter(writer, () => routines!.create(body));';
+  patched = replacePinned(patched, create, `      let hostedGrant: ReturnType<typeof sealMatrixSchedule>;
+      if (process.env.OMB_MATRIX_PAIR_SOCKET && body && typeof body === "object" && typeof body.botId === "string") {
+        const source = matrixHostedScheduleSource(body.botId, body.resultsThreadId);
+        const selected = body.modelSelection?.instanceId ?? (source ?? store.bot(body.botId))?.modelSelection.instanceId;
+        if (selected === MATRIX_HOSTED_INSTANCE) {
+          if (auth.kind !== "session" || !ownerOrAdmin(auth)) return json(res, 403, { error: "Only the paired Matrix owner can schedule this model." });
+          hostedGrant = sealMatrixSchedule(req.headers["x-matrix-hosted-bots-schedule"]);
+          const model = body.modelSelection;
+          if (!hostedGrant || !source || model?.instanceId !== MATRIX_HOSTED_INSTANCE || model.model !== source.modelSelection.model
+            || model.instanceId !== source.modelSelection.instanceId || body.schedule?.type !== "once") {
+            return json(res, 409, { error: "Save a one-time automation with an existing conversation on this bot and its current Matrix model." });
+          }
+        }
+      }
+      const routine = withRoutineWriter(writer, () => routines!.create(body, undefined, hostedGrant));`);
+  patched = replacePinned(patched, '      const run = routines!.runNow(routineMatch[1]);', `      if (routines!.hostedScheduleGrant(routineMatch[1])) return json(res, 409, { error: "This Matrix automation runs once at the scheduled time." });
+      const run = routines!.runNow(routineMatch[1]);`);
+  const editing = '      const refused = routineBodyRefusal(body, routines!.listRoutines().find((candidate) => candidate.id === routineMatch![1])); if (refused) return json(res, refused.status, { error: refused.error });';
+  patched = replacePinned(patched, editing, `      if (routines!.hostedScheduleGrant(routineMatch[1])) {
+        if (auth.kind !== "session" || !ownerOrAdmin(auth)) return json(res, 403, { error: "Only the paired Matrix owner can change this automation." });
+        if (!body || typeof body !== "object" || body.enabled !== false || Object.keys(body).length !== 1) {
+          return json(res, 409, { error: "Pause or delete this Matrix automation and save a new one to change its time, model, or instructions." });
+        }
+      } else if (process.env.OMB_MATRIX_PAIR_SOCKET && body?.modelSelection?.instanceId === MATRIX_HOSTED_INSTANCE) {
+        return json(res, 409, { error: "Save a new one-time automation to use a Matrix model." });
+      }
+${editing}`);
+  const removing = '      const removed = routines!.remove(routineMatch[1]);';
+  return replacePinned(patched, removing, `      if (routines!.hostedScheduleGrant(routineMatch[1]) && (auth.kind !== "session" || !ownerOrAdmin(auth))) {
+        return json(res, 403, { error: "Only the paired Matrix owner can remove this automation." });
+      }
+${removing}`);
+}
+
+export function patchMatrixScheduleRoutines(source) {
+  let patched = replacePinned(source, '  installedPackage?: RoutinePackageStamp;', '  installedPackage?: RoutinePackageStamp;\n  matrixScheduledGrant?: string;');
+  patched = replacePinned(patched, '  routineId: string;\n  routineName: string;', '  routineId: string;\n  routineName: string;\n  matrixHostedJoined?: true;');
+  patched = replacePinned(patched, '      this.runs.findLast((candidate) => candidate.threadId === threadId);',
+    '      this.runs.findLast((candidate) => candidate.threadId === threadId && !candidate.matrixHostedJoined);');
+  patched = replacePinned(patched, 'joinConversation?: (run: RoutineRun) => string | null;', 'joinConversation?: (run: RoutineRun) => string | null;\n  joinHostedSchedule?: (run: RoutineRun) => string | null | false;');
+  patched = replacePinned(patched, '    onDispatchError: (message: string) => void,\n  ) => Promise<void>;\n  startGoal?: (', '    onDispatchError: (message: string) => void,\n    run: RoutineRun,\n  ) => Promise<void>;\n  startGoal?: (');
+  patched = replacePinned(patched, 'const { installedPackage: _installedPackage, ...visible }', 'const { installedPackage: _installedPackage, matrixScheduledGrant: _matrixScheduledGrant, ...visible }');
+  patched = replacePinned(patched, '  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {', `  hostedScheduleGrant(id: string): string | undefined {
+    return this.routines.find((routine) => routine.id === id)?.matrixScheduledGrant;
+  }
+
+  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, hostedGrant?: { routineId: string; sealedGrant: string }): Routine {`);
+  const create = '      id: randomUUID(),\n      ...clean,\n      // Only a confirmed chat card';
+  patched = replacePinned(patched, create, '      id: hostedGrant?.routineId ?? randomUUID(),\n      ...clean,\n      ...(hostedGrant ? { matrixScheduledGrant: hostedGrant.sealedGrant } : {}),\n      // Only a confirmed chat card');
+  const join = '        const joined = run.threadId || (run.target === "room-goal" ? null : this.options.joinConversation?.(run)) || null;';
+  patched = replacePinned(patched, join, `        const matrixJoined = this.options.joinHostedSchedule?.(run);
+        if (matrixJoined === false || (matrixJoined && run.threadId && run.threadId !== matrixJoined)) {
+          this.failRun(run, "This scheduled conversation or model is no longer available.");
+          continue;
+        }
+        if (matrixJoined) run.matrixHostedJoined = true;
+        const joined = matrixJoined || run.threadId || (run.target === "room-goal" ? null : this.options.joinConversation?.(run)) || null;`);
+  const start = '              triggerSource,\n              (message) => this.failThread(task.threadId, message, { cause: "refused" }),';
+  return replacePinned(patched, start, start + '\n              cloneRun(run),');
+}
+
+export function patchMatrixScheduleCalendar(source) {
+  const calendar = 'export function QuickComposer({';
+  let patched = replacePinned(source, calendar, `// A Matrix one-shot sends the current source's model and actual thread in
+// the existing Save action. Never send a placeholder destination.
+function matrixHostedScheduleFields(bot: Bot | undefined, destination: string | null | undefined) {
+  if (!bot) return {};
+  const resultsThreadId = destination ?? bot.mainThreadId ?? bot.threadId;
+  const task = bot.tasks?.find((candidate) => candidate.threadId === resultsThreadId);
+  const selection = task?.modelSelection ?? bot.modelSelection;
+  if (selection.instanceId !== "matrix-hosted-ai") return {};
+  return { resultsThreadId, modelSelection: { instanceId: selection.instanceId, model: selection.model } };
+}
+
+${calendar}`);
+  patched = replacePinned(patched, '          ...(routineTarget === "bot" ? { resultsThreadId } : {}),',
+    '          ...(routineTarget === "bot" ? { resultsThreadId } : {}),\n          ...(!existingRoutine && routineTarget === "bot" ? matrixHostedScheduleFields(selectedBots[0], resultsThreadId) : {}),');
+  return replacePinned(patched, '            resultsThreadId,\n          } satisfies RoutineInput),',
+    '            resultsThreadId,\n            ...matrixHostedScheduleFields(bots.find((bot) => bot.id === botIds[0]), resultsThreadId),\n          } satisfies RoutineInput),');
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.length !== 3) throw new Error("Usage: apply-private-host.mjs <upstream source directory>");
   const file = resolve(process.argv[2], "server/index.ts");
   const route = resolve(process.argv[2], "server/routes/bot-messages.ts");
-  await writeFile(file, patchPrivateHost(patchMatrixProviderRegistry(await readFile(file, "utf8"))));
+  await writeFile(file, patchPrivateHost(patchMatrixScheduleIndex(patchMatrixProviderRegistry(await readFile(file, "utf8")))));
+  const routines = resolve(process.argv[2], "server/routines.ts");
+  await writeFile(routines, patchMatrixScheduleRoutines(await readFile(routines, "utf8")));
+  const calendar = resolve(process.argv[2], "src/components/RoutineCalendarPage.tsx");
+  await writeFile(calendar, patchMatrixScheduleCalendar(await readFile(calendar, "utf8")));
+  await copyFile(new URL("./matrix-schedule.ts", import.meta.url), resolve(process.argv[2], "server/drivers/matrix-schedule.ts"));
   await writeFile(route, patchMatrixProviderDispatch(await readFile(route, "utf8")));
   await copyFile(new URL("./matrix-provider.ts", import.meta.url), resolve(process.argv[2], "server/drivers/matrix-provider.ts"));
 }

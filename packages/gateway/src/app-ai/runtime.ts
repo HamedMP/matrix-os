@@ -23,6 +23,8 @@ import type { ChatGptPlanAuthority } from "../bots/chatgpt-plan.js";
 import { CHATGPT_PLAN_SOURCE, projectChatGptPlanAppRoutes } from "./chatgpt-plan-projection.js";
 import { generateChatGptPlanAppText } from "./chatgpt-plan-completion.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
+import { isOpenCodeFreeAppRoute, projectOpenCodeFreeAppRoutes, type createOpenCodeAppCompletion } from "./opencode-completion.js";
+import { isCodexProfileAppRoute, projectCodexProfileAppRoutes } from "./codex-profile-projection.js";
 const PolicySchema = z.strictObject({
     apps: z.array(AppAiRequestSchema.shape.app).max(100),
     model: KernelModelSchema.optional(),
@@ -38,6 +40,7 @@ type HostedBotsGeneration = {
     prompt: string;
     signal: AbortSignal;
     generateManaged?: HostedBotsApiCompletion;
+    requestClass?: "background";
 };
 export type HostedBotsAppAiCatalog = {
     routes: Array<AppAiRoute & { modelLabel: string; supportsManagedTools: boolean }>;
@@ -88,6 +91,11 @@ interface RuntimeOptions {
     nativeProfileGuard?: NativeProviderProfileGuard;
     piSdkCompletion?: ReturnType<typeof createPiSdkAppCompletion>;
     hermesCompletion?: ReturnType<typeof createHermesAppCompletion>;
+    openCodeCompletion?: ReturnType<typeof createOpenCodeAppCompletion>;
+    codexProfileCompletion?: {
+        probe(signal: AbortSignal): Promise<boolean>;
+        generate(input: { route: AppAiRouteSelection; prompt: string; signal: AbortSignal; revalidate(): Promise<boolean> }): Promise<AppAiResult>;
+    };
     chatGptPlanSource?: () => { ownerId: string; authority: ChatGptPlanAuthority } | undefined;
 }
 /** Owner app grant + exact live V3-derived route, rechecked after credentials/queue waits. */
@@ -133,13 +141,33 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
             throw new Error("App AI access denied");
         if (policy.model && !policy.route) return {settings:undefined,canonical:undefined,policy,routes:{routes:[],defaultRoute:null},allRoutes:[],sdkRoutes:[] as AppAiRouteSelection[]};
         const managedOnly = hostedBots && (intent?.managedOnly || (intent?.route && hostedBotsRouteIsManaged(intent.route)));
+        const exactCodex = Boolean(hostedBots && intent?.route && isCodexProfileAppRoute(intent.route));
+        const exactOpenCode = Boolean(hostedBots && intent?.route && isOpenCodeFreeAppRoute(intent.route));
+        const personalOnly = exactCodex || exactOpenCode;
         let [settings, canonical] = await Promise.all([
-            managedOnly ? undefined : options.providerSettingsReader?.getSnapshot({ includeNativeAccountMetadata: intent?.verify !== false, includeNativeAccountUsage: false, signal }),
+            managedOnly ? undefined : options.providerSettingsReader?.getSnapshot({
+                includeNativeAccountMetadata: !exactOpenCode && (exactCodex || intent?.verify !== false),
+                includeNativeAccountUsage: false, signal, ...(personalOnly ? { suppressFundedProbes: true } : {}),
+            }),
             options.providerSnapshotReader?.getSnapshot(managedOnly ? { admissionScope: "managed_matrix", signal }
+                : personalOnly ? { suppressFundedProbes: true, signal }
                 : intent?.verify === false ? { includeNativeAccountMetadata: false, includeNativeAccountUsage: false, signal } : { signal }),
         ]);
         signal.throwIfAborted();
         const routes = projectAppAiAuthorizationRoutes(settings, canonical);
+        const nativeHostedRoutes: Array<AppAiRoute & { modelLabel?: string }> = [];
+        const matchesSelection = (route: AppAiRouteSelection) => !intent?.route || sameAppAiRoute(route, intent.route);
+        if (hostedBots && !managedOnly && options.openCodeCompletion && (!intent?.route || exactOpenCode)) {
+            const projected = projectOpenCodeFreeAppRoutes(settings, canonical).filter(matchesSelection);
+            if (projected.length && (intent?.verify === false || await options.openCodeCompletion.probe(signal)))
+                nativeHostedRoutes.push(...projected);
+        }
+        if (hostedBots && !managedOnly && options.codexProfileCompletion && (!intent?.route || exactCodex)) {
+            const projected = projectCodexProfileAppRoutes(settings, canonical).filter(matchesSelection);
+            if (projected.length && (intent?.verify === false || await options.codexProfileCompletion.probe(signal)))
+                nativeHostedRoutes.push(...projected);
+        }
+        routes.routes = [...routes.routes.filter(route => !nativeHostedRoutes.some(row => sameAppAiRoute(row, route))), ...nativeHostedRoutes];
         if (!managedOnly && canonical?.instances?.some(instance=>instance.id===CHATGPT_PLAN_SOURCE)) {
             const planSource = options.chatGptPlanSource?.();
             routes.routes.push(...projectChatGptPlanAppRoutes(canonical, Boolean(planSource && options.ownerIds.includes(planSource.ownerId))));
@@ -167,6 +195,7 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         for (const route of routes.routes) {
             if (route.availability !== "available")
                 continue;
+            if (nativeHostedRoutes.some(entry => sameAppAiRoute(entry, route))) continue;
             if (route.accessSourceId === CHATGPT_PLAN_SOURCE) continue;
             if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included") {
                 if (!options.fundedCredentialProvider?.enabled || (hostedBots && !options.fundedAdmission) || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
@@ -247,14 +276,15 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         const authorizedRoutes=policy.route ? routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!)) : routes.routes;
         const publicRoutes = authorizedRoutes.slice(0,128);
         if (exact && !publicRoutes.some(entry=>sameAppAiRoute(entry,exact))) publicRoutes[publicRoutes.length>=128?127:publicRoutes.length]=exact;
-        return { settings, canonical, policy, sdkRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
+        return { settings, canonical, policy, sdkRoutes, nativeHostedRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
     }
-    async function connected(request: AppAiRequest, signal: AbortSignal, hostedBots = false, generateManaged?: HostedBotsApiCompletion) {
+    async function connected(request: AppAiRequest, signal: AbortSignal, hostedBots = false, generateManaged?: HostedBotsApiCompletion, requestClass?: "background") {
         const initial = await catalog(request.app, signal, { route: request.route }, hostedBots);
         const route = request.route ?? initial.routes.defaultRoute;
         if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route)))
             throw new Error("App AI route is unavailable");
-        const managedToolTurn = generateManaged && hostedBots && supportsHostedBotsTools(initial.canonical, route);
+        if (requestClass === "background" && (!hostedBots || !hostedBotsRouteIsManaged(route))) throw new Error("App AI background source unavailable");
+        const managedToolTurn = !requestClass && generateManaged && hostedBots && supportsHostedBotsTools(initial.canonical, route);
         const revalidate = async () => {
             const current = await catalog(request.app, signal, { route, verify: false }, hostedBots);
             return (!current.policy.model || current.policy.route!==undefined) && (!current.policy.route || sameAppAiRoute(current.policy.route,route)) && current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
@@ -268,12 +298,19 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         }
         if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included" || route.accessSourceId === "owner_anthropic_key") {
             const textSignal = generateManaged ? AbortSignal.any([signal, AbortSignal.timeout(APP_AI_TIMEOUT_MS)]) : signal;
-            return generateApiAppText({ ...options, route, prompt: request.prompt, signal: textSignal, revalidate });
+            return generateApiAppText({ ...options, route, prompt: request.prompt, signal: textSignal, revalidate, requestClass });
         }
         if (route.accessSourceId === CHATGPT_PLAN_SOURCE) {
             const source = options.chatGptPlanSource?.();
             if (!source || !options.ownerIds.includes(source.ownerId) || !initial.canonical) throw new Error("App AI source unavailable");
             return generateChatGptPlanAppText({...source,app:request.app,route,canonical:initial.canonical,prompt:request.prompt,signal,revalidate});
+        }
+        if (hostedBots && initial.nativeHostedRoutes?.some(entry => sameAppAiRoute(entry, route))) {
+            if (options.openCodeCompletion && isOpenCodeFreeAppRoute(route))
+                return options.openCodeCompletion.generate({ modelId: route.modelId, prompt: request.prompt, signal, revalidate });
+            if (options.codexProfileCompletion && isCodexProfileAppRoute(route))
+                return options.codexProfileCompletion.generate({ route, prompt: request.prompt, signal, revalidate });
+            throw new Error("Native App AI route unavailable");
         }
         if (!initial.settings)
             throw new Error("App AI route unavailable");
@@ -392,7 +429,7 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
     const hostedBots = {
         discover: (signal: AbortSignal, scope: HostedBotsDiscoveryScope = "all") => hostedWork(signal, async (workSignal): Promise<HostedBotsAppAiCatalog> => {
             const intent = scope === "managed" ? { managedOnly: true } : undefined;
-            const { allRoutes, canonical, settings, routes: { defaultRoute } } = await catalog(HOSTED_BOTS_APP, workSignal, intent, true);
+            const { allRoutes, canonical, settings, nativeHostedRoutes, routes: { defaultRoute } } = await catalog(HOSTED_BOTS_APP, workSignal, intent, true);
             return {
                 defaultRoute,
                 routes: allRoutes.filter(route => route.availability === "available").map(route => {
@@ -402,16 +439,17 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
                     const canonicalModel = canonical?.models.find(entry => entry.id === route.modelId);
                     return {
                         ...route,
-                        modelLabel: settingsModel?.displayName || canonicalModel?.displayName || route.modelId,
+                        modelLabel: nativeHostedRoutes?.find(entry => sameAppAiRoute(entry, route))?.modelLabel
+                            || settingsModel?.displayName || canonicalModel?.displayName || route.modelId,
                         supportsManagedTools: supportsHostedBotsTools(canonical, route),
                     };
                 }),
             };
         }, HOSTED_BOTS_DISCOVERY_TIMEOUT_MS),
-        generate: ({ route, prompt, signal, generateManaged }: HostedBotsGeneration): Promise<AppAiResult> => hostedWork(
+        generate: ({ route, prompt, signal, generateManaged, requestClass }: HostedBotsGeneration): Promise<AppAiResult> => hostedWork(
             signal,
-            workSignal => connected(AppAiRequestSchema.parse({ app: HOSTED_BOTS_APP, route, prompt }), workSignal, true, generateManaged),
-            generateManaged && hostedBotsRouteIsManaged(route) ? HOSTED_BOTS_TOOL_TIMEOUT_MS : APP_AI_TIMEOUT_MS,
+            workSignal => connected(AppAiRequestSchema.parse({ app: HOSTED_BOTS_APP, route, prompt }), workSignal, true, generateManaged, requestClass),
+            !requestClass && generateManaged && hostedBotsRouteIsManaged(route) ? HOSTED_BOTS_TOOL_TIMEOUT_MS : APP_AI_TIMEOUT_MS,
         ),
     };
     return { routes, hostedBots };

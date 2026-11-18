@@ -20,7 +20,10 @@ const COMPLETE_STATUS_TIMEOUT = 37_000;
 const STATUS_TRANSPORT_GRACE = 8_000;
 
 type TurnIdentity = { botId: string; threadId: string; sendId: string };
-export type MatrixHostedTurnTicket = TurnIdentity & { token: string };
+export type MatrixHostedTurnTicket = TurnIdentity & {
+  token: string;
+  schedule?: { routineId: string; modelId: string; scheduledFor: number };
+};
 const ownerSend = new AsyncLocalStorage<MatrixHostedTurnTicket | null>();
 type HistoryLine = {
   id: string; role: string; kind: string; text?: string | null;
@@ -51,7 +54,9 @@ export function runMatrixHostedModelTurn<T>(
   instanceId: string, ticket: MatrixHostedTurnTicket | undefined,
   messages: readonly HistoryLine[], excluded: ReadonlySet<string>, work: () => T,
 ): T {
+  if (ticket?.schedule && instanceId !== MATRIX_HOSTED_INSTANCE) throw new Error("The scheduled Matrix model has changed.");
   if (instanceId !== MATRIX_HOSTED_INSTANCE || !ticket?.token) return modelTurn.run(null, work);
+  if (ticket.schedule) return modelTurn.run({ ticket, history: [] }, work);
   const history: ContextLine[] = [];
   for (let i = messages.length - 1; i >= 0 && history.length < 12; i--) {
     const line = messages[i]!;
@@ -71,7 +76,7 @@ export function matrixHostedProviderConfigs(configs: InstanceConfigMap): Instanc
 }
 
 async function query(
-  path: "/status" | "/status?complete=1" | "/turn", signal: AbortSignal, body?: string, token?: string,
+  path: "/status" | "/status?complete=1" | "/turn" | "/schedule/turn", signal: AbortSignal, body?: string, token?: string,
 ): Promise<unknown> {
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     const req = request({
@@ -167,6 +172,7 @@ export const matrixHostedDriver: ProviderDriver<null> = {
         if (stopped || !enabled || !dispatch || !ticket?.token || !matrixModelId(selected)
           || ticket.botId !== input.botId || ticket.threadId !== input.threadId
           || input.guestConfined || input.mentionTurn || input.images?.length) throw new Error(SEND_NOTICE);
+        if (ticket.schedule && ticket.schedule.modelId !== selected) throw new Error("The scheduled Matrix model has changed.");
         if (active.has(input.threadId) || active.size >= 8) throw new Error("Matrix AI is busy. Send a new message when the turn finishes.");
         const token = ticket.token;
         ticket.token = "";
@@ -188,9 +194,11 @@ export const matrixHostedDriver: ProviderDriver<null> = {
           try {
             // The gateway supplies the exact latest user text from its
             // authorized request, not mutable turn input or private context.
-            const timeout = catalog?.tools.has(selected) ? MANAGED_TURN_TIMEOUT : TEXT_TURN_TIMEOUT;
-            const result = await query("/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]), JSON.stringify({
-              botId: ticket.botId, threadId: ticket.threadId, sendId: ticket.sendId, modelId: selected, history: dispatch.history,
+            const schedule = ticket.schedule;
+            const timeout = !schedule && catalog?.tools.has(selected) ? MANAGED_TURN_TIMEOUT : TEXT_TURN_TIMEOUT;
+            const result = await query(schedule ? "/schedule/turn" : "/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]), JSON.stringify({
+              botId: ticket.botId, threadId: ticket.threadId, modelId: selected,
+              ...(schedule ? { routineId: schedule.routineId, scheduledFor: schedule.scheduledFor } : { sendId: ticket.sendId, history: dispatch.history }),
             }), token);
             abort.signal.throwIfAborted();
             const text = result && typeof result === "object" && "text" in result ? result.text : null;

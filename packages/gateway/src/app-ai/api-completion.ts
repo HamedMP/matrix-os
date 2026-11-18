@@ -57,6 +57,7 @@ interface AppAiApiOptions {
     revalidate: () => Promise<boolean>;
     fundedCredentialProvider?: MatrixFundedCredentialProvider;
     fundedAdmission?: FundedAdmissionQueue;
+    requestClass?: "background";
     fetchImpl?: typeof fetch;
 }
 
@@ -64,6 +65,7 @@ interface AppAiApiOptions {
 export async function requestAppAiApiPayload(options: AppAiApiOptions, body: object): Promise<unknown> {
     const signal = AbortSignal.any([options.signal, AbortSignal.timeout(30000)]);
     signal.throwIfAborted();
+    const requestClass = options.requestClass ?? "interactive";
     const funded = options.route.accessSourceId === "matrix_cloudflare" || options.route.accessSourceId === "matrix_included";
     const anthropic = options.route.accessSourceId !== "matrix_cloudflare";
     const headers = new Headers({ "content-type": "application/json", "accept": "application/json" });
@@ -71,7 +73,7 @@ export async function requestAppAiApiPayload(options: AppAiApiOptions, body: obj
     if (funded) {
         if (!options.fundedCredentialProvider?.enabled)
             throw new Error("App AI funded access unavailable");
-        const lease = await options.fundedCredentialProvider.getCredential({ requestClass: "interactive", signal });
+        const lease = await options.fundedCredentialProvider.getCredential({ requestClass, signal });
         if (!lease.token || !lease.relayBaseUrl)
             throw new Error("App AI funded access unavailable");
         base = lease.relayBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
@@ -95,7 +97,7 @@ export async function requestAppAiApiPayload(options: AppAiApiOptions, body: obj
         signal.throwIfAborted();
         return (options.fetchImpl ?? fetch)(`${base}/v1/${anthropic ? "messages" : "chat/completions"}`, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal });
     };
-    const response = funded && options.fundedAdmission ? await options.fundedAdmission.run<Response>({ requestClass: "interactive", signal }, async () => {
+    const response = funded && options.fundedAdmission ? await options.fundedAdmission.run<Response>({ requestClass, signal }, async () => {
         const result = await send();
         if (result.status === 429 && result.headers.has("x-matrix-funded-reason")) {
             await result.body?.cancel();

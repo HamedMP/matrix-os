@@ -6,6 +6,7 @@ import { AppAiInputSchema, type AppAiRouteSelection, type ManagedWorkersAiModelI
 import { routeSelection, sameAppAiRoute } from "../app-ai/connected-routes.js";
 import { HOSTED_BOTS_DISCOVERY_TIMEOUT_MS, hostedBotsRouteIsManaged, type createRuntimeAppAiService, type HostedBotsApiCompletion, type HostedBotsAppAiCatalog } from "../app-ai/runtime.js";
 import { bindHostedBotsDriveSocket } from "./drive-approval-runtime.js";
+import { createHostedBotsMatrixScheduleRoutes, type HostedBotsScheduleGrantStore } from "./matrix-schedule.js";
 
 export const MATRIX_BOTS_MODEL_ID = "@cf/zai-org/glm-5.3-flash" satisfies ManagedWorkersAiModelId;
 export const MATRIX_BOTS_TURN_HEADER = "x-matrix-hosted-bots-model-turn";
@@ -142,6 +143,7 @@ export function issueHostedBotsMatrixTurn(
 type Options = {
   providers: HostedBotsModelProvider;
   generateManaged?: HostedBotsManagedCompletion;
+  schedules?: HostedBotsScheduleGrantStore;
 };
 
 export function createHostedBotsMatrixModel(options: Options) {
@@ -216,6 +218,34 @@ export function createHostedBotsMatrixModel(options: Options) {
     const models = (await readPicker(complete)).public;
     return c.json(!complete && observations.all.pending ? { ...models, refreshing: true } : models);
   });
+  async function resolveModel(key: string) {
+    let route = key === MATRIX_BOTS_MODEL_ID ? legacyGlmRoute
+      : picker().routes.get(key) ?? (await readPicker()).routes.get(key);
+    if (!route && observations.all.pending) {
+      await waitForObservation(observations.all.pending);
+      route = picker().routes.get(key);
+    }
+    return route;
+  }
+  async function resolveScheduledModel(key: string) {
+    // Schedule admission never probes personal engines. The actual funded
+    // completion still authorizes the exact route again at execution.
+    refresh("managed");
+    if (!observed(observations.managed)) await waitForObservation(observations.managed.pending);
+    const route = picker().routes.get(key);
+    return route && hostedBotsRouteIsManaged(route) ? route : undefined;
+  }
+  const schedule = options.schedules && {
+    async issue(intent: Parameters<HostedBotsScheduleGrantStore["issue"]>[0]) {
+      const route = await resolveScheduledModel(intent.modelId);
+      if (lifecycle.signal.aborted || !route) return null;
+      return options.schedules!.issue(intent, Date.now());
+    },
+    revoke: options.schedules.revoke,
+  };
+  if (options.schedules) app.route("/schedule", createHostedBotsMatrixScheduleRoutes({
+    consume: options.schedules.consume, resolve: resolveScheduledModel, generate: options.providers.generate, lifecycle: lifecycle.signal,
+  }));
   app.post("/turn", bodyLimit({
     maxSize: MAX_REDEEM_BYTES, onError: (c) => c.json({ error: "too_large" }, 413),
   }), async (c) => {
@@ -235,13 +265,7 @@ export function createHostedBotsMatrixModel(options: Options) {
     try {
       // Resolve the picker ID without substituting a default. Its exact route
       // is freshly authorized by App AI, including for persisted legacy GLM.
-      const key = body.data.modelId;
-      let route = key === MATRIX_BOTS_MODEL_ID ? legacyGlmRoute
-        : picker().routes.get(key) ?? (await readPicker()).routes.get(key);
-      if (!route && observations.all.pending) {
-        await waitForObservation(observations.all.pending);
-        route = picker().routes.get(key);
-      }
+      const route = await resolveModel(body.data.modelId);
       if (!route) return c.json({ error: "unavailable" }, 503);
       const prompt = turnPrompt(ticket.text, body.data.history);
       const generateManaged = options.generateManaged;
@@ -257,6 +281,7 @@ export function createHostedBotsMatrixModel(options: Options) {
   });
   return {
     routes: app,
+    schedule,
     issue: ((identity, text) => {
       if (lifecycle.signal.aborted) return undefined;
       const now = Date.now();
@@ -272,15 +297,15 @@ export function createHostedBotsMatrixModel(options: Options) {
 
 export async function initializeHostedBotsMatrixModel(options: Options & { admitted: boolean; socketPath?: string }) {
   if (!options.admitted) {
-    return { issue: undefined, close: async () => {} };
+    return { issue: undefined, schedule: undefined, close: async () => {} };
   }
   const model = createHostedBotsMatrixModel(options);
   try {
     const stop = await bindHostedBotsDriveSocket(options.socketPath ?? SOCKET, model.routes);
-    return { issue: model.issue, close: async () => { model.close(); await stop(); } };
+    return { issue: model.issue, schedule: model.schedule, close: async () => { model.close(); await stop(); } };
   } catch (error) {
     model.close();
     console.warn("[hosted-bots] Could not start Matrix model bridge", error instanceof Error ? error.name : "UnknownError");
-    return { issue: undefined, close: async () => {} };
+    return { issue: undefined, schedule: undefined, close: async () => {} };
   }
 }

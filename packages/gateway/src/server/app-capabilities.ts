@@ -3,6 +3,8 @@ import { createAppCapabilityRoutes } from "../app-capabilities/routes.js";
 import { createRuntimeAppAiService, isAppAiAllowed } from "../app-ai/runtime.js";
 import { createPiSdkAppCompletion } from "../app-ai/pi-sdk-completion.js";
 import { createHermesAppCompletion } from "../app-ai/hermes-completion.js";
+import { createOpenCodeAppCompletion } from "../app-ai/opencode-completion.js";
+import { canCompleteCodexProfileAppText, generateCodexProfileAppText } from "../app-ai/codex-profile-completion.js";
 import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { createAppAiLifecycle } from "./app-ai-lifecycle.js";
@@ -34,15 +36,20 @@ export function registerAppIntegrationCapabilities(app: Hono, options: {
 
 /** Shared request lifetime drains all paths, including non-native completions. */
 export function registerAppAiCapabilities(app: Hono, options:
-  Omit<RuntimeOptions, "piSdkCompletion" | "hermesCompletion" | "lifecycle"> & {
+  Omit<RuntimeOptions, "piSdkCompletion" | "hermesCompletion" | "openCodeCompletion" | "codexProfileCompletion" | "lifecycle"> & {
     hermesRuntimeSource: Parameters<typeof createHermesAppCompletion>[0]["runtimeSource"];
   }) {
   const { hermesRuntimeSource, ...runtimeOptions } = options;
   const lifecycle = createAppAiLifecycle();
   const pi = createPiSdkAppCompletion({ homePath: options.homePath });
   const hermes = createHermesAppCompletion({ homePath: options.homePath, runtimeSource: hermesRuntimeSource });
+  const profileGuard = options.nativeProfileGuard;
   const runtime = createRuntimeAppAiService({
-    ...runtimeOptions, lifecycle, piSdkCompletion: pi, hermesCompletion: hermes,
+    ...runtimeOptions, lifecycle, piSdkCompletion: pi, hermesCompletion: hermes, openCodeCompletion: createOpenCodeAppCompletion(),
+    codexProfileCompletion: profileGuard ? {
+      probe: signal => canCompleteCodexProfileAppText(options.homePath, signal),
+      generate: input => generateCodexProfileAppText({ ...input, homePath: options.homePath, profileGuard }),
+    } : undefined,
     // The paired adapter races caller cancellation. Retain the authority's
     // underlying work too, until real completion/cancellation settles.
     chatGptPlanSource: options.chatGptPlanSource ? () => {

@@ -286,3 +286,37 @@ it("uses a successful full catalog after fast discovery fails without restoring 
     vi.useRealTimers();
   }
 });
+
+it("uses the background funding lane for the original scheduled text while direct Matrix tools stay unavailable", async () => {
+  const { bridge: direct, service, fetchImpl, queue, getCredential } = fixture();
+  const token = "d".repeat(64);
+  const routineId = "550e8400-e29b-41d4-a716-446655440000";
+  const scheduledFor = Date.now() - 1;
+  const identity = { botId: turn.botId, threadId: turn.threadId, modelId: MATRIX_BOTS_MODEL_ID, scheduledFor };
+  const generateManaged = vi.fn(async () => ({ text: "unapproved" }));
+  const issue = vi.fn(async () => ({ routineId, token }));
+  const consume = vi.fn(async () => text);
+  const bridge = createHostedBotsMatrixModel({
+    providers: service.hostedBots, generateManaged, schedules: { issue, consume, revoke: async () => {} },
+  });
+  try {
+    const approved = { ...identity, scheduledFor: Date.now() + 1000, prompt: text };
+    expect(await bridge.schedule?.issue(approved)).toEqual({ routineId, token });
+    const response = await bridge.routes.request("/schedule/turn", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + token },
+      body: JSON.stringify({ ...identity, routineId }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ text: "The requested summary." });
+    expect(generateManaged).not.toHaveBeenCalled();
+    expect(getCredential).toHaveBeenCalledWith(expect.objectContaining({ requestClass: "background" }));
+    expect(queue).toHaveBeenCalledWith(expect.objectContaining({ requestClass: "background" }), expect.any(Function));
+    const sent = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
+    expect(sent.messages.at(-1)).toEqual({ role: "user", content: text });
+    expect(sent.tool_choice).toBe("none");
+  } finally {
+    bridge.close();
+    direct.close();
+  }
+});
