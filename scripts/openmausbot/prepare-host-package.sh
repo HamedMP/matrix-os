@@ -15,7 +15,7 @@ printf '%s  %s\n' "$digest" "$work/source.tar.gz" | sha256sum --check -
 tar -xzf "$work/source.tar.gz" -C "$work/source" --strip-components=1
 node -e 'require("node:fs").rmSync(process.argv[1], { recursive: true, force: true })' "$work/source/enterprise"
 node "$root/apply-private-host.mjs" "$work/source"
-node "$root/apply-matrix-theme.mjs" "$work/source" "$root/bots.svg"
+node "$root/apply-matrix-theme.mjs" "$work/source"
 
 (
   cd "$work/source"

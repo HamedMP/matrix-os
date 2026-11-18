@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error The Docker build entry point is a standalone Node script.
+import { buildOpenMausBotHostImage } from "../../../scripts/openmausbot/build-host-image.mjs";
 
 const run = promisify(execFile);
 const script = "scripts/openmausbot/apply-matrix-theme.mjs";
@@ -71,6 +73,29 @@ describe("OpenMausBot Matrix skin", () => {
         .toContain("matrix-bots-websocket-base");
       await run(process.execPath, [script, root]);
       expect(await readFile(css, "utf8")).toBe(patched);
+    });
+  });
+
+  it("runs the theme patch using only the isolated Docker build context", async () => {
+    await withFixture(source, async (root, css) => {
+      await buildOpenMausBotHostImage(process.cwd(), join(root, "image.tar"), "a".repeat(40), async (
+        command: string, args: string[],
+      ) => {
+        expect(command).toBe("docker");
+        if (args[0] !== "build") return;
+        const context = args.at(-1)!;
+        const dockerfile = await readFile(join(context, "Dockerfile"), "utf8");
+        expect(dockerfile).toContain("COPY . /matrix/");
+        const stageWorkdir = /^WORKDIR (\S+)$/m.exec(dockerfile)?.[1];
+        expect(stageWorkdir).toBeDefined();
+        // The image stages this allowlisted context at /matrix. Run the same
+        // patch with no checkout ancestors from which to resolve imports.
+        const workdir = join(context, relative("/matrix", stageWorkdir!));
+        await run(process.execPath, [join(workdir, "apply-matrix-theme.mjs"), root], { cwd: workdir });
+      });
+      expect(await readFile(css, "utf8")).toContain(marker);
+      expect(await readFile(css, "utf8")).toContain("--color-app: #fafafa");
+      expect(await readFile(join(root, "public", "app-icon.svg"), "utf8")).toContain("M48 31");
     });
   });
 

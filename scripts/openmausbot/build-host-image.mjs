@@ -1,12 +1,18 @@
 import { spawn } from "node:child_process";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const sourceFiles = [
-  "Dockerfile", "prepare-host-package.sh", "apply-private-host.mjs", "apply-matrix-theme.mjs",
-  "matrix-provider.ts", "matrix-drive-mcp.mjs", "runtime-pnpm-lock.yaml",
+  "scripts/openmausbot/prepare-host-package.sh",
+  "scripts/openmausbot/apply-private-host.mjs",
+  "scripts/openmausbot/apply-matrix-theme.mjs",
+  "scripts/openmausbot/matrix-provider.ts",
+  "scripts/openmausbot/matrix-drive-mcp.mjs",
+  "scripts/openmausbot/runtime-pnpm-lock.yaml",
+  "packages/brand/src/tokens.ts",
+  "shell/public/system-app-icons/v2/bots.svg",
 ];
 
 export async function buildOpenMausBotHostImage(source, archive, sha, run) {
@@ -14,10 +20,13 @@ export async function buildOpenMausBotHostImage(source, archive, sha, run) {
   const image = "matrix-openmausbot-oss:matrix-" + sha;
   const context = await mkdtemp(join(tmpdir(), "matrix-openmausbot-builder-"));
   try {
+    await copyFile(join(source, "scripts/openmausbot/Dockerfile"), join(context, "Dockerfile"));
+    // Match source-relative imports and asset paths inside the isolated build.
     for (const file of sourceFiles) {
-      await copyFile(join(source, "scripts/openmausbot", file), join(context, file));
+      const destination = join(context, file);
+      await mkdir(dirname(destination), { recursive: true });
+      await copyFile(join(source, file), destination);
     }
-    await copyFile(join(source, "shell/public/system-app-icons/v2/bots.svg"), join(context, "bots.svg"));
     await run("docker", [
       "build", "--platform", "linux/amd64", "--tag", image,
       "--label", "org.matrix-os.openmausbot.bundle-sha=" + sha, context,

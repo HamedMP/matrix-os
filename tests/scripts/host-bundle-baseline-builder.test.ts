@@ -29,9 +29,10 @@ function fixture(docker: string) {
     "apply-matrix-theme.mjs", "matrix-provider.ts", "matrix-drive-mcp.mjs", "runtime-pnpm-lock.yaml",
   ];
   for (const file of imageSources) cpSync(join(repo, "scripts/openmausbot", file), join(root, "scripts/openmausbot", file));
-  const icon = "shell/public/system-app-icons/v2/bots.svg";
-  mkdirSync(join(root, dirname(icon)), { recursive: true });
-  cpSync(join(repo, icon), join(root, icon));
+  for (const file of ["shell/public/system-app-icons/v2/bots.svg", "packages/brand/src/tokens.ts"]) {
+    mkdirSync(join(root, dirname(file)), { recursive: true });
+    cpSync(join(repo, file), join(root, file));
+  }
   writeFileSync(join(root, ".env.private"), "PRIVATE_FIXTURE_VALUE=do-not-transfer\n");
   mkdirSync(join(root, "packages/fixture/node_modules"), { recursive: true });
   mkdirSync(join(root, "packages/fixture/dist"));
@@ -163,7 +164,7 @@ if (args[0] === 'build') {
   if (args.includes('--iidfile')) {
     fs.writeFileSync(path.join(root, 'context-files'), JSON.stringify(fs.readdirSync(context)));
     fs.writeFileSync(args[args.indexOf('--iidfile') + 1], 'sha256:' + 'a'.repeat(64));
-  } else fs.writeFileSync(path.join(root, 'workload-context'), JSON.stringify(fs.readdirSync(context)));
+  } else fs.writeFileSync(path.join(root, 'workload-context'), JSON.stringify(fs.readdirSync(context, { recursive: true }).sort()));
 } else if (args[0] === 'save') {
   fs.writeFileSync(args[args.indexOf('--output') + 1], 'fixture-workload-image');
 } else if (args[0] === 'create') {
@@ -252,8 +253,13 @@ it("uses only clean exact tracked source and public metadata, exporting only nam
   expect(args).toContain("MATRIX_BUILD_SHA=" + f.env.MATRIX_BUILD_SHA);
   expect(args).toContain("TMPDIR=/scratch");
   expect(JSON.parse(readFileSync(join(f.root, "workload-context"), "utf8"))).toEqual([
-    "Dockerfile", "apply-matrix-theme.mjs", "apply-private-host.mjs", "bots.svg", "matrix-drive-mcp.mjs",
-    "matrix-provider.ts", "prepare-host-package.sh", "runtime-pnpm-lock.yaml",
+    "Dockerfile",
+    "packages", "packages/brand", "packages/brand/src", "packages/brand/src/tokens.ts",
+    "scripts", "scripts/openmausbot",
+    ...["apply-matrix-theme.mjs", "apply-private-host.mjs", "matrix-drive-mcp.mjs", "matrix-provider.ts",
+      "prepare-host-package.sh", "runtime-pnpm-lock.yaml"].map(file => "scripts/openmausbot/" + file),
+    "shell", "shell/public", "shell/public/system-app-icons", "shell/public/system-app-icons/v2",
+    "shell/public/system-app-icons/v2/bots.svg",
   ]);
   expect(args).toContain("HOST_BUNDLE_OPENMAUSBOT_ARCHIVE=/matrix-openmausbot.image.tar");
   expect(args.find((arg: string) => arg.endsWith("dst=/matrix-openmausbot.image.tar,readonly"))).toMatch(/(?:^|,)src=[^,]+openmausbot-image\.tar,/);

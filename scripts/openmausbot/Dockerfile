@@ -1,9 +1,9 @@
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git unzip && rm -rf /var/lib/apt/lists/*
-WORKDIR /matrix
-COPY prepare-host-package.sh apply-private-host.mjs apply-matrix-theme.mjs matrix-provider.ts \
-    matrix-drive-mcp.mjs runtime-pnpm-lock.yaml bots.svg ./
+# The host image builder stages only the approved source files in this context.
+COPY . /matrix/
+WORKDIR /matrix/scripts/openmausbot
 RUN bash ./prepare-host-package.sh /opt/openmausbot-package
 
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6
