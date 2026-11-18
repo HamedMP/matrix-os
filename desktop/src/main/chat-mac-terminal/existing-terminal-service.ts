@@ -1,4 +1,4 @@
-import type { InvokeResponse } from "../../shared/ipc-contract";
+import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
 import type { PrepareMacTerminalCheck } from "../../shared/mac-terminal-probe-ipc";
 import type { MacTerminalContext } from "../chat-electron-preview/transport";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
@@ -6,6 +6,7 @@ import type { LocalTerminalHost } from "../local-terminals/host";
 import type { BeginMacActivity, MacActivityPhase } from "../mac-activity/activity";
 
 const SNAPSHOT_WINDOW_MS = 60_000;
+type SnapshotRequest = InvokeRequest<"chat:mac-terminal-read-existing">;
 type SnapshotReply = InvokeResponse<"chat:mac-terminal-read-existing">;
 type CancelReason = "revoked" | "stopped";
 type TerminalReader = Awaited<ReturnType<LocalTerminalHost["openExistingTerminalReader"]>>;
@@ -23,13 +24,27 @@ interface Dependencies {
 }
 
 interface NativeSnapshotApproval {
+  sender: object;
   isCurrent(): boolean;
   pick(terminals: readonly ListedTerminal[], signal: AbortSignal): Promise<string | null>;
   approve(context: MacTerminalContext, terminal: ListedTerminal, output: string, signal: AbortSignal): Promise<boolean>;
 }
 
+interface ActiveSnapshot {
+  request: SnapshotRequest;
+  sender: object;
+  operation: AbortController;
+  result: Promise<SnapshotReply>;
+}
+
 export function createMacExistingTerminalService(deps: Dependencies) {
-  let active: { chatId: string; operation: AbortController; result: Promise<SnapshotReply> } | null = null;
+  let active: ActiveSnapshot | null = null;
+
+  async function abort(current: ActiveSnapshot, reason: CancelReason) {
+    current.operation.abort(reason);
+    await current.result;
+    return true;
+  }
 
   async function capture(
     target: PrepareMacTerminalCheck, native: NativeSnapshotApproval, operation: AbortController,
@@ -39,7 +54,7 @@ export function createMacExistingTerminalService(deps: Dependencies) {
     let lease: MacActionPairingLease | null = null;
     let phase: MacActivityPhase = "failed";
     try {
-      if (!native.isCurrent()) return { status: "unavailable" };
+      if (signal.aborted || !native.isCurrent()) return { status: "unavailable" };
       const context = await deps.readTerminalContext(target, signal);
       if (!context || context.chatId !== target.chatId || context.worktreeId !== target.worktreeId) {
         return { status: "unavailable" };
@@ -52,6 +67,7 @@ export function createMacExistingTerminalService(deps: Dependencies) {
           && latest.worktreeId === context.worktreeId && latest.scopeKey === context.scopeKey;
       };
 
+      if (!isCurrent()) return { status: "unavailable" };
       const reader = await deps.openReader();
       if (!reader.terminals.length || !isCurrent()) return { status: "unavailable" };
       activity = deps.beginActivity?.("terminal", context.worktreeId);
@@ -106,20 +122,25 @@ export function createMacExistingTerminalService(deps: Dependencies) {
 
   return {
     isBusy: () => active !== null,
-    async run(target: PrepareMacTerminalCheck, native: NativeSnapshotApproval): Promise<SnapshotReply> {
+    async run(request: SnapshotRequest, native: NativeSnapshotApproval): Promise<SnapshotReply> {
       if (!deps.enabled) return { status: "unavailable" };
       if (active || deps.terminalBusy()) return { status: "busy" };
       const operation = new AbortController();
-      const result = capture(target, native, operation).finally(() => { active = null; });
-      active = { chatId: target.chatId, operation, result };
+      const { chatId, worktreeId } = request;
+      const result = capture({ chatId, worktreeId }, native, operation).finally(() => { active = null; });
+      active = { request, sender: native.sender, operation, result };
       return result;
+    },
+    async cancelRequest(request: SnapshotRequest, sender: object) {
+      const current = active;
+      if (!current || current.sender !== sender || current.request.requestId !== request.requestId
+        || current.request.chatId !== request.chatId || current.request.worktreeId !== request.worktreeId) return false;
+      return abort(current, "revoked");
     },
     async cancel(reason: CancelReason, chatId?: string) {
       const current = active;
-      if (!current || (chatId !== undefined && current.chatId !== chatId)) return false;
-      current.operation.abort(reason);
-      await current.result;
-      return true;
+      if (!current || (chatId !== undefined && current.request.chatId !== chatId)) return false;
+      return abort(current, reason);
     },
   };
 }

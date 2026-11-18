@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createMacExistingTerminalService } from "@desktop/main/chat-mac-terminal/existing-terminal-service";
 
 const target = { chatId: "chat_origin", worktreeId: "wt_abcdef012345" };
+const request = { ...target, requestId: "a454c167-8571-4ddf-861d-57e2ead091d4" };
+const nextRequest = { ...target, requestId: "ef67f087-18b0-461c-9685-dfb955f186d9" };
 const context = { ...target, projectId: "proj_test", scopeKey: "owner-scope" };
 const terminal = { id: "t7", title: "Local test shell" };
 const other = { id: "t8", title: "Other shell" };
@@ -25,9 +27,9 @@ function setup() {
     acquireActionPairing: vi.fn().mockResolvedValue(lease),
     beginActivity: vi.fn(() => activity),
   };
-  const native = { isCurrent: vi.fn(() => true), pick: vi.fn().mockResolvedValue(terminal.id), approve: vi.fn().mockResolvedValue(true) };
+  const native = { sender: {}, isCurrent: vi.fn(() => true), pick: vi.fn().mockResolvedValue(terminal.id), approve: vi.fn().mockResolvedValue(true) };
   const service = createMacExistingTerminalService(deps);
-  return { activity, native, reader, lease, deps, service, run: () => service.run(target, native) };
+  return { activity, native, reader, lease, deps, service, run: () => service.run(request, native) };
 }
 
 describe("read a selected existing Mac terminal", () => {
@@ -38,7 +40,9 @@ describe("read a selected existing Mac terminal", () => {
     expect(reader.read).toHaveBeenCalledExactlyOnceWith(terminal.id, expect.any(AbortSignal));
     expect(native.approve).toHaveBeenCalledExactlyOnceWith(context, terminal, output, expect.any(AbortSignal));
     expect(reader.assertCurrent).toHaveBeenCalledWith(terminal.id, expect.any(AbortSignal));
-    expect(deps.readTerminalContext).toHaveBeenCalledTimes(3);
+    expect(deps.readTerminalContext.mock.calls).toEqual(
+      Array.from({ length: 3 }, () => [target, expect.any(AbortSignal)]),
+    );
     expect(lease.close).toHaveBeenCalledOnce();
     expect(activity.finish).toHaveBeenCalledExactlyOnceWith("returned");
   });
@@ -126,6 +130,66 @@ describe("read a selected existing Mac terminal", () => {
     expect(await result).toEqual({ status: "failed" });
     expect(lease.close).toHaveBeenCalledOnce();
     expect(activity.finish).toHaveBeenCalledExactlyOnceWith("failed");
+  });
+
+  it("aborts only the original snapshot before a delayed reader can open the picker", async () => {
+    const { service, deps, reader, native, run } = setup();
+    const opening = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<typeof reader>();
+    deps.openReader.mockImplementationOnce(() => { opening.resolve(); return opened.promise; });
+    const pending = run();
+    await opening.promise;
+
+    try {
+      const unrelated = [
+        service.cancelRequest({ ...request, chatId: "chat_other" }, native.sender),
+        service.cancelRequest({ ...request, worktreeId: "wt_abcdef012346" }, native.sender),
+        service.cancelRequest(nextRequest, native.sender),
+        service.cancelRequest(request, {}),
+      ];
+      const cancel = service.cancelRequest(request, native.sender);
+      const overlap = service.run(nextRequest, native);
+      opened.resolve(reader);
+      expect(await Promise.all(unrelated)).toEqual([false, false, false, false]);
+      expect(await overlap).toEqual({ status: "busy" });
+      expect(await pending).toEqual({ status: "unavailable" });
+      expect(await cancel).toBe(true);
+      expect(native.pick).not.toHaveBeenCalled();
+      expect(native.approve).not.toHaveBeenCalled();
+      expect(reader.read).not.toHaveBeenCalled();
+    } finally {
+      opened.resolve(reader);
+      await pending;
+    }
+  });
+
+  it("dismisses native approval and ignores its late reply without canceling a later snapshot", async () => {
+    const { service, native, lease, activity, run } = setup();
+    const approval = Promise.withResolvers<AbortSignal>();
+    const answer = Promise.withResolvers<boolean>();
+    native.approve.mockImplementationOnce((_context, _terminal, _output, signal: AbortSignal) => {
+      approval.resolve(signal);
+      return answer.promise;
+    });
+    const pending = run();
+    const originalSignal = await approval.promise;
+
+    try {
+      const cancel = service.cancelRequest(request, native.sender);
+      expect(originalSignal.aborted).toBe(true);
+      answer.resolve(true);
+      expect(await pending).toEqual({ status: "unavailable" });
+      expect(await cancel).toBe(true);
+      expect(lease.close).toHaveBeenCalledOnce();
+      expect(activity.finish).toHaveBeenCalledExactlyOnceWith("revoked");
+    } finally {
+      answer.resolve(false);
+      await pending;
+    }
+
+    const next = service.run(nextRequest, native);
+    expect(await service.cancelRequest(request, native.sender)).toBe(false);
+    expect(await next).toMatchObject({ status: "ready", output });
   });
 
   it("keeps cancellation scoped and blocks another request while the picker is active", async () => {

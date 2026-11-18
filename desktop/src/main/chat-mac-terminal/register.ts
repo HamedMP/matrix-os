@@ -29,6 +29,21 @@ interface Options {
   ): Promise<void>;
 }
 
+function onOriginClosed(window: BrowserWindow, close: () => void) {
+  const { webContents } = window;
+  const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
+    if (details.isMainFrame && !details.isSameDocument) close();
+  };
+  window.once("closed", close);
+  webContents.once("render-process-gone", close);
+  webContents.on("did-start-navigation", onNavigation);
+  return () => {
+    window.removeListener("closed", close);
+    webContents.removeListener("render-process-gone", close);
+    webContents.removeListener("did-start-navigation", onNavigation);
+  };
+}
+
 export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: Options) {
   const { auth, host } = options;
   const transport = options.transport ?? createChatElectronPreviewTransport(auth);
@@ -139,19 +154,26 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     background.isBusy() || existing.isBusy() || watch.isBusy() ? { status: "busy" } : service.prepare(request));
   handle("chat:mac-terminal-read-existing", async (request, event) => {
     const window = options.window();
-    if (!window || window.isDestroyed()) return { status: "unavailable" };
-    const closed = () => { void existing.cancel("revoked", request.chatId); };
-    window.once("closed", closed);
+    const { sender, senderFrame } = event;
+    if (!window || window.isDestroyed() || window.webContents !== sender || !senderFrame) {
+      return { status: "unavailable" };
+    }
+    const removeCloseListener = onOriginClosed(window, () => { void existing.cancelRequest(request, senderFrame); });
     try {
       return await existing.run(request, {
-        isCurrent: () => !window.isDestroyed() && options.window() === window && options.isTrustedSender(event),
+        sender: senderFrame,
+        isCurrent: () => !window.isDestroyed() && options.window() === window
+          && event.senderFrame === senderFrame && options.isTrustedSender(event),
         pick: (terminals, signal) => pickExistingMacTerminal(window, terminals, signal),
         approve: (context, terminal, output, signal) => approveExistingMacTerminal(window, context, terminal, output, signal),
       });
     } finally {
-      window.removeListener("closed", closed);
+      removeCloseListener();
     }
   });
+  handle("chat:mac-terminal-read-existing-cancel", async (request, event) => ({
+    ok: event.senderFrame ? await existing.cancelRequest(request, event.senderFrame) : false,
+  }));
   handle("chat:mac-terminal-watch-start", (request, event) => {
     const window = options.window();
     const { sender, senderFrame } = event;
@@ -164,19 +186,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
         && event.senderFrame === senderFrame && options.isTrustedSender(event),
       pick: (terminals, signal) => pickExistingMacTerminal(window, terminals, signal),
       approve: (context, terminal, signal) => approveMacTerminalWatch(window, context, terminal, signal),
-      onClose(close) {
-        const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
-          if (details.isMainFrame && !details.isSameDocument) close();
-        };
-        window.once("closed", close);
-        sender.once("render-process-gone", close);
-        sender.on("did-start-navigation", onNavigation);
-        return () => {
-          window.removeListener("closed", close);
-          sender.removeListener("render-process-gone", close);
-          sender.removeListener("did-start-navigation", onNavigation);
-        };
-      },
+      onClose: close => onOriginClosed(window, close),
     });
   });
   handle("chat:mac-terminal-watch-read", (request, event) =>

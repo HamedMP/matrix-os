@@ -167,7 +167,7 @@ export function useChatMacTerminalWatch(scope: WatchScope | null) {
     select: () => { void start(); },
   } : undefined;
   const feedback = viewing && scope ? (
-    <section aria-label="Mac terminal output" className="ph-no-capture mb-2 rounded-lg border border-[var(--border)] bg-[var(--bg-sunken)] text-sm">
+    <section aria-label="Mac terminal output" className="ph-no-capture mb-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div className="min-w-0">
           <p className="truncate font-medium">{viewing.title}</p>
@@ -179,7 +179,7 @@ export function useChatMacTerminalWatch(scope: WatchScope | null) {
         </button>
       </div>
       {viewing.output ? (
-        <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all border-t border-[var(--border)] px-3 py-2 text-xs">
+        <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all border-t border-[var(--border-subtle)] px-3 py-2 text-xs">
           {viewing.output}
         </pre>
       ) : <p className="px-3 pb-2 text-xs text-[var(--text-secondary)]">The terminal screen is empty.</p>}
