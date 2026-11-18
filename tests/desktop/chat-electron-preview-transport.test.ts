@@ -5,6 +5,7 @@ import {
   MacTerminalDeliveryRejectedError,
 } from "@desktop/main/chat-electron-preview/transport";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
+import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
 
 const chatId = "chat_original";
 const runId = "run_original";
@@ -176,6 +177,52 @@ describe("authenticated Chat Electron preview transport", () => {
       ],
     });
     expect(posted.parts[0].text).not.toContain("Main reported passing checks");
+  });
+
+  it.each([true, false])("recovers a lost receipt response without rerunning the preview (accepted=%s)", async accepted => {
+    const { service: transport, fetchFn, storeResult, existingUpload } = verificationFixture();
+    const fetch = fetchFn.getMockImplementation()!;
+    storeResult();
+    let dropped = false;
+    fetchFn.mockImplementation(async (input, options) => {
+      if (!dropped && new URL(String(input)).pathname === "/api/chats/" + chatId + "/turns") {
+        dropped = true;
+        // The first image already reached storage, regardless of the turn outcome.
+        existingUpload(png);
+        if (accepted) {
+          const response = await fetch(input, options);
+          expect(response.status).toBe(202);
+          await response.body?.cancel();
+        }
+        throw new TypeError("Connection reset before receiving the receipt");
+      }
+      return fetch(input, options);
+    });
+    const execute = vi.fn(async () => ({ png, testSummary: "10 tests passed" }));
+    const check = vi.fn(async () => true);
+    const service = createChatElectronPreviewService({
+      ...transport,
+      enabled: true,
+      acquireActionPairing: async () => ({ check, close: vi.fn() }),
+      approve: async () => true,
+      wasHandled: async () => false,
+      claim: async () => true,
+      execute,
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await expect(service.run(verificationTarget)).resolves.toEqual({ status: "returned" });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(execute).toHaveBeenCalledOnce();
+    const writes = resultWrites(fetchFn);
+    expect(writes.map(([, options]) => options?.method)).toEqual(accepted ? ["PUT", "POST"] : ["PUT", "POST", "PUT", "POST"]);
+    if (!accepted) {
+      expect(String(writes[2]?.[0])).toBe(String(writes[0]?.[0]));
+      expect(JSON.parse(String(writes[3]?.[1]?.body)).clientRequestId)
+        .toBe(JSON.parse(String(writes[1]?.[1]?.body)).clientRequestId);
+    }
   });
 
   it("verifies a clean worktree with an unchanged supported source", async () => {
