@@ -21,6 +21,7 @@ interface AppMenuTemplateOptions {
   stopBackgroundMacChecks?(): void;
   openMacActivity?(): void;
   openMacPairing?(): void;
+  openMacVerification?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
 }
@@ -39,6 +40,7 @@ export function createAppMenuTemplate({
   stopBackgroundMacChecks,
   openMacActivity,
   openMacPairing,
+  openMacVerification,
   openThirdPartyNotices,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
@@ -138,6 +140,7 @@ export function createAppMenuTemplate({
             { type: "separator" },
             settingsItem,
             ...(openMacPairing ? [{ label: "Mac Pairing…", click: openMacPairing }] : []),
+            ...(openMacVerification ? [{ label: "Mac Verification…", click: openMacVerification }] : []),
             ...(openMacActivity ? [{
               id: RECENT_MAC_ACTIVITY_MENU_ID, label: "Recent Mac Activity…", enabled: false, click: openMacActivity,
             }] : []),

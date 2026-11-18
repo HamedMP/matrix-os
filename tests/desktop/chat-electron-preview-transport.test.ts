@@ -5,6 +5,7 @@ import {
   MacTerminalDeliveryRejectedError,
 } from "@desktop/main/chat-electron-preview/transport";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
+import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
 
 const chatId = "chat_original";
 const runId = "run_original";
@@ -26,6 +27,9 @@ const matchingStatus = " M " + sourcePath + "\0";
 const pilotOutput = "?? .eng495-53d72ed9-0d31-4ed6-9cb4-fd150698377c/test.log\0";
 const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const sourceSha256 = sha256(fileContent);
+const verificationBase = 'function SignIn() { return <span className="signin-eyebrow">YOUR SPACE TO BEGIN</span>; }\n';
+const verificationSource = verificationBase.replace("YOUR SPACE TO BEGIN", label);
+const verificationTarget = { chatId, runId, requestKind: "verification" as const };
 const marker = "MATRIX_ELECTRON_PREVIEW_V1 " + JSON.stringify({ baseSha, sourceSha256, label, mainChecksPassed: true });
 const selection = { instanceId: "codex_default", model: "gpt-6.1-sol" };
 const executionRoot = { kind: "worktree", projectId, worktreeId };
@@ -71,6 +75,7 @@ function mockTransport() {
   const inventory = [{ id: worktreeId, path: checkoutPath, projectSlug: "matrix-os" }];
   let gitHead = originHead;
   let gitStatus = matchingStatus;
+  let committedSource = verificationBase;
   let uploadStatus = 200;
   let uploadedBytes = png;
   let storeResult = false;
@@ -88,7 +93,12 @@ function mockTransport() {
       const request = JSON.parse(String(init?.body));
       expect(request).toMatchObject({ cwd, timeoutMs: 5000 });
       expect(request.command.slice(0, 5)).toEqual(["/usr/bin/git", "--no-optional-locks", "-c", "core.fsmonitor=false", "--no-pager"]);
-      const stdout = request.command.includes("rev-parse") ? gitHead : gitStatus;
+      let stdout = gitStatus;
+      if (request.command.includes("rev-parse")) stdout = gitHead;
+      if (request.command.includes("show")) {
+        expect(request.command.slice(5)).toEqual(["show", `${baseSha}:${sourcePath}`]);
+        stdout = committedSource;
+      }
       return Response.json({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false, truncated: false, durationMs: 10 });
     }
     if (url.pathname === "/api/coding-agents/files/read") return Response.json(source);
@@ -118,6 +128,11 @@ function mockTransport() {
   });
   return { detail, source, inventory, fetchFn,
     setGit: (head: string, status: string) => { gitHead = head; gitStatus = status; },
+    setSource: (content: string, base = verificationBase) => {
+      source.content = content;
+      source.metadata.sizeBytes = Buffer.byteLength(content);
+      committedSource = base;
+    },
     service: createChatElectronPreviewTransport(auth, { fetchFn, now: () => now }),
     changeSession: () => { authStatus = { ...authStatus, authGeneration: 5 }; },
     existingUpload: (bytes: Buffer) => { uploadStatus = 409; uploadedBytes = bytes; },
@@ -132,6 +147,137 @@ function resultWrites(fetchFn: ReturnType<typeof mockTransport>["fetchFn"]) {
 }
 
 describe("authenticated Chat Electron preview transport", () => {
+  function verificationFixture() {
+    const mock = mockTransport();
+    mock.detail.messages[0]!.parts[0]!.text = "Completed the worktree change.";
+    mock.setSource(verificationSource);
+    return mock;
+  }
+
+  it("verifies the exact supported worktree edit without an assistant marker and posts one receipt", async () => {
+    const { service, fetchFn, storeResult } = verificationFixture();
+    storeResult();
+    const target = await service.read(verificationTarget);
+    expect(target).toMatchObject({ ...verificationTarget, projectId, worktreeId, label, baseSha,
+      sourceSha256: sha256(verificationSource), expiresAt: now + 9 * 60_000 });
+
+    const result = { png, testSummary: "10 tests passed" };
+    await service.returnResult(target!, result);
+    await service.returnResult(target!, result);
+
+    const writes = resultWrites(fetchFn);
+    expect(writes).toHaveLength(2);
+    expect(new URL(String(writes[1]![0])).pathname).toBe("/api/chats/" + chatId + "/turns");
+    const posted = JSON.parse(String(writes[1]![1]?.body));
+    expect(posted).toMatchObject({
+      executionRoot,
+      parts: [
+        { type: "text", text: expect.stringContaining("Mac verification: 10 tests passed") },
+        { type: "attachment_reference", mimeType: "image/png" },
+      ],
+    });
+    expect(posted.parts[0].text).not.toContain("Main reported passing checks");
+  });
+
+  it.each([true, false])("recovers a lost receipt response without rerunning the preview (accepted=%s)", async accepted => {
+    const { service: transport, fetchFn, storeResult, existingUpload } = verificationFixture();
+    const fetch = fetchFn.getMockImplementation()!;
+    storeResult();
+    let dropped = false;
+    fetchFn.mockImplementation(async (input, options) => {
+      if (!dropped && new URL(String(input)).pathname === "/api/chats/" + chatId + "/turns") {
+        dropped = true;
+        // The first image already reached storage, regardless of the turn outcome.
+        existingUpload(png);
+        if (accepted) {
+          const response = await fetch(input, options);
+          expect(response.status).toBe(202);
+          await response.body?.cancel();
+        }
+        throw new TypeError("Connection reset before receiving the receipt");
+      }
+      return fetch(input, options);
+    });
+    const execute = vi.fn(async () => ({ png, testSummary: "10 tests passed" }));
+    const check = vi.fn(async () => true);
+    const service = createChatElectronPreviewService({
+      ...transport,
+      enabled: true,
+      acquireActionPairing: async () => ({ check, close: vi.fn() }),
+      approve: async () => true,
+      wasHandled: async () => false,
+      claim: async () => true,
+      execute,
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await expect(service.run(verificationTarget)).resolves.toEqual({ status: "returned" });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(execute).toHaveBeenCalledOnce();
+    const writes = resultWrites(fetchFn);
+    expect(writes.map(([, options]) => options?.method)).toEqual(accepted ? ["PUT", "POST"] : ["PUT", "POST", "PUT", "POST"]);
+    if (!accepted) {
+      expect(String(writes[2]?.[0])).toBe(String(writes[0]?.[0]));
+      expect(JSON.parse(String(writes[3]?.[1]?.body)).clientRequestId)
+        .toBe(JSON.parse(String(writes[1]?.[1]?.body)).clientRequestId);
+    }
+  });
+
+  it("verifies a clean worktree with an unchanged supported source", async () => {
+    const { service, setGit, setSource } = verificationFixture();
+    setGit(originHead, "");
+    setSource(verificationBase);
+    await expect(service.read(verificationTarget)).resolves.toMatchObject({
+      label: "YOUR SPACE TO BEGIN", sourceSha256: sha256(verificationBase),
+    });
+  });
+
+  it.each([
+    [matchingStatus + "?? another.ts\0", verificationSource],
+    [matchingStatus + pilotOutput, verificationSource],
+    [matchingStatus, verificationSource + 'doOtherWork();\n'],
+    [matchingStatus, verificationSource.replace(label, "{startProcess()}")],
+    [matchingStatus, verificationSource.replace(label, "CHECK &lt;TAG&gt;")],
+    [matchingStatus, verificationSource.replace(label, "GOOD\\nINPUT")],
+    [matchingStatus, verificationSource + verificationSource],
+    ["", verificationSource],
+    [matchingStatus, verificationBase],
+  ])("denies unsupported status or source bytes %# without returning evidence", async (status, content) => {
+    const { service, setGit, setSource, fetchFn } = verificationFixture();
+    setGit(originHead, status);
+    setSource(content);
+    await expect(service.read(verificationTarget)).resolves.toBeNull();
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("does not let a superseded run or a mixed worktree inherit the typed verification approval", async () => {
+    const first = verificationFixture();
+    first.detail.runs.push({ ...first.detail.runs[0]!, id: "run_newer" });
+    await expect(first.service.read(verificationTarget)).resolves.toBeNull();
+
+    const { service, setGit, fetchFn } = verificationFixture();
+    const target = (await service.read(verificationTarget))!;
+    setGit(originHead, matchingStatus + "?? another.ts\0");
+    await expect(service.returnResult(target, { error: "build-failed" })).rejects.toThrow("Preview source changed");
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("does not post a typed result when a different source snapshot appears during image upload", async () => {
+    const { service, setSource, fetchFn } = verificationFixture();
+    const fetch = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, options) => {
+      if (new URL(String(input)).pathname === "/api/files/blob" && options?.method === "PUT") {
+        setSource(verificationSource.replace(label, "NEW WORKTREE SNAPSHOT"));
+      }
+      return fetch(input, options);
+    });
+    const target = (await service.read(verificationTarget))!;
+    await expect(service.returnResult(target, { png, testSummary: "10 tests passed" })).rejects.toThrow("Preview source changed");
+    expect(resultWrites(fetchFn).map(([, options]) => options?.method)).toEqual(["PUT"]);
+  });
+
   it("binds a fresh assistant request to the existing owner and exact worktree bytes", async () => {
     const { service, fetchFn } = mockTransport();
     const request = await service.read({ chatId, runId });

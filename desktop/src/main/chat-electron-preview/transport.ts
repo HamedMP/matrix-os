@@ -7,14 +7,18 @@ import {
   type CanonicalChatDetailResponse, type CanonicalChatRun, type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
 import {
-  CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, CHAT_ELECTRON_PREVIEW_SOURCE,
-  getChatElectronPreviewMarkerForRun, isCurrentChatElectronPreviewRun, type ChatElectronPreviewMarker,
+  CHAT_ELECTRON_PREVIEW_BASE_LABEL, CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, CHAT_ELECTRON_PREVIEW_SOURCE,
+  ChatElectronPreviewMarkerSchema, getChatElectronPreviewMarkerForRun,
+  isCurrentChatElectronPreviewRun, type ChatElectronPreviewMarker,
 } from "../../shared/chat-electron-preview";
+import { ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
 import {
   getLatestCompletedMacTerminalRun, getMacTerminalProbeMarkerForRun, isCurrentMacTerminalProbeRun,
   MAC_TERMINAL_PROBE_MAX_AGE_MS, MacTerminalProbeOutputSchema, type MacTerminalProbeMarker,
 } from "../../shared/mac-terminal-probe";
 import type { AuthService } from "../auth/auth-service";
+import { previewRequestKey } from "./claims";
+import { deriveVerificationLabel } from "./source";
 
 const MAX_CHAT_REPLY_BYTES = 4 * 1024 * 1024;
 const MAX_SOURCE_REPLY_BYTES = 512 * 1024;
@@ -61,6 +65,7 @@ export interface ChatElectronPreviewRequest {
   readonly baseSha: string;
   readonly sourceSha256: string;
   readonly label: string;
+  readonly requestKind?: ChatElectronPreviewTarget["requestKind"];
   readonly operation?: ChatElectronPreviewMarker["operation"];
   readonly backgroundTargetId?: string;
   readonly expiresAt: number;
@@ -87,6 +92,19 @@ export interface MacTerminalRequest extends MacTerminalContext, MacTerminalProbe
 }
 
 export class MacTerminalDeliveryRejectedError extends Error {}
+
+export class ChatElectronPreviewTransportInterruptedError extends Error {
+  constructor(cause: unknown) {
+    super("Preview transport interrupted", { cause });
+  }
+}
+
+function throwFetchError(error: unknown): never {
+  if (error instanceof TypeError || (error instanceof DOMException && error.name === "TimeoutError")) {
+    throw new ChatElectronPreviewTransportInterruptedError(error);
+  }
+  throw error;
+}
 
 type Auth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
 interface RuntimeAuthority {
@@ -119,7 +137,7 @@ async function boundedBytes(response: Response, maximum: number) {
   let length = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch(throwFetchError);
       if (done) return Buffer.concat(chunks, length);
       length += value.byteLength;
       if (length > maximum || chunks.length >= 2048) {
@@ -159,17 +177,16 @@ function getPersonalWorktreeRun(detail: CanonicalChatDetailResponse, ownerId: st
   return { run, root: run.executionRoot };
 }
 
-function getPrivateRun(detail: CanonicalChatDetailResponse, ownerId: string, ref: z.infer<typeof RequestRef>) {
+function getPreviewCapableRun(detail: CanonicalChatDetailResponse, ownerId: string, ref: z.infer<typeof RequestRef>) {
   const candidate = getPersonalWorktreeRun(detail, ownerId, ref);
-  if (!candidate?.run.capabilitySnapshot.attachments.includes("image")) return null;
-  const marker = getChatElectronPreviewMarkerForRun(detail, candidate.run.id);
-  return marker ? { ...candidate, marker } : null;
+  return candidate?.run.capabilitySnapshot.attachments.includes("image") ? candidate : null;
 }
 
-function matchingBytes(request: ChatElectronPreviewRequest, content: z.infer<typeof FileReadResponseSchema>) {
-  return content.metadata.path === CHAT_ELECTRON_PREVIEW_SOURCE && !content.truncated
-    && Buffer.byteLength(content.content) === content.metadata.sizeBytes
-    && sha256(content.content) === request.sourceSha256;
+function getPrivateRun(detail: CanonicalChatDetailResponse, ownerId: string, ref: z.infer<typeof RequestRef>) {
+  const candidate = getPreviewCapableRun(detail, ownerId, ref);
+  if (!candidate) return null;
+  const marker = getChatElectronPreviewMarkerForRun(detail, candidate.run.id);
+  return marker ? { ...candidate, marker } : null;
 }
 
 function hasReturned(detail: CanonicalChatDetailResponse, request: CanonicalCreateChatTurnRequest) {
@@ -217,7 +234,7 @@ export function createChatElectronPreviewTransport(
     const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
     const response = await fetchFn(new URL(path, authority.origin), {
       ...init, headers, redirect: "error", signal,
-    });
+    }).catch(throwFetchError);
     if (signal.aborted || !sameAuthority(authority, currentAuthority())) {
       await response.body?.cancel();
       signal.throwIfAborted();
@@ -266,24 +283,50 @@ export function createChatElectronPreviewTransport(
 
   // Registry and Git identity must agree before using a Chat worktree. Command
   // arguments are fixed here. Chat contributes only the validated worktree ID.
-  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest, signal?: AbortSignal) {
-    const registered = await readWorktreeCheckout(authority, preview.worktreeId, signal);
-    if (!registered) return false;
+  async function readPreviewSource(
+    authority: RuntimeAuthority, worktreeId: string, verification: boolean, signal?: AbortSignal,
+  ) {
+    const registered = await readWorktreeCheckout(authority, worktreeId, signal);
+    if (!registered) return null;
     const { cwd, checkout } = registered;
     const head = await readGit(authority, cwd, ["rev-parse", "--show-toplevel", "HEAD"], signal);
-    if (head !== `${checkout}\n${preview.baseSha}\n`) return false;
+    const baseSha = head?.split("\n")[1];
+    if (baseSha === undefined || !ChatElectronPreviewMarkerSchema.shape.baseSha.safeParse(baseSha).success
+      || head !== `${checkout}\n${baseSha}\n`) return null;
     const status = await readGit(authority, cwd, [
       "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=none",
     ], signal);
-    if (!status?.endsWith("\0")) return false;
-    const edits = status.slice(0, -1).split("\0").filter(entry => !OLD_PILOT_ARTIFACT.test(entry));
-    if (edits.length !== 1 || edits[0] !== ` M ${CHAT_ELECTRON_PREVIEW_SOURCE}`) return false;
+    if (status === null || (status && !status.endsWith("\0"))) return null;
+    const entries = status ? status.slice(0, -1).split("\0") : [];
+    const edits = verification ? entries : entries.filter(entry => !OLD_PILOT_ARTIFACT.test(entry));
+    const edited = edits.length === 1 && edits[0] === ` M ${CHAT_ELECTRON_PREVIEW_SOURCE}`;
+    if (!edited && !(verification && edits.length === 0)) return null;
 
-    const query = new URLSearchParams({ projectId: PROJECT_SLUG, worktreeId: preview.worktreeId, path: CHAT_ELECTRON_PREVIEW_SOURCE });
+    const query = new URLSearchParams({ projectId: PROJECT_SLUG, worktreeId, path: CHAT_ELECTRON_PREVIEW_SOURCE });
     const parsed = FileReadResponseSchema.safeParse(await requestJson(
       authority, `/api/coding-agents/files/read?${query}`, MAX_SOURCE_REPLY_BYTES, { signal },
     ));
-    return parsed.success && matchingBytes(preview, parsed.data);
+    if (!parsed.success || parsed.data.truncated || parsed.data.metadata.path !== CHAT_ELECTRON_PREVIEW_SOURCE) return null;
+    const bytes = Buffer.from(parsed.data.content);
+    if (!bytes.length || bytes.length !== parsed.data.metadata.sizeBytes) return null;
+    return { cwd, baseSha, edited, bytes };
+  }
+
+  async function readVerificationManifest(authority: RuntimeAuthority, worktreeId: string, signal?: AbortSignal) {
+    const source = await readPreviewSource(authority, worktreeId, true, signal);
+    if (!source) return null;
+    const { cwd, baseSha, bytes, edited } = source;
+    const committed = await readGit(authority, cwd, ["show", `${baseSha}:${CHAT_ELECTRON_PREVIEW_SOURCE}`], signal);
+    const label = committed === null ? null : deriveVerificationLabel(Buffer.from(committed), bytes);
+    if (!label || edited !== (label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL)) return null;
+    return { baseSha, label, sourceSha256: sha256(bytes) };
+  }
+
+  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest, signal?: AbortSignal) {
+    const verification = preview.requestKind === "verification";
+    const source = await readPreviewSource(authority, preview.worktreeId, verification, signal);
+    return source !== null && source.baseSha === preview.baseSha && sha256(source.bytes) === preview.sourceSha256
+      && (!verification || source.edited === (preview.label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL));
   }
 
   async function verifyTerminalWorktree(authority: RuntimeAuthority, projectId: string, worktreeId: string, signal?: AbortSignal) {
@@ -450,26 +493,34 @@ export function createChatElectronPreviewTransport(
           turns: [receipt.turn], activities: [] }, turn)) throw new Error("Mac terminal result receipt mismatch");
     },
 
-    async read(ref: { chatId: string; runId: string }, background?: ChatElectronPreviewBackgroundBinding, signal = background?.signal): Promise<ChatElectronPreviewRequest | null> {
-      if (!RequestRef.safeParse(ref).success) return null;
+    async read(ref: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding, signal = background?.signal): Promise<ChatElectronPreviewRequest | null> {
+      if (!ChatElectronPreviewTarget.safeParse(ref).success) return null;
+      const isVerification = ref.requestKind === "verification";
+      if (isVerification && background) return null;
       const authority = background ? backgroundAuthority(background) : currentAuthority();
       if (!authority) return null;
       const detail = await readDetail(authority, ref.chatId, signal);
-      const candidate = detail && (background
+      if (!detail) return null;
+      const marked = isVerification ? null : (background
         ? getBackgroundPreview(detail, authority, background)
         : getPrivateRun(detail, authority.ownerId, ref));
+      const candidate = isVerification ? getPreviewCapableRun(detail, authority.ownerId, ref) : marked;
       if (!candidate || !isCurrentChatElectronPreviewRun(candidate.run, now())) return null;
-      if (candidate.run.id !== ref.runId || Boolean(candidate.marker.backgroundTargetId) !== Boolean(background)) return null;
+      if (candidate.run.id !== ref.runId || Boolean(marked?.marker.backgroundTargetId) !== Boolean(background)) return null;
+      if (isVerification && (detail.record.activeRun || detail.runs.at(-1)?.id !== ref.runId)) return null;
       const project = ProjectReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}`, 64 * 1024, { signal }));
       if (!project.success || project.data.project.id !== candidate.root.projectId) return null;
+      const source = marked ? marked.marker : await readVerificationManifest(authority, candidate.root.worktreeId, signal);
+      if (!source) return null;
       const preview = Object.freeze({
         ...ref, projectId: candidate.root.projectId, worktreeId: candidate.root.worktreeId,
         scopeKey: sha256(JSON.stringify([authority.origin, authority.ownerId, authority.runtimeSlot])),
-        baseSha: candidate.marker.baseSha, sourceSha256: candidate.marker.sourceSha256, label: candidate.marker.label,
-        operation: candidate.marker.operation, backgroundTargetId: candidate.marker.backgroundTargetId,
+        baseSha: source.baseSha, sourceSha256: source.sourceSha256, label: source.label,
+        operation: marked?.marker.operation,
+        backgroundTargetId: marked?.marker.backgroundTargetId,
         expiresAt: Date.parse(candidate.run.completedAt!) + CHAT_ELECTRON_PREVIEW_MAX_AGE_MS,
       });
-      if (!(await verifySource(authority, preview, signal)) || preview.expiresAt <= now()) return null;
+      if ((!isVerification && !(await verifySource(authority, preview, signal))) || preview.expiresAt <= now()) return null;
       bindings.set(preview, { authority, run: candidate.run });
       return preview;
     },
@@ -484,11 +535,12 @@ export function createChatElectronPreviewTransport(
       if (!binding || !sameAuthority(binding.authority, currentAuthority())) throw new Error("Preview session changed");
       const { authority, run } = binding;
       const result = Result.parse(resultInput);
-      const key = sha256(JSON.stringify([preview.scopeKey, preview.chatId, preview.runId]));
+      const key = previewRequestKey(preview);
+      const isVerification = preview.requestKind === "verification";
       const executionRoot = { kind: "worktree" as const, projectId: preview.projectId, worktreeId: preview.worktreeId };
       const text = "error" in result
         ? `Mac Electron preview build or verification failed for run ${preview.runId}. No screenshot was captured. Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`
-        : `Mac Electron preview built for run ${preview.runId} from commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}. Main reported passing checks. Main worktree HEAD, tracked diff and source bytes were independently verified. Mac verification: ${result.testSummary.replace(/\.$/, "")}. The attached image is from this preview. Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`;
+        : `Mac Electron preview built for run ${preview.runId} from commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}. ${isVerification ? "" : "Main reported passing checks. "}Matrix independently verified the worktree HEAD, tracked diff and source bytes. Mac verification: ${result.testSummary.replace(/\.$/, "")}. The attached image is from this preview. Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`;
       const parts: CanonicalCreateChatTurnRequest["parts"] = [{ type: "text", text }];
       const ownerReference = "error" in result ? null : `temporary/desktop-chat/electron-preview-${sha256(key + sha256(result.png))}.png`;
       if (ownerReference && "png" in result) {
@@ -498,11 +550,13 @@ export function createChatElectronPreviewTransport(
 
       async function prepareTurn() {
         const detail = await readDetail(authority, preview.chatId, signal);
-        const candidate = detail && getPrivateRun(detail, authority.ownerId, preview);
-        if (!detail || !candidate || candidate.root.projectId !== preview.projectId || candidate.root.worktreeId !== preview.worktreeId
-          || candidate.marker.baseSha !== preview.baseSha || candidate.marker.sourceSha256 !== preview.sourceSha256
-          || candidate.marker.label !== preview.label || candidate.marker.operation !== preview.operation
-          || candidate.marker.backgroundTargetId !== preview.backgroundTargetId) throw new Error("Preview Chat or source changed");
+        if (!detail) throw new Error("Preview Chat or source changed");
+        const marked = isVerification ? null : getPrivateRun(detail, authority.ownerId, preview);
+        const candidate = isVerification ? getPreviewCapableRun(detail, authority.ownerId, preview) : marked;
+        if (!candidate || candidate.root.projectId !== preview.projectId || candidate.root.worktreeId !== preview.worktreeId
+          || (marked && (marked.marker.baseSha !== preview.baseSha || marked.marker.sourceSha256 !== preview.sourceSha256
+          || marked.marker.label !== preview.label || marked.marker.operation !== preview.operation
+          || marked.marker.backgroundTargetId !== preview.backgroundTargetId))) throw new Error("Preview Chat or source changed");
         const turn = CanonicalCreateChatTurnRequestSchema.parse({
           clientRequestId: `req_electron_preview_${key}`, baseRevision: detail.record.chat.revision,
           parts, executionRoot, selection: { instanceId: run.selection.instanceId, model: run.selection.model },
@@ -510,13 +564,14 @@ export function createChatElectronPreviewTransport(
         });
         if (hasReturned(detail, turn)) return null;
         if (detail.record.activeRun) throw new Error("Original Chat is busy");
+        if (isVerification && detail.runs.at(-1)?.id !== preview.runId) throw new Error("Preview Chat or source changed");
         return turn;
       }
 
       const initial = await prepareTurn();
       if (!initial) return;
+      if ((isVerification || ownerReference) && !(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
       if (ownerReference && "png" in result) {
-        if (!(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
         const path = `/api/files/blob?${new URLSearchParams({ path: ownerReference })}`;
         const uploaded = await request(authority, path, {
           method: "PUT", headers: { "content-type": "application/octet-stream" }, body: new Uint8Array(result.png), signal,
@@ -542,6 +597,7 @@ export function createChatElectronPreviewTransport(
       }
 
       const path = chatMessageVersionUrl(`/api/chats/${preview.chatId}/turns`);
+      if (isVerification && ownerReference && !(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
       const turn = await prepareTurn();
       if (!turn) return;
       const response = await request(authority, path, {

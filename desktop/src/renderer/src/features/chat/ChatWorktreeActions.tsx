@@ -3,6 +3,7 @@ import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { type StageChatWorktreeDraft, useChatElectronPreview } from "./ChatElectronPreview";
 import { useChatMacTerminalWatch } from "./ChatMacTerminalWatch";
 import { useChatMacTerminalProbe } from "./ChatMacTerminalProbe";
+import type { MacVerificationDraft } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 export function ChatWorktreeActions({ active, actorId, detail, onDraft, onDiscardDraft, children }: {
@@ -11,7 +12,7 @@ export function ChatWorktreeActions({ active, actorId, detail, onDraft, onDiscar
   detail: CanonicalChatDetailResponse;
   onDraft?: StageChatWorktreeDraft;
   onDiscardDraft: (text: string) => void;
-  children: (actions: readonly ComposerMentionAction[]) => ReactNode;
+  children: (actions: readonly ComposerMentionAction[], verification?: MacVerificationDraft) => ReactNode;
 }) {
   const preview = useChatElectronPreview({ active, actorId, detail, onDraft });
   const terminal = useChatMacTerminalProbe({
@@ -19,6 +20,7 @@ export function ChatWorktreeActions({ active, actorId, detail, onDraft, onDiscar
   });
   const watch = useChatMacTerminalWatch(terminal.watchScope);
   const actions = [
+    ...(preview.verificationAction ? [preview.verificationAction] : []),
     ...(preview.action ? [preview.action] : []),
     ...(watch.inUse ? [] : terminal.actions),
     ...(watch.action ? [watch.action] : []),
@@ -26,10 +28,11 @@ export function ChatWorktreeActions({ active, actorId, detail, onDraft, onDiscar
 
   return (
     <>
+      {preview.verificationFeedback}
       {preview.feedback}
       {terminal.feedback}
       {watch.feedback}
-      {children(actions)}
+      {children(actions, preview.verificationDraft)}
     </>
   );
 }
