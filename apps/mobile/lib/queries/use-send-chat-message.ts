@@ -106,6 +106,10 @@ export function useSendChatMessage() {
       const computer = await fetchActiveComputer(token);
       if (!computer) throw new Error("Computer unavailable.");
       const gatewayUrl = `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`;
+      if (attachments.some(({ matrixSource }) => matrixSource
+        && (matrixSource.gatewayUrl !== gatewayUrl || matrixSource.userId !== userId))) {
+        throw new Error("Choose the Matrix file again on this computer.");
+      }
 
       // Decided before anything is uploaded, so an attachment the computer
       // could not be told about never leaves the phone.

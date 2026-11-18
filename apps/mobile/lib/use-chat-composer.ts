@@ -319,7 +319,10 @@ export function useChatComposer({
     });
   }, [draftKey]);
 
-  const attachments = readAttachmentDraft(state.attachments, draftKey);
+  const draftAttachments = readAttachmentDraft(state.attachments, draftKey);
+  const attachments = useMemo(() => scope === null
+    ? draftAttachments.filter(attachment => !attachment.matrixSource) : draftAttachments,
+  [scope, draftAttachments]);
   const attachmentRoom = Math.max(0, MAX_MESSAGE_ATTACHMENTS - reservedAttachments(state, draftKey) - attachments.length);
   const unreadable = useMemo(() => (
     attachmentKinds ? unreadableAttachments(attachments, attachmentKinds) : NO_ATTACHMENTS
@@ -538,6 +541,7 @@ export function useChatComposer({
     removeAttachment,
     /** How many more can be added. Places are held for attachments still being sent, or not sent. */
     attachmentRoom,
+    matrixAttachmentScope: JSON.stringify([scope, activeChatId, navigation, projectId]),
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     attachmentNotice,

@@ -18,6 +18,12 @@ jest.mock("react-native-safe-area-context", () => ({
 
 const mockPickPhotos = jest.fn();
 const mockPickFiles = jest.fn();
+jest.mock("@/components/chat/MatrixAttachmentPicker", () => ({
+  MatrixAttachmentPicker: () => {
+    const { Text } = jest.requireActual("react-native") as typeof import("react-native");
+    return <Text>Matrix files fixture</Text>;
+  },
+}));
 jest.mock("@/lib/chat-attachment-picker", () => ({
   pickPhotos: (...args: unknown[]) => mockPickPhotos(...args),
   pickFiles: (...args: unknown[]) => mockPickFiles(...args),
@@ -71,6 +77,19 @@ function row(label: string) {
 function open() {
   fireEvent.press(addButton());
 }
+
+it("offers a computer file picker inside the add sheet alongside device files", () => {
+  const matrix = { scope: "account:computer:chat", gatewayUrl: "https://matrix.test/vm/computer" };
+  const { props, rerender } = renderControl({ matrix });
+  open();
+  expect(row("Files")).toBeTruthy();
+  fireEvent.press(row("Matrix Files"));
+  expect(screen.getByText("Matrix files fixture")).toBeTruthy();
+  expect(mockSheet.isPresented).toBe(true);
+  rerender(<ComposerAddControl {...props} matrix={{ ...matrix, scope: "account:computer:other-chat" }} />);
+  expect(screen.queryByText("Matrix files fixture")).toBeNull();
+  expect(mockSheet.isPresented).toBe(false);
+});
 
 describe("the composer's add control", () => {
   let alert: jest.SpyInstance;

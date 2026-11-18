@@ -85,12 +85,16 @@ export default function ProjectRoute() {
   // A new chat starts in the permission mode chosen here, else the one last chosen on this phone.
   const turnModes = chosenTurnModes(catalog, selection, undefined, chosenPermissionMode ?? remembered.choice?.permissionMode);
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
+  const matrixBinding = gateway.gatewayUrl && gateway.ready && project
+    ? { gatewayUrl: gateway.gatewayUrl, scope: JSON.stringify([gateway.userId, gateway.computerKey, project.id]) }
+    : undefined;
   const composer = useProjectComposer({
     projectId: project?.id ?? null,
     selection,
     catalog,
     turnModes,
     attachmentKinds,
+    matrixAttachmentScope: matrixBinding?.scope,
     // There is no model to send to until the provider catalog has loaded.
     disabled: catalogPending || (chosenModel === null && choiceUnknown),
     onChatStarted: (chatId, startedWith, startedInMode) => {
@@ -199,6 +203,7 @@ export default function ProjectRoute() {
             draft: composer.draft,
             onChangeDraft: changeDraft,
             enabled: composer.canAddAttachments,
+            matrix: matrixBinding,
           }),
           modelControl: (
             <ModelPicker

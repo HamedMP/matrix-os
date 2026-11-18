@@ -25,7 +25,7 @@ const BACK_ICON_SIZE = 22;
 // The share of the window's height the skills may take before they scroll.
 const SKILL_LIST_HEIGHT_SHARE = 0.5;
 
-export type AddMenuPage = "menu" | "skills";
+export type AddMenuPage = "menu" | "skills" | "matrix";
 
 export interface AddMenuProps {
   page: AddMenuPage;
@@ -39,6 +39,7 @@ export interface AddMenuProps {
   busy: boolean;
   onPhotos: () => void;
   onFiles: () => void;
+  onMatrixFiles?: () => void;
   onShowSkills: () => void;
   onShowMenu: () => void;
   onSelectSkill: (entry: ChatSlashEntry) => void;
@@ -64,6 +65,7 @@ export function AddMenu({
   busy,
   onPhotos,
   onFiles,
+  onMatrixFiles,
   onShowSkills,
   onShowMenu,
   onSelectSkill,
@@ -82,6 +84,9 @@ export function AddMenu({
   const files = attachmentRow(
     kinds.includes("file"), remaining, "Browse the files on this phone", "The selected model cannot read files",
   );
+  const matrixFiles = attachmentRow(
+    kinds.length > 0, remaining, "Browse this Matrix Computer", "The selected model cannot read attachments",
+  );
 
   return (
     <View testID="add-menu" style={[styles.menu, padding]}>
@@ -90,6 +95,8 @@ export function AddMenu({
       <View testID="add-menu-attach" style={styles.group}>
         <MenuRow icon={PhotoIcon} label="Photos" detail={photos.detail} disabled={busy || !photos.enabled} onPress={onPhotos} />
         <MenuRow icon={DocumentIcon} label="Files" detail={files.detail} disabled={busy || !files.enabled} onPress={onFiles} />
+        {onMatrixFiles ? <MenuRow icon={DocumentIcon} label="Matrix Files" detail={matrixFiles.detail}
+          disabled={busy || !matrixFiles.enabled} opensPage onPress={onMatrixFiles} /> : null}
       </View>
       {skills.length > 0 ? (
         <View testID="add-menu-more" style={styles.group}>
