@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { MacActionPairing } from "@desktop/main/desktop-pairing/action";
 import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
 
 const identity = { chatId: "chat_test", runId: "run_test" };
@@ -9,11 +10,12 @@ const request = {
 };
 const preview = { png: Buffer.from("test picture"), testSummary: "10 passed" };
 
-function setup() {
+function setup(acquireActionPairing?: MacActionPairing) {
   const seen = new Set<string>();
   const activity = { update: vi.fn(), finish: vi.fn() };
   const deps = {
     enabled: true,
+    acquireActionPairing,
     read: vi.fn().mockResolvedValue(request),
     isCurrent: vi.fn(() => true),
     wasHandled: vi.fn(async (key: string) => seen.has(key)),
@@ -31,6 +33,33 @@ function setup() {
 }
 
 describe("one-time Electron Desktop preview", () => {
+  it("requires the paired key after consent before claiming or running the preview", async () => {
+    const acquireActionPairing = vi.fn(async () => null);
+    const { deps, activity, service } = setup(acquireActionPairing);
+    expect(await service.run(identity)).toEqual({ status: "unavailable" });
+    expect(deps.approve).toHaveBeenCalledOnce();
+    expect(acquireActionPairing).toHaveBeenCalledOnce();
+    expect(deps.claim).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+  });
+
+  it("drops the preview result after a device revision changes during the build", async () => {
+    const check = vi.fn().mockResolvedValue(true);
+    const close = vi.fn();
+    const { deps, activity, service } = setup(async operation => {
+      check.mockImplementationOnce(async () => true)
+        .mockImplementationOnce(async () => { operation.abort("revoked"); return false; });
+      return { check, close };
+    });
+    expect(await service.run(identity)).toEqual({ status: "unavailable" });
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(deps.returnResult).not.toHaveBeenCalled();
+    expect(activity.finish).toHaveBeenCalledWith("revoked");
+    expect(close).toHaveBeenCalledOnce();
+    expect(await service.run(identity)).toEqual({ status: "already-handled" });
+  });
+
   it("uses one explicit approval, builds the bound version and returns evidence once", async () => {
     const { deps, activity, service } = setup();
     expect(await service.run(identity)).toEqual({ status: "returned" });
@@ -134,6 +163,29 @@ describe("one-time Electron Desktop preview", () => {
     });
     expect(await service.run(identity)).toEqual({ status: "returned" });
     expect(activity.finish).toHaveBeenCalledExactlyOnceWith("returned");
+  });
+
+  it("requires the original background pairing before a newly approved preview executes", async () => {
+    const { deps, service } = setup(async () => ({
+      check: vi.fn().mockResolvedValue(true),
+      close: vi.fn(),
+    }));
+    const background = new AbortController();
+    const check = vi.fn().mockResolvedValueOnce(true).mockImplementationOnce(async () => {
+      background.abort("revoked");
+      return false;
+    });
+    const result = await service.run(identity, {
+      signal: background.signal,
+      grant: { targetId: "d5739cf6-cb60-4b79-99a1-d95c23949a5c", approvedAt: Date.now() },
+      context: request,
+      pairing: { check, close: vi.fn() },
+    });
+    expect(result).toEqual({ status: "unavailable" });
+    expect(deps.approve).toHaveBeenCalledOnce();
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.returnResult).not.toHaveBeenCalled();
   });
 
   it("cancels a background preview and skips return if its grant stops", async () => {

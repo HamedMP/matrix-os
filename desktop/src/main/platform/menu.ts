@@ -13,6 +13,7 @@ export function installAppMenu(options: {
   openTerminalWindow(): void;
   stopBackgroundMacChecks?(): void;
   openMacActivity?(): void;
+  openMacPairing?(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
 }) {
@@ -32,6 +33,7 @@ export function installAppMenu(options: {
     openTerminalWindow: options.openTerminalWindow,
     stopBackgroundMacChecks: options.stopBackgroundMacChecks,
     openMacActivity: options.openMacActivity,
+    openMacPairing: options.openMacPairing,
     ...(options.thirdPartyNoticesPath ? {
       openThirdPartyNotices: () => {
         // openPath resolves to an error string instead of rejecting.
