@@ -94,7 +94,8 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
           `Mac checkout ${source.checkout}`,
           `Commit ${request.baseSha}`,
           `Source SHA-256 ${request.sourceSha256}`,
-          request.requestKind === "verification" ? `Sign-in label: ${request.label}` : `New sign-in label: ${request.label}`,
+          request.recipe === "files-trash" ? "Verify right-click Move to Trash and Undo with disposable files."
+            : request.requestKind === "verification" ? `Sign-in label: ${request.label}` : `New sign-in label: ${request.label}`,
           ...(request.operation ? ["Check that Sign in shows a recoverable connection error in the isolated preview."] : []),
         ].join("\n"),
         buttons: ["Cancel", "Approve Once"],
@@ -117,7 +118,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       return runChatElectronPreview({
         checkout: source.checkout, electronPath: source.electronPath, baseSha: request.baseSha,
         sourceSha256: request.sourceSha256, label: request.label, operation: request.operation,
-        requestKind: request.requestKind, signal,
+        requestKind: request.requestKind, recipe: request.recipe, signal,
       });
     },
     reportError(error) {
@@ -133,7 +134,16 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     return {
       available: Boolean(legacySource && status.signedIn),
       verificationAvailable: verificationAvailable() && status.signedIn && status.runtimeSlot === "primary",
+      ...(setup?.enabled() && status.signedIn && status.runtimeSlot === "primary" ? { terminalRequests: true } : {}),
     };
+  });
+  const terminalIntent = "chat:mac-verification-terminal-intent";
+  ipc.handle(terminalIntent, async (event, raw) => {
+    if (!options.isTrustedSender(event)) throw new Error("invalid request");
+    const ref = CHAT_ELECTRON_PREVIEW_INVOKE[terminalIntent].request.parse(raw);
+    if (!setup?.enabled()) return { digest: null };
+    const digest = await transport.probeTerminalIntent(ref);
+    return { digest: setup.enabled() && options.isTrustedSender(event) ? digest : null };
   });
   const select = "chat:mac-verification-selection";
   ipc.handle(select, (event, raw) => {
@@ -197,7 +207,8 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     const request = CHAT_ELECTRON_PREVIEW_INVOKE[run].request.safeParse(raw);
     if (!request.success) throw new Error("invalid request");
     const { fullAccessViewId, ...target } = request.data;
-    if (target.requestKind === "verification" ? !verificationAvailable() : !legacySource) {
+    if ((target.terminalIntentDigest && !setup?.enabled())
+      || (target.requestKind === "verification" ? !verificationAvailable() : !legacySource)) {
       return { status: "unavailable" };
     }
     // A renderer may lose its selection between acknowledging the mode and

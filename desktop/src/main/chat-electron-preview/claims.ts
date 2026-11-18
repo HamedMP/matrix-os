@@ -11,6 +11,7 @@ export function previewRequestKey(request: ChatElectronPreviewRequest): string {
   const scope = [request.scopeKey, request.chatId, request.runId];
   if (request.requestKind === "verification") {
     scope.push(request.requestKind, request.projectId, request.worktreeId, request.baseSha, request.sourceSha256);
+    if (request.recipe === "files-trash") scope.push(request.recipe);
   }
   return createHash("sha256").update(JSON.stringify(scope)).digest("hex");
 }

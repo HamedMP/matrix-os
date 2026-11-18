@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatRun } from "@matrix-os/contracts";
 import type { InvokeResponse } from "../../../../shared/ipc-contract";
-import { isCurrentChatElectronPreviewRun } from "../../../../shared/chat-electron-preview";
+import { CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, isCurrentChatElectronPreviewRun } from "../../../../shared/chat-electron-preview";
 import { invoke } from "../../lib/operator";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
@@ -31,11 +31,12 @@ const STATUS: Record<Attempt["status"], string> = {
   "already-handled": "This Mac verification was already handled.",
 };
 
-export function useMacVerification({ candidate, busy, editingQueuedTurn, permissionMode }: {
+export function useMacVerification({ candidate, busy, editingQueuedTurn, permissionMode, terminalRequests = false }: {
   candidate: Candidate | null;
   busy: boolean;
   editingQueuedTurn: boolean;
   permissionMode?: string;
+  terminalRequests?: boolean;
 }) {
   const key = candidate
     ? JSON.stringify([candidate.chatId, candidate.worktree.projectId, candidate.worktree.worktreeId])
@@ -54,6 +55,7 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
   const latestDraftRun = useRef<string | null>(null);
   const currentRunId = candidate?.run.id;
   const draftRunId = busy || editingQueuedTurn ? null : currentRunId ?? null;
+  const lastTerminal = useRef<{ scope: Selection; runId: string; digest: string } | null>(null);
   useLayoutEffect(() => {
     selection.current = key ? { key } : null;
     setIntent(null);
@@ -104,13 +106,13 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
     && isCurrentChatElectronPreviewRun(candidate.run));
   const currentIntent = intent && intent.scope === selection.current && intent.scope.key === key ? intent : null;
 
-  async function request() {
+  async function request(terminalIntentDigest?: string) {
     const current = selection.current;
     if (!candidate || !current || current.key !== key || !canStart
       || latestRun.current !== candidate.run.id) return;
     if (inFlight.current) {
       setAttempt({ scope: current.key, runId: candidate.run.id, status: "busy" });
-      return;
+      return "busy" as const;
     }
     const pending: Attempt = { scope: current.key, runId: candidate.run.id, status: "pending" };
     inFlight.current = pending;
@@ -127,8 +129,10 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
         runId: candidate.run.id,
         requestKind: "verification",
         ...(binding ? { fullAccessViewId: binding.viewId } : {}),
+        ...(terminalIntentDigest ? { terminalIntentDigest } : {}),
       });
       if (selection.current === current) setAttempt({ ...pending, status: response.status });
+      return response.status;
     } catch (error: unknown) {
       console.warn("[mac-verification] request failed", error instanceof Error ? error.name : "UnknownError");
       if (selection.current === current) setAttempt({ ...pending, status: "unavailable" });
@@ -154,6 +158,45 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
     }
     void request();
   });
+  const completedAt = candidate?.run.completedAt;
+  const startTerminalVerification = useEffectEvent((requestedChat: string, requestedRun: string, digest: string) => {
+    const current = selection.current;
+    if (!candidate || !current || current.key !== key || !canStart || pendingIntent.current
+      || inFlight.current || candidate.chatId !== requestedChat || candidate.run.id !== requestedRun
+      || latestRun.current !== requestedRun) return;
+    const prior = lastTerminal.current;
+    if (prior?.scope === current && prior.runId === requestedRun && prior.digest === digest) return;
+    const attempt = { scope: current, runId: requestedRun, digest };
+    lastTerminal.current = attempt;
+    void request(digest).then(status => {
+      if (status === "busy" && lastTerminal.current === attempt) lastTerminal.current = null;
+    });
+  });
+
+  // Only the already eligible, currently visible Chat owns a polling loop.
+  // A reply from before navigation or the next run is never dispatched.
+  useEffect(() => {
+    if (!terminalRequests || !canStart || currentIntent || !chatId || !currentRunId || !completedAt) return;
+    const expiresAt = Date.parse(completedAt) + CHAT_ELECTRON_PREVIEW_MAX_AGE_MS;
+    let current = true;
+    let reportedFailure = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function check(chat: string, run: string) {
+      if (!current || Date.now() >= expiresAt) return;
+      try {
+        const response = await invoke("chat:mac-verification-terminal-intent", { chatId: chat, runId: run });
+        if (current && Date.now() < expiresAt && response.digest) startTerminalVerification(chat, run, response.digest);
+      } catch (error: unknown) {
+        if (!reportedFailure) {
+          console.warn("[mac-verification] Terminal request check failed", error instanceof Error ? error.name : "UnknownError");
+          reportedFailure = true;
+        }
+      }
+      if (current && Date.now() < expiresAt) timer = setTimeout(() => void check(chat, run), 3_000);
+    }
+    void check(chatId, currentRunId);
+    return () => { current = false; clearTimeout(timer); };
+  }, [canStart, chatId, completedAt, currentIntent, currentRunId, key, terminalRequests]);
   useEffect(() => {
     completeIntent();
   }, [busy, canStart, currentIntent, currentRunId]);
