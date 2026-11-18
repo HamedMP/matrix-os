@@ -36,6 +36,7 @@ export function XpTilesView({ renamingPath, onCancelRename, onOpenFile }: XpTile
             key={entry.name}
             data-web-file-path={currentPath ? `${currentPath}/${entry.name}` : entry.name}
             data-web-file-type={entry.type}
+            data-web-file-selected={selected}
             draggable={entry.type === "file"}
             className={selected ? "xp-tile xp-tile-selected" : "xp-tile"}
             // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- gridcell in a CSS grid (role="grid"); no native HTML element maps to the ARIA gridcell role

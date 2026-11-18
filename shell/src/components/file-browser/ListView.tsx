@@ -117,6 +117,7 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
                 key={entry.name}
                 data-web-file-path={currentPath ? `${currentPath}/${entry.name}` : entry.name}
                 data-web-file-type={entry.type}
+                data-web-file-selected={selected}
                 draggable={entry.type === "file"}
                 className={cn(
                   "cursor-default hover:bg-accent/50 transition-colors",
