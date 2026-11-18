@@ -97,6 +97,19 @@ export interface MacTerminalRequest extends MacTerminalContext, MacTerminalProbe
 
 export class MacTerminalDeliveryRejectedError extends Error {}
 
+export class ChatElectronPreviewTransportInterruptedError extends Error {
+  constructor(cause: unknown) {
+    super("Preview transport interrupted", { cause });
+  }
+}
+
+function throwFetchError(error: unknown): never {
+  if (error instanceof TypeError || (error instanceof DOMException && error.name === "TimeoutError")) {
+    throw new ChatElectronPreviewTransportInterruptedError(error);
+  }
+  throw error;
+}
+
 type Auth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
 interface RuntimeAuthority {
   token: string;
@@ -128,7 +141,7 @@ async function boundedBytes(response: Response, maximum: number) {
   let length = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch(throwFetchError);
       if (done) return Buffer.concat(chunks, length);
       length += value.byteLength;
       if (length > maximum || chunks.length >= 2048) {
@@ -230,9 +243,11 @@ export function createChatElectronPreviewTransport(
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${authority.token}`);
-    const timeout = AbortSignal.timeout(TIMEOUT_MS);
-    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
-    const response = await fetchFn(new URL(path, authority.origin), { ...init, headers, redirect: "error", signal });
+    const deadline = AbortSignal.timeout(TIMEOUT_MS);
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    const response = await fetchFn(new URL(path, authority.origin), {
+      ...init, headers, redirect: "error", signal,
+    }).catch(throwFetchError);
     if (signal.aborted || !sameAuthority(authority, currentAuthority())) {
       await response.body?.cancel();
       signal.throwIfAborted();

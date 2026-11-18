@@ -1,10 +1,13 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { ChatElectronPreviewReply, ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
-import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest } from "./transport";
+import { ChatElectronPreviewTransportInterruptedError, type ChatElectronPreviewBackgroundBinding,
+  type ChatElectronPreviewRequest } from "./transport";
 import { previewRequestKey } from "./claims";
 
 type BackgroundPreview = ChatElectronPreviewBackgroundBinding & { pairing?: MacActionPairingLease };
+const DELIVERY_RETRY_MS = 500;
 
 interface PreviewResult {
   png: Buffer;
@@ -68,6 +71,23 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       return !boundarySignal.aborted;
     }
 
+    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) {
+      for (let attempt = 0; ; attempt++) {
+        if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) return false;
+        if (attempt === 0) activity?.update("returning");
+        try {
+          // Re-check the exact Chat and source before writing and reconcile a receipt
+          // that may already have been accepted. Do not repeat the local build.
+          await deps.returnResult(current, result, signal);
+          return true;
+        } catch (error: unknown) {
+          if (attempt !== 0 || current.requestKind !== "verification"
+            || !(error instanceof ChatElectronPreviewTransportInterruptedError)) throw error;
+          await delay(DELIVERY_RETRY_MS, undefined, { signal });
+        }
+      }
+    }
+
     try {
       const request = await read();
       if (!request || !deps.isCurrent(request) || signal.aborted) return { status: "unavailable" };
@@ -119,20 +139,16 @@ export function createChatElectronPreviewService(deps: Dependencies) {
           return { status: "unavailable" };
         }
         deps.reportError?.(error);
-        if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
+        if (!await deliver(current, { error: "build-failed" })) {
           completion = "revoked";
           return { status: "unavailable" };
         }
-        activity?.update("returning");
-        await deps.returnResult(current, { error: "build-failed" }, signal);
         return { status: "failed" };
       }
-      if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
+      if (!await deliver(current, result)) {
         completion = "revoked";
         return { status: "unavailable" };
       }
-      activity?.update("returning");
-      await deps.returnResult(current, result, signal);
       completion = "returned";
       return { status: "returned" };
     } catch (error: unknown) {
