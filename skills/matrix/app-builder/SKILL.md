@@ -2,7 +2,7 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.5.0
+version: 1.5.1
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -35,8 +35,9 @@ keep this skill's design, packaging and visual verification guidance.
 - Do not create Next.js, `.next/`, `app/` router files, `runtime: "node"`, `serve.start`, or `npm start` unless the user explicitly requests a server runtime or Next.js.
 - Do not create plain HTML apps unless the user explicitly asks for a plain HTML app.
 - Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
-- Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
-- Verify `dist/index.html` exists.
+- **Build every app you create or change, in the same run.** Run `cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build` (skip the install only when dependencies are unchanged), then confirm `dist/index.html` exists, before you hand over or link the app. Source files alone are not a deliverable: a Vite app without `dist/` opens as `{"error":"needs_build","status":"needs_build"}`.
+- Rebuild after your last source edit. A stale `dist/` is still the old app.
+- If you cannot build in this run (no working shell, or an install/build failure you cannot fix), the app is unfinished. Say so in the first line of your reply, state that opening it will show `needs_build`, give the exact command above, and do not call the app built, working or ready or link it as an installed app.
 - Use injected Matrix theme variables and iframe-safe sizing. Choose a coherent product style from the brief, mood and references; use app-local semantic tokens for its palette/materials, with inherited Matrix tokens as the baseline when no direction is chosen.
 - For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix integration/runtime rules and choose typography, shapes, borders, layout, materials, color and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
@@ -308,7 +309,7 @@ Missing `service`, `describeService` or `ai.routes` on the running bridge means 
 
 ## Verification
 
-Before reporting done:
+Run this on every create and every edit, before reporting done. If a step cannot run, follow the unfinished-app rule in Non-Negotiables instead of reporting success:
 
 ```bash
 cd ~/apps/<slug>

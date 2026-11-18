@@ -64,10 +64,11 @@ Publishing returns `https://matrix.page/<permanent-id>` with an optional friendl
 
 1. Create app directory: `~/apps/<slug>/`
 2. Write project files (see structure below)
-3. Run: `cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build`
+3. Run: `cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build`. This is part of creating the app, not an optional check: a Vite app without `dist/` opens as `{"error":"needs_build","status":"needs_build"}`. Rebuild after the last source edit.
 4. Verify `dist/index.html` exists
 5. Run the builder preflight; verify `runtime: "vite"`, `runtimeVersion`, `listingTrust: "first_party"`, personal scope, and `build.output: "dist"`
 6. Verify launch through Matrix and inspect the actual app before reporting success
+7. If you cannot build in this run (no working shell, or a failure you cannot fix), the app is unfinished: say so first, state that opening it will show `needs_build`, give the command from step 3, and do not describe the app as built, working or ready
 
 ### Structure
 ```

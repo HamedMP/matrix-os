@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -34,4 +34,19 @@ it.each([
 
 it("rejects a valid manifest without its production build", () => {
   expect(() => execFileSync(process.execPath, [script, fixture({}, false)], { stdio: "pipe" })).toThrow();
+});
+
+// An agent that writes source but never builds leaves the owner with a
+// `needs_build` launch error. Both guidance documents must make the build a
+// delivery gate and say what to report when the run cannot build.
+it.each([
+  "skills/matrix/app-builder/SKILL.md",
+  "home/agents/knowledge/app-generation.md",
+])("makes the production build a delivery gate in %s", (path) => {
+  const content = readFileSync(path, "utf8");
+  expect(content).toContain("cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build");
+  expect(content).toContain("needs_build");
+  expect(content).toMatch(/Rebuild after (your|the) last source edit/);
+  expect(content).toMatch(/If you cannot build in this run/);
+  expect(content).toMatch(/do not (call|describe) the app (as )?built, working or ready/);
 });
