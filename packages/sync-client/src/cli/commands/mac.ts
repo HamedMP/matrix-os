@@ -3,7 +3,7 @@ import { createAuthExpiredError, createNotAuthenticatedError, resolveCliAuthStat
 import { MAC_VERIFICATION_ERRORS, queueMacVerification } from "../mac-verification-client.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
-import { MacVerificationRecipeSchema } from "@matrix-os/contracts";
+import { MacVerificationRecipeSchema } from "@matrix-os/contracts/mac-verification-terminal";
 
 const verifyCommand = defineCommand({
   meta: { name: "verify", description: "Queue Mac Verification for the current Git worktree and its Matrix Chat" },

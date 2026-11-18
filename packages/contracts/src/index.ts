@@ -1519,5 +1519,3 @@ export * from "#routine-full-access";
 export * from "#routine-full-access-view";
 
 export * from "#routine-origin-proof";
-
-export * from "./mac-verification-terminal.js";
