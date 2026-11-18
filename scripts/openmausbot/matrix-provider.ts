@@ -14,6 +14,10 @@ const SEND_NOTICE = "Send a new, direct text message from the paired Matrix Bots
 const MAX_MODELS = 128;
 const TEXT_TURN_TIMEOUT = 35_000;
 const MANAGED_TURN_TIMEOUT = 150_000;
+const STATUS_TIMEOUT = 8_000;
+// Detached completion can wait through Gateway's 35s native discovery.
+const COMPLETE_STATUS_TIMEOUT = 37_000;
+const STATUS_TRANSPORT_GRACE = 8_000;
 
 type TurnIdentity = { botId: string; threadId: string; sendId: string };
 export type MatrixHostedTurnTicket = TurnIdentity & { token: string };
@@ -67,7 +71,7 @@ export function matrixHostedProviderConfigs(configs: InstanceConfigMap): Instanc
 }
 
 async function query(
-  path: "/status" | "/turn", signal: AbortSignal, body?: string, token?: string,
+  path: "/status" | "/status?complete=1" | "/turn", signal: AbortSignal, body?: string, token?: string,
 ): Promise<unknown> {
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     const req = request({
@@ -129,7 +133,26 @@ export const matrixHostedDriver: ProviderDriver<null> = {
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { turnId: string; abort: AbortController }>();
     let catalog: ReturnType<typeof matrixModelCatalog> = null;
+    let observedAt = 0;
     let stopped = false;
+    let catalogCompletion: Promise<void> | undefined;
+    const statusLifetime = new AbortController();
+    const statusSignal = (timeout: number) => AbortSignal.any([statusLifetime.signal, AbortSignal.timeout(timeout)]);
+    function observe(value: unknown) {
+      if (stopped) return;
+      catalog = matrixModelCatalog(value);
+      observedAt = Date.now();
+    }
+    function completeCatalog(value: unknown) {
+      if (catalogCompletion || !value || typeof value !== "object"
+        || !("refreshing" in value) || value.refreshing !== true) return;
+      // Upstream reuses engine health snapshots. Update the live catalog
+      // getter once the same discovery completes, even during that cache.
+      catalogCompletion = query("/status?complete=1", statusSignal(COMPLETE_STATUS_TIMEOUT)).then(observe)
+        .catch((error: unknown) => {
+          if (!stopped) console.warn("[matrix-ai] Catalog refresh unavailable", error instanceof Error ? error.name : "UnknownError");
+        }).finally(() => { catalogCompletion = undefined; });
+    }
     const stopAll = async () => {
       for (const turn of active.values()) turn.abort.abort();
       active.clear();
@@ -208,15 +231,19 @@ export const matrixHostedDriver: ProviderDriver<null> = {
       async snapshot() {
         if (!enabled || stopped) return { state: "unavailable", reason: "Matrix AI unavailable" };
         try {
-          catalog = matrixModelCatalog(await query("/status", AbortSignal.timeout(14_000)));
-          if (catalog) return { state: "available", authenticated: true, billing: "metered" };
+          const value = await query("/status", statusSignal(STATUS_TIMEOUT));
+          observe(value);
+          completeCatalog(value);
         } catch (error) {
-          catalog = null;
+          // Keep a just-read catalog through a transient socket failure.
+          // A valid empty response above always replaces it immediately.
+          if (Date.now() - observedAt >= STATUS_TRANSPORT_GRACE) catalog = null;
           console.warn("[matrix-ai] Status unavailable", error instanceof Error ? error.name : "UnknownError");
         }
+        if (catalog) return { state: "available", authenticated: true, billing: "metered" };
         return { state: "unavailable", reason: "Matrix AI unavailable for this Matrix Computer" };
       },
-      async dispose() { stopped = true; catalog = null; await stopAll(); listeners.clear(); },
+      async dispose() { stopped = true; statusLifetime.abort(); catalog = null; await stopAll(); listeners.clear(); },
     };
   },
 };

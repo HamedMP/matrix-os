@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { productColors as color, productScales as scale, radii } from "../../packages/brand/src/tokens.ts";
 
@@ -82,6 +82,30 @@ const css = [
   display: none;
 }
 
+.matrix-hosted-bot-avatar > .matrix-recipe-rabbit,
+.matrix-hosted-bot-avatar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.matrix-hosted-bot-avatar .matrix-agent-rabbit__ear {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.matrix-hosted-bot-avatar .matrix-agent-rabbit__ear--left {
+  transform: translateY(-1px) scaleY(0.96) rotate(-5deg);
+}
+
+.matrix-hosted-bot-avatar .matrix-agent-rabbit__ear--right {
+  transform: translateY(-1px) scaleY(0.96) rotate(5deg);
+}
+
+.matrix-hosted-bot-avatar .matrix-agent-rabbit__status {
+  display: none;
+}
+
 :root[data-matrix-bots-skin] [data-matrix-image-scrim] {
   background: color-mix(in srgb, #000 55%, transparent);
 }
@@ -144,6 +168,8 @@ await Promise.all([
     icons: [{ src: "/app-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
   }, null, 2) + "\n"),
   writeFile(resolve(sourceRoot, "public/app-icon.svg"), icon),
+  copyFile(new URL("../../packages/ui/src/chat-agents/RecipeRabbit.tsx", import.meta.url),
+    resolve(sourceRoot, "src/components/MatrixRecipeRabbit.tsx")),
 ]);
 
 async function patchPinnedSource(file, replacements) {
@@ -177,11 +203,17 @@ await Promise.all([
   ]),
   patchPinnedSource("components/Avatar.tsx", [
     ['import { MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";',
-      'import { DEFAULT_MASCOT_BODY, MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\nimport { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";'],
+      'import { DEFAULT_MASCOT_BODY, MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\nimport { isMatrixHostedBots } from "@/lib/matrix-hosted-settings";\nimport { RecipeRabbit } from "./MatrixRecipeRabbit";'],
+    ['  bot: {\n    name?: string;', '  bot: {\n    id?: string;\n    name?: string;'],
     ['  if (outcome !== "flatImage") {', `  if (isMatrixHostedBots() && !profile.avatarUrl && !bot.mascotFaceColor
     && (!bot.mascotBody || bot.mascotBody === DEFAULT_MASCOT_BODY)) {
-    return <img src="/app-icon.svg" alt={label ?? bot.name ?? ""} width={size} height={size}
-      draggable={false} className="block shrink-0 object-contain" style={{ width: size, height: size }} />;
+    const avatarName = label ?? bot.name ?? t("avatar.altFallback");
+    return (
+      <span role="img" aria-label={avatarName} className="matrix-hosted-bot-avatar block shrink-0"
+        style={{ width: size, height: size }}>
+        <RecipeRabbit id={bot.id ?? avatarName} name={avatarName} avatar />
+      </span>
+    );
   }
 
   if (outcome !== "flatImage") {`],

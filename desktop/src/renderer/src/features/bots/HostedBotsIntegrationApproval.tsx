@@ -171,7 +171,7 @@ export function HostedBotsIntegrationApproval({ transport }: { transport: ApiCli
       }
       const accounts = result.accounts.filter((account) => account.service === request.service
         && (request.service !== "github" || account.id.startsWith("github-developer:")));
-      setReview({ request, accounts, accountId: "" });
+      setReview({ request, accounts, accountId: accounts.length === 1 ? accounts[0]?.id ?? "" : "" });
     }, "Couldn’t load connected accounts.");
   }
 

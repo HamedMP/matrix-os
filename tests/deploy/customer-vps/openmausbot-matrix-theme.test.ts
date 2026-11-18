@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { promisify } from "node:util";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { AgentAvatar } from "../../../packages/ui/src/chat-agents/AgentAvatar";
 // @ts-expect-error The Docker build entry point is a standalone Node script.
 import { buildOpenMausBotHostImage } from "../../../scripts/openmausbot/build-host-image.mjs";
 
@@ -11,7 +14,7 @@ const run = promisify(execFile);
 const script = "scripts/openmausbot/apply-matrix-theme.mjs";
 const source = '[data-skin="daylight"] {\n  --color-app: #ffffff;\n}\n[data-skin="midnight"] {\n  --color-app: #000000;\n}\n';
 const marker = "/* Matrix OS palettes for OpenMausBot */";
-const rabbitAsset = "shell/public/matrix-logo.svg";
+const rabbitSource = "packages/ui/src/chat-agents/RecipeRabbit.tsx";
 
 async function withFixture(styles: string, fn: (root: string, css: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "matrix-openmausbot-theme-"));
@@ -37,7 +40,7 @@ async function withFixture(styles: string, fn: (root: string, css: string) => Pr
 
     await writeFile(join(root, "src", "lib", "brand.ts"), 'export interface Brand { name: string; }\nexport const PRODUCT_NAME = "MausBot";\nconst DEFAULT_BRAND: Brand = { name: "OpenMausBot" };\n  current = status;\n');
     await writeFile(join(root, "src", "state", "store.tsx"), 'import { cloudAsleep, onCloudPower } from "../lib/cloud-power";\n    const wrapped: React.Dispatch<Action> = (action) => {\n    };\n');
-    await writeFile(join(root, "src", "components", "Avatar.tsx"), 'import { MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\n  if (outcome !== "flatImage") {\n    return (\n      <MausAvatar />\n    );\n  }\n');
+    await writeFile(join(root, "src", "components", "Avatar.tsx"), 'import { MASCOT_BODIES, botMascotBody } from "../../shared/mascot-bodies";\n  bot: {\n    name?: string;\n    color: MausColor;\n  };\n  if (outcome !== "flatImage") {\n    return (\n      <MausAvatar />\n    );\n  }\n');
     await writeFile(join(root, "src", "components", "SidebarConnectApps.tsx"), 'import { useStore } from "@/state/store";\n    if (state.pluginsOpen) return;\n        <span aria-hidden="true" data-app-faces="">\n        </span>\n      </>}');
     await writeFile(join(root, "src", "components", "ModelPicker.tsx"), 'import { ApiKeyHint, openKeysFor } from "./EngineSetup";\n    dispatch(openKeysFor(railInstance));\n    onManage={remote ? undefined : openEngines}\n');
     await writeFile(join(root, "src", "components", "bot-panel", "pages.tsx"), 'import { appSwitchPatch } from "@/lib/bot-app-access";\nexport function AppsPage({ bot, derived }: PageContext) {\n}\n');
@@ -75,14 +78,23 @@ describe("OpenMausBot Matrix skin", () => {
       expect(manifest.name).toBe("Matrix Bots");
       expect(manifest.icons[0]?.src).toBe("/app-icon.svg");
       const artwork = await readFile(join(root, "public", "app-icon.svg"), "utf8");
-      const rabbit = await readFile(rabbitAsset, "utf8");
-      for (const path of rabbit.matchAll(/<path d="[^"]+"/g)) expect(artwork).toContain(path[0]);
+      const legacyAvatar = renderToStaticMarkup(createElement(AgentAvatar, {
+        id: "matrix-bots", name: "Bots", category: "productivity",
+      }));
+      const rabbitShapes = [...legacyAvatar.matchAll(/\bd="(M[^"]+)" (?:fill|stroke)=/g)]
+        .slice(0, 5).map(([, path]) => path);
+      expect(rabbitShapes).toHaveLength(5);
+      for (const shape of rabbitShapes) expect(artwork).toContain(`d="${shape}"`);
+      expect(artwork).toContain(/--rabbit-ink:(#[0-9A-F]{6})/.exec(legacyAvatar)?.[1]);
+      expect(await readFile(join(root, "src", "components", "MatrixRecipeRabbit.tsx"), "utf8"))
+        .toBe(await readFile(rabbitSource, "utf8"));
       const brand = await readFile(join(root, "src", "lib", "brand.ts"), "utf8");
       expect(brand).toContain('logo: "/app-icon.svg"');
       expect(brand).toContain('status.source === "default" ? { ...status, brand: DEFAULT_BRAND } : status');
       const avatars = await readFile(join(root, "src", "components", "Avatar.tsx"), "utf8");
-      expect(avatars).toContain("!profile.avatarUrl");
-      expect(avatars).toContain('src="/app-icon.svg"');
+      expect(avatars).toContain("!profile.avatarUrl && !bot.mascotFaceColor");
+      expect(avatars).toContain("bot.mascotBody === DEFAULT_MASCOT_BODY");
+      expect(avatars).toContain('<RecipeRabbit id={bot.id ?? avatarName} name={avatarName} avatar />');
       expect(avatars).toContain('if (outcome !== "flatImage")');
       const store = await readFile(join(root, "src", "state", "store.tsx"), "utf8");
       expect(store).toContain('action.type === "togglePlugins"');

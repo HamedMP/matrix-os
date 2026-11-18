@@ -12,6 +12,7 @@ const sourceFiles = [
   "scripts/openmausbot/matrix-drive-mcp.mjs",
   "scripts/openmausbot/runtime-pnpm-lock.yaml",
   "packages/brand/src/tokens.ts",
+  "packages/ui/src/chat-agents/RecipeRabbit.tsx",
   "shell/public/system-app-icons/v2/bots.svg",
 ];
 

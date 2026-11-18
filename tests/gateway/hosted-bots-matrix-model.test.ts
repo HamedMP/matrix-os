@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { AiProviderSnapshotV3, AppAiRouteSelection } from "@matrix-os/contracts";
-import { createRuntimeAppAiService } from "../../packages/gateway/src/app-ai/runtime.js";
+import { createRuntimeAppAiService, type HostedBotsAppAiCatalog } from "../../packages/gateway/src/app-ai/runtime.js";
+import type { ProviderSnapshotReadOptions } from "../../packages/gateway/src/ai-providers/snapshot-read-options.js";
 import {
   createHostedBotsMatrixModel, issueHostedBotsMatrixTurn, MATRIX_BOTS_MODEL_ID,
 } from "../../packages/gateway/src/hosted-bots/matrix-model.js";
@@ -11,6 +12,16 @@ const secondModelId = "@cf/fixture/second";
 const managedRoute = (modelId: string): AppAiRouteSelection => ({
   harnessId: "matrix_ai", accountId: null, accessSourceId: "matrix_cloudflare", modelId,
 });
+const pickerManaged: HostedBotsAppAiCatalog["routes"][number] = {
+  ...managedRoute(MATRIX_BOTS_MODEL_ID), displayName: "Matrix AI", availability: "available",
+  readiness: "ready", reason: null, modelLabel: "Managed model", supportsManagedTools: true,
+};
+const pickerPersonal: HostedBotsAppAiCatalog["routes"][number] = {
+  harnessId: "native-claude", accountId: "owner-claude", accessSourceId: "owner_claude_profile",
+  modelId: "claude-sonnet-5", displayName: "Claude", availability: "available", readiness: "local_profile",
+  reason: null, modelLabel: "Connected model", supportsManagedTools: false,
+};
+const pickerCatalog = (...routes: HostedBotsAppAiCatalog["routes"]): HostedBotsAppAiCatalog => ({ routes, defaultRoute: null });
 
 function fixture() {
   const snapshot = {
@@ -23,7 +34,7 @@ function fixture() {
       { id: secondModelId, displayName: "Second model", status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"], capabilities: [] },
     ],
   };
-  const inventory = vi.fn(async () => snapshot as unknown as AiProviderSnapshotV3);
+  const inventory = vi.fn(async (_options?: ProviderSnapshotReadOptions) => snapshot as unknown as AiProviderSnapshotV3);
   const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({
     choices: [{ finish_reason: "stop", message: { content: "The requested summary." } }],
   }));
@@ -173,12 +184,103 @@ it("shares a brief picker availability read but expires unused direct-send ticke
     expect(await Promise.all(statuses.map(response => response.json()))).toEqual([
       expect.objectContaining({ available: true }), expect.objectContaining({ available: true }),
     ]);
-    expect(inventory).toHaveBeenCalledOnce();
+    expect(inventory.mock.calls.filter(([options]) => options?.admissionScope === "managed_matrix")).toHaveLength(1);
+    expect(inventory.mock.calls.filter(([options]) => !options?.admissionScope)).toHaveLength(1);
     snapshot.accessSources[0]!.state = "unavailable";
     await vi.advanceTimersByTimeAsync(46_000);
     expect(await (await bridge.routes.request("/status")).json()).toEqual({ available: false, default: "", models: [] });
     expect((await redeem(ticket!, { ...turn, modelId: MATRIX_BOTS_MODEL_ID, history: [] })).status).toBe(403);
     expect(fetchImpl).not.toHaveBeenCalled();
+  } finally {
+    bridge.close();
+    vi.useRealTimers();
+  }
+});
+
+it("returns the managed catalog while a single slow native read continues in the background", async () => {
+  let finishNative!: (catalog: HostedBotsAppAiCatalog) => void;
+  const native = new Promise<HostedBotsAppAiCatalog>(resolve => { finishNative = resolve; });
+  const discover = vi.fn((_signal: AbortSignal, scope?: "managed" | "all") =>
+    scope === "managed" ? Promise.resolve(pickerCatalog(pickerManaged)) : native);
+  const bridge = createHostedBotsMatrixModel({ providers: { discover, generate: vi.fn() } });
+  try {
+    const statuses = await Promise.all([bridge.routes.request("/status"), bridge.routes.request("/status")]);
+    const results = await Promise.all(statuses.map(response => response.json()));
+    expect(results).toEqual([
+      expect.objectContaining({ available: true, refreshing: true, models: [expect.objectContaining({ label: "Managed model · Text only" })] }),
+      expect.objectContaining({ available: true, refreshing: true, models: [expect.objectContaining({ label: "Managed model · Text only" })] }),
+    ]);
+    expect(discover.mock.calls.map(([, scope]) => scope).sort()).toEqual(["all", "managed"]);
+    const completion = bridge.routes.request("/status?complete=1");
+    finishNative(pickerCatalog(pickerManaged, pickerPersonal));
+    expect(await (await completion).json()).toMatchObject({
+      models: [expect.objectContaining({ label: "Managed model · Text only" }), expect.objectContaining({ label: "Connected model · Claude · Text only" })],
+    });
+    await vi.waitFor(async () => {
+      expect(await (await bridge.routes.request("/status")).json()).toMatchObject({
+        available: true, models: [expect.objectContaining({ label: "Managed model · Text only" }), expect.objectContaining({ label: "Connected model · Claude · Text only" })],
+      });
+    });
+  } finally {
+    finishNative(pickerCatalog());
+    bridge.close();
+  }
+});
+
+it("holds transient native picker observations only until expiry and discards a successful revocation", async () => {
+  vi.useFakeTimers();
+  let full: HostedBotsAppAiCatalog | Error = pickerCatalog(pickerManaged, pickerPersonal);
+  const discover = vi.fn(async (_signal: AbortSignal, scope?: "managed" | "all") => {
+    if (scope === "managed") return pickerCatalog(pickerManaged);
+    if (full instanceof Error) throw full;
+    return full;
+  });
+  const bridge = createHostedBotsMatrixModel({ providers: { discover, generate: vi.fn() } });
+  const status = async () => await (await bridge.routes.request("/status")).json() as { models: Array<{ label: string }> };
+  try {
+    expect((await status()).models).toHaveLength(2);
+    full = new DOMException("Synthetic slow native status", "TimeoutError");
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await status()).models).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect((await status()).models).toHaveLength(1);
+    full = pickerCatalog(pickerManaged, pickerPersonal);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await status()).models).toHaveLength(2);
+    full = pickerCatalog(pickerManaged);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await status()).models).toHaveLength(1);
+  } finally {
+    bridge.close();
+    vi.useRealTimers();
+  }
+});
+
+it("uses a successful full catalog after fast discovery fails without restoring rows revoked by the fast catalog", async () => {
+  vi.useFakeTimers();
+  const timeout = new DOMException("Synthetic catalog deadline", "TimeoutError");
+  let managed: HostedBotsAppAiCatalog | Error = timeout;
+  let full: HostedBotsAppAiCatalog | Error = pickerCatalog(pickerManaged);
+  const discover = vi.fn(async (_signal: AbortSignal, scope?: "managed" | "all") => {
+    const result = scope === "managed" ? managed : full;
+    if (result instanceof Error) throw result;
+    return result;
+  });
+  const bridge = createHostedBotsMatrixModel({ providers: { discover, generate: vi.fn() } });
+  const status = async () => await (await bridge.routes.request("/status")).json();
+  const empty = { available: false, default: "", models: [] };
+  try {
+    expect(await status()).toMatchObject({
+      available: true, default: MATRIX_BOTS_MODEL_ID,
+      models: [expect.objectContaining({ id: MATRIX_BOTS_MODEL_ID })],
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    managed = pickerCatalog();
+    expect(await status()).toEqual(empty);
+    await vi.advanceTimersByTimeAsync(13_000);
+    managed = timeout;
+    full = timeout;
+    expect(await status()).toEqual(empty);
   } finally {
     bridge.close();
     vi.useRealTimers();

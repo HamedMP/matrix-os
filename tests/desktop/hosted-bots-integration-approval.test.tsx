@@ -94,13 +94,14 @@ describe("Hosted Bots integration approvals", () => {
     expect(screen.getByText("list_prs")).toBeTruthy();
     expect(screen.getByText(/"repo": "HamedMP\/matrix-os"/).textContent).toContain('"per_page": 1');
     expect(screen.getByText(/results will be shared with the requesting conversation/i)).toBeTruthy();
-    const account = await screen.findByRole("combobox", { name: "GitHub Developer account" });
+    const account = await screen.findByRole<HTMLSelectElement>("combobox", { name: "GitHub Developer account" });
     expect(screen.getByRole("option", { name: "GitHub Developer · octocat" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Work account" })).toBeNull();
     expect(screen.queryByRole("option", { name: "GitHub work account" })).toBeNull();
     const approve = screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" });
-    expect(approve.disabled).toBe(true);
-    fireEvent.change(account, { target: { value: GITHUB_ACCOUNT.id } });
+    expect(account.value).toBe(GITHUB_ACCOUNT.id);
+    expect(approve.disabled).toBe(false);
+    expect(post).not.toHaveBeenCalled();
     fireEvent.click(approve);
     await waitFor(() => expect(post).toHaveBeenCalledWith(`${PATH}/${ID}/decision`, {
       decision: "allow",
@@ -139,8 +140,9 @@ describe("Hosted Bots integration approvals", () => {
     render(workspace(true));
     fireEvent.click(await screen.findByRole("button", { name: "Review Drive request" }));
     expect(get.mock.calls.map(([path]) => path).filter(path => path !== MCP_PATH)).toEqual([PATH, LEGACY_PATH, `${LEGACY_PATH}?includeAccounts=1`]);
-    const account = await screen.findByRole("combobox", { name: "Google Drive account" });
-    fireEvent.change(account, { target: { value: ACCOUNT.id } });
+    const account = await screen.findByRole<HTMLSelectElement>("combobox", { name: "Google Drive account" });
+    expect(account.value).toBe(ACCOUNT.id);
+    expect(post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith(`${LEGACY_PATH}/${ID}/decision`, {
       decision: "allow",
@@ -156,10 +158,11 @@ describe("Hosted Bots integration approvals", () => {
     expect(post).not.toHaveBeenCalled();
     fireEvent.click(review);
     expect(await screen.findByText(FILE)).toBeTruthy();
-    const account = await screen.findByRole("combobox", { name: "Google Drive account" });
+    const account = await screen.findByRole<HTMLSelectElement>("combobox", { name: "Google Drive account" });
     const approve = screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" });
-    expect(approve.disabled).toBe(true);
-    fireEvent.change(account, { target: { value: ACCOUNT.id } });
+    expect(account.value).toBe(ACCOUNT.id);
+    expect(approve.disabled).toBe(false);
+    expect(post).not.toHaveBeenCalled();
     fireEvent.click(approve);
     await waitFor(() => expect(post).toHaveBeenCalledWith(`${PATH}/${ID}/decision`, {
       decision: "allow",
@@ -168,6 +171,23 @@ describe("Hosted Bots integration approvals", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel read" }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith(`${PATH}/${ID}`, undefined, expect.any(Object)));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel read" })).toBeNull());
+  });
+
+  it("requires an explicit account choice when more than one can fulfill a Drive read", async () => {
+    const alternate = { id: "personal-connection", label: "Personal account", service: "google_drive" };
+    const { post, workspace } = setup([ACCOUNT, alternate]);
+    render(workspace(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Review Drive request" }));
+    const account = await screen.findByRole<HTMLSelectElement>("combobox", { name: "Google Drive account" });
+    const approve = screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" });
+    expect(account.value).toBe("");
+    expect(approve.disabled).toBe(true);
+    fireEvent.change(account, { target: { value: alternate.id } });
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(approve);
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`${PATH}/${ID}/decision`, {
+      decision: "allow", accountId: alternate.id,
+    }, expect.any(Object)));
   });
 
   it("directs the owner to Matrix Connect Apps when no Drive account is available and can still deny", async () => {
