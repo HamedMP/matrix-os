@@ -47,6 +47,7 @@ describe("shared Chat AI controls", () => {
     const { container } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor" resourceRevision="4"
       draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()} changeDraftMode={vi.fn()}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0}
+      renderedMessageIds={["msg_original"]}
       renderHistory={(status: (messageId: string) => React.ReactNode) => <article data-testid="original-prompt">
         <p>Ship the release</p>{status("msg_original")}
       </article>} />);

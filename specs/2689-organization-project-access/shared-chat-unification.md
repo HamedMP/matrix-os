@@ -126,8 +126,9 @@ candidate selections; no new admission policy or retry loop is added.
 Historical request status belongs beside its canonical prompt, linked through
 `messageId`, including identical prompts from the same participant. Completed
 requests add no status. Unclaimed work retains ordinary progress controls. The
-composer must not repeat the claimed request history or expand horizontally for
-long prompts. Reuse library controls for cancel/retry and tool decisions.
+composer must not repeat status for rendered prompts or expand horizontally for
+long prompts. Requests outside the loaded history retain compact controls until
+the matching canonical prompt is rendered. Reuse library controls for cancel/retry and tool decisions.
 
 The optional request `messageId` is returned only when the new client asks for
 `includeMessageIds=1`. Default responses retain the old strict shape during

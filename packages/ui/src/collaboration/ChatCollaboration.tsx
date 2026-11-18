@@ -746,6 +746,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
 }) {
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const discussionTrigger = useRef<HTMLButtonElement>(null);
+  const timeline = projectSharedChatTimeline(state.messages);
   const discussion = useSessionDiscussion({ api, scope: state.scope, actorId, runtimeId, open: discussionOpen, storage });
   const closeDiscussion = useCallback(() => {
     setDiscussionOpen(false);
@@ -772,8 +773,9 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
       changeDraftMode={changeDraftMode} discussionSending={state.sending} discussionError={state.error === "send"}
       sendDiscussion={send} refreshVersion={state.refreshVersion}
+      renderedMessageIds={timeline.map(message => message.id)}
       renderHistory={renderStatus => <SharedChatHistory state={state} actorId={actorId}
-        loadMoreMessages={loadMoreMessages} renderRequestStatus={renderStatus} />} />
+        timeline={timeline} loadMoreMessages={loadMoreMessages} renderRequestStatus={renderStatus} />} />
     <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} zIndex={layers?.dialog} />
   </main>;
 }
@@ -815,13 +817,13 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, proj
 }
 
 
-function SharedChatHistory({ state, actorId, loadMoreMessages, renderRequestStatus }: {
+function SharedChatHistory({ state, actorId, loadMoreMessages, renderRequestStatus, timeline }: {
+  timeline: ReturnType<typeof projectSharedChatTimeline>;
   renderRequestStatus: (messageId: string) => ReactNode;
   state: SharedChatState;
   actorId: string;
   loadMoreMessages: () => Promise<void>;
 }) {
-  const timeline = projectSharedChatTimeline(state.messages);
   return <Conversation><ConversationContent className="justify-start gap-6 pt-8 sm:pt-12">
     {timeline.length === 0 ? <div className="py-12 text-center">
       <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start a conversation</h2>

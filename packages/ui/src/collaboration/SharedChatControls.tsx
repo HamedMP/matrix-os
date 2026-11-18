@@ -51,6 +51,7 @@ export function SharedChatControls({
   updateDraft,
   refreshVersion,
   renderHistory,
+  renderedMessageIds,
 }: {
   api: CollaborationApi;
   scope: CollaborationScope;
@@ -64,17 +65,25 @@ export function SharedChatControls({
   sendDiscussion(): Promise<void>;
   refreshVersion: number;
   renderHistory?: (renderStatus: (messageId: string) => ReactNode) => ReactNode;
+  renderedMessageIds?: readonly string[];
 }) {
   const controller = useSharedAiController({ api, scope, actorId, resourceRevision, draft, updateDraft, refreshVersion });
   const { state, submitAi, control, decide } = controller;
   const presentation = sharedComposerPresentation(scope, state);
-  const relevantRequests = state.requests.filter((request) => request.state !== "completed"
-    && (!renderHistory || !request.messageId));
   // Response pages contain at most 100 requests; these render-local indexes are
   // rebuilt on refresh and retain only the latest page after optimistic submits.
   const inlineRequests = state.requests.slice(-COLLABORATION_PAGE_LIMIT).filter(request => request.messageId);
-  const inlineApprovals = new Set(inlineRequests.map(request => request.id));
   const requestsByMessage = new Map(inlineRequests.map(request => [request.messageId, request]));
+  // Only candidate request keys can enter this render-local Set (at most one
+  // response page), even when the paginated transcript is much larger.
+  const renderedRequests = new Set<string>();
+  for (const messageId of renderedMessageIds ?? []) {
+    if (requestsByMessage.has(messageId)) renderedRequests.add(messageId);
+  }
+  const inlineApprovals = new Set(inlineRequests.filter(request => request.messageId !== undefined
+    && renderedRequests.has(request.messageId)).map(request => request.id));
+  const relevantRequests = state.requests.filter((request) => request.state !== "completed"
+    && (!renderHistory || !request.messageId || !renderedRequests.has(request.messageId)));
   return <>
     {renderHistory?.((messageId) => {
       const request = requestsByMessage.get(messageId);
