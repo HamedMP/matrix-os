@@ -155,6 +155,28 @@ describe("Electron Chat preview", () => {
 });
 
 describe("Mac Verification", () => {
+  it("dispatches a Terminal intent once through the same Full Access view", async () => {
+    const digest = "d".repeat(64);
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") {
+        return { available: false, verificationAvailable: true, terminalRequests: true };
+      }
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest };
+      return { status: "returned" };
+    });
+    vi.stubGlobal("operator", { invoke });
+    const props = { ...initialProps, permissionMode: "full_access", detail: detailWithPreview() };
+    const { rerender } = render(<StrictMode><ChatElectronPreview {...props} /></StrictMode>);
+    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
+    rerender(<StrictMode><ChatElectronPreview {...props} /></StrictMode>);
+    const calls = invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run");
+    expect(calls).toEqual([["chat:electron-preview-run", expect.objectContaining({
+      chatId: chat.id, runId: selectedRun.id, requestKind: "verification",
+      fullAccessViewId: expect.any(String), terminalIntentDigest: digest,
+    })]]);
+  });
+
   function verificationDetail() {
     const detail = detailWithPreview({ parts: [{ type: "text", text: "Worktree changes are ready." }] });
     const run = detail.runs[0]!;

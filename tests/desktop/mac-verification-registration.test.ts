@@ -105,7 +105,7 @@ describe("Mac Verification packaged IPC", () => {
       expect(readAvailable()).toEqual({ available: false, verificationAvailable: false });
       expect(await run(verified)).toEqual({ status: "unavailable" });
       await openVerification?.();
-      expect(readAvailable()).toEqual({ available: false, verificationAvailable: true });
+      expect(readAvailable()).toEqual({ available: false, verificationAvailable: true, terminalRequests: true });
       expect(await run({ chatId: verified.chatId, runId: verified.runId })).toEqual({ status: "unavailable" });
       const view = select();
       expect(await run(verified, view)).toEqual({ status: "returned" });

@@ -4,6 +4,7 @@ import { completeRemotePaths } from "../file-transfer-client.js";
 import { resolveCliProfile } from "../profiles.js";
 
 const COMMANDS = [
+  "mac",
   "routines",
   "login",
   "logout",

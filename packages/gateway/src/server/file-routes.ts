@@ -248,10 +248,13 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const body = await parseJson<{ path: string; withUndo?: boolean }>(c);
+    if (typeof body?.path !== "string" || !body.path) return c.json({ error: "path required" }, 400);
+    if (body.withUndo !== undefined && typeof body.withUndo !== "boolean") {
+      return c.json({ error: "withUndo must be a boolean" }, 400);
+    }
     return withProjectFileAdmission(c, [body.path], async () => {
-      const result = await fileDelete(homePath, body.path);
+      const result = await fileDelete(homePath, body.path, { withUndo: body.withUndo === true });
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     });
   });
@@ -262,11 +265,14 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
+    const body = await parseJson<{ trashPath: string; entryId?: string }>(c);
+    if (typeof body?.trashPath !== "string" || !body.trashPath) return c.json({ error: "trashPath required" }, 400);
+    if (body.entryId !== undefined && !z.uuid().safeParse(body.entryId).success) {
+      return c.json({ error: "Invalid Trash entry" }, 400);
+    }
     const entry = (await trashList(homePath)).entries.find((candidate) => candidate.trashPath === body.trashPath);
     return withProjectFileAdmission(c, entry ? [entry.originalPath] : [], async () => {
-      const result = await trashRestore(homePath, body.trashPath);
+      const result = await trashRestore(homePath, body.trashPath, body.entryId);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     });
   });

@@ -24,6 +24,8 @@ Mac Verification appears under `@` and `/mac-verification`. Selecting it alone r
 
 The initial verifier accepts an unchanged Matrix OS worktree or a single plain-text sign-in label edit. It validates the registered path, Git base and exact file bytes, runs the fixed sign-in suite and opens a disposable Electron window. Other edits fail admission. Reuse the already-paired device and the trusted local checkout configured from the native app menu. Multi-file source snapshots and additional app surfaces require separate execution contracts.
 
+[Terminal Mac Verification](./terminal-mac-verification.md) uses the same Chat and device boundaries with an explicit typed recipe. It supports the sign-in recipe and a disposable Files Trash scenario.
+
 ### Setup
 
 In Matrix Electron Desktop on macOS, open **Mac Pairing…** and choose **Pair and Allow Chat Full Access** for the selected primary Computer. With an existing pairing, choose **Allow Chat Full Access** once. Open **Mac Verification…**, choose a trusted local Matrix OS checkout with the matching revision and prepared offline dependencies, then enable for the app session. Select **Full Access** in the private worktree Chat to run Mac Verification directly. See recent work and stop pending actions in **Mac Activity**. Choose **Revoke Chat Full Access** in Mac Pairing to remove consent.
