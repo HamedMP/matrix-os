@@ -1,5 +1,5 @@
 import type { LayoutWindow } from "@/hooks/useWindowManager";
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { canonicalOsViewCatalogPath, HOSTED_BOTS_APP_PATH } from "@matrix-os/contracts";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { getCodeEditorUrl } from "./feature-flags";
 import { openWebAppBridgeWindow, resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
@@ -8,6 +8,7 @@ const BUILT_IN_APP_VALUES = [
   "__terminal__",
   "__file-browser__",
   "__chat__",
+  HOSTED_BOTS_APP_PATH,
   "__activity-monitor__",
   "__browser__",
   "__cloud-desktop__",
@@ -50,6 +51,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
   ["__chat__", "Chat"],
+  [HOSTED_BOTS_APP_PATH, "Bots"],
   ["__activity-monitor__", "Activity Monitor"],
 ]);
 

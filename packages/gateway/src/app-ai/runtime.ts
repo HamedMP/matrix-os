@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
 import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { AppAiRequestSchema, AppAiRouteSelectionSchema, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
+import { APP_AI_TIMEOUT_MS, AppAiRequestSchema, AppAiRouteSelectionSchema, FUNDED_AI_READINESS_TIMEOUTS, type AppAiRequest, type AppAiResult, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
 import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
@@ -23,11 +23,41 @@ import type { ChatGptPlanAuthority } from "../bots/chatgpt-plan.js";
 import { CHATGPT_PLAN_SOURCE, projectChatGptPlanAppRoutes } from "./chatgpt-plan-projection.js";
 import { generateChatGptPlanAppText } from "./chatgpt-plan-completion.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
+import { isOpenCodeFreeAppRoute, projectOpenCodeFreeAppRoutes, type createOpenCodeAppCompletion } from "./opencode-completion.js";
+import { isCodexProfileAppRoute, projectCodexProfileAppRoutes } from "./codex-profile-projection.js";
 const PolicySchema = z.strictObject({
     apps: z.array(AppAiRequestSchema.shape.app).max(100),
     model: KernelModelSchema.optional(),
     route: AppAiRouteSelectionSchema.optional(),
 });
+const HOSTED_BOTS_APP = "matrix-bots";
+const hostedBotsPolicy: z.infer<typeof PolicySchema> = { apps: [HOSTED_BOTS_APP] };
+const HOSTED_BOTS_TOOL_TIMEOUT_MS = 150_000;
+const HOSTED_BOTS_OPENCODE_TIMEOUT_MS = 60_000;
+export const HOSTED_BOTS_DISCOVERY_TIMEOUT_MS = FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs + 4_000;
+export type HostedBotsApiCompletion = (input: Pick<Parameters<typeof generateApiAppText>[0], "route" | "prompt" | "signal" | "revalidate">) => Promise<AppAiResult>;
+type HostedBotsGeneration = {
+    route: AppAiRouteSelection;
+    prompt: string;
+    signal: AbortSignal;
+    generateManaged?: HostedBotsApiCompletion;
+    requestClass?: "background";
+};
+export type HostedBotsAppAiCatalog = {
+    routes: Array<AppAiRoute & { modelLabel: string; supportsManagedTools: boolean }>;
+    defaultRoute: AppAiRouteSelection | null;
+};
+type HostedBotsDiscoveryScope = "managed" | "all";
+
+export function hostedBotsRouteIsManaged(route: AppAiRouteSelection): boolean {
+    return route.harnessId === "matrix_ai" && route.accountId === null
+        && (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included");
+}
+function supportsHostedBotsTools(canonical: AiProviderSnapshotV3 | undefined, route: AppAiRouteSelection): boolean {
+    return hostedBotsRouteIsManaged(route) && Boolean(canonical?.models.find(model =>
+        model.id === route.modelId && model.eligibleAccessSourceIds.includes(route.accessSourceId)
+        && model.capabilities?.includes("tools")));
+}
 async function readPolicy(homePath: string) {
     const path = join(homePath, "system/app-ai.json");
     try {
@@ -62,10 +92,20 @@ interface RuntimeOptions {
     nativeProfileGuard?: NativeProviderProfileGuard;
     piSdkCompletion?: ReturnType<typeof createPiSdkAppCompletion>;
     hermesCompletion?: ReturnType<typeof createHermesAppCompletion>;
+    openCodeCompletion?: ReturnType<typeof createOpenCodeAppCompletion>;
+    codexProfileCompletion?: {
+        probe(signal: AbortSignal): Promise<boolean>;
+        generate(input: { route: AppAiRouteSelection; prompt: string; signal: AbortSignal; revalidate(): Promise<boolean> }): Promise<AppAiResult>;
+    };
     chatGptPlanSource?: () => { ownerId: string; authority: ChatGptPlanAuthority } | undefined;
 }
 /** Owner app grant + exact live V3-derived route, rechecked after credentials/queue waits. */
-export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
+export function createRuntimeAppAiService(options: RuntimeOptions) {
+    // Built-in access is reachable solely through the trusted in-process service.
+    // The public app bridge always reads the owner's installed application grant.
+    function policyFor(app: string, hostedBots: boolean) {
+        return hostedBots && app === HOSTED_BOTS_APP ? Promise.resolve(hostedBotsPolicy) : readPolicy(options.homePath);
+    }
     function selectedRoute(settings: ProviderSettingsSnapshot | undefined, canonical: AiProviderSnapshotV3 | undefined, policyRoute: AppAiRouteSelection | undefined, routes: AppAiRoute[]) {
         // A default is selected only by explicit owner policy or their exact V3
         // active route. There is no first-ready/cheapest/provider fallback.
@@ -95,25 +135,60 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         }
         return selected;
     }
-    async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean }) {
+    async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean; managedOnly?: boolean; scheduleAuthority?: boolean }, hostedBots = false) {
         signal.throwIfAborted();
-        const policy = await readPolicy(options.homePath);
+        const policy = await policyFor(app, hostedBots);
         if (!policy?.apps.includes(app))
             throw new Error("App AI access denied");
         if (policy.model && !policy.route) return {settings:undefined,canonical:undefined,policy,routes:{routes:[],defaultRoute:null},allRoutes:[],sdkRoutes:[] as AppAiRouteSelection[]};
+        const managedOnly = hostedBots && (intent?.managedOnly || intent?.scheduleAuthority || (intent?.route && hostedBotsRouteIsManaged(intent.route)));
+        const exactCodex = Boolean(hostedBots && intent?.route && isCodexProfileAppRoute(intent.route));
+        const exactOpenCode = Boolean(hostedBots && intent?.route && isOpenCodeFreeAppRoute(intent.route));
+        const personalOnly = exactCodex || exactOpenCode;
         let [settings, canonical] = await Promise.all([
-            options.providerSettingsReader?.getSnapshot({includeNativeAccountMetadata:intent?.verify!==false,includeNativeAccountUsage:false,signal}), options.providerSnapshotReader?.getSnapshot(intent?.verify === false ? {includeNativeAccountMetadata:false,includeNativeAccountUsage:false,signal} : {signal}),
+            managedOnly ? undefined : options.providerSettingsReader?.getSnapshot({
+                includeNativeAccountMetadata: !exactOpenCode && (exactCodex || intent?.verify !== false),
+                includeNativeAccountUsage: false, signal, ...(personalOnly ? { suppressFundedProbes: true } : {}),
+            }),
+            options.providerSnapshotReader?.getSnapshot(managedOnly ? {
+                admissionScope: intent?.scheduleAuthority ? "managed_matrix_authority" : "managed_matrix", signal,
+            }
+                : personalOnly ? { suppressFundedProbes: true, signal }
+                : intent?.verify === false ? { includeNativeAccountMetadata: false, includeNativeAccountUsage: false, signal } : { signal }),
         ]);
         signal.throwIfAborted();
         const routes = projectAppAiAuthorizationRoutes(settings, canonical);
-        const planSource = options.chatGptPlanSource?.();
-        if (canonical?.instances?.some(instance=>instance.id===CHATGPT_PLAN_SOURCE)) routes.routes.push(...projectChatGptPlanAppRoutes(canonical, Boolean(planSource && options.ownerIds.includes(planSource.ownerId))));
+        const nativeHostedRoutes: Array<AppAiRoute & { modelLabel?: string }> = [];
+        const matchesSelection = (route: AppAiRouteSelection) => !intent?.route || sameAppAiRoute(route, intent.route);
+        if (hostedBots && !managedOnly && options.openCodeCompletion && (!intent?.route || exactOpenCode)) {
+            const projected = projectOpenCodeFreeAppRoutes(settings, canonical).filter(matchesSelection);
+            if (projected.length && (intent?.verify === false || await options.openCodeCompletion.probe(signal)))
+                nativeHostedRoutes.push(...projected);
+        }
+        if (hostedBots && !managedOnly && options.codexProfileCompletion && (!intent?.route || exactCodex)) {
+            const projected = projectCodexProfileAppRoutes(settings, canonical).filter(matchesSelection);
+            if (projected.length && (intent?.verify === false || await options.codexProfileCompletion.probe(signal)))
+                nativeHostedRoutes.push(...projected);
+        }
+        routes.routes = [...routes.routes.filter(route => !nativeHostedRoutes.some(row => sameAppAiRoute(row, route))), ...nativeHostedRoutes];
+        if (!managedOnly && canonical?.instances?.some(instance=>instance.id===CHATGPT_PLAN_SOURCE)) {
+            const planSource = options.chatGptPlanSource?.();
+            routes.routes.push(...projectChatGptPlanAppRoutes(canonical, Boolean(planSource && options.ownerIds.includes(planSource.ownerId))));
+        }
         const managedReadiness=routes.routes.filter(entry=>entry.harnessId==="matrix_ai");
+        if (managedOnly) {
+            routes.routes = routes.routes.filter(hostedBotsRouteIsManaged);
+        } else if (hostedBots) {
+            // The canonical managed route already represents the same account
+            // and model. A saved CLI harness cannot create a duplicate choice.
+            routes.routes = routes.routes.filter(route => hostedBotsRouteIsManaged(route)
+                || (route.accessSourceId !== "matrix_cloudflare" && route.accessSourceId !== "matrix_included"));
+        }
         if (policy.route) routes.routes = routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!));
         // Preserve default ambiguity checks against the complete authority projection.
         const projectedDefault = selectedRoute(settings, canonical, policy.route, routes.routes);
         // Generation has one exact route. Discovery alone checks every model.
-        if (intent) {
+        if (intent && !intent.managedOnly) {
             const selected = intent.route ?? projectedDefault;
             routes.routes = selected ? routes.routes.filter(entry => sameAppAiRoute(entry, selected)) : [];
         }
@@ -123,9 +198,10 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         for (const route of routes.routes) {
             if (route.availability !== "available")
                 continue;
+            if (nativeHostedRoutes.some(entry => sameAppAiRoute(entry, route))) continue;
             if (route.accessSourceId === CHATGPT_PLAN_SOURCE) continue;
             if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included") {
-                if (!options.fundedCredentialProvider?.enabled || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
+                if (!options.fundedCredentialProvider?.enabled || (hostedBots && !options.fundedAdmission) || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
                     route.availability = "unavailable";
                     route.readiness = "unavailable";
                     route.reason = "completion_unavailable";
@@ -181,7 +257,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                     if (sdkChecks.length >= 128) throw new Error("App AI catalog unavailable");
                     const modelIds = [...new Set(routes.routes.filter(entry=>entry.availability==="available" && piSettings?.harnesses.some(candidate=>candidate.id===entry.harnessId && candidate.harness==="pi" && candidate.route.providerId===piProviderId && piSettings.accessSources.some(source=>source.id===candidate.accessSourceId && source.kind==="harness_profile"))).map(entry=>entry.modelId))];
                     let models: string[] = [];
-                    try { models = await options.piSdkCompletion.probe({providerId:harness.route.providerId,modelIds,signal,revalidate:()=>isAppAiAllowed(options.homePath,app)}); }
+                    try { models = await options.piSdkCompletion.probe({providerId:harness.route.providerId,modelIds,signal,revalidate:async()=>(await policyFor(app, hostedBots))?.apps.includes(app) ?? false}); }
                     catch (error) { signal.throwIfAborted();console.warn("[app-ai] Pi SDK discovery unavailable",error instanceof Error?error.name:"UnknownError"); }
                     check={providerId:harness.route.providerId,models};sdkChecks.push(check);signal.throwIfAborted();
                 }
@@ -198,29 +274,53 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 route.availability="unavailable";route.readiness="unavailable";route.reason="completion_unavailable";
             }
         }
-        const selected = intent ? projectedDefault : selectedRoute(settings, canonical, policy.route, routes.routes);
+        const selected = intent && !intent.managedOnly ? projectedDefault : selectedRoute(settings, canonical, policy.route, routes.routes);
         const exact = selected && routes.routes.find(entry => entry.availability === "available" && sameAppAiRoute(entry, selected));
         const authorizedRoutes=policy.route ? routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!)) : routes.routes;
         const publicRoutes = authorizedRoutes.slice(0,128);
         if (exact && !publicRoutes.some(entry=>sameAppAiRoute(entry,exact))) publicRoutes[publicRoutes.length>=128?127:publicRoutes.length]=exact;
-        return { settings, canonical, policy, sdkRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
+        return { settings, canonical, policy, sdkRoutes, nativeHostedRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
     }
-    async function connected(request: AppAiRequest, signal: AbortSignal) {
-        const initial = await catalog(request.app, signal, { route: request.route });
+    async function connected(request: AppAiRequest, signal: AbortSignal, hostedBots = false, generateManaged?: HostedBotsApiCompletion, requestClass?: "background") {
+        const openCode = hostedBots && request.route && isOpenCodeFreeAppRoute(request.route);
+        const scheduleAuthority = hostedBots && requestClass === "background";
+        const initial = await catalog(request.app, signal, { route: request.route, scheduleAuthority }, hostedBots).catch((error: unknown) => {
+            if (openCode) console.warn("[app-ai] OpenCode completion unavailable", "catalog_read");
+            throw error;
+        });
         const route = request.route ?? initial.routes.defaultRoute;
-        if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route)))
+        if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))) {
+            if (openCode) console.warn("[app-ai] OpenCode completion unavailable", "route_unavailable");
             throw new Error("App AI route is unavailable");
+        }
+        if (requestClass === "background" && (!hostedBots || !hostedBotsRouteIsManaged(route))) throw new Error("App AI background source unavailable");
+        const managedToolTurn = !requestClass && generateManaged && hostedBots && supportsHostedBotsTools(initial.canonical, route);
         const revalidate = async () => {
-            const current = await catalog(request.app, signal, { route, verify: false });
+            const current = await catalog(request.app, signal, { route, verify: false, scheduleAuthority }, hostedBots);
             return (!current.policy.model || current.policy.route!==undefined) && (!current.policy.route || sameAppAiRoute(current.policy.route,route)) && current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
+                && (!managedToolTurn || supportsHostedBotsTools(current.canonical, route))
                 && (request.route !== undefined || current.routes.defaultRoute !== null && sameAppAiRoute(current.routes.defaultRoute, route));
         };
-        if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included" || route.accessSourceId === "owner_anthropic_key")
-            return generateApiAppText({ ...options, route, prompt: request.prompt, signal, revalidate });
+        if (generateManaged && managedToolTurn) {
+            const result = await generateManaged({ route, prompt: request.prompt, signal, revalidate });
+            if (!await revalidate()) throw new Error("App AI access revoked");
+            return result;
+        }
+        if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included" || route.accessSourceId === "owner_anthropic_key") {
+            const textSignal = generateManaged ? AbortSignal.any([signal, AbortSignal.timeout(APP_AI_TIMEOUT_MS)]) : signal;
+            return generateApiAppText({ ...options, route, prompt: request.prompt, signal: textSignal, revalidate, requestClass });
+        }
         if (route.accessSourceId === CHATGPT_PLAN_SOURCE) {
             const source = options.chatGptPlanSource?.();
             if (!source || !options.ownerIds.includes(source.ownerId) || !initial.canonical) throw new Error("App AI source unavailable");
             return generateChatGptPlanAppText({...source,app:request.app,route,canonical:initial.canonical,prompt:request.prompt,signal,revalidate});
+        }
+        if (hostedBots && initial.nativeHostedRoutes?.some(entry => sameAppAiRoute(entry, route))) {
+            if (options.openCodeCompletion && isOpenCodeFreeAppRoute(route))
+                return options.openCodeCompletion.generate({ modelId: route.modelId, prompt: request.prompt, signal, revalidate });
+            if (options.codexProfileCompletion && isCodexProfileAppRoute(route))
+                return options.codexProfileCompletion.generate({ route, prompt: request.prompt, signal, revalidate });
+            throw new Error("Native App AI route unavailable");
         }
         if (!initial.settings)
             throw new Error("App AI route unavailable");
@@ -233,7 +333,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             // lease, durable owner intent and the direct CLI identity proof are used.
             const guardedRevalidate = async () => {
                 signal.throwIfAborted();
-                const policy = await readPolicy(options.homePath);
+                const policy = await policyFor(request.app, hostedBots);
                 if (!policy?.apps.includes(request.app))
                     return false;
                 if (policy.model !== initial.policy.model || JSON.stringify(policy.route) !== JSON.stringify(initial.policy.route))
@@ -249,7 +349,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         if (harness.harness === "hermes") {
             // Read both authoritative receipts immediately before credential proof;
             // earlier route projection can outlive the native five-second window.
-            const current = await catalog(request.app, signal, { route, verify: false });
+            const current = await catalog(request.app, signal, { route, verify: false }, hostedBots);
             if (!current.settings || !current.canonical || current.policy.model !== initial.policy.model
                 || JSON.stringify(current.policy.route) !== JSON.stringify(initial.policy.route)
                 || !current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
@@ -259,7 +359,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             if(!options.hermesCompletion || !source) throw new Error("App AI source unavailable");
             const guardedRevalidate = async () => {
                 signal.throwIfAborted();
-                const policy=await readPolicy(options.homePath);
+                const policy=await policyFor(request.app, hostedBots);
                 if(!policy?.apps.includes(request.app) || policy.model!==initial.policy.model || JSON.stringify(policy.route)!==JSON.stringify(initial.policy.route)) return false;
                 const saved=await readSavedProviderSettingsConfiguration(join(options.homePath,"system/ai-providers/settings.json"));
                 const selected=saved ? saved.harnesses.find(entry=>entry.id===route.harnessId) : (await options.providerSettingsReader?.getSnapshot({includeNativeAccountMetadata:false,includeNativeAccountUsage:false,signal}))?.harnesses.find(entry=>entry.id===route.harnessId);
@@ -278,7 +378,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             // proves the exact physical model and locked credential lineage.
             const guardedRevalidate = async () => {
                 signal.throwIfAborted();
-                const policy = await readPolicy(options.homePath);
+                const policy = await policyFor(request.app, hostedBots);
                 if (!policy?.apps.includes(request.app) || policy.model!==initial.policy.model || JSON.stringify(policy.route)!==JSON.stringify(initial.policy.route)) return false;
                 const saved = await readSavedProviderSettingsConfiguration(join(options.homePath,"system/ai-providers/settings.json"));
                 const selected = saved ? saved.harnesses.find(entry=>entry.id===route.harnessId) : (await options.providerSettingsReader?.getSnapshot({includeNativeAccountMetadata:false,includeNativeAccountUsage:false,signal}))?.harnesses.find(entry=>entry.id===route.harnessId);
@@ -293,7 +393,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         }
         throw new Error("App AI completion unavailable");
     }
-    return createAppAiRoutes({
+    const routes = createAppAiRoutes({
         lifecycle: options.lifecycle,
         authorizeOwner(context) {
             return options.ownerIds.includes(requireRequestPrincipal(context).userId);
@@ -330,4 +430,48 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 signal: launch.fundedRunTimeoutMs ? AbortSignal.any([signal, AbortSignal.timeout(launch.fundedRunTimeoutMs)]) : signal });
         },
     });
+    async function hostedWork<T>(signal: AbortSignal, operation: (workSignal: AbortSignal) => Promise<T>, timeoutMs = APP_AI_TIMEOUT_MS): Promise<T> {
+        const lifetime = options.lifecycle;
+        const workSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs), ...(lifetime ? [lifetime.signal] : [])]);
+        workSignal.throwIfAborted();
+        return lifetime ? lifetime.track(() => operation(workSignal)) : operation(workSignal);
+    }
+    const hostedBots = {
+        discover: (signal: AbortSignal, scope: HostedBotsDiscoveryScope = "all", mode?: "schedule_authority") => hostedWork(signal, async (workSignal): Promise<HostedBotsAppAiCatalog> => {
+            const intent = scope === "managed" || mode === "schedule_authority"
+                ? { managedOnly: true, scheduleAuthority: mode === "schedule_authority" } : undefined;
+            const { allRoutes, canonical, settings, nativeHostedRoutes, routes: { defaultRoute } } = await catalog(HOSTED_BOTS_APP, workSignal, intent, true);
+            return {
+                defaultRoute,
+                routes: allRoutes.filter(route => route.availability === "available").map(route => {
+                    const harness = settings?.harnesses.find(entry => entry.id === route.harnessId);
+                    const provider = settings?.modelProviders.find(entry => entry.id === harness?.route.providerId);
+                    const settingsModel = provider?.models.find(entry => entry.id === route.modelId);
+                    const canonicalModel = canonical?.models.find(entry => entry.id === route.modelId);
+                    return {
+                        ...route,
+                        modelLabel: nativeHostedRoutes?.find(entry => sameAppAiRoute(entry, route))?.modelLabel
+                            || settingsModel?.displayName || canonicalModel?.displayName || route.modelId,
+                        supportsManagedTools: supportsHostedBotsTools(canonical, route),
+                    };
+                }),
+            };
+        }, HOSTED_BOTS_DISCOVERY_TIMEOUT_MS),
+        generate: ({ route, prompt, signal, generateManaged, requestClass }: HostedBotsGeneration): Promise<AppAiResult> => {
+            let timeoutMs = APP_AI_TIMEOUT_MS;
+            if (!requestClass) {
+                if (generateManaged && hostedBotsRouteIsManaged(route)) timeoutMs = HOSTED_BOTS_TOOL_TIMEOUT_MS;
+                else if (isOpenCodeFreeAppRoute(route)) timeoutMs = HOSTED_BOTS_OPENCODE_TIMEOUT_MS;
+            }
+            return hostedWork(signal,
+                workSignal => connected(AppAiRequestSchema.parse({ app: HOSTED_BOTS_APP, route, prompt }), workSignal, true, generateManaged, requestClass),
+                timeoutMs,
+            );
+        },
+    };
+    return { routes, hostedBots };
+}
+
+export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
+    return createRuntimeAppAiService(options).routes;
 }

@@ -1,0 +1,16 @@
+<!-- Idle Chat Bot rabbit from RecipeRabbit.tsx, teal productivity variant for matrix-bots. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <g style="transform-box: fill-box; transform-origin: 50% 100%; transform: translateY(-1px) scaleY(.96) rotate(-5deg)">
+    <path d="M14 20C12 13 13 5 17 2c5 3 5 12 3 18Z" fill="#35B7A7"/>
+    <path d="M15.2 6.5c1.5 2.2 2.2 5.4 2.2 8.3" fill="none" stroke="#DDF6F1" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+  <g style="transform-box: fill-box; transform-origin: 50% 100%; transform: translateY(-1px) scaleY(.96) rotate(5deg)">
+    <path d="M28 20c0-8 3-16 7-18 5 4 3 14-1 19Z" fill="#35B7A7"/>
+    <path d="M34.5 6.5c-1.5 2.2-2.2 5.4-2.2 8.3" fill="none" stroke="#DDF6F1" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+  <path d="M9 39C4 32 8 19 21 10c3-2 6-2 9 0 11 8 15 20 10 28-6 9-23 10-31 1Z" fill="#35B7A7"/>
+  <g fill="#17201f">
+    <rect x="14" y="25" width="3.2" height="6" rx="1.6" transform="rotate(-12 15.6 28)"/>
+    <rect x="30" y="25" width="3.2" height="6" rx="1.6" transform="rotate(-12 31.6 28)"/>
+  </g>
+</svg>

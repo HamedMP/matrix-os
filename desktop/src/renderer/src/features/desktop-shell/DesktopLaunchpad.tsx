@@ -7,6 +7,7 @@ import type { OsViewDesktopAddResult, OsViewDesktopBounds } from "@matrix-os/con
 
 export default function DesktopLaunchpad({
   open,
+  botsAvailable,
   onClose,
   onLaunchTab,
   onCreateApp,
@@ -16,6 +17,7 @@ export default function DesktopLaunchpad({
   onSwitchOsView,
 }: {
   open: boolean;
+  botsAvailable?: boolean;
   onClose: () => void;
   onLaunchTab?: (tabId: string) => void;
   onCreateApp?: () => void;
@@ -46,6 +48,7 @@ export default function DesktopLaunchpad({
       <AppLauncher
         presentation="launchpad"
         launcherActive={open}
+        botsAvailable={botsAvailable}
         onCloseLauncher={onClose}
         onCreateApp={onCreateApp}
         onOpenDesktopApp={onOpenDesktopApp}

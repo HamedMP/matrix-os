@@ -2,6 +2,7 @@
 // At most `maxLive` embeds keep a live WebContentsView; the rest are detached
 // but restorable. Total records are capped so a runaway open loop can't grow
 // unbounded.
+import type { HostedBotsAppearance } from "../../shared/hosted-bots-appearance";
 import { randomUUID } from "node:crypto";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { isNavigationAllowed } from "./origin-policy";
@@ -18,6 +19,7 @@ export interface Bounds {
 export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
   setScale(factor: number): void;
+  setBotsAppearance?(appearance: HostedBotsAppearance): void;
   loadUrl(url: string): Promise<void>;
   captureSnapshot?(): Promise<string | null>;
   attach(): void;
@@ -25,7 +27,7 @@ export interface EmbedViewLike {
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "shared-app" | "browser";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "shared-app" | "browser" | "hosted-bots";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }
@@ -36,6 +38,7 @@ export type EmbedManagerOptions = {
     partition: string;
     kind: EmbedKind;
     slug: string | null;
+    botsAppearance?: HostedBotsAppearance;
     routeSlug: string | null;
     allowedOrigins: string[];
     resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
@@ -110,6 +113,7 @@ export class EmbedManager {
       id?: string;
       active?: boolean;
       routeSlug?: string;
+      botsAppearance?: HostedBotsAppearance;
       allowedOrigins?: string[];
       resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
       allowPublicNavigation?: boolean;
@@ -157,6 +161,7 @@ export class EmbedManager {
       partition,
       kind,
       slug,
+      botsAppearance: options?.botsAppearance,
       routeSlug: kind === "app" ? options?.routeSlug ?? slug : null,
       allowedOrigins,
       resolveNavigation: options?.resolveNavigation,
@@ -200,6 +205,13 @@ export class EmbedManager {
     const record = this.records.get(embedId);
     if (!record || !Number.isFinite(factor) || factor < 0.5 || factor > 2) return false;
     record.view.setScale(factor);
+    return true;
+  }
+
+  setBotsAppearance(embedId: string, appearance: HostedBotsAppearance): boolean {
+    const view = this.records.get(embedId)?.view;
+    if (!view?.setBotsAppearance) return false;
+    view.setBotsAppearance(appearance);
     return true;
   }
 

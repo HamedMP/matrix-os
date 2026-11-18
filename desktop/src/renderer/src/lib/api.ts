@@ -6,6 +6,7 @@ import { chatFundingVersionUrl } from "@matrix-os/contracts";
 import { isRoutineOriginPath, botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
 
 const API_TIMEOUT_MS = 10_000;
+const HOSTED_BOTS_MCP_DECISION_PATH = /^\/api\/chats\/hosted-bots\/runs\/[^/?]+\/approvals\/[^/?]+(?:\?|$)/;
 
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
@@ -91,7 +92,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     init: RequestInit,
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
-    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path) && !isRoutineOriginPath(path);
+    // Hosted Bots shares the owner approval proxy with Chat, not the Chat
+    // wire contract. The hosted decision handler rejects forwarded query params.
+    const chatPath = /^\/api\/chats(?:[/?]|$)/.test(path) && !HOSTED_BOTS_MCP_DECISION_PATH.test(path);
+    const negotiateChatResponse = chatPath && !isRoutineOriginPath(path);
     const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
       (signal): signal is AbortSignal => signal !== null && signal !== undefined,
@@ -105,7 +109,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
-        ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
+        // Never replay a model credential body to a redirected destination.
+        ...(init.method === "PUT" && path === "/api/hosted-bots/model" ? { redirect: "error" } : {}),
+        ...(chatPath ? {
           headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
         } : {}),
         signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),

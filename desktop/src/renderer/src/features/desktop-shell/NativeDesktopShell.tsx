@@ -1,3 +1,4 @@
+import { DesktopHostedBotsProvider, useDesktopHostedBotsCapability } from "../bots/DesktopBotsWorkspace";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
@@ -87,6 +88,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const drawerOpen = useDesktopAppDrawer((state) => state.open);
   const setDrawerOpen = useDesktopAppDrawer((state) => state.setOpen);
   const api = useConnection((state) => state.api);
+  const botsCapability = useDesktopHostedBotsCapability();
+  const botsAvailable = botsCapability.mode !== null;
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const { data: installedApps = [], refetch: refetchInstalledApps, isPending: appsLoading } = useAppsQuery();
@@ -259,7 +262,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [closeTab, tabs]);
 
   const destinations = useMemo<DesktopDestination[]>(() => {
-    const fixedApps = FIXED_DESKTOP_APPS.map((app) => {
+    const fixedApps = FIXED_DESKTOP_APPS.filter((app) => app.id !== "bots" || botsAvailable).map((app) => {
       if (app.id !== "notes" && app.id !== "whiteboard") return app;
       const installed = installedApps.find((candidate) => candidate.path === app.path);
       return installed?.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
@@ -268,6 +271,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     });
     const openers: Record<DesktopAppId, () => void> = {
       work: () => openRoot(openChatIndex),
+      bots: () => openRoot(() => openTab({ kind: "bots", title: "Bots" })),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
       editor: () => openRoot(() => openTab(EDITOR_WORKSPACE_TAB_SPEC)),
@@ -315,7 +319,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       }];
     });
     return [...fixed, ...generated];
-  }, [installedApps, openRoot, openTab, platformHost, runtimeSlot]);
+  }, [botsAvailable, installedApps, openRoot, openTab, platformHost, runtimeSlot]);
 
   useNativeChatStartup({
     entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: !appsLoading,
@@ -399,6 +403,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     && activeSurface?.mode === "tab";
 
   return (
+    <DesktopHostedBotsProvider value={botsCapability}>
     <div
       data-native-desktop-shell
       className="absolute inset-x-0 bottom-0 overflow-hidden"
@@ -459,6 +464,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       {launcherMounted ? (
         <DesktopLaunchpad
           open={launcherOpen}
+          botsAvailable={botsAvailable}
           onClose={closeApps}
           onLaunchTab={launchApp}
           onCreateApp={createApp}
@@ -482,5 +488,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         </>
       ) : null}
     </div>
+    </DesktopHostedBotsProvider>
   );
 }

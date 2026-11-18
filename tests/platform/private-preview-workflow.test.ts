@@ -116,6 +116,16 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(outputs.action).toBe(action);
   });
 
+  it('registers a bundle without requiring a Bots-specific label or moving any channel', async () => {
+    const { status, outputs } = await decide({ HAS_BUNDLE_LABEL: 'true' });
+    expect(status).toBe(0);
+    expect(outputs.action).toBe('bundle');
+    expect(outputs).not.toHaveProperty('openmausbot_preview');
+    const build = workflow.jobs.build!.steps.find((candidate) => candidate.name === 'Build host bundle');
+    expect(build?.env).toMatchObject({ HOST_BUNDLE_CHANNEL: 'none' });
+    expect(build?.env).not.toHaveProperty('HOST_BUNDLE_OPENMAUSBOT_PREVIEW');
+  });
+
   it('exposes an opt-in manual bundle action using live PR head and author without deployment', async () => {
     expect(workflow.on.workflow_dispatch.inputs.bundle_only).toMatchObject({ type: 'boolean', default: false });
     const liveSha = 'a'.repeat(40);

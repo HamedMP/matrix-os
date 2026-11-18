@@ -1,5 +1,6 @@
 import {
   Blocks,
+  Bot,
   FileCode2,
   FilePenLine,
   Code2,
@@ -14,6 +15,7 @@ import {
   UsersIcon,
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
+import { HOSTED_BOTS_APP_PATH } from "@matrix-os/contracts";
 import { bundledDesktopIconForPath } from "./bundled-app-icons";
 import { useState } from "react";
 import type { Tab, TabKind } from "../../stores/tabs";
@@ -24,6 +26,7 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   browser: Globe2,
   work: FolderKanban,
   chat: MessageCircle,
+  bots: Bot,
   projects: FolderKanban,
   project: FolderKanban,
   task: FileCode2,
@@ -52,7 +55,7 @@ export default function SurfaceIcon({
   const Icon = isPlugins ? Blocks : SURFACE_ICON[tab.kind];
   const explicitIcon = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   const product = tab.kind === "app" ? nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "") : null;
-  const paths: Partial<Record<TabKind,string>> = { home: "__browser__", browser: "__browser__", work: "__chat__", chat: "__chat__", terminal: "__terminal__", terminals: "__terminal__", files: "__file-browser__", editor: "__editor__", notes: "apps/notes/index.html", settings: "__settings__" };
+  const paths: Partial<Record<TabKind,string>> = { home: "__browser__", browser: "__browser__", work: "__chat__", chat: "__chat__", bots: HOSTED_BOTS_APP_PATH, terminal: "__terminal__", terminals: "__terminal__", files: "__file-browser__", editor: "__editor__", notes: "apps/notes/index.html", settings: "__settings__" };
   const path = product?.path ?? (isPlugins ? "__plugins__" : paths[tab.kind]);
   const iconUrl = explicitIcon ?? (path ? bundledDesktopIconForPath(path) : undefined);
   if (iconUrl) return <RemoteSurfaceIcon key={iconUrl} iconUrl={iconUrl} size={size} fallback={Icon} />;

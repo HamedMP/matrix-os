@@ -258,3 +258,17 @@ describe("funded AI readiness", () => {
     expect(JSON.stringify(await reader.read())).not.toContain("private");
   });
 });
+
+it("authorizes scheduled model intent from current Chat funding without probing relay liveness", async () => {
+  const { reader, state, getRouteReadiness, getFundingSummary } = setup();
+  getRouteReadiness.mockRejectedValue(new DOMException("Cold relay", "TimeoutError"));
+  const call = { mode: "schedule_authority" } as const;
+  expect(await reader.read(call)).toMatchObject({
+    readiness: { state: "ready" }, allowedModelIds: ["claude-sonnet-5"],
+  });
+  state.policy.enabled = false;
+  state.policy.allowedModelIds = [];
+  expect(await reader.read(call)).toMatchObject({ readiness: { state: "unavailable" }, allowedModelIds: [] });
+  expect(getFundingSummary).toHaveBeenCalledTimes(2);
+  expect(getRouteReadiness).not.toHaveBeenCalled();
+});

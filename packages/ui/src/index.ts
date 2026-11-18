@@ -347,6 +347,9 @@ export { RoutineActionConfirmation } from "./routine-action/RoutineActionConfirm
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 
+export { BotsWorkspace } from "./bots/BotsWorkspace.js";
+export { useHostedBotsAvailability, type HostedBotsTransport } from "./bots/hosted-bots-client.js";
+
 export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
 
 export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";

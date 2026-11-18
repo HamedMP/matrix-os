@@ -14,8 +14,11 @@ import icon9 from "../../../../../../shell/public/system-app-icons/v3/canvas.png
 import icon10 from "../../../../../../shell/public/system-app-icons/v3/desktop.png";
 import icon11 from "../../../../../../shell/public/system-app-icons/v2/create-app.png";
 
+import botsIcon from "../../../../../../shell/public/system-app-icons/v2/bots.svg";
+
 const icons: Readonly<Record<string,string>> = {
   "chat": icon0,
+  bots: botsIcon,
   "terminal": icon1,
   "files": icon2,
   "editor": icon3,

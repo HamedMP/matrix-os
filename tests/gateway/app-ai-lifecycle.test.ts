@@ -12,6 +12,7 @@ vi.mock('@matrix-os/kernel', () => ({ generateAppText: mocks.generate, DEFAULT_K
 import { registerAppAiCapabilities } from '../../packages/gateway/src/server/app-capabilities.js';
 import { createAppAiLifecycle } from '../../packages/gateway/src/server/app-ai-lifecycle.js';
 import { projectChatGptPlanSnapshot } from '../../packages/gateway/src/app-ai/chatgpt-plan-projection.js';
+import type { ProviderSettingsSnapshot } from '@matrix-os/contracts';
 import { createFundedAdmissionQueue } from '../../packages/gateway/src/funded-ai/admission-queue.js';
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 let homePath: string;
@@ -20,6 +21,72 @@ afterEach(async () => { vi.useRealTimers(); await rm(homePath, { recursive: true
 const route = { harnessId: 'matrix_ai', accountId: null, accessSourceId: 'matrix_cloudflare', modelId: '@cf/zai-org/glm-5.3-flash' };
 const canonical = () => ({ accessSources: [{ id: route.accessSourceId, state: 'ready', checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString(), eligibleModelIds: [route.modelId] }], models: [{ id: route.modelId, status: 'current', eligibleAccessSourceIds: [route.accessSourceId] }] });
 const post = (app: Hono, selection: unknown = route, signal?: AbortSignal) => app.request('/api/bridge/ai', { method: 'POST', signal, body: JSON.stringify({ app: 'brain', prompt: 'text', ...(selection ? { route: selection } : {}) }) });
+it('shares managed routes with the trusted Bots bridge without granting uninstalled apps an HTTP route', async () => {
+  const snapshot = canonical();
+  const second = { ...route, modelId: '@cf/fixture/second' };
+  snapshot.accessSources[0]!.eligibleModelIds.push(second.modelId);
+  snapshot.models.push({ id: second.modelId, status: 'current', eligibleAccessSourceIds: [second.accessSourceId] });
+  const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: 'second reply' } }] }));
+  const app = new Hono();
+  const runtime = registerAppAiCapabilities(app, {
+    homePath, ownerIds: ['owner'], hermesRuntimeSource: {} as never,
+    providerSnapshotReader: { getSnapshot: async () => snapshot as never },
+    fundedCredentialProvider: { enabled: true, getCredential: async () => ({ token: 'synthetic', relayBaseUrl: 'https://relay.example.test' }) } as never,
+    fundedAdmission: createFundedAdmissionQueue(), fetchImpl,
+  });
+  try {
+    const signal = new AbortController().signal;
+    expect((await app.request('/api/bridge/ai/routes?app=matrix-bots')).status).toBe(403);
+    expect((await app.request('/api/bridge/ai', { method: 'POST', body: JSON.stringify({ app: 'matrix-bots', prompt: 'text', route: second }) })).status).toBe(403);
+    expect((await runtime.hostedBots.discover(signal)).routes).toEqual([
+      expect.objectContaining({ ...route, availability: 'available' }),
+      expect.objectContaining({ ...second, availability: 'available' }),
+    ]);
+    await expect(runtime.hostedBots.generate({ route: second, prompt: 'only text', signal })).resolves.toEqual({ text: 'second reply' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: second.modelId, tool_choice: 'none', store: false });
+    snapshot.accessSources[0]!.eligibleModelIds = [route.modelId];
+    await expect(runtime.hostedBots.generate({ route: second, prompt: 'another', signal })).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+it('uses the connected owner Anthropic account for a Bots turn and observes revocation independently of Matrix credit', async () => {
+  await mkdir(join(homePath, 'system/ai-providers'));
+  await writeFile(join(homePath, 'system/ai-providers/anthropic-key.json'), JSON.stringify({ version: 1, apiKey: 'synthetic-fixture-key' }), { mode: 0o600 });
+  const selected = { harnessId: 'claude-fixture', accountId: 'anthropic-fixture', accessSourceId: 'owner_anthropic_key', modelId: 'claude-sonnet-5' };
+  const settings = {
+    harnesses: [{ id: selected.harnessId, selectedAccountId: selected.accountId, accessSourceId: selected.accessSourceId,
+      harness: 'claude', displayName: 'Claude', enabled: true, installState: 'installed', authState: 'authenticated', connectivity: 'online',
+      route: { providerId: 'anthropic', modelId: selected.modelId } }],
+    accessSources: [{ id: selected.accessSourceId, kind: 'provider_account', accountId: selected.accountId,
+      eligibleModelIds: [selected.modelId], readiness: { state: 'ready', staleAfter: null } }],
+    accounts: [{ id: selected.accountId, accessSourceId: selected.accessSourceId, authState: 'authenticated' }],
+    modelProviders: [{ id: 'anthropic', models: [{ id: selected.modelId, displayName: 'Claude Sonnet 5', enabled: true }] }],
+  } as unknown as ProviderSettingsSnapshot;
+  const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'owner route reply' }] }));
+  const app = new Hono();
+  const runtime = registerAppAiCapabilities(app, {
+    homePath, ownerIds: ['owner'], hermesRuntimeSource: {} as never, fetchImpl,
+    providerSettingsReader: { getSnapshot: async () => settings },
+  });
+  try {
+    const signal = new AbortController().signal;
+    expect((await runtime.hostedBots.discover(signal)).routes).toEqual([
+      expect.objectContaining({ ...selected, modelLabel: 'Claude Sonnet 5', supportsManagedTools: false }),
+    ]);
+    const generateManaged = vi.fn();
+    expect(await runtime.hostedBots.generate({ route: selected, prompt: 'owner prompt', signal, generateManaged })).toEqual({ text: 'owner route reply' });
+    expect(generateManaged).not.toHaveBeenCalled();
+    const [url, request] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.anthropic.com/v1/messages');
+    expect(new Headers(request?.headers).get('x-api-key')).toBe('synthetic-fixture-key');
+    expect(JSON.parse(String(request?.body))).toMatchObject({ model: selected.modelId, messages: [{ role: 'user', content: 'owner prompt' }] });
+    settings.harnesses[0]!.enabled = false;
+    await expect(runtime.hostedBots.generate({ route: selected, prompt: 'after revocation', signal })).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
 it('aborts funded HTTP and waits for real cancellation cleanup before closing dependencies, while rejecting new work', async () => {
   await writeFile(join(homePath, 'system/app-ai.json'), JSON.stringify({ apps: ['brain'] }));
   const entered = deferred<void>(); const release = deferred<void>(); let signal!: AbortSignal; let drained = false;

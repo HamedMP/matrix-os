@@ -49,6 +49,38 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("sends Hosted Bots MCP decisions through the selected runtime without Chat funding negotiation", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(202, { ok: true }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn,
+    }).forRuntime("dev");
+    const path = "/api/chats/hosted-bots/runs/hosted-bots-7da48e02-068d-4afb-af50-fab92aa96bbf/approvals/c550fd7e-1933-4744-a1f9-9cb667af33c1";
+    const decision = { decision: "approve", clientRequestId: "req_a1fabc4227554a2a840696f8ac626105" };
+
+    await expect(client.post(path, decision, { omitErrorBody: true, maxBytes: 1024 })).resolves.toEqual({ ok: true });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      `https://app.matrix-os.com${path}?runtime=dev`,
+      expect.objectContaining({
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(decision),
+      }),
+    );
+  });
+
+  it("does not follow redirects when sending a Hosted Bots model credential", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { connected: true }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "pv-1907-3fa91c2e", fetchFn,
+    });
+
+    await client.put("/api/hosted-bots/model", { apiKey: "test-only-key" });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/hosted-bots/model?runtime=pv-1907-3fa91c2e",
+      expect.objectContaining({ method: "PUT", redirect: "error" }),
+    );
+  });
+
   it("sends a bounded text range to the pinned Preview runtime", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("first part", { status: 206 }));
     const client = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn }).forRuntime("pr-2047");

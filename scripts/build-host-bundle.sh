@@ -145,6 +145,22 @@ node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-update-request-rejection"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
+# Stage the isolated workload in every compatible host bundle. The premerge
+# baseline sandbox receives this exact build's image as a read-only input.
+OPENMAUSBOT_BUILD_SHA="${MATRIX_BUILD_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+[[ "$OPENMAUSBOT_BUILD_SHA" =~ ^[a-f0-9]{40}$ ]]
+OPENMAUSBOT_IMAGE_ARCHIVE="$STAGE_DIR/bin/matrix-openmausbot.image.tar"
+if [ -n "${HOST_BUNDLE_OPENMAUSBOT_ARCHIVE:-}" ]; then
+  test -f "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE" && test ! -L "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE"
+  install -m 0644 "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE" "$OPENMAUSBOT_IMAGE_ARCHIVE"
+else
+  node "$ROOT_DIR/scripts/openmausbot/build-host-image.mjs" "$ROOT_DIR" "$OPENMAUSBOT_IMAGE_ARCHIVE" "$OPENMAUSBOT_BUILD_SHA"
+fi
+test -s "$OPENMAUSBOT_IMAGE_ARCHIVE"
+printf 'matrix-openmausbot-oss:matrix-%s\n' "$OPENMAUSBOT_BUILD_SHA" > "$STAGE_DIR/bin/matrix-openmausbot.image-ref"
+chmod 0644 "$OPENMAUSBOT_IMAGE_ARCHIVE" "$STAGE_DIR/bin/matrix-openmausbot.image-ref"
+install -m 0755 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot-run" "$STAGE_DIR/bin/"
+install -m 0644 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot.service" "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-configure-platform-speech.py"
@@ -160,6 +176,11 @@ cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 bash "$ROOT_DIR/scripts/stage-host-pnpm.sh" "$STAGE_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+# Keep OpenMausBot attribution next to the compiled code that redistributes it.
+HOSTED_BOTS_SOURCE_DIR="$ROOT_DIR/packages/gateway/src/hosted-bots/upstream"
+HOSTED_BOTS_NOTICE_DIR="$STAGE_DIR/app/packages/gateway/dist/hosted-bots/upstream"
+mkdir -p "$HOSTED_BOTS_NOTICE_DIR"
+install -m 0644 "$HOSTED_BOTS_SOURCE_DIR/LICENSE" "$HOSTED_BOTS_SOURCE_DIR/NOTICE" "$HOSTED_BOTS_NOTICE_DIR/"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 # Check the copied native bytes against the customer ABI, then load the exact
 # staged dependency with the Node version shipped in this bundle.

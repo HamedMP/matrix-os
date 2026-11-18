@@ -5,7 +5,12 @@ const repo = z.string().max(256).regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/)
   .refine((value) => value.split("/").every((part) => part !== "." && part !== ".."));
 const pullNumber = z.number().int().min(1).max(2147483647);
 const pagination = { page: z.number().int().min(1).max(1000000).optional(), perPage: z.number().int().min(1).max(100).optional() };
-const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+// Keep GitHub's vendor representation preferred and explicitly accept
+// application/json so the Pipedream SDK decodes the response as JSON.
+const headers = {
+  Accept: "application/vnd.github+json, application/json;q=0.9",
+  "X-GitHub-Api-Version": "2022-11-28",
+};
 const root = (p: Record<string, unknown>) => `https://api.github.com/repos/${repo.parse(p.repo).split("/").map(encodeURIComponent).join("/")}`;
 const pageParams = (p: Record<string, unknown>): Record<string, string> => ({ page: String(p.page ?? 1), per_page: String(p.perPage ?? 30) });
 function pullAction(description: string, suffix = "", paged = false): ServiceAction {

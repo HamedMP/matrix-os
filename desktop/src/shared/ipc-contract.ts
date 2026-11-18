@@ -8,7 +8,9 @@ import { DesktopDevRunSummarySchema } from "./dev-run-label";
 import { z } from "zod/v4";
 import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
-import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
+import { HostedBotsAppearanceSchema } from "./hosted-bots-appearance";
+import { HostedBotsSettingsSectionSchema } from "./hosted-bots-settings";
+import { AI_USAGE_INVOKE } from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
 import { SHARED_APP_DEEP_LINK_EVENTS, SHARED_APP_DEEP_LINK_INVOKE } from "./shared-app-deep-link-ipc";
@@ -409,6 +411,12 @@ export const INVOKE_CHANNELS = {
   "embed:open": {
     request: z.discriminatedUnion("kind", [
       z.strictObject({
+        kind: z.literal("hosted-bots"),
+        appearance: HostedBotsAppearanceSchema,
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
         kind: z.literal("hosted-shell"),
         bounds: BoundsSchema,
         active: z.boolean().optional(),
@@ -450,6 +458,10 @@ export const INVOKE_CHANNELS = {
   },
   "embed:set-scale": {
     request: z.strictObject({ embedId: z.string().min(1).max(64), factor: ZoomFactorSchema }),
+    response: Ok,
+  },
+  "embed:set-bots-appearance": {
+    request: z.strictObject({ embedId: z.string().min(1).max(64), appearance: HostedBotsAppearanceSchema }),
     response: Ok,
   },
   "embed:set-active": {
@@ -567,6 +579,11 @@ export const EVENT_CHANNELS = {
       state: EmbedStateSchema,
     })
     .strict(),
+  "embed:open-bots-settings": z.strictObject({
+    embedId: z.uuid(),
+    runtimeSlot: z.string().min(1).max(64),
+    section: HostedBotsSettingsSectionSchema,
+  }),
   "notification:clicked": z.object({ threadId: z.string().min(1).max(128) }).strict(),
   "runtime:thread-event": z.object({
     threadId: ThreadIdSchema,

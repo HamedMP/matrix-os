@@ -1,14 +1,20 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenCodeServerProcess, OPENCODE_READ_ONLY_PERMISSIONS } from "../../packages/gateway/src/coding-agents/opencode-server-process.js";
-function fixture(resume = false, ignorePermissions = false, stallEvent = false) {
+function fixture(resume = false, ignorePermissions = false, stallEvent = false, textOnly?: { wrongModel?: boolean; tool?: boolean; allow?: boolean; startupExit?: boolean; freeLimit?: boolean; foreignLimit?: boolean }) {
   const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> };
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
   child.kill = vi.fn(() => { queueMicrotask(() => child.emit("exit", 0)); });
-  const spawn = vi.fn(() => { queueMicrotask(() => child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:42101\n"))); return child; });
+  const spawn = vi.fn(() => {
+    queueMicrotask(() => {
+      if (textOnly?.startupExit) child.emit("exit", 1);
+      else child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:42101\n"));
+    });
+    return child;
+  });
   let stream!: ReadableStreamDefaultController<Uint8Array>;
   let complete!: (response: Response) => void;
-  const send = (type: string, properties: unknown) => { if (stream.desiredSize === null) return false; stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`)); return true; };
+  const send = (type: string, properties: unknown) => { if (!stream || stream.desiredSize === null) return false; stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`)); return true; };
   let permissions = resume ? [...OPENCODE_READ_ONLY_PERMISSIONS] : [];
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
@@ -24,6 +30,15 @@ function fixture(resume = false, ignorePermissions = false, stallEvent = false) 
     if (path === "/event" && stallEvent) return new Promise<Response>(() => undefined);
     if (path === "/event") return new Response(new ReadableStream({ start(controller) { stream = controller; } }), { headers: { "content-type": "text/event-stream" } });
     if (path === "/session/ses_test/message") {
+      if (textOnly?.freeLimit || textOnly?.foreignLimit) queueMicrotask(() => send("session.status", {
+        sessionID: textOnly.foreignLimit ? "ses_other" : "ses_test",
+        status: { type: "retry", attempt: 1, message: "sensitive upstream text", action: { reason: "free_tier_limit" } },
+      }));
+      if (textOnly?.freeLimit) return new Promise<Response>(() => undefined);
+      if (textOnly) return Response.json({
+        info: { id: "msg_answer", role: "assistant", sessionID: "ses_test", providerID: "opencode", modelID: textOnly.wrongModel ? "other-free" : "beam-free", finish: "stop" },
+        parts: [{ id: "part_answer", type: textOnly.tool ? "tool" : "text", text: "Exact answer", time: { end: 1 } }],
+      });
       queueMicrotask(() => send("question.asked", { id: "que_test", sessionID: "ses_test", questions: [{ header: "Color", question: "Choose colors", options: [{ label: "Red", description: "Red" }, { label: "Blue", description: "Blue" }], multiple: true, custom: false }] }));
       return new Promise<Response>(resolve => { complete = resolve; });
     }
@@ -34,11 +49,12 @@ function fixture(resume = false, ignorePermissions = false, stallEvent = false) 
     }
     throw new Error(`Unexpected endpoint ${path}`);
   });
-  const process = createOpenCodeServerProcess("opencode", ["run", "--format", "json", ...(resume ? ["--session", "ses_test"] : []), "Choose"], { cwd: "/work/repo", env: { HOME: "/owner" } }, { spawn: spawn as never, fetch: fetch as never });
+  const revalidate = vi.fn(async () => textOnly?.allow !== false);
+  const process = createOpenCodeServerProcess("opencode", ["run", "--format", "json", ...(resume ? ["--session", "ses_test"] : []), ...(textOnly ? ["--model", "opencode/beam-free"] : []), "Choose"], { cwd: "/work/repo", env: { HOME: "/owner" } }, { spawn: spawn as never, fetch: fetch as never, ...(textOnly ? { textOnly: { revalidate } } : {}) });
   const lines: Record<string, any>[] = [];
   process.stdout.on("data", chunk => lines.push(JSON.parse(chunk.toString())));
   const exited = new Promise<number | null>(resolve => process.once("exit", resolve));
-  return { process, lines, exited, spawn, fetch, child, send };
+  return { process, lines, exited, spawn, fetch, child, send, revalidate };
 }
 describe("OpenCode local server transport", () => {
   it.each([false, true])("answers a native pending question without appending permissions (resume: %s)", async (resume) => {
@@ -77,6 +93,50 @@ describe("OpenCode local server transport", () => {
     expect(run.lines.some(line => line.requestId === "que_foreign")).toBe(false);
     run.process.kill("SIGTERM");
     await run.exited;
+  });
+});
+
+describe("OpenCode text-only completion", () => {
+  it("records a bounded stage when the scoped child exits before startup", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const run = fixture(false, false, false, { startupExit: true });
+      expect(await run.exited).toBe(1);
+      expect(run.fetch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("[coding-agents] OpenCode text completion unavailable", "startup_exit");
+    } finally { warn.mockRestore(); }
+  });
+
+  it("uses one verified deny-all session and returns the exact completed text", async () => {
+    const run = fixture(false, false, false, {});
+    expect(await run.exited).toBe(0);
+    expect(run.lines).toEqual([{ type: "text", sessionID: "ses_test", part: expect.objectContaining({ text: "Exact answer" }) }]);
+    expect(JSON.parse(String(run.fetch.mock.calls[0]![1].body)).permission).toEqual([{ permission: "*", pattern: "*", action: "deny" }]);
+    expect(run.fetch.mock.calls.filter(([url]) => url.endsWith("/event"))).toHaveLength(1);
+    expect(run.spawn.mock.calls[0]![2].env.OPENCODE_ENABLE_QUESTION_TOOL).toBeUndefined();
+    expect(run.revalidate).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops the exact session before a provider retry on confirmed free-tier exhaustion", async () => {
+    const run = fixture(false, false, false, { freeLimit: true });
+    expect(await run.exited).toBe(1);
+    expect(run.lines).toEqual([{ type: "error", code: "free_limit" }]);
+    expect(run.fetch.mock.calls.filter(([url]) => url.endsWith("/message"))).toHaveLength(1);
+    expect(run.child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(JSON.stringify(run.lines)).not.toContain("sensitive");
+  });
+
+  it("ignores a foreign session's free-tier status", async () => {
+    const run = fixture(false, false, false, { foreignLimit: true });
+    expect(await run.exited).toBe(0);
+    expect(run.lines).toEqual([{ type: "text", sessionID: "ses_test", part: expect.objectContaining({ text: "Exact answer" }) }]);
+  });
+
+  it.each([{ wrongModel: true }, { tool: true }, { allow: false }])("fails closed for %j", async mode => {
+    const run = fixture(false, false, false, mode);
+    expect(await run.exited).toBe(1);
+    expect(run.lines.some(line => line.type === "text")).toBe(false);
+    if (mode.allow === false) expect(run.fetch.mock.calls.some(([url]) => url.endsWith("/message"))).toBe(false);
   });
 });
 

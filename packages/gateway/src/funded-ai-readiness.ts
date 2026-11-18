@@ -12,7 +12,11 @@ export interface FundedAiReadiness {
   /** Policy-authorized discovery only; never execution authority. */
   discoverableModelIds?: string[];
 }
-export interface FundedAiReadinessReader { read(options?: { signal?: AbortSignal }): Promise<FundedAiReadiness> }
+// Scheduled authority observes the control plane only. Unlike discovery, it
+// need not run a model probe: only an actual governed turn uses the relay.
+export const FUNDED_AI_SCHEDULE_AUTHORITY_TIMEOUT_MS = 6_000;
+type ReadOptions = { signal?: AbortSignal; mode?: "schedule_authority" };
+export interface FundedAiReadinessReader { read(options?: ReadOptions): Promise<FundedAiReadiness> }
 
 export function createFundedAiReadinessReader(options: {
   summary: FundedAiFundingSummaryReader;
@@ -25,7 +29,7 @@ export function createFundedAiReadinessReader(options: {
     ? FUNDED_AI_READINESS_TIMEOUTS.jevObservationMs : FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs;
   let inFlight: Promise<FundedAiReadiness> | undefined;
 
-  async function readFresh(callerSignal?: AbortSignal): Promise<FundedAiReadiness> {
+  async function readFresh(callerSignal?: AbortSignal, scheduleAuthority = false): Promise<FundedAiReadiness> {
     const checkedAt = now();
     const unavailable: FundedAiReadiness = {
       readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(), staleAfter: null,
@@ -47,13 +51,13 @@ export function createFundedAiReadinessReader(options: {
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error("Funded readiness deadline exceeded"));
-        }, deadlineMs);
+        }, scheduleAuthority ? FUNDED_AI_SCHEDULE_AUTHORITY_TIMEOUT_MS : deadlineMs);
       });
       const summary = options.summary.getFundingSummary({ signal });
-      const routes = options.routes?.getRouteReadiness({ signal, ...(options.modelId ? { modelId: options.modelId } : {}) }).catch((error: unknown) => {
+      const routes = !scheduleAuthority ? options.routes?.getRouteReadiness({ signal, ...(options.modelId ? { modelId: options.modelId } : {}) }).catch((error: unknown) => {
         console.warn("[funded-ai] Route observation unavailable:", error instanceof Error ? error.name : "UnknownError");
         return undefined;
-      });
+      }) : undefined;
       const raw = await Promise.race([summary, deadline]);
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, funding: raw.funding, policy: raw.policy });
       const chatAvailability = raw.chatAvailability === undefined ? undefined
@@ -61,16 +65,28 @@ export function createFundedAiReadinessReader(options: {
       const current = now().getTime();
       signal.throwIfAborted();
       const ledgerAsOf = Date.parse(funding.asOf);
-      if (!policy.enabled || Date.parse(policy.checkedAt) > current
-        || Date.parse(policy.staleAfter) <= current
-        || ledgerAsOf > current + 60_000 || current - ledgerAsOf > 5 * 60_000) return unavailable;
+      if (Date.parse(policy.checkedAt) > current || Date.parse(policy.staleAfter) <= current
+        || ledgerAsOf > current + 60_000 || current - ledgerAsOf > 5 * 60_000) {
+        if (scheduleAuthority) throw new Error("Stale schedule funding authority");
+        return unavailable;
+      }
+      if (!policy.enabled) return unavailable;
       const discoverableModelIds = policy.allowedModelIds.map((id) => id.replace(/^anthropic\//, ""));
       const observationStaleAfter = new Date(Math.min(Date.parse(policy.staleAfter), ledgerAsOf + 5 * 60_000, checkedAt.getTime() + 30_000)).toISOString();
       const discovery = { ...unavailable, discoverableModelIds,
         readiness: { ...unavailable.readiness, staleAfter: observationStaleAfter } };
-      if (!chatAvailability) return discovery;
+      if (!chatAvailability) {
+        if (scheduleAuthority) throw new Error("Schedule Chat funding is unavailable");
+        return discovery;
+      }
       const barrier = fundedAiFundingBarrier(funding, chatAvailability);
       if (barrier) return { ...discovery, readiness: { ...discovery.readiness, ...barrier } };
+      if (scheduleAuthority) {
+        return discoverableModelIds.length > 0 ? {
+          ...discovery, allowedModelIds: discoverableModelIds,
+          readiness: { ...discovery.readiness, state: "ready", action: "none", safeReason: null },
+        } : discovery;
+      }
       let rawReceipt: unknown;
       try { rawReceipt = await Promise.race([Promise.resolve(routes), deadline]); }
       catch (error: unknown) {
@@ -100,6 +116,7 @@ export function createFundedAiReadinessReader(options: {
       };
     } catch (error) {
       console.warn("[funded-ai] Readiness check unavailable:", error instanceof Error ? error.name : "UnknownError");
+      if (scheduleAuthority) throw new Error("Schedule funding authority unavailable");
       return unavailable;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
@@ -110,6 +127,9 @@ export function createFundedAiReadinessReader(options: {
 
   return {
     read(call = {}) {
+      // Only the private hosted scheduler can ask for current spending
+      // authority without synthesizing a relay liveness observation.
+      if (call.mode === "schedule_authority") return readFresh(call.signal, true);
       // An execution observer owns cancellation; it cannot abort another
       // concurrent Settings observer's shared observation.
       if (call.signal) return readFresh(call.signal);

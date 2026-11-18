@@ -129,6 +129,17 @@ import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE, OPENMAUSBOT_RUNTIME_SOCKET } from "./hosted-bots/oss-gateway.js";
+import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
+import { createOpenMausBotOwnerCheck } from "./hosted-bots/oss-owner.js";
+import { admitsOpenMausBotHostBundle } from "./hosted-bots/oss-host-bundle.js";
+import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
+import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
+import { initializeHostedBotsScheduleStore } from "./hosted-bots/matrix-schedule-store.js";
+import { initializeHostedBotsMatrixModel } from "./hosted-bots/matrix-model.js";
+import { createHostedBotsManagedTools } from "./hosted-bots/managed-tool-catalog.js";
+import { generateHostedBotsManagedText } from "./hosted-bots/managed-tools.js";
+import { requestAppAiApiPayload } from "./app-ai/api-completion.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -177,7 +188,7 @@ import { startBots, type BotServices } from "./startup/bots.js";
 import { createCompanyBotSetup } from "./startup/slack-company.js";
 import { startOwnerSlack } from "./startup/slack-owner.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
-import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotIntegrationClient, createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
@@ -1283,6 +1294,45 @@ export async function createGateway(config: GatewayConfig) {
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   registerRoutineDirectResourceFence(app);
+  const openMausBotAdmitted = admitsOpenMausBotHostBundle();
+  const isOpenMausBotOwner = createOpenMausBotOwnerCheck(process.env);
+  const openMausBotGateway = createOpenMausBotGateway({
+    socketPath: OPENMAUSBOT_RUNTIME_SOCKET,
+    admitted: openMausBotAdmitted,
+    isOwner: isOpenMausBotOwner,
+    upgradeWebSocket,
+    issueModelTurn: (identity, text) => hostedBotsMatrixModel.issue?.(identity, text),
+    schedules: {
+      issue: async (intent, signal) => {
+        const schedule = hostedBotsMatrixModel.schedule;
+        if (!schedule) throw new Error("Schedule authority unavailable");
+        return schedule.issue(intent, signal);
+      },
+      revoke: async routineId => { await hostedBotsMatrixModel.schedule?.revoke(routineId); },
+    },
+  });
+  app.route(OPENMAUSBOT_PROXY_BASE, openMausBotGateway.routes);
+
+  const hostedBotsDrive = await initializeHostedBotsDrive({
+    admitted: openMausBotAdmitted,
+    isOwner: isOpenMausBotOwner,
+    ownerId: process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim() || "",
+    customMcp: managedPiMcpDependencies({
+      env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+      clerkOwnerId: process.env.MATRIX_CLERK_USER_ID?.trim(),
+    }),
+    ...(openMausBotAdmitted ? { github: createHostedBotsGithubRead({ homePath }) } : {}),
+    ...(internalIntegrationBaseUrl && internalPlatformToken ? {
+      integration: createBotIntegrationClient(createPlatformIntegrationTransport({
+        baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken,
+      })),
+    } : {}),
+  });
+  app.route(HOSTED_BOTS_DRIVE_BASE, hostedBotsDrive.routes);
+  app.route(HOSTED_BOTS_INTEGRATIONS_BASE, hostedBotsDrive.integrationRoutes);
+  app.route("/api/chats/hosted-bots", hostedBotsDrive.mcpDecisionRoutes);
+  const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
+  app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1539,6 +1589,31 @@ export async function createGateway(config: GatewayConfig) {
     nativeProfileGuard: nativeProviderProfileGuard,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     chatGptPlanSource: appSubscriptionSource,
+  });
+  const hostedBotsScheduleOwner = process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim();
+  const hostedBotsScheduleMachine = process.env.MATRIX_MACHINE_ID?.trim();
+  const hostedBotsSchedules = openMausBotAdmitted && kyselyInstance && hostedBotsScheduleOwner && hostedBotsScheduleMachine
+    ? await initializeHostedBotsScheduleStore(kyselyInstance, {
+      ownerId: hostedBotsScheduleOwner, machineId: hostedBotsScheduleMachine,
+    }).catch((error: unknown) => {
+      console.warn("[hosted-bots] Schedule authorization unavailable", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
+    })
+    : undefined;
+  const hostedBotsToolRoutes = hostedBotsDrive.toolRoutes;
+  const hostedBotsMatrixModel = await initializeHostedBotsMatrixModel({
+    admitted: openMausBotAdmitted, providers: appAiRuntime.hostedBots,
+    schedules: hostedBotsSchedules,
+    ...(hostedBotsToolRoutes ? {
+      generateManaged: options => generateHostedBotsManagedText({
+        ...options,
+        tools: createHostedBotsManagedTools(hostedBotsToolRoutes),
+        transport: body => requestAppAiApiPayload({
+          homePath, fundedCredentialProvider, fundedAdmission,
+          route: options.route, signal: options.signal, revalidate: options.revalidate,
+        }, body),
+      }),
+    } : {}),
   });
   const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
   const chatDriveContext = await registerGatewayProjectDriveRoutes(app, { repository: chatRepository, collaborationReady: gatewayCollaboration !== null });
@@ -1892,6 +1967,10 @@ export async function createGateway(config: GatewayConfig) {
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
+      openMausBotGateway.close();
+      await hostedBotsMatrixModel.close();
+      await hostedBotsDrive.close();
+      await hostedBotsRuntime.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();

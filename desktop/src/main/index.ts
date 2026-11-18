@@ -533,9 +533,11 @@ if (!gotLock) {
 
       const embeds = new EmbedService({
         getWindow: () => mainWindow,
+        getHostedBotsAuth: () => auth.getStatus(),
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+        openHostedBotsSettings: (embedId, runtimeSlot, section) => sendEvent("embed:open-bots-settings", { embedId, runtimeSlot, section }),
         appBridge: nativeAppBridge,
         appPreloadPath: join(__dirname, "../preload/index.cjs"),
         browserLabViewerAuth: {

@@ -60,6 +60,18 @@ const RawCatalogSchema = z.object({
   nextCursor: z.string().max(512).nullable(),
 }).strict();
 
+/** A native inference must know the exact eligible vendor model, not the
+ * UI projection's first-item fallback or a synthetic Settings ID. */
+export function selectCodexTextCompletionModel(raw: unknown, configuredModel?: string): string {
+  const catalog = RawCatalogSchema.parse(raw);
+  if (catalog.nextCursor !== null) throw new Error("Codex model catalog is incomplete");
+  const models = catalog.data.filter(entry => !entry.hidden && entry.inputModalities.includes("text"));
+  const matching = models.filter(entry => configuredModel === undefined
+    ? entry.isDefault : entry.id === configuredModel || entry.model === configuredModel);
+  if (matching.length !== 1) throw new Error("Codex model is unavailable");
+  return ReferenceIdSchema.parse(matching[0]!.model);
+}
+
 function labelFor(value: string): string {
   if (value === "xhigh") return "Extra high";
   return value.charAt(0).toUpperCase() + value.slice(1).replaceAll("_", " ");

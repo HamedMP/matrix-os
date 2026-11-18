@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
+import { admitsHostedBotsPrivatePreview } from '../../packages/gateway/src/hosted-bots/preview-admission.js';
 import {
   loadCustomerVpsCloudInitTemplate,
   renderCloudInitTemplate,
@@ -7,7 +9,7 @@ import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-
 import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../../packages/platform/src/customer-vps-host-config.js';
 
 const config = loadCustomerVpsConfig({
-  PLATFORM_PORT: '9000',
+  PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com',
   PLATFORM_SECRET: 'platform-secret',
   HETZNER_API_TOKEN: 'token',
   S3_ACCESS_KEY_ID: 'r2-access-key',
@@ -69,6 +71,24 @@ describe('Private Preview host environment', () => {
       expect(envLines(renderCloudInitTemplate(template, hostConfig('pv-1907-3fa91c2e', 'private-preview'))))
         .toContain('MATRIX_PREVIEW_RUNTIME=true');
     }
+  });
+
+  it.each([
+    ['private-preview', 'pv-1907-3fa91c2e', true],
+    ['preview', 'pr-1907', false],
+    ['customer', 'alice', false],
+  ] as const)('uses the actual %s host environment to gate Hosted Bots', async (provisioningClass, handle, expected) => {
+    const template = await loadCustomerVpsCloudInitTemplate();
+    const rendered = renderCloudInitTemplate(template, hostConfig(handle, provisioningClass));
+    const cloudInit = parse(rendered) as { write_files: Array<{ path: string; content: string }> };
+    const host = cloudInit.write_files.find((file) => file.path === '/opt/matrix/env/host.env');
+    expect(host).toBeDefined();
+    const lines = envLines(host!.content).filter((line) => line.includes('='));
+    const env = Object.fromEntries(lines.map((line) => {
+      const separator = line.indexOf('=');
+      return [line.slice(0, separator), line.slice(separator + 1)];
+    }));
+    expect(admitsHostedBotsPrivatePreview(env)).toBe(expected);
   });
 
   it('keeps a Private Preview user_data under the Hetzner limit with headroom', async () => {
