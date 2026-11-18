@@ -81,6 +81,7 @@ function mockTransport() {
   let storeResult = false;
   let savedReceipt: { message: unknown; turn: unknown; run: unknown } | undefined;
   let returnedRunChatId = chatId;
+  let onReadReceipt: (() => void) | undefined;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname === "/api/chats/" + chatId) {
@@ -122,6 +123,16 @@ function mockTransport() {
         admission: "accepted",
       };
       if (storeResult) savedReceipt = receipt;
+      if (onReadReceipt) {
+        const body = new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(receipt)));
+            controller.close();
+            onReadReceipt?.();
+          },
+        }, { highWaterMark: 0 });
+        return new Response(body, { status: 202, headers: { "content-type": "application/json" } });
+      }
       return Response.json(receipt, { status: 202 });
     }
     throw new Error("Unexpected request " + url.pathname);
@@ -137,6 +148,7 @@ function mockTransport() {
     changeSession: () => { authStatus = { ...authStatus, authGeneration: 5 }; },
     existingUpload: (bytes: Buffer) => { uploadStatus = 409; uploadedBytes = bytes; },
     storeResult: () => { storeResult = true; },
+    onReadReceipt: (callback: () => void) => { onReadReceipt = callback; },
     misrouteResult: () => { returnedRunChatId = "chat_wrong"; },
   };
 }
@@ -392,6 +404,20 @@ describe("authenticated Chat Electron preview transport", () => {
         { type: "attachment_reference", ownerReference: path, mimeType: "image/png", sizeBytes: png.length },
       ],
     });
+  });
+
+  it("recognizes a verified committed Mac Verification receipt when Stop happens while reading it", async () => {
+    const { service, fetchFn, onReadReceipt, storeResult } = verificationFixture();
+    const operation = new AbortController();
+    const target = (await service.read(verificationTarget))!;
+    const result = { png, testSummary: "10 tests passed" };
+    storeResult();
+    onReadReceipt(() => operation.abort("stopped"));
+
+    await expect(service.returnResult(target, result, operation.signal)).resolves.toBeUndefined();
+    expect(operation.signal.reason).toBe("stopped");
+    await service.returnResult(target, result);
+    expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
   });
 
   it("reports an approved build failure to the original Chat without an attachment", async () => {

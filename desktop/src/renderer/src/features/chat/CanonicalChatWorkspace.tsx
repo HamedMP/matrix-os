@@ -92,6 +92,7 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
+import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
 import type { MacVerificationDraft } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
@@ -304,13 +305,15 @@ function CanonicalChatWorkspaceContent({
   const executionControls = useMemo(() => controller.detail ? canonicalChatExecutionControls({
     chatId: controller.detail.record.chat.id, currentSelection: controller.detail.record.chat.currentSelection, runs: controller.detail.runs,
   }) : undefined, [controller.detail]);
-  const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
+  const { selection: providerSelection, onSelectionChange, scopeReady: providerSelectionScopeReady } = useCanonicalComposerSelection({
     catalog: providerCatalog,
     catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
     executionControls,
+    macReceiptRunId: controller.detail && executionControls
+      && isMacVerificationReceiptRun(controller.detail, executionControls.runId) ? executionControls.runId : undefined,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
   const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
@@ -1143,6 +1146,7 @@ function CanonicalChatWorkspaceContent({
                 active={nativeChatChecksActive}
                 actorId={actorId}
                 detail={controller.detail}
+                permissionMode={providerSelectionScopeReady && selectionAvailable ? selection?.permissionMode : undefined}
                 onDraft={stageWorktreeDraft}
                 onDiscardDraft={discardWorktreeDraft}
               >
