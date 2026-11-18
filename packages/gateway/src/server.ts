@@ -131,8 +131,8 @@ import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
 import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE, OPENMAUSBOT_RUNTIME_SOCKET } from "./hosted-bots/oss-gateway.js";
 import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
-import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-owner.js";
-import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
+import { createOpenMausBotOwnerCheck } from "./hosted-bots/oss-owner.js";
+import { admitsOpenMausBotHostBundle } from "./hosted-bots/oss-host-bundle.js";
 import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
 import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
 import { initializeHostedBotsMatrixModel } from "./hosted-bots/matrix-model.js";
@@ -1290,8 +1290,8 @@ export async function createGateway(config: GatewayConfig) {
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   registerRoutineDirectResourceFence(app);
-  const openMausBotAdmitted = admitsOpenMausBotPreviewBundle(process.env);
-  const isOpenMausBotOwner = createOpenMausBotPreviewOwnerCheck(process.env);
+  const openMausBotAdmitted = admitsOpenMausBotHostBundle();
+  const isOpenMausBotOwner = createOpenMausBotOwnerCheck(process.env);
   const openMausBotGateway = createOpenMausBotGateway({
     socketPath: OPENMAUSBOT_RUNTIME_SOCKET,
     admitted: openMausBotAdmitted,

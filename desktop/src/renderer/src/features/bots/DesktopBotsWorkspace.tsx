@@ -1,4 +1,4 @@
-import { isPrivatePreviewHandle } from "@matrix-os/contracts";
+import { isPrivatePreviewHandle, MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
 import { BotsWorkspace, useHostedBotsAvailability } from "@matrix-os/ui";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { AppError } from "../../../../shared/app-error";
@@ -13,7 +13,7 @@ export function useDesktopHostedBotsCapability() {
   const userId = useConnection((state) => state.userId);
   const generation = useConnection((state) => state.authGeneration);
   const scope = JSON.stringify([platformHost, runtimeSlot, userId, generation]);
-  const transport = useMemo(() => isPrivatePreviewHandle(runtimeSlot) ? api?.forRuntime(runtimeSlot) ?? null : null,
+  const transport = useMemo(() => MatrixComputerRuntimeSlotSchema.safeParse(runtimeSlot).success ? api?.forRuntime(runtimeSlot) ?? null : null,
     [api, runtimeSlot, scope]);
   const [probe, setProbe] = useState<{ transport: NonNullable<typeof transport>; mode: "oss" | "legacy" | "unavailable" }>();
   useEffect(() => {
@@ -32,7 +32,7 @@ export function useDesktopHostedBotsCapability() {
       }, (error: unknown) => {
         if (disposed) return;
         const status = error instanceof AppError ? error.httpStatus : undefined;
-        if (status === 404) {
+        if (status === 404 && isPrivatePreviewHandle(runtimeSlot)) {
           report("legacy");
           return;
         }
@@ -44,7 +44,7 @@ export function useDesktopHostedBotsCapability() {
     };
     check();
     return () => { disposed = true; clearTimeout(retry); };
-  }, [transport]);
+  }, [transport, runtimeSlot]);
 
   const mode = probe?.transport === transport ? probe.mode : undefined;
   const fallback = useHostedBotsAvailability(mode === "legacy" ? transport : null);

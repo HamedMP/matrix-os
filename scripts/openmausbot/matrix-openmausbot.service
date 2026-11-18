@@ -1,12 +1,12 @@
 [Unit]
-Description=OpenMausBot OSS Private Preview workload
+Description=OpenMausBot OSS Matrix Computer workload
 After=docker.service network-online.target
 Before=matrix-gateway.service
 Requires=docker.service
 Wants=network-online.target
 PartOf=matrix-gateway.service
-ConditionPathExists=/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW
 ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-ref
+ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image.tar
 StartLimitIntervalSec=180
 StartLimitBurst=6
 

@@ -165,6 +165,6 @@ describe("OpenMausBot Matrix integration MCP", () => {
     expect(launcher).toContain('install -d -o matrix -g matrix -m 0750 "$drive_dir"');
     expect(launcher).toContain('src=$drive_dir,dst=/matrix-drive,readonly');
     expect(launcher).toContain('iptables -I INPUT 1 -i "$bridge" -j REJECT');
-    expect(dockerfile).toContain("COPY matrix-drive-mcp.mjs ./matrix-drive-mcp.mjs");
+    expect(dockerfile).toContain("COPY --from=build /opt/openmausbot-package/matrix-drive-mcp.mjs ./matrix-drive-mcp.mjs");
   });
 });

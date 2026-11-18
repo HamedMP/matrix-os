@@ -23,6 +23,15 @@ function fixture(docker: string) {
   for (const file of ["build-host-bundle.sh", "host-bundle-baseline-builder.mjs", "host-bundle-builder.Dockerfile"]) {
     if (existsSync(join(repo, "scripts", file))) cpSync(join(repo, "scripts", file), join(root, "scripts", file));
   }
+  mkdirSync(join(root, "scripts/openmausbot"));
+  const imageSources = [
+    "Dockerfile", "build-host-image.mjs", "prepare-host-package.sh", "apply-private-host.mjs",
+    "apply-matrix-theme.mjs", "matrix-provider.ts", "matrix-drive-mcp.mjs", "runtime-pnpm-lock.yaml",
+  ];
+  for (const file of imageSources) cpSync(join(repo, "scripts/openmausbot", file), join(root, "scripts/openmausbot", file));
+  const icon = "shell/public/system-app-icons/v2/bots.svg";
+  mkdirSync(join(root, dirname(icon)), { recursive: true });
+  cpSync(join(repo, icon), join(root, icon));
   writeFileSync(join(root, ".env.private"), "PRIVATE_FIXTURE_VALUE=do-not-transfer\n");
   mkdirSync(join(root, "packages/fixture/node_modules"), { recursive: true });
   mkdirSync(join(root, "packages/fixture/dist"));
@@ -37,7 +46,7 @@ function fixture(docker: string) {
     const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0); return result.stdout.trim();
   };
-  git(["init", "-q"]); git(["add", "scripts", ".env.private", "packages"]);
+  git(["init", "-q"]); git(["add", "scripts", "shell", ".env.private", "packages"]);
   git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"]);
   const sha = git(["rev-parse", "HEAD"]);
   const env = { PATH: join(root, "bin") + delimiter + process.env.PATH, HOME: join(root, "home"),
@@ -151,8 +160,12 @@ const root = process.env.FIXTURE_ROOT, args = process.argv.slice(2), options = $
 fs.appendFileSync(path.join(root, 'docker-log'), JSON.stringify(args) + '\\n');
 if (args[0] === 'build') {
   const context = args.at(-1);
-  fs.writeFileSync(path.join(root, 'context-files'), JSON.stringify(fs.readdirSync(context)));
-  fs.writeFileSync(args[args.indexOf('--iidfile') + 1], 'sha256:' + 'a'.repeat(64));
+  if (args.includes('--iidfile')) {
+    fs.writeFileSync(path.join(root, 'context-files'), JSON.stringify(fs.readdirSync(context)));
+    fs.writeFileSync(args[args.indexOf('--iidfile') + 1], 'sha256:' + 'a'.repeat(64));
+  } else fs.writeFileSync(path.join(root, 'workload-context'), JSON.stringify(fs.readdirSync(context)));
+} else if (args[0] === 'save') {
+  fs.writeFileSync(args[args.indexOf('--output') + 1], 'fixture-workload-image');
 } else if (args[0] === 'create') {
   const source = args[args.indexOf('--mount') + 1].split(',src=')[1].split(',dst=')[0];
   fs.writeFileSync(path.join(root, 'source-path'), source);
@@ -238,6 +251,12 @@ it("uses only clean exact tracked source and public metadata, exporting only nam
   expect(args).toContain("ALL"); expect(args).toContain("no-new-privileges:true"); expect(args).toContain("--read-only");
   expect(args).toContain("MATRIX_BUILD_SHA=" + f.env.MATRIX_BUILD_SHA);
   expect(args).toContain("TMPDIR=/scratch");
+  expect(JSON.parse(readFileSync(join(f.root, "workload-context"), "utf8"))).toEqual([
+    "Dockerfile", "apply-matrix-theme.mjs", "apply-private-host.mjs", "bots.svg", "matrix-drive-mcp.mjs",
+    "matrix-provider.ts", "prepare-host-package.sh", "runtime-pnpm-lock.yaml",
+  ]);
+  expect(args).toContain("HOST_BUNDLE_OPENMAUSBOT_ARCHIVE=/matrix-openmausbot.image.tar");
+  expect(args.find((arg: string) => arg.endsWith("dst=/matrix-openmausbot.image.tar,readonly"))).toMatch(/(?:^|,)src=[^,]+openmausbot-image\.tar,/);
   expect(JSON.parse(readFileSync(join(f.root, "tmp-state"), "utf8"))).toEqual({ mode: 0o700, entries: [] });
   for (const privateValue of ["fixture-private-r2", "fixture-checkout-token", "fixture-private-claude", "docker.sock", "--privileged", "--network=host"]) expect(JSON.stringify(args)).not.toContain(privateValue);
   const output = join(f.root, "dist/isolated-result");

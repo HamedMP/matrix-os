@@ -129,7 +129,7 @@ const manifestPath = resolve(sourceRoot, "public/manifest.webmanifest");
 const brand = await readFile(brandPath, "utf8");
 const html = await readFile(htmlPath, "utf8");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const icon = await readFile(new URL("../../shell/public/system-app-icons/v2/bots.svg", import.meta.url));
+const icon = await readFile(process.argv[3] ?? new URL("../../shell/public/system-app-icons/v2/bots.svg", import.meta.url));
 
 await Promise.all([
   writeFile(brandPath, brand

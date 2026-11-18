@@ -145,20 +145,22 @@ node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-update-request-rejection"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
-if [ "${HOST_BUNDLE_OPENMAUSBOT_PREVIEW:-false}" = "true" ]; then
-  test "${HOST_BUNDLE_CHANNEL:-}" = none
-  install -m 0755 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot-run" "$STAGE_DIR/bin/"
-  install -m 0644 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot.service" "$STAGE_DIR/systemd/"
-  node - "$STAGE_DIR/systemd/matrix-gateway.service" <<'NODE'
-const { readFileSync, writeFileSync } = require("node:fs");
-const unitPath = process.argv[2];
-const unit = readFileSync(unitPath, "utf8");
-const wants = /^Wants=matrix-terminal-runtime\.service matrix-scope-runtime\.service$/m;
-if (!wants.test(unit)) throw new Error("Unexpected Matrix gateway unit dependencies");
-writeFileSync(unitPath, unit.replace(wants, "$& matrix-openmausbot.service"));
-NODE
-  bash "$ROOT_DIR/scripts/openmausbot/build-private-preview.sh" "$STAGE_DIR"
+# Stage the isolated workload in every compatible host bundle. The premerge
+# baseline sandbox receives this exact build's image as a read-only input.
+OPENMAUSBOT_BUILD_SHA="${MATRIX_BUILD_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+[[ "$OPENMAUSBOT_BUILD_SHA" =~ ^[a-f0-9]{40}$ ]]
+OPENMAUSBOT_IMAGE_ARCHIVE="$STAGE_DIR/bin/matrix-openmausbot.image.tar"
+if [ -n "${HOST_BUNDLE_OPENMAUSBOT_ARCHIVE:-}" ]; then
+  test -f "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE" && test ! -L "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE"
+  install -m 0644 "$HOST_BUNDLE_OPENMAUSBOT_ARCHIVE" "$OPENMAUSBOT_IMAGE_ARCHIVE"
+else
+  node "$ROOT_DIR/scripts/openmausbot/build-host-image.mjs" "$ROOT_DIR" "$OPENMAUSBOT_IMAGE_ARCHIVE" "$OPENMAUSBOT_BUILD_SHA"
 fi
+test -s "$OPENMAUSBOT_IMAGE_ARCHIVE"
+printf 'matrix-openmausbot-oss:matrix-%s\n' "$OPENMAUSBOT_BUILD_SHA" > "$STAGE_DIR/bin/matrix-openmausbot.image-ref"
+chmod 0644 "$OPENMAUSBOT_IMAGE_ARCHIVE" "$STAGE_DIR/bin/matrix-openmausbot.image-ref"
+install -m 0755 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot-run" "$STAGE_DIR/bin/"
+install -m 0644 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot.service" "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-configure-platform-speech.py"

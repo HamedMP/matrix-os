@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const pairingListener = `
-// Matrix Private Preview commissioning stays on a separate Unix socket whose
+// Matrix Computer commissioning stays on a separate Unix socket whose
 // parent directory is private to this daemon. Its normal HTTP socket still
 // uses upstream's remote authentication and one-time pairing exchange.
 const matrixPairSocket = process.env.OMB_MATRIX_PAIR_SOCKET;
@@ -39,7 +39,7 @@ if (matrixPairSocket) {
       return json(res, 400, { error: "A body is not accepted" });
     }
     if (outstandingPairing) sessions.cancelPairing(outstandingPairing);
-    const opened = sessions.openPairing({ label: "Matrix Private Preview", ttlMs: 5 * 60_000 });
+    const opened = sessions.openPairing({ label: "Matrix Computer", ttlMs: 5 * 60_000 });
     outstandingPairing = opened.id;
     res.setHeader("cache-control", "no-store");
     return json(res, 200, { code: formatPairingCode(opened.code), expiresAt: opened.expiresAt });

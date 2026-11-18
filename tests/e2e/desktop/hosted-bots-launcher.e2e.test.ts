@@ -16,19 +16,20 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(main)) {
 }
 
 it.skipIf(!existsSync(main)).each([
-  { fullRuntime: false, label: "Matrix fallback" },
-  { fullRuntime: true, label: "full upstream surface" },
-])("opens Bots beside Chat in the built Matrix Electron window ($label)", async ({ fullRuntime }) => {
+  { fullRuntime: false, label: "Matrix fallback", runtimeSlot: "pv-1907-3fa91c2e", handle: "pv-1907-3fa91c2e" },
+  { fullRuntime: true, label: "full upstream surface", runtimeSlot: "pv-1907-3fa91c2e", handle: "pv-1907-3fa91c2e" },
+  { fullRuntime: true, label: "Dev Computer", runtimeSlot: "dev", handle: "neo-dev" },
+])("opens Bots beside Chat in the built Matrix Electron window ($label)", async ({ fullRuntime, runtimeSlot, handle }) => {
   const gateway = await startStubGateway();
   const profile = mkdtempSync(join(tmpdir(), "matrix-hosted-bots-e2e-"));
-  const runtimeSlot = "pv-1907-3fa91c2e";
   let rosterRequests = 0;
   let readinessRequests = 0;
   let embeddedRequests = 0;
   let embeddedDocuments = 0;
   let socketRequests = 0;
   const session = "omb_session_8799_preview=omb_sess_" + "t".repeat(43);
-  const prefix = "/vm/" + runtimeSlot + "/api/hosted-bots/runtime";
+  const vmPath = "/vm/" + handle + (runtimeSlot === handle ? "" : "/~runtime/" + runtimeSlot);
+  const prefix = vmPath + "/api/hosted-bots/runtime";
   let app: ElectronApplication | undefined;
   const server = createServer((incoming, outgoing) => {
     const url = new URL(incoming.url!, gateway.url);
@@ -38,8 +39,9 @@ it.skipIf(!existsSync(main)).each([
     }
     if (incoming.method === "GET" && url.pathname === "/api/auth/computers") {
       json({
-        items: [{ handle: runtimeSlot, runtimeSlot, label: "Preview Computer",
-          availability: "available", kind: "preview", gatewayPath: "/vm/" + runtimeSlot, capabilities: [] }],
+        items: [{ handle, runtimeSlot, label: runtimeSlot === "dev" ? "Additional Computer" : "Preview Computer",
+          availability: "available", kind: runtimeSlot === "dev" ? "customer" : "preview",
+          gatewayPath: vmPath, capabilities: [] }],
         selectedSlot: runtimeSlot, hasMore: false, limit: 20,
       });
       return;
@@ -146,15 +148,15 @@ it.skipIf(!existsSync(main)).each([
       env: { ...process.env, OPERATOR_GATEWAY_URL: url, OPERATOR_USER_DATA_DIR: profile, MATRIX_DESKTOP_QA_IDENTITY: "isolated" },
     });
     app = await launch();
-    const encrypted = await app.evaluate(async ({ app: electron, safeStorage }) => {
+    const encrypted = await app.evaluate(async ({ app: electron, safeStorage }, handle) => {
       await electron.whenReady();
       return Array.from(safeStorage.encryptString(JSON.stringify({
-        accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "user-1", handle: "neo",
+        accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "user-1", handle,
       })));
-    });
+    }, handle);
     writeFileSync(join(profile, "credential.bin"), Buffer.from(encrypted));
     writeFileSync(join(profile, "state.json"), JSON.stringify({
-      profile: { handle: "neo", userId: "user-1", platformHost: url, runtimeSlot },
+      profile: { handle, userId: "user-1", platformHost: url, runtimeSlot },
       appearance: { theme: "light", themeId: "matrix" },
     }));
     await closeElectronApp(app);

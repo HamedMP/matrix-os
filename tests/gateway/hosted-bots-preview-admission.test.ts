@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { admitsHostedBotsPrivatePreview, admitsOpenMausBotPreviewBundle } from "../../packages/gateway/src/hosted-bots/preview-admission.js";
+import { admitsHostedBotsPrivatePreview } from "../../packages/gateway/src/hosted-bots/preview-admission.js";
+
+import { admitsOpenMausBotHostBundle } from "../../packages/gateway/src/hosted-bots/oss-host-bundle.js";
 
 const handle = "pv-1907-3fa91c2e";
 const platform = "https://app.matrix-os.com";
@@ -13,16 +15,6 @@ const privatePreview: NodeJS.ProcessEnv = {
 };
 
 describe("Hosted Bots Private Preview admission", () => {
-  it("checks the fixed bundle marker only after owner-only preview admission", () => {
-    const markerExists = vi.fn().mockReturnValue(false);
-    expect(admitsOpenMausBotPreviewBundle({ ...privatePreview, MATRIX_RUNTIME_SLOT: "primary" }, markerExists)).toBe(false);
-    expect(markerExists).not.toHaveBeenCalled();
-    expect(admitsOpenMausBotPreviewBundle(privatePreview, markerExists)).toBe(false);
-    expect(markerExists).toHaveBeenCalledExactlyOnceWith("/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW");
-    markerExists.mockReturnValue(true);
-    expect(admitsOpenMausBotPreviewBundle(privatePreview, markerExists)).toBe(true);
-  });
-
   it("admits the exact owner-only preview projection emitted by Platform", () => {
     expect(admitsHostedBotsPrivatePreview(privatePreview)).toBe(true);
   });
@@ -45,5 +37,30 @@ describe("Hosted Bots Private Preview admission", () => {
     ["platform credentials", { PLATFORM_INTERNAL_URL: "https://user@app.matrix-os.com" }],
   ] satisfies [string, NodeJS.ProcessEnv][])("denies %s", (_case, overrides) => {
     expect(admitsHostedBotsPrivatePreview({ ...privatePreview, ...overrides })).toBe(false);
+  });
+});
+
+const ref = "/opt/matrix/bin/matrix-openmausbot.image-ref";
+const archive = "/opt/matrix/bin/matrix-openmausbot.image.tar";
+const protectedFile = { isFile: () => true, uid: 0, mode: 0o644, size: 100 };
+
+describe("Hosted Bots OSS installation", () => {
+  it("admits the protected installed image without requiring preview metadata", () => {
+    const readFileStat = vi.fn(() => protectedFile);
+    expect(admitsOpenMausBotHostBundle(readFileStat)).toBe(true);
+    expect(readFileStat.mock.calls).toEqual([[ref], [archive]]);
+  });
+
+  it.each([
+    undefined,
+    { ...protectedFile, uid: 1000 },
+    { ...protectedFile, mode: 0o664 },
+    { ...protectedFile, mode: 0o646 },
+    { ...protectedFile, isFile: () => false },
+    { ...protectedFile, size: 0 },
+  ])("fails closed for an unavailable or untrusted artifact (%j)", invalid => {
+    for (const path of [ref, archive]) {
+      expect(admitsOpenMausBotHostBundle(name => name === path ? invalid : protectedFile)).toBe(false);
+    }
   });
 });

@@ -6,6 +6,7 @@ import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { buildOpenMausBotHostImage } from "./openmausbot/build-host-image.mjs";
 
 const exec = promisify(execFile);
 const rootDefault = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -155,6 +156,10 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
     await run("git", ["archive", "--format=tar", `--output=${archive}`, env.MATRIX_BUILD_SHA, "--", ".", ...excluded,
       ":(exclude,glob)**/*.node", ":(exclude,glob)**/*.tsbuildinfo"]);
     await run("tar", ["-xf", archive, "-C", source]);
+    // Build the workload from archived sources outside the baseline sandbox,
+    // which receives only its read-only archive and has no Docker socket.
+    const workloadArchive = join(temporary, "openmausbot-image.tar");
+    await buildOpenMausBotHostImage(source, workloadArchive, env.MATRIX_BUILD_SHA, run);
     await mkdir(join(source, ".matrix-builder/home"), { recursive: true, mode: 0o700 });
     await writeFile(join(source, ".matrix-builder/empty.npmrc"), "", { flag: "wx", mode: 0o600 });
     const iid = join(temporary, "image-id");
@@ -162,7 +167,8 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
     const image = (await readFile(iid, "utf8")).trim();
     if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new Error("Baseline builder did not return an immutable image ID");
     // Native artifact extraction must not inherit /work/node_modules via ancestry.
-    const cleanEnv = { HOME: "/work/.matrix-builder/home", TMPDIR: "/scratch", XDG_CACHE_HOME: "/work/.matrix-builder/cache", XDG_DATA_HOME: "/work/.matrix-builder/share",
+    const workloadPath = "/matrix-openmausbot.image.tar";
+    const cleanEnv = { HOST_BUNDLE_OPENMAUSBOT_ARCHIVE: workloadPath, HOME: "/work/.matrix-builder/home", TMPDIR: "/scratch", XDG_CACHE_HOME: "/work/.matrix-builder/cache", XDG_DATA_HOME: "/work/.matrix-builder/share",
       NPM_CONFIG_USERCONFIG: "/work/.matrix-builder/empty.npmrc", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0",
       CI: "true", MATRIX_NO_TELEMETRY: "1", NEXT_TELEMETRY_DISABLED: "1", PATH: "/usr/local/bin:/usr/bin:/bin", ...forwarded };
     console.log(`Host baseline builder: ${image}; source ${env.MATRIX_BUILD_SHA}; version ${env.HOST_BUNDLE_VERSION}; channel none`);
@@ -174,6 +180,7 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
       "--cpus", String(Math.min(4, availableParallelism())), "--memory", memory, "--memory-swap", memory, "--shm-size", "256m",
       "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=1g,mode=1777", "--mount", `type=bind,src=${source},dst=/work`,
       "--mount", `type=bind,src=${scratch},dst=/scratch`,
+      "--mount", `type=bind,src=${workloadArchive},dst=${workloadPath},readonly`,
       ...Object.entries(cleanEnv).flatMap(([key, value]) => ["--env", `${key}=${value}`]), image]);
     await run("docker", ["start", "--attach", name]);
     const state = (await exec("docker", ["inspect", "--format", "{{.State.ExitCode}} {{.State.Running}}", name], {

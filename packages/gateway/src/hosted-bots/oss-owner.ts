@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer, SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 
-export function createOpenMausBotPreviewOwnerCheck(env: NodeJS.ProcessEnv): (c: Context) => boolean {
+export function createOpenMausBotOwnerCheck(env: NodeJS.ProcessEnv): (c: Context) => boolean {
   const clerkOwner = env.MATRIX_CLERK_USER_ID?.trim();
   const localOwner = env.MATRIX_USER_ID?.trim();
   const owner = clerkOwner || localOwner;

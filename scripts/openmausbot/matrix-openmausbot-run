@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly docker=/usr/bin/docker
 readonly image_dir=/opt/matrix/bin
-readonly bundle_marker=/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW
-readonly env_file=/opt/matrix/env/host.env
+readonly image_ref="$image_dir/matrix-openmausbot.image-ref"
+readonly image_archive="$image_dir/matrix-openmausbot.image.tar"
 readonly name=matrix-openmausbot
 readonly network=matrix-openmausbot
 readonly bridge=matrix-omb0
@@ -15,30 +15,28 @@ readonly socket_dir=/run/matrix-openmausbot
 readonly drive_dir=/run/matrix-openmausbot-drive
 readonly pair_key="$state_dir/pairing-key"
 
+trusted_artifact() {
+  [[ -f "$1" && ! -L "$1" && -s "$1" ]] || return 1
+  local metadata
+  metadata="$(stat -c '%u %a' -- "$1")" || return 1
+  [[ "$metadata" =~ ^0\ ([0-7]{3,4})$ ]] && (( (8#${BASH_REMATCH[1]} & 022) == 0 ))
+}
+
 admit() {
-  local key value preview='' collaboration='' handle='' slot='' origin='' manifest=''
-  local origin_pattern='^https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?$'
-  while IFS='=' read -r key value; do
-    case "$key" in
-      MATRIX_PREVIEW_RUNTIME) preview="$value" ;;
-      MATRIX_COLLABORATION_DISABLED) collaboration="$value" ;;
-      MATRIX_HANDLE) handle="$value" ;;
-      MATRIX_RUNTIME_SLOT) slot="$value" ;;
-      PLATFORM_INTERNAL_URL) origin="$value" ;;
-      MATRIX_UPDATE_MANIFEST_BASE_URL) manifest="$value" ;;
-    esac
-  done < "$env_file"
-  [[ "$preview" = true && "$collaboration" = 1 && "$slot" = "$handle" ]] \
-    && [[ "$handle" =~ ^pv-[1-9][0-9]{0,8}-[0-9a-f]{8}$ && "$origin" =~ $origin_pattern ]] \
-    && [[ "$manifest" = "$origin/private-preview-updates/$handle" ]]
+  trusted_artifact "$image_ref" && trusted_artifact "$image_archive" || return 1
+  local candidate
+  IFS= read -r -n 128 candidate < "$image_ref" || return 1
+  [[ "$candidate" =~ ^matrix-openmausbot-oss:matrix-[a-f0-9]{40}$ ]] || return 1
+  printf '%s\n' "$candidate"
 }
 
 if [[ "${1:-}" = "--admit" ]]; then
-  admit
+  admit >/dev/null
   exit
 fi
 
-admit
+image="$(admit)"
+readonly image
 if [[ "${1:-}" = "--prepare-drive" ]]; then
   [[ ! -L "$drive_dir" ]]
   install -d -o matrix -g matrix -m 0750 "$drive_dir"
@@ -52,15 +50,13 @@ if [[ "${1:-}" = "--pair" ]]; then
       -X POST http://localhost/pairing
   exit
 fi
-image="$(cat "$image_dir/matrix-openmausbot.image-ref")"
-[[ "$image" =~ ^matrix-openmausbot-oss:matrix-[a-f0-9]{40}$ && "$(cat "$bundle_marker")" = "$image" ]]
 matches_release() {
   local actual
   actual="$("$docker" image inspect --format '{{index .Config.Labels "org.matrix-os.openmausbot.bundle-sha"}}' "$image" 2>/dev/null)" || return 1
   [[ "$actual" = "${image##*:matrix-}" ]]
 }
 if ! matches_release; then
-  "$docker" load --input "$image_dir/matrix-openmausbot.image.tar" >/dev/null
+  "$docker" load --input "$image_archive" >/dev/null
   matches_release
 fi
 

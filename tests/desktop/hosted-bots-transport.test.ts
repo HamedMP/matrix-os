@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHostedBotsProtocolHandler, hostedBotsIdentity, hostedBotsSocketAllowed, hostedBotsProviderLoginAllowed, HOSTED_BOTS_ORIGIN } from "@desktop/main/embeds/hosted-bots-transport";
 
-const auth = { signedIn: true, platformHost: "https://app.matrix-os.com", userId: "owner", runtimeSlot: "pv-202-0123abcd" };
+const auth = { signedIn: true, platformHost: "https://app.matrix-os.com", userId: "owner", handle: "pv-202-0123abcd", runtimeSlot: "pv-202-0123abcd" };
 const cookieName = "omb_session_8799_abc";
 const cookieValue = "omb_sess_" + "a".repeat(43);
 
-function setup() {
-  let currentAuth = auth;
+function setup(initialAuth = auth) {
+  let currentAuth = initialAuth;
   const get = vi.fn().mockResolvedValue([
     { name: cookieName, value: cookieValue, httpOnly: true, secure: true },
     { name: "__session", value: "other-credential" },
@@ -15,7 +15,7 @@ function setup() {
   const remove = vi.fn().mockResolvedValue(undefined);
   const flushStore = vi.fn().mockResolvedValue(undefined);
   const fetcher = vi.fn<typeof fetch>();
-  const identity = hostedBotsIdentity(auth)!;
+  const identity = hostedBotsIdentity(initialAuth)!;
   const handler = createHostedBotsProtocolHandler(identity, {
     getIdentity: () => hostedBotsIdentity(currentAuth),
     getToken: () => "matrix-bearer",
@@ -26,8 +26,15 @@ function setup() {
 }
 
 describe("hosted Bots Electron transport", () => {
-  it("derives a separate persistent partition for an authorized preview owner", () => {
-    expect(hostedBotsIdentity({ ...auth, runtimeSlot: "primary" })).toBeNull();
+  it("scopes the persistent partition to the authenticated owner and selected Computer", () => {
+    const primary = hostedBotsIdentity({ ...auth, handle: "owner", runtimeSlot: "primary" });
+    const dev = hostedBotsIdentity({ ...auth, handle: "owner-dev", runtimeSlot: "dev" });
+    expect(primary?.partition).toMatch(/^hosted-bots-[a-f0-9]{32}$/);
+    expect(dev?.partition).toMatch(/^hosted-bots-[a-f0-9]{32}$/);
+    expect(dev?.partition).not.toBe(primary?.partition);
+    expect(dev?.partition).not.toBe(hostedBotsIdentity({ ...auth, handle: "replacement-dev", runtimeSlot: "dev" })?.partition);
+    expect(hostedBotsIdentity({ ...auth, handle: "owner/dev", runtimeSlot: "dev" })).toBeNull();
+    expect(hostedBotsIdentity({ ...auth, handle: "owner", runtimeSlot: "../dev" })).toBeNull();
     expect(hostedBotsIdentity({ ...auth, signedIn: false })).toBeNull();
     expect(hostedBotsIdentity({ ...auth, platformHost: "https://other.test/vm/anything" })).toBeNull();
     expect(hostedBotsIdentity(auth)?.partition).toMatch(/^hosted-bots-[a-f0-9]{32}$/);
@@ -79,6 +86,24 @@ describe("hosted Bots Electron transport", () => {
     expect(hostedBotsSocketAllowed(identity, base + "/api/bots/bot-1/browser/settings")).toBe(false);
     expect(hostedBotsSocketAllowed(identity, base.replace("pv-202", "pv-203") + "/api/bots/bot-1/browser/stream")).toBe(false);
     expect(hostedBotsSocketAllowed(identity, base.replace("app.matrix-os.com", "elsewhere.test") + "/api/bots/bot-1/browser/stream")).toBe(false);
+  });
+
+  it("uses the selected Dev handle and runtime for HTTP requests and viewer upgrades", async () => {
+    const dev = { ...auth, handle: "owner-dev", runtimeSlot: "dev" };
+    const { handler, fetcher } = setup(dev);
+    fetcher.mockResolvedValue(new Response("<html><head></head><body>Bots</body></html>", {
+      headers: { "content-type": "text/html" },
+    }));
+    const result = await handler(new Request(HOSTED_BOTS_ORIGIN + "/"));
+    const path = "/vm/owner-dev/~runtime/dev/api/hosted-bots/runtime";
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://app.matrix-os.com" + path + "/");
+    const base = "wss://app.matrix-os.com" + path;
+    expect(await result.text()).toContain('<meta name="matrix-bots-websocket-base" content="' + base + '">');
+    const viewer = "/api/bots/bot-1/browser/stream";
+    const identity = hostedBotsIdentity(dev)!;
+    expect(hostedBotsSocketAllowed(identity, base + viewer)).toBe(true);
+    expect(hostedBotsSocketAllowed(identity, base.replace("/~runtime/dev/", "/~runtime/primary/") + viewer)).toBe(false);
+    expect(hostedBotsSocketAllowed(identity, base.replace("/owner-dev/", "/owner/") + viewer)).toBe(false);
   });
 
   it("permits only supported public provider login pages", () => {

@@ -1,9 +1,11 @@
+import { createHmac } from "node:crypto";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { createOpenMausBotPreviewOwnerCheck } from "../../packages/gateway/src/hosted-bots/oss-preview-owner.js";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { createOpenMausBotOwnerCheck } from "../../packages/gateway/src/hosted-bots/oss-owner.js";
 import { markAuthContextReady, markVerifiedRuntimeBearer, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE } from "../../packages/gateway/src/hosted-bots/oss-gateway.js";
@@ -173,9 +175,33 @@ describe("OpenMausBot gateway transport", () => {
   });
 });
 
-it("checks verified Matrix preview identity independently of OpenMausBot pairing", async () => {
+it("admits only a verified owner actor through the regular Computer gateway", async () => {
+  const owner = "user_a";
+  const token = "test-runtime-bearer";
+  const app = new Hono();
+  const check = createOpenMausBotOwnerCheck({ MATRIX_CLERK_USER_ID: owner, MATRIX_USER_ID: owner });
+  app.use("*", authMiddleware(token));
+  app.get(OPENMAUSBOT_PROXY_BASE, c => c.json({ allowed: check(c) }));
+  const auth = { authorization: "Bearer " + token };
+  const proof = (actor: string) => ({
+    ...auth,
+    "x-platform-user-id": actor,
+    "x-platform-verified": createHmac("sha256", token).update(actor).digest("hex"),
+  });
+  for (const [headers, allowed] of [
+    [proof(owner), true],
+    [proof("delegated_user"), false],
+    [auth, false],
+    [{ ...auth, "x-platform-user-id": owner, "x-platform-verified": "forged" }, false],
+  ] as const) {
+    const response = await app.request(OPENMAUSBOT_PROXY_BASE, { headers });
+    expect(await response.json()).toEqual({ allowed });
+  }
+});
+
+it("checks verified Matrix owner identity independently of OpenMausBot pairing", async () => {
   async function verify(env: NodeJS.ProcessEnv, actor: string, verified = true) {
-    const check = createOpenMausBotPreviewOwnerCheck(env);
+    const check = createOpenMausBotOwnerCheck(env);
     const app = new Hono();
     app.get("/", (c) => {
       markAuthContextReady(c);

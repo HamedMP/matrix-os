@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Cookies, Session, WebContents } from "electron";
-import { isPrivatePreviewHandle } from "@matrix-os/contracts";
+import { MatrixComputerHandleSchema, MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
 import { parseSetCookieHeaders } from "./app-session";
 
 export const HOSTED_BOTS_ORIGIN = "https://matrix-bots.invalid";
@@ -19,6 +19,7 @@ const MAX_DOCUMENT_BYTES = 256 * 1024;
 interface HostedBotsIdentity {
   partition: string;
   gateway: string;
+  handle: string;
   runtimeSlot: string;
 }
 
@@ -27,6 +28,7 @@ export interface HostedBotsAuth {
   platformHost: string;
   runtimeSlot: string;
   userId?: string | null;
+  handle?: string;
 }
 
 interface HostedBotsCredentials {
@@ -41,17 +43,24 @@ interface HostedBotsProtocolDeps extends HostedBotsCredentials {
 }
 
 export function hostedBotsIdentity(auth: HostedBotsAuth): HostedBotsIdentity | null {
-  if (!auth.signedIn || !auth.userId || !isPrivatePreviewHandle(auth.runtimeSlot) || !URL.canParse(auth.platformHost)) return null;
+  if (!auth.signedIn || !auth.userId || !URL.canParse(auth.platformHost)) return null;
+  const handle = MatrixComputerHandleSchema.safeParse(auth.handle);
+  const slot = MatrixComputerRuntimeSlotSchema.safeParse(auth.runtimeSlot);
+  if (!handle.success || !slot.success) return null;
   const gateway = new URL(auth.platformHost);
   const local = gateway.protocol === "http:" && gateway.hostname === "127.0.0.1";
   if ((!local && gateway.protocol !== "https:") || gateway.username || gateway.password || gateway.pathname !== "/" || gateway.search || gateway.hash) return null;
-  const scope = JSON.stringify([gateway.origin, auth.userId, auth.runtimeSlot]);
-  const digest = createHash("sha256").update(scope).digest("hex").slice(0, 32);
-  return { partition: "hosted-bots-" + digest, gateway: gateway.origin, runtimeSlot: auth.runtimeSlot };
+  // The existing preview partition used the slot as its handle. Preserve
+  // those paired sessions and include both route parts on other Computers.
+  const parts = [gateway.origin, auth.userId, slot.data];
+  if (handle.data !== slot.data) parts.push(handle.data);
+  const digest = createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 32);
+  return { partition: "hosted-bots-" + digest, gateway: gateway.origin, handle: handle.data, runtimeSlot: slot.data };
 }
 
 function gatewayProxyBase(identity: HostedBotsIdentity): URL {
-  return new URL("/vm/" + identity.runtimeSlot + proxyPath, identity.gateway);
+  const slot = identity.handle === identity.runtimeSlot ? "" : "/~runtime/" + identity.runtimeSlot;
+  return new URL("/vm/" + identity.handle + slot + proxyPath, identity.gateway);
 }
 
 function gatewaySocketBase(identity: HostedBotsIdentity): URL {

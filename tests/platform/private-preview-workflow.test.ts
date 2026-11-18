@@ -116,16 +116,14 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(outputs.action).toBe(action);
   });
 
-  it('adds OpenMausBot only to opted-in Private Preview bundles', async () => {
-    const optedIn = { HAS_OPENMAUSBOT_LABEL: 'true' };
-    expect((await decide({ HAS_BUNDLE_LABEL: 'true' })).outputs.openmausbot_preview).toBe('false');
-    expect((await decide({ HAS_BUNDLE_LABEL: 'true', ...optedIn })).outputs.openmausbot_preview).toBe('true');
-    expect((await decide({ HAS_LABEL: 'true', HAS_BUNDLE_LABEL: 'true', ...optedIn })).outputs.openmausbot_preview).toBe('false');
-    expect((await decide({ HAS_BUNDLE_LABEL: 'true', ...optedIn, EVENT_HEAD_REPO: 'fork/matrix-os' })).outputs.openmausbot_preview).toBe('false');
-    expect((await decide({
-      EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true',
-      FAKE_PR_JSON: JSON.stringify({ head: { sha: headSha, ref: 'feature', repo: { full_name: 'HamedMP/matrix-os' } }, labels: [{ name: 'openmausbot-preview' }] }),
-    })).outputs.openmausbot_preview).toBe('true');
+  it('registers a bundle without requiring a Bots-specific label or moving any channel', async () => {
+    const { status, outputs } = await decide({ HAS_BUNDLE_LABEL: 'true' });
+    expect(status).toBe(0);
+    expect(outputs.action).toBe('bundle');
+    expect(outputs).not.toHaveProperty('openmausbot_preview');
+    const build = workflow.jobs.build!.steps.find((candidate) => candidate.name === 'Build host bundle');
+    expect(build?.env).toMatchObject({ HOST_BUNDLE_CHANNEL: 'none' });
+    expect(build?.env).not.toHaveProperty('HOST_BUNDLE_OPENMAUSBOT_PREVIEW');
   });
 
   it('exposes an opt-in manual bundle action using live PR head and author without deployment', async () => {
