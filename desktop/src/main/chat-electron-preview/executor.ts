@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
+import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationRecipe } from "@matrix-os/contracts";
 import { isAbsolute, join } from "node:path";
 import {
   CHAT_ELECTRON_PREVIEW_SOURCE,
@@ -9,6 +10,7 @@ import {
   type ChatElectronPreviewMarker,
 } from "../../shared/chat-electron-preview";
 import { capturePreviewScript } from "./executor-capture";
+import { verifiedFilesTrashSource } from "./files-source";
 import { MAX_SIGN_IN_SOURCE_BYTES, verifiedSignInSource } from "./source";
 import type { ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
 
@@ -23,6 +25,7 @@ export interface ChatElectronPreviewExecution {
   sourceSha256: string;
   label: string;
   requestKind?: ChatElectronPreviewTarget["requestKind"];
+  recipe?: MacVerificationRecipe;
   operation?: ChatElectronPreviewMarker["operation"];
   signal: AbortSignal;
 }
@@ -133,16 +136,16 @@ async function readBoundedFile(path: string, maximum: number, description: strin
   return bytes;
 }
 
-function summarizeVitest(output: Buffer): string {
+function summarizeVitest(output: Buffer, suite: string): string {
   const matches = [...output.toString("utf8").matchAll(/^\s*Tests\s+(\d{1,4}) passed \((\d{1,4})\)\s*$/gm)];
   const match = matches.length === 1 ? matches[0] : undefined;
   if (!match || Number(match[1]) === 0 || match[1] !== match[2]) {
     throw new Error("Electron preview tests did not report a passing count");
   }
-  return `Electron Desktop device authorization sign-in: ${match[1]} tests passed.`;
+  return `${suite}: ${match[1]} tests passed.`;
 }
 
-async function testAndBuild(source: string, temp: string, signal: AbortSignal) {
+async function testAndBuild(source: string, temp: string, signal: AbortSignal, recipe: MacVerificationRecipe | undefined) {
   const env = localEnvironment(homedir(), temp);
   const options = { env, signal, cwd: source, timeout: 180_000 };
   // Resolve the installed dependencies at this exact revision from the local
@@ -151,10 +154,12 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal) {
     "pnpm", "install", "--offline", "--ignore-scripts", "--frozen-lockfile",
     "--config.enable-global-virtual-store=false",
   ], { ...options, stage: "offline dependency preparation" });
+  const filesTrash = recipe === "files-trash";
   const tests = await runLocal("node", [
-    "node_modules/vitest/vitest.mjs", "run", "--reporter=dot", "tests/desktop/signin-device-auth.test.tsx",
-  ], { ...options, timeout: 45_000, stage: "focused sign-in tests" });
-  const testSummary = summarizeVitest(tests);
+    "node_modules/vitest/vitest.mjs", "run", "--reporter=dot",
+    filesTrash ? "tests/gateway/trash.test.ts" : "tests/desktop/signin-device-auth.test.tsx",
+  ], { ...options, timeout: 45_000, stage: filesTrash ? "focused Trash tests" : "focused sign-in tests" });
+  const testSummary = summarizeVitest(tests, filesTrash ? "Gateway Trash" : "Electron Desktop device authorization sign-in");
   await runLocal("corepack", [
     "pnpm", "--filter", "@matrix-os/brand", "build",
   ], { ...options, timeout: 90_000, stage: "brand build" });
@@ -167,7 +172,7 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal) {
 async function capturePreview(
   source: string,
   root: string,
-  { electronPath, label, operation, signal }: ChatElectronPreviewExecution,
+  { electronPath, label, operation, recipe, signal }: ChatElectronPreviewExecution,
 ): Promise<Buffer> {
   const profile = join(root, "profile");
   const isolatedHome = join(root, "home");
@@ -176,19 +181,22 @@ async function capturePreview(
     mkdir(join(isolatedHome, "Library", "Application Support"), { recursive: true, mode: 0o700 }),
   ]);
   const destination = join(root, "preview.png");
-  await runLocal("node", [
-    "--input-type=module", "--eval", capturePreviewScript, electronPath, profile, destination, label, operation ?? "",
-  ], { cwd: source, stage: "capture", timeout: 95_000, signal, env: localEnvironment(isolatedHome, root) });
+  const args = recipe === "files-trash"
+    ? ["--import", "tsx", "tests/e2e/desktop/fixtures/mac-verification-files.mts", electronPath, profile, destination, label]
+    : ["--input-type=module", "--eval", capturePreviewScript, electronPath, profile, destination, label, operation ?? ""];
+  await runLocal("node", args, { cwd: source, stage: "capture", timeout: 95_000, signal, env: localEnvironment(isolatedHome, root) });
   const png = await readBoundedFile(destination, maxPngBytes, "preview screenshot");
   if (png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("Invalid preview screenshot");
   return png;
 }
 
 export async function runChatElectronPreview(request: ChatElectronPreviewExecution): Promise<{ png: Buffer; testSummary: string }> {
-  const { baseSha, sourceSha256, label, operation, electronPath, signal } = request;
+  const { baseSha, sourceSha256, label, operation, recipe, electronPath, signal } = request;
   signal.throwIfAborted();
   const verification = request.requestKind === "verification";
-  if (!(verification ? ChatElectronPreviewLabelSchema : ChatElectronPreviewMarkerSchema.shape.label).safeParse(label).success) {
+  const filesTrash = recipe === "files-trash";
+  if (filesTrash ? (!verification || operation !== undefined)
+    : !(verification ? ChatElectronPreviewLabelSchema : ChatElectronPreviewMarkerSchema.shape.label).safeParse(label).success) {
     throw new Error("Unsupported preview label");
   }
   if (!ChatElectronPreviewMarkerSchema.shape.operation.safeParse(operation).success) {
@@ -210,11 +218,12 @@ export async function runChatElectronPreview(request: ChatElectronPreviewExecuti
   const worktree = join(root, "source");
   try {
     await git(["worktree", "add", "--detach", "--", worktree, baseSha], checkout, signal);
-    const source = join(worktree, CHAT_ELECTRON_PREVIEW_SOURCE);
+    const source = join(worktree, recipe ? MAC_VERIFICATION_SOURCE_BY_RECIPE[recipe] : CHAT_ELECTRON_PREVIEW_SOURCE);
     const base = await readBoundedFile(source, MAX_SIGN_IN_SOURCE_BYTES, "preview source");
-    const candidate = verifiedSignInSource(base, label, sourceSha256, verification);
+    const candidate = filesTrash ? verifiedFilesTrashSource(base, label, sourceSha256)
+      : verifiedSignInSource(base, label, sourceSha256, verification);
     await writeFile(source, candidate);
-    const testSummary = await testAndBuild(worktree, root, signal);
+    const testSummary = await testAndBuild(worktree, root, signal, recipe);
     // The trusted build may generate ignored outputs. Recheck the bound input
     // after the build as well, before sending anything to the Chat.
     if (!(await readBoundedFile(source, MAX_SIGN_IN_SOURCE_BYTES, "preview source")).equals(candidate)) {
@@ -225,7 +234,7 @@ export async function runChatElectronPreview(request: ChatElectronPreviewExecuti
       png,
       testSummary: operation === "verify-sign-in-recovery"
         ? `${testSummary} Sign in showed a recoverable connection error and re-enabled retry.`
-        : testSummary,
+        : filesTrash ? `${testSummary} Electron Desktop Files moved the target to Trash and restored it with Undo.` : testSummary,
     };
   } finally {
     try {
