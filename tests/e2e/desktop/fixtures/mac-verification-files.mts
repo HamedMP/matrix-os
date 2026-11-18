@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { MacVerificationFilesMenuLabelSchema } from "@matrix-os/contracts";
+import { MacVerificationFilesMenuLabelSchema } from "@matrix-os/contracts/mac-verification-terminal";
 import { Hono } from "hono";
 import { _electron, type ElectronApplication } from "playwright";
 import { registerFileRoutes } from "../../../../packages/gateway/src/server/file-routes.js";
