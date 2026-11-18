@@ -93,9 +93,11 @@ export function patchMatrixProviderRegistry(source) {
   const direct = "  const message = await startTurn(botId, text, { threadId, replyTo, sendId, sender, trigger, via, callId, dataContext, app, mentions, allowRoomTurnElsewhere: true });";
   patched = replacePinned(patched, direct, direct.replace("allowRoomTurnElsewhere: true", "allowRoomTurnElsewhere: true, matrixHostedTurn: takeMatrixHostedOwnerSend(botId, threadId, sendId)"));
   patched = replacePinned(patched, "    requestMessageId?: string;\n    origin?: WorkOrigin;", "    requestMessageId?: string;\n    matrixHostedTurn?: MatrixHostedTurnTicket;\n    origin?: WorkOrigin;");
+  const replayCondition = "savedSteps.dispatch.sendTurn(instance, personLine &&";
+  patched = replacePinned(patched, replayCondition, "savedSteps.dispatch.sendTurn(instance, instance.instanceId !== MATRIX_HOSTED_INSTANCE && personLine &&");
   const turnDispatch = '(input) => quickFallback.sendTurn(instance, input, route.quickModel ? { model, own: bot.modelSelection, onFallback: () => store.patchMessage(threadId, userMessage.id, { quickModel: undefined }) } : undefined)';
   patched = replacePinned(patched, turnDispatch,
-    '(input) => runMatrixHostedModelTurn(instance.instanceId, opts?.matrixHostedTurn, () => ' + turnDispatch.slice('(input) => '.length) + ')');
+    '(input) => runMatrixHostedModelTurn(instance.instanceId, opts?.matrixHostedTurn, activeMessages, skipTranscript, () => ' + turnDispatch.slice('(input) => '.length) + ')');
   const readOnly = '    if (hostedModels) return { ...described, readOnly: true,';
   return replacePinned(patched, readOnly, readOnly.replace('hostedModels', 'hostedModels || instance.instanceId === MATRIX_HOSTED_INSTANCE'));
 }

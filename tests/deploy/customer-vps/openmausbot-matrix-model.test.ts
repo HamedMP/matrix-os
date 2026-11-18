@@ -27,6 +27,7 @@ it("registers the served Matrix model as an actual upstream provider only in the
     "  const message = await startTurn(botId, text, { threadId, replyTo, sendId, sender, trigger, via, callId, dataContext, app, mentions, allowRoomTurnElsewhere: true });",
     "    requestMessageId?: string;",
     "    origin?: WorkOrigin;",
+    "savedSteps.dispatch.sendTurn(instance, personLine &&",
     "(input) => quickFallback.sendTurn(instance, input, route.quickModel ? { model, own: bot.modelSelection, onFallback: () => store.patchMessage(threadId, userMessage.id, { quickModel: undefined }) } : undefined)",
     "    if (hostedModels) return { ...described, readOnly: true,",
   ].join("\n");
@@ -34,7 +35,8 @@ it("registers the served Matrix model as an actual upstream provider only in the
   expect(registry).toContain('process.env.OMB_MATRIX_PAIR_SOCKET');
   expect(registry).toContain('[...BUILT_IN_DRIVERS, matrixHostedDriver]');
   expect(registry).toContain('matrixHostedTurn: takeMatrixHostedOwnerSend(botId, threadId, sendId)');
-  expect(registry).toContain('runMatrixHostedModelTurn(instance.instanceId, opts?.matrixHostedTurn,');
+  expect(registry).toContain('runMatrixHostedModelTurn(instance.instanceId, opts?.matrixHostedTurn, activeMessages, skipTranscript,');
+  expect(registry).toContain('instance.instanceId !== MATRIX_HOSTED_INSTANCE && personLine');
   const provider = await readFile("scripts/openmausbot/matrix-provider.ts", "utf8");
   expect(provider).toContain('type: "item.completed", itemType: "assistant_text"');
   expect(provider).toContain('type: "turn.completed"');

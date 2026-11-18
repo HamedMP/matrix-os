@@ -15,7 +15,12 @@ const SEND_NOTICE = "Matrix AI accepts a new, direct text message from the paire
 type TurnIdentity = { botId: string; threadId: string; sendId: string };
 export type MatrixHostedTurnTicket = TurnIdentity & { token: string };
 const ownerSend = new AsyncLocalStorage<MatrixHostedTurnTicket | null>();
-const modelTurn = new AsyncLocalStorage<MatrixHostedTurnTicket | null>();
+type HistoryLine = {
+  id: string; role: string; kind: string; text?: string | null;
+  automation?: unknown; peerAsk?: unknown; from?: unknown; relayed?: boolean;
+};
+type ContextLine = { role: "user" | "assistant"; text: string };
+const modelTurn = new AsyncLocalStorage<{ ticket: MatrixHostedTurnTicket; history: ContextLine[] } | null>();
 
 export function withMatrixHostedOwnerSend<T>(
   header: string | string[] | undefined, identity: TurnIdentity, work: () => T,
@@ -36,9 +41,19 @@ export function takeMatrixHostedOwnerSend(
 
 /** Only the immediate, non-queued owner dispatch passes a ticket here. */
 export function runMatrixHostedModelTurn<T>(
-  instanceId: string, ticket: MatrixHostedTurnTicket | undefined, work: () => T,
+  instanceId: string, ticket: MatrixHostedTurnTicket | undefined,
+  messages: readonly HistoryLine[], excluded: ReadonlySet<string>, work: () => T,
 ): T {
-  return modelTurn.run(instanceId === MATRIX_HOSTED_INSTANCE && ticket ? ticket : null, work);
+  if (instanceId !== MATRIX_HOSTED_INSTANCE || !ticket?.token) return modelTurn.run(null, work);
+  const history: ContextLine[] = [];
+  for (let i = messages.length - 1; i >= 0 && history.length < 12; i--) {
+    const line = messages[i]!;
+    if (line.kind !== "text" || !line.text || excluded.has(line.id) || line.automation || line.peerAsk || line.from || line.relayed) continue;
+    if (line.role === "user" || line.role === "bot") {
+      history.push({ role: line.role === "user" ? "user" : "assistant", text: line.text.slice(0, 1_000) });
+    }
+  }
+  return modelTurn.run({ ticket, history: history.reverse() }, work);
 }
 
 export function matrixHostedProviderConfigs(configs: InstanceConfigMap): InstanceConfigMap {
@@ -102,8 +117,9 @@ export const matrixHostedDriver: ProviderDriver<null> = {
       provider: MATRIX_HOSTED_INSTANCE,
       capabilities: { sessionModelSwitch: "unsupported" },
       async sendTurn(input) {
-        const ticket = modelTurn.getStore();
-        if (stopped || !enabled || !ticket?.token || input.model !== MATRIX_HOSTED_MODEL
+        const dispatch = modelTurn.getStore();
+        const ticket = dispatch?.ticket;
+        if (stopped || !enabled || !dispatch || !ticket?.token || input.model !== MATRIX_HOSTED_MODEL
           || ticket.botId !== input.botId || ticket.threadId !== input.threadId
           || input.guestConfined || input.mentionTurn || input.images?.length) throw new Error(SEND_NOTICE);
         if (active.has(input.threadId) || active.size >= 8) throw new Error("Matrix AI is busy. Send a new message when the turn finishes.");
@@ -127,11 +143,8 @@ export const matrixHostedDriver: ProviderDriver<null> = {
           try {
             // The gateway supplies the exact latest user text from its
             // authorized request, not mutable turn input or private context.
-            const history = (input.transcript ?? [])
-              .filter(line => line.role === "user" || line.role === "assistant")
-              .slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 1_000) }));
             const result = await query("/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(35_000)]), JSON.stringify({
-              botId: ticket.botId, threadId: ticket.threadId, sendId: ticket.sendId, modelId: MATRIX_HOSTED_MODEL, history,
+              botId: ticket.botId, threadId: ticket.threadId, sendId: ticket.sendId, modelId: MATRIX_HOSTED_MODEL, history: dispatch.history,
             }), token);
             abort.signal.throwIfAborted();
             const text = result && typeof result === "object" && "text" in result ? result.text : null;
