@@ -182,6 +182,7 @@ import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
+import { createRuntimeDesktopPairingRoutes } from "./desktop-pairing/routes.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -1283,6 +1284,7 @@ export async function createGateway(config: GatewayConfig) {
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   registerRoutineDirectResourceFence(app);
+  app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance }));
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0

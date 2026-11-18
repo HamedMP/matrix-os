@@ -13,6 +13,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Reac
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ResourceRows } from "./ComposerResourceRows";
+import { ComposerMentionActions, type ComposerMentionAction } from "./ComposerMentionActions";
 import {
   listCanonicalSlashEntries,
   updateCanonicalComposerOption,
@@ -104,6 +105,7 @@ export function SharedChatComposer({
   referenceTokens = [],
   onReferenceTokensChange,
   onAgentMention,
+  mentionActions,
   onSubmit,
   onAbort,
   busy,
@@ -145,6 +147,7 @@ export function SharedChatComposer({
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
   onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
+  mentionActions?: readonly ComposerMentionAction[];
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
@@ -248,10 +251,19 @@ export function SharedChatComposer({
     .filter((resource) => !isChatMention(resource) || canAddChatMention(referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []), resource));
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
+  const queryToken = resourceQuery === null ? null : `@${resourceMatch?.[1] ?? ""}`;
+  const canUseMacActions = !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length;
+  const filteredMentionActions = resourceQuery !== null && canUseMacActions
+    ? (mentionActions ?? []).filter(action => (action.consumeTrigger || value.trim() === queryToken)
+      && `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
+    : [];
+  const filteredNativeSkills = slashQuery !== null && canUseMacActions
+    ? (mentionActions ?? []).filter(action => action.slashCommand?.includes(slashQuery))
+    : [];
   const suggestionCount = slashMenuOpen
-    ? filteredSlashEntries.length
+    ? filteredNativeSkills.length + filteredSlashEntries.length
     : resourceMenuOpen
-      ? filteredResources.length + (canAttach ? 1 : 0)
+      ? filteredMentionActions.length + filteredResources.length + (canAttach ? 1 : 0)
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const activeSuggestionIndex = Math.min(suggestionIndex, Math.max(0, suggestionCount - 1));
@@ -269,9 +281,27 @@ export function SharedChatComposer({
       projectSkill: { projectId: projectSlashScope.projectId, isCurrent: projectSkillDraft.isCurrent, onAccepted: projectSkillDraft.clear },
     };
   };
+  const applyNativeAction = (action: ComposerMentionAction, trigger: string | null, end: number) => {
+    const current = editorRef.current?.readValue();
+    if (!current || current.value !== value || current.tokens.length) return;
+    setDismissedSuggestionKey(suggestionKey);
+    if (action.consumeTrigger && trigger) {
+      editorRef.current?.removeTrigger(trigger, end);
+      const remaining = editorRef.current?.readValue().value;
+      if (remaining !== undefined && remaining !== current.value) action.select(current.value, remaining);
+    } else {
+      action.select(current.value);
+    }
+  };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
-      const entry = filteredSlashEntries[index];
+      const skill = filteredNativeSkills[index];
+      if (skill && slashMatch) {
+        const suffix = value.slice(slashMatch.end).match(/^[a-z0-9_.-]*/i)?.[0] ?? "";
+        applyNativeAction(skill, slashMatch.token + suffix, slashMatch.end + suffix.length);
+        return;
+      }
+      const entry = filteredSlashEntries[index - filteredNativeSkills.length];
       if (entry) {
         if (entry.kind === "project_skill") {
           if (!slashMatch || !projectSkillDraft.select(entry.path)) return;
@@ -294,12 +324,18 @@ export function SharedChatComposer({
       }
       return;
     }
-    if (resourceQuery !== null && canAttach && index === 0) {
+    const action = filteredMentionActions[index];
+    if (resourceMenuOpen && action) {
+      applyNativeAction(action, queryToken, cursor);
+      return;
+    }
+    const resourceIndex = index - filteredMentionActions.length;
+    if (resourceQuery !== null && canAttach && resourceIndex === 0) {
       setDismissedSuggestionKey(suggestionKey);
       onAttach?.();
       return;
     }
-    const resource = filteredResources[index - (canAttach ? 1 : 0)];
+    const resource = filteredResources[resourceIndex - (canAttach ? 1 : 0)];
     if (resourceQuery !== null && resource) {
       // Keep keyboard behavior deterministic after mouse or Enter selection:
       // the next Enter belongs to the composer, not the stale resource menu.
@@ -375,7 +411,7 @@ export function SharedChatComposer({
       onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
     },
   ] : [];
-  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
+  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0 || filteredMentionActions.length > 0);
   const suggestionMenuOpen = slashMenuOpen || showResourceSuggestions;
   const suggestionSessionOpen = slashMenuOpen || resourceMenuOpen;
   const dismissSuggestion = useEffectEvent(() => setDismissedSuggestionKey(suggestionKey));
@@ -418,15 +454,16 @@ export function SharedChatComposer({
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             {projectSkills.catalog ? "Project skills & commands" : "Skills & commands"}
           </p>
-          {!filteredSlashEntries.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:slashLoading,instance,entryCount:slashEntries.length,projectSkills:projectSkills.catalog})}</p> : null}
+          {!filteredSlashEntries.length && !filteredNativeSkills.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:slashLoading,instance,entryCount:slashEntries.length,projectSkills:projectSkills.catalog})}</p> : null}
+          <ComposerMentionActions actions={filteredNativeSkills} selectedIndex={activeSuggestionIndex} onSelect={applySuggestion} />
           {filteredSlashEntries.map((entry, index) => (
             <button
               key={`${entry.kind}:${entry.id}`}
               type="button"
               role="option"
-              aria-selected={activeSuggestionIndex === index}
+              aria-selected={activeSuggestionIndex === index + filteredNativeSkills.length}
               className="grid min-h-10 w-full grid-cols-[1rem_minmax(12rem,16rem)_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
-              onClick={() => applySuggestion(index)}
+              onClick={() => applySuggestion(index + filteredNativeSkills.length)}
             >
               <span data-slot="skill-command-icon" className="flex items-center justify-center" style={{ color: "var(--text-tertiary)" }}>
                 {entry.kind !== "command" ? <Box size={15} aria-hidden /> : <SquareTerminal size={15} aria-hidden />}
@@ -439,11 +476,12 @@ export function SharedChatComposer({
       ) : showResourceSuggestions ? (
         <SuggestionMenu label="Add" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
+          <ComposerMentionActions actions={filteredMentionActions} selectedIndex={activeSuggestionIndex} onSelect={applySuggestion} />
           <ResourceRows
             role="option"
             canAttach={canAttach}
             resources={filteredResources}
-            selectedIndex={activeSuggestionIndex}
+            selectedIndex={activeSuggestionIndex - filteredMentionActions.length}
             onAttach={() => onAttach?.()}
             onResource={insertResource}
           />

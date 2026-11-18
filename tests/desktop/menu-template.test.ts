@@ -2,6 +2,95 @@ import { describe, expect, it, vi } from "vitest";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 
 describe("createAppMenuTemplate", () => {
+  it("opens Mac pairing directly in installed and development Matrix clients", () => {
+    const openMacPairing = vi.fn();
+    const options = {
+      appName: "Matrix OS", isPackaged: true, platform: "darwin" as const,
+      openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn(),
+      openMacPairing,
+    };
+    function pairingItem(template: ReturnType<typeof createAppMenuTemplate>) {
+      const menu = template.find(item => item.label === options.appName);
+      return Array.isArray(menu?.submenu) ? menu.submenu.find(item => item.label === "Mac Pairing…") : undefined;
+    }
+    for (const isPackaged of [true, false]) {
+      const item = pairingItem(createAppMenuTemplate({ ...options, isPackaged }));
+      if (!item?.click) throw new Error("missing native Mac pairing action");
+      item.click({} as never, {} as never, {} as never);
+    }
+    expect(openMacPairing).toHaveBeenCalledTimes(2);
+    expect(options.send).not.toHaveBeenCalled();
+    expect(pairingItem(createAppMenuTemplate({ ...options, openMacPairing: undefined }))).toBeUndefined();
+    expect(pairingItem(createAppMenuTemplate({ ...options, platform: "linux" }))).toBeUndefined();
+  });
+
+  it("opens Mac Verification setup in the installed macOS client", () => {
+    const openMacVerification = vi.fn();
+    const options = {
+      appName: "Matrix OS", isPackaged: true,
+      openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(), openMacVerification,
+    };
+    const macMenu = createAppMenuTemplate({ ...options, platform: "darwin" });
+    const appMenu = macMenu.find(item => item.label === options.appName);
+    const item = Array.isArray(appMenu?.submenu)
+      ? appMenu.submenu.find(option => option.label === "Mac Verification…") : undefined;
+    if (!item?.click) throw new Error("missing native Mac Verification setup");
+    item.click({} as never, {} as never, {} as never);
+    expect(openMacVerification).toHaveBeenCalledOnce();
+    expect(options.send).not.toHaveBeenCalled();
+    expect(JSON.stringify(createAppMenuTemplate({ ...options, platform: "win32" }))).not.toContain("Mac Verification");
+  });
+
+  it("opens local Mac activity history from the native menu without a renderer action", () => {
+    const openMacActivity = vi.fn();
+    const send = vi.fn();
+    const options = {
+      appName: "Matrix OS", isPackaged: false, platform: "darwin" as const,
+      openExternal: vi.fn(), send, adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn(),
+      openMacActivity,
+    };
+    function historyItem(template: ReturnType<typeof createAppMenuTemplate>) {
+      const menu = template.find(item => item.label === "Matrix OS");
+      return Array.isArray(menu?.submenu) ? menu.submenu.find(item => item.label === "Recent Mac Activity…") : undefined;
+    }
+    const item = historyItem(createAppMenuTemplate(options));
+    if (!item?.click) throw new Error("missing native activity history");
+    item.click({} as never, {} as never, {} as never);
+    expect(openMacActivity).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(historyItem(createAppMenuTemplate({ ...options, openMacActivity: undefined }))).toBeUndefined();
+    expect(historyItem(createAppMenuTemplate({ ...options, platform: "linux" }))).toBeUndefined();
+  });
+
+  it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
+    const stopBackgroundMacChecks = vi.fn();
+    const options = {
+      appName: "Matrix OS",
+      isPackaged: false,
+      platform: "darwin" as const,
+      openExternal: vi.fn(),
+      send: vi.fn(),
+      adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(),
+      quitApp: vi.fn(),
+      stopBackgroundMacChecks,
+    };
+    function stopItem(template: ReturnType<typeof createAppMenuTemplate>) {
+      const appMenu = template.find(item => item.label === "Matrix OS");
+      return Array.isArray(appMenu?.submenu)
+        ? appMenu.submenu.find(item => item.id === "stop-background-mac-checks")
+        : undefined;
+    }
+    const item = stopItem(createAppMenuTemplate(options));
+    expect(item).toMatchObject({ label: "Stop Background Mac Terminal Checks", visible: false });
+    if (!item?.click) throw new Error("missing native stop callback");
+    item.click({} as never, {} as never, {} as never);
+    expect(stopBackgroundMacChecks).toHaveBeenCalledOnce();
+    expect(options.send).not.toHaveBeenCalled();
+    expect(stopItem(createAppMenuTemplate({ ...options, stopBackgroundMacChecks: undefined }))).toBeUndefined();
+  });
+
   it("preserves Electron's standard non-terminal Edit menu roles", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
