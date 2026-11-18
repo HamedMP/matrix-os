@@ -128,7 +128,7 @@ describe("OpenMausBot gateway transport", () => {
       expect(received[0]?.headers["x-matrix-hosted-bots-schedule"]).toBe(routineId + ":" + token);
       expect(schedules.issue).toHaveBeenCalledWith({
         botId: "pebble", threadId: "original-thread", scheduledFor: at, prompt: payload.prompt, modelId: model,
-      });
+      }, expect.any(AbortSignal));
       const rejected = await save(owner.app, { ...payload, resultsThreadId: "missing-thread" });
       expect(rejected.status).toBe(409);
       await rejected.text();
@@ -138,6 +138,11 @@ describe("OpenMausBot gateway transport", () => {
       await deletion.text();
       expect(schedules.revoke).toHaveBeenCalledTimes(2);
       expect(received[2]?.headers["x-matrix-hosted-bots-schedule"]).toBeUndefined();
+      schedules.issue.mockRejectedValueOnce(new DOMException("cold funding transport", "TimeoutError"));
+      const temporary = await save(owner.app);
+      expect(temporary.status).toBe(503);
+      expect(await temporary.json()).toEqual({ error: "Matrix could not verify this schedule right now. Try saving again." });
+      expect(received).toHaveLength(3);
     } finally {
       owner.gateway.close();
       guest.gateway.close();

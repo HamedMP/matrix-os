@@ -1303,7 +1303,11 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket,
     issueModelTurn: (identity, text) => hostedBotsMatrixModel.issue?.(identity, text),
     schedules: {
-      issue: async intent => hostedBotsMatrixModel.schedule?.issue(intent) ?? null,
+      issue: async (intent, signal) => {
+        const schedule = hostedBotsMatrixModel.schedule;
+        if (!schedule) throw new Error("Schedule authority unavailable");
+        return schedule.issue(intent, signal);
+      },
       revoke: async routineId => { await hostedBotsMatrixModel.schedule?.revoke(routineId); },
     },
   });

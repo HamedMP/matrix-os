@@ -399,7 +399,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
     const canonicalOnly = this.#observationScope?.() === "canonical_matrix" || options.admissionScope === "canonical_matrix";
-    const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
+    const scheduleAuthority = options.admissionScope === "managed_matrix_authority";
+    const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix" || scheduleAuthority;
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
     // Aggregate funding can outlive native evidence. Renew within the outer
@@ -416,7 +417,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const [drivers, funded, apiKeyReadiness, profileReadiness, observedNativeCatalog] = await Promise.all([
       this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
-        ? this.#fundedReadiness.read()
+        ? this.#fundedReadiness.read(scheduleAuthority ? { mode: "schedule_authority", signal: options.signal } : undefined)
         : undefined,
       managedMatrixOnly ? readinessForObservation(credentials.ownerApiKey.state, "api_key", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true, options.ownerKeyPreflight, options.signal,

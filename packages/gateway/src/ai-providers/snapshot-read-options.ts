@@ -9,7 +9,7 @@ export interface ProviderSnapshotReadOptions {
   collaborationChatRoute?: CollaborationChatProviderRoute;
   refresh?: boolean;
   /** Exact managed Matrix admission skips unrelated native inventory; never cache its authority. */
-  admissionScope?: "managed_matrix" | "canonical_matrix";
+  admissionScope?: "managed_matrix" | "canonical_matrix" | "managed_matrix_authority";
   /** Trusted runtime-owner-only identity/allowance enrichment; never renderer input. */
   includeNativeAccountMetadata?: boolean;
   /** Server-verified runtime owner only: repair an existing saved native selection. */

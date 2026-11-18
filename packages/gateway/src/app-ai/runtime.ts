@@ -33,6 +33,7 @@ const PolicySchema = z.strictObject({
 const HOSTED_BOTS_APP = "matrix-bots";
 const hostedBotsPolicy: z.infer<typeof PolicySchema> = { apps: [HOSTED_BOTS_APP] };
 const HOSTED_BOTS_TOOL_TIMEOUT_MS = 150_000;
+const HOSTED_BOTS_OPENCODE_TIMEOUT_MS = 60_000;
 export const HOSTED_BOTS_DISCOVERY_TIMEOUT_MS = FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs + 4_000;
 export type HostedBotsApiCompletion = (input: Pick<Parameters<typeof generateApiAppText>[0], "route" | "prompt" | "signal" | "revalidate">) => Promise<AppAiResult>;
 type HostedBotsGeneration = {
@@ -134,13 +135,13 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         }
         return selected;
     }
-    async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean; managedOnly?: boolean }, hostedBots = false) {
+    async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean; managedOnly?: boolean; scheduleAuthority?: boolean }, hostedBots = false) {
         signal.throwIfAborted();
         const policy = await policyFor(app, hostedBots);
         if (!policy?.apps.includes(app))
             throw new Error("App AI access denied");
         if (policy.model && !policy.route) return {settings:undefined,canonical:undefined,policy,routes:{routes:[],defaultRoute:null},allRoutes:[],sdkRoutes:[] as AppAiRouteSelection[]};
-        const managedOnly = hostedBots && (intent?.managedOnly || (intent?.route && hostedBotsRouteIsManaged(intent.route)));
+        const managedOnly = hostedBots && (intent?.managedOnly || intent?.scheduleAuthority || (intent?.route && hostedBotsRouteIsManaged(intent.route)));
         const exactCodex = Boolean(hostedBots && intent?.route && isCodexProfileAppRoute(intent.route));
         const exactOpenCode = Boolean(hostedBots && intent?.route && isOpenCodeFreeAppRoute(intent.route));
         const personalOnly = exactCodex || exactOpenCode;
@@ -149,7 +150,9 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
                 includeNativeAccountMetadata: !exactOpenCode && (exactCodex || intent?.verify !== false),
                 includeNativeAccountUsage: false, signal, ...(personalOnly ? { suppressFundedProbes: true } : {}),
             }),
-            options.providerSnapshotReader?.getSnapshot(managedOnly ? { admissionScope: "managed_matrix", signal }
+            options.providerSnapshotReader?.getSnapshot(managedOnly ? {
+                admissionScope: intent?.scheduleAuthority ? "managed_matrix_authority" : "managed_matrix", signal,
+            }
                 : personalOnly ? { suppressFundedProbes: true, signal }
                 : intent?.verify === false ? { includeNativeAccountMetadata: false, includeNativeAccountUsage: false, signal } : { signal }),
         ]);
@@ -279,14 +282,21 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         return { settings, canonical, policy, sdkRoutes, nativeHostedRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
     }
     async function connected(request: AppAiRequest, signal: AbortSignal, hostedBots = false, generateManaged?: HostedBotsApiCompletion, requestClass?: "background") {
-        const initial = await catalog(request.app, signal, { route: request.route }, hostedBots);
+        const openCode = hostedBots && request.route && isOpenCodeFreeAppRoute(request.route);
+        const scheduleAuthority = hostedBots && requestClass === "background";
+        const initial = await catalog(request.app, signal, { route: request.route, scheduleAuthority }, hostedBots).catch((error: unknown) => {
+            if (openCode) console.warn("[app-ai] OpenCode completion unavailable", "catalog_read");
+            throw error;
+        });
         const route = request.route ?? initial.routes.defaultRoute;
-        if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route)))
+        if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))) {
+            if (openCode) console.warn("[app-ai] OpenCode completion unavailable", "route_unavailable");
             throw new Error("App AI route is unavailable");
+        }
         if (requestClass === "background" && (!hostedBots || !hostedBotsRouteIsManaged(route))) throw new Error("App AI background source unavailable");
         const managedToolTurn = !requestClass && generateManaged && hostedBots && supportsHostedBotsTools(initial.canonical, route);
         const revalidate = async () => {
-            const current = await catalog(request.app, signal, { route, verify: false }, hostedBots);
+            const current = await catalog(request.app, signal, { route, verify: false, scheduleAuthority }, hostedBots);
             return (!current.policy.model || current.policy.route!==undefined) && (!current.policy.route || sameAppAiRoute(current.policy.route,route)) && current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
                 && (!managedToolTurn || supportsHostedBotsTools(current.canonical, route))
                 && (request.route !== undefined || current.routes.defaultRoute !== null && sameAppAiRoute(current.routes.defaultRoute, route));
@@ -427,8 +437,9 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
         return lifetime ? lifetime.track(() => operation(workSignal)) : operation(workSignal);
     }
     const hostedBots = {
-        discover: (signal: AbortSignal, scope: HostedBotsDiscoveryScope = "all") => hostedWork(signal, async (workSignal): Promise<HostedBotsAppAiCatalog> => {
-            const intent = scope === "managed" ? { managedOnly: true } : undefined;
+        discover: (signal: AbortSignal, scope: HostedBotsDiscoveryScope = "all", mode?: "schedule_authority") => hostedWork(signal, async (workSignal): Promise<HostedBotsAppAiCatalog> => {
+            const intent = scope === "managed" || mode === "schedule_authority"
+                ? { managedOnly: true, scheduleAuthority: mode === "schedule_authority" } : undefined;
             const { allRoutes, canonical, settings, nativeHostedRoutes, routes: { defaultRoute } } = await catalog(HOSTED_BOTS_APP, workSignal, intent, true);
             return {
                 defaultRoute,
@@ -446,11 +457,17 @@ export function createRuntimeAppAiService(options: RuntimeOptions) {
                 }),
             };
         }, HOSTED_BOTS_DISCOVERY_TIMEOUT_MS),
-        generate: ({ route, prompt, signal, generateManaged, requestClass }: HostedBotsGeneration): Promise<AppAiResult> => hostedWork(
-            signal,
-            workSignal => connected(AppAiRequestSchema.parse({ app: HOSTED_BOTS_APP, route, prompt }), workSignal, true, generateManaged, requestClass),
-            !requestClass && generateManaged && hostedBotsRouteIsManaged(route) ? HOSTED_BOTS_TOOL_TIMEOUT_MS : APP_AI_TIMEOUT_MS,
-        ),
+        generate: ({ route, prompt, signal, generateManaged, requestClass }: HostedBotsGeneration): Promise<AppAiResult> => {
+            let timeoutMs = APP_AI_TIMEOUT_MS;
+            if (!requestClass) {
+                if (generateManaged && hostedBotsRouteIsManaged(route)) timeoutMs = HOSTED_BOTS_TOOL_TIMEOUT_MS;
+                else if (isOpenCodeFreeAppRoute(route)) timeoutMs = HOSTED_BOTS_OPENCODE_TIMEOUT_MS;
+            }
+            return hostedWork(signal,
+                workSignal => connected(AppAiRequestSchema.parse({ app: HOSTED_BOTS_APP, route, prompt }), workSignal, true, generateManaged, requestClass),
+                timeoutMs,
+            );
+        },
     };
     return { routes, hostedBots };
 }

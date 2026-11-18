@@ -9,7 +9,7 @@ import { buildIsolatedProviderLaunch } from "../coding-agents/provider-process-i
 
 const OPENCODE_FREE_SOURCE = "harness_opencode_opencode";
 const CONTRACT_VERSION = "1.19.5";
-const FreeModel = /^opencode:(?:big-pickle|[a-z0-9][a-z0-9-]{0,95}-free)$/;
+const FreeModel = /^opencode:(?:big-pickle|[a-z0-9](?:[a-z0-9-]|(?<=[0-9])\.(?=[0-9])){0,95}-free)$/;
 const execFileAsync = promisify(execFile);
 
 export function isOpenCodeFreeAppRoute(route: AppAiRouteSelection): boolean {
@@ -90,11 +90,16 @@ export function createOpenCodeAppCompletion() {
   }
 
   async function generate(input: { modelId: string; prompt: string; signal: AbortSignal; revalidate(): Promise<boolean> }) {
-    if (!FreeModel.test(input.modelId) || running) throw new Error("OpenCode route is unavailable");
+    if (!FreeModel.test(input.modelId) || running) {
+      console.warn("[app-ai] OpenCode completion unavailable", running ? "busy" : "model");
+      throw new Error("OpenCode route is unavailable");
+    }
     running = true;
     let scratch: string | undefined;
+    let stage: "version" | "prepare" | "transport" = "version";
     try {
       if (!await probeVersion(input.signal)) throw new Error("OpenCode runtime is unavailable");
+      stage = "prepare";
       scratch = await mkdtemp("/tmp/matrix-opencode-app-");
       const providerModel = input.modelId.slice("opencode:".length);
       const env = sterileEnvironment(command, scratch);
@@ -108,6 +113,7 @@ export function createOpenCodeAppCompletion() {
         },
       });
       input.signal.throwIfAborted();
+      stage = "transport";
       const child = createOpenCodeServerProcess(command, ["run", "--model", `opencode/${providerModel}`, input.prompt], {
         cwd: scratch, env,
       }, { textOnly: { revalidate: input.revalidate } });
@@ -133,6 +139,9 @@ export function createOpenCodeAppCompletion() {
         input.signal.throwIfAborted();
         return { text };
       } finally { input.signal.removeEventListener("abort", abort); }
+    } catch (error) {
+      console.warn("[app-ai] OpenCode completion unavailable", input.signal.aborted ? "aborted" : stage);
+      throw error;
     } finally {
       try {
         if (scratch) await rm(scratch, { recursive: true, force: true });

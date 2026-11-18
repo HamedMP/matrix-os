@@ -13,6 +13,9 @@ const RESPONSE_LIMIT = 256_000;
 const SEND_NOTICE = "Send a new, direct text message from the paired Matrix Bots window to use Matrix providers.";
 const MAX_MODELS = 128;
 const TEXT_TURN_TIMEOUT = 35_000;
+// A private scheduled call checks fresh authority before the text turn.
+const SCHEDULED_TURN_TIMEOUT = 45_000;
+const OPENCODE_TURN_TIMEOUT = 100_000;
 const MANAGED_TURN_TIMEOUT = 150_000;
 const STATUS_TIMEOUT = 8_000;
 // Detached completion can wait through Gateway's 35s native discovery.
@@ -109,22 +112,24 @@ const emptyModels: ModelCatalog = { default: "", options: [] };
 function matrixModelId(value: unknown): value is string {
   return typeof value === "string" && (value === MATRIX_HOSTED_MODEL || /^matrix-route-[a-f0-9]{64}$/.test(value));
 }
-function matrixModelCatalog(value: unknown): { models: ModelCatalog; tools: ReadonlySet<string> } | null {
+function matrixModelCatalog(value: unknown): { models: ModelCatalog; turnTimeouts: ReadonlyMap<string, number> } | null {
   if (!value || typeof value !== "object" || !("available" in value) || value.available !== true
     || !("default" in value) || !matrixModelId(value.default)
     || !("models" in value) || !Array.isArray(value.models) || value.models.length > MAX_MODELS) return null;
   const options: ModelCatalog["options"] = [];
   const seen = new Set<string>();
-  const tools = new Set<string>();
+  const turnTimeouts = new Map<string, number>();
   for (const option of value.models) {
     if (!option || typeof option !== "object" || !matrixModelId(option.id) || seen.has(option.id)
       || typeof option.label !== "string" || !option.label.trim() || option.label.length > 320
-      || typeof option.tools !== "boolean") return null;
+      || typeof option.tools !== "boolean"
+      || option.turnTimeoutMs !== undefined && (option.tools || option.turnTimeoutMs !== OPENCODE_TURN_TIMEOUT)) return null;
     seen.add(option.id);
     options.push({ id: option.id, label: option.label });
-    if (option.tools) tools.add(option.id);
+    if (option.tools) turnTimeouts.set(option.id, MANAGED_TURN_TIMEOUT);
+    else if (option.turnTimeoutMs === OPENCODE_TURN_TIMEOUT) turnTimeouts.set(option.id, OPENCODE_TURN_TIMEOUT);
   }
-  return seen.has(value.default) ? { models: { default: value.default, options }, tools } : null;
+  return seen.has(value.default) ? { models: { default: value.default, options }, turnTimeouts } : null;
 }
 
 export const matrixHostedDriver: ProviderDriver<null> = {
@@ -195,7 +200,7 @@ export const matrixHostedDriver: ProviderDriver<null> = {
             // The gateway supplies the exact latest user text from its
             // authorized request, not mutable turn input or private context.
             const schedule = ticket.schedule;
-            const timeout = !schedule && catalog?.tools.has(selected) ? MANAGED_TURN_TIMEOUT : TEXT_TURN_TIMEOUT;
+            const timeout = schedule ? SCHEDULED_TURN_TIMEOUT : catalog?.turnTimeouts.get(selected) ?? TEXT_TURN_TIMEOUT;
             const result = await query(schedule ? "/schedule/turn" : "/turn", AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]), JSON.stringify({
               botId: ticket.botId, threadId: ticket.threadId, modelId: selected,
               ...(schedule ? { routineId: schedule.routineId, scheduledFor: schedule.scheduledFor } : { sendId: ticket.sendId, history: dispatch.history }),

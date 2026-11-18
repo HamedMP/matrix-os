@@ -57,6 +57,7 @@ export function createOpenCodeServerProcess(
   let origin = ""; let child: OpenCodeProcess | undefined; let stopped = false; let ended = false;
   let desiredExit: number | null = null; let killTimer: ReturnType<typeof setTimeout> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
+  let textStage: "startup" | "session_policy" | "authorize_before" | "message" | "result" | "authorize_after" = "startup";
   const emit = (record: Record<string, unknown>) => { if (!stopped) stdout.emit("data", Buffer.from(`${JSON.stringify(record)}\n`)); };
   async function fetchOwned(path: string, body: unknown, method: string, signal: AbortSignal): Promise<Response> {
     const response = await requestFetch(`${origin}${path}`, {
@@ -117,7 +118,8 @@ export function createOpenCodeServerProcess(
   }
   function fail(error: unknown) {
     if (stopped) return;
-    logCodingAgentWarning("OpenCode server transport failed", error);
+    if (textOnly) console.warn("[coding-agents] OpenCode text completion unavailable", textStage);
+    else logCodingAgentWarning("OpenCode server transport failed", error);
     emit({ type: "error" }); stop(1);
   }
   async function stream(response: Response): Promise<void> {
@@ -182,10 +184,15 @@ export function createOpenCodeServerProcess(
       child.stderr.on("data", chunk => { if (!stopped) stderr.emit("data", chunk); });
       child.stdout.once("end", endRoutine); child.stdout.once("close", endRoutine);
       child.once("error", error => { endRoutine(); reject(error); fail(error); });
-      child.once("exit", code => { endRoutine(); cleanupBootstrap(); reject(new Error("OpenCode server exited")); end(stopped ? desiredExit : code === 0 ? 1 : code); });
+      child.once("exit", code => {
+        endRoutine(); cleanupBootstrap(); reject(new Error("OpenCode server exited"));
+        if (textOnly && !stopped) console.warn("[coding-agents] OpenCode text completion unavailable", origin ? "server_exit" : "startup_exit");
+        end(stopped ? desiredExit : code === 0 ? 1 : code);
+      });
       readyTimer = setTimeout(() => reject(new Error("OpenCode server startup timed out")), 10_000); readyTimer.unref?.();
     });
     await ready; if (stopped) return;
+    textStage = "session_policy";
     if (sessionId && !SESSION_ID.test(sessionId)) throw new Error("OpenCode session unavailable");
     if (!sessionId) {
       const created = object(await boundedJson(await request("/session", { title: textOnly ? "Matrix Bots" : "Matrix Chat", permission: permissions })));
@@ -202,10 +209,13 @@ export function createOpenCodeServerProcess(
     if (textOnly && model) {
       const providerID = model.slice(0, separator);
       const modelID = model.slice(separator + 1);
+      textStage = "authorize_before";
       if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
+      textStage = "message";
       const result = object(await boundedJson(await executionRequest(`${path}/message`, {
         agent: "build", model: { providerID, modelID }, parts: [{ type: "text", text: prompt }],
       })));
+      textStage = "result";
       const info = object(result?.info);
       if (info?.error || info?.role !== "assistant" || info.sessionID !== sessionId || info.providerID !== providerID
         || info.modelID !== modelID || info.finish !== "stop" || !Array.isArray(result?.parts)
@@ -215,6 +225,7 @@ export function createOpenCodeServerProcess(
         || part.type === "text" && (typeof part.text !== "string" || typeof object(part.time)?.end !== "number")))
         throw new Error("OpenCode text completion contains unsupported parts");
       const { text } = AppAiResultSchema.parse({ text: parts.filter(part => part?.type === "text").map(part => part!.text).join("") });
+      textStage = "authorize_after";
       if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
       emit({ type: "text", sessionID: sessionId, part: { type: "text", text } });
       stop(0);

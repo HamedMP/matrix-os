@@ -61,3 +61,9 @@ it("seals a routine's broker capability across daemon restart and denies copied 
   setMatrixScheduleSealKey(Buffer.alloc(64, "b"));
   expect(openMatrixSchedule(id, record.sealedGrant)).toBe(token);
 });
+
+it("gives the private scheduled turn a separate bounded authority and inference window", async () => {
+  const provider = await readFile("scripts/openmausbot/matrix-provider.ts", "utf8");
+  expect(provider).toContain("const SCHEDULED_TURN_TIMEOUT = 45_000;");
+  expect(provider).toContain("const timeout = schedule ? SCHEDULED_TURN_TIMEOUT : catalog?.turnTimeouts.get(selected) ?? TEXT_TURN_TIMEOUT;");
+});

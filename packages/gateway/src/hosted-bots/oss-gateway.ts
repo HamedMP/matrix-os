@@ -188,7 +188,7 @@ export function createOpenMausBotGateway(options: {
   eventsWindowMs?: number;
   issueModelTurn?: Parameters<typeof issueHostedBotsMatrixTurn>[0];
   schedules?: {
-    issue: (intent: HostedBotsScheduleIntent) => ReturnType<HostedBotsScheduleGrantStore["issue"]>;
+    issue: (intent: HostedBotsScheduleIntent, signal: AbortSignal) => ReturnType<HostedBotsScheduleGrantStore["issue"]>;
     revoke: HostedBotsScheduleGrantStore["revoke"];
   };
 }) {
@@ -288,10 +288,16 @@ export function createOpenMausBotGateway(options: {
           active.delete(lifetime);
           return c.json({ error: MATRIX_BOTS_SCHEDULE_REFUSAL }, headers.cookie ? 400 : 403);
         }
-        const grant = await options.schedules?.issue(routineIntent);
+        const signal = AbortSignal.any([c.req.raw.signal, lifetime.signal]);
+        const grant = await options.schedules?.issue(routineIntent, signal).catch((error: unknown) => {
+          console.warn("[hosted-bots] Schedule authorization check failed", error instanceof Error ? error.name : "UnknownError");
+          return undefined;
+        });
         if (!grant) {
           active.delete(lifetime);
-          return c.json({ error: "The selected Matrix model cannot run this schedule." }, 409);
+          return grant === null
+            ? c.json({ error: "This Matrix model or funding cannot be used for this schedule." }, 409)
+            : c.json({ error: "Matrix could not verify this schedule right now. Try saving again." }, 503);
         }
         pendingRoutineId = grant.routineId;
         headers[MATRIX_BOTS_SCHEDULE_HEADER] = grant.routineId + ":" + grant.token;

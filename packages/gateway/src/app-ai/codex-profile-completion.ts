@@ -10,6 +10,7 @@ import type { NativeProviderProfileGuard } from "../ai-providers/native-provider
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
 import { nativeCodexConfigurationFingerprint } from "../coding-agents/native-codex-configuration-fingerprint.mjs";
 import { createNativeCodexExecutionProof } from "../coding-agents/native-codex-execution-proof.mjs";
+import { CODEX_CONFIGURED_MODEL_ID, readHostedCodexModelIntent } from "./codex-model-intent.js";
 import { HostedCodexTextError, runHostedCodexTextTurn, type HostedCodexRequest } from "./codex-profile-wire.js";
 
 const BWRAP = "/usr/bin/bwrap";
@@ -111,7 +112,7 @@ export async function generateCodexProfileAppText(options: {
   profileGuard: NativeProviderProfileGuard;
   revalidate: () => Promise<boolean>;
 }) {
-  let stage: "eligibility" | "launch" | "proof" | "turn" = "eligibility";
+  let stage: "eligibility" | "launch" | "proof" | "model" | "turn" = "eligibility";
   try {
     const route = AppAiRouteSelectionSchema.parse(options.route);
     const { prompt } = AppAiInputSchema.parse({ prompt: options.prompt });
@@ -132,6 +133,9 @@ export async function generateCodexProfileAppText(options: {
       revision: row.nativeAccountConsentRevision, harnessInstanceId: row.id, accountId: route.accountId,
       configurationFingerprint: nativeCodexConfigurationFingerprint(row),
     });
+    const useConfiguredModel = route.modelId === CODEX_CONFIGURED_MODEL_ID;
+    stage = "model";
+    const configuredModel = useConfiguredModel ? await readHostedCodexModelIntent(environment.CODEX_HOME!) : undefined;
     const authorize = async (request: HostedCodexRequest) => {
       options.signal.throwIfAborted();
       await options.profileGuard.assertReadable("codex");
@@ -147,11 +151,13 @@ export async function generateCodexProfileAppText(options: {
         return value;
       });
       await options.profileGuard.assertReadable("codex");
+      if (useConfiguredModel && await readHostedCodexModelIntent(environment.CODEX_HOME!) !== configuredModel)
+        throw new Error(UNAVAILABLE);
       options.signal.throwIfAborted();
     };
     const launch = hostedCodexSandboxLaunch(join(environment.CODEX_HOME!, "auth.json"));
     stage = "turn";
-    return await runHostedCodexTextTurn({ ...launch, model: route.modelId, prompt, signal: options.signal, authorize });
+    return await runHostedCodexTextTurn({ ...launch, model: route.modelId, configuredModel, prompt, signal: options.signal, authorize });
   } catch (error) {
     console.warn("[app-ai] Native Codex completion unavailable", error instanceof HostedCodexTextError ? error.stage : stage);
     throw new Error(UNAVAILABLE);

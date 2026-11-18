@@ -1,11 +1,17 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenCodeServerProcess, OPENCODE_READ_ONLY_PERMISSIONS } from "../../packages/gateway/src/coding-agents/opencode-server-process.js";
-function fixture(resume = false, ignorePermissions = false, stallEvent = false, textOnly?: { wrongModel?: boolean; tool?: boolean; allow?: boolean }) {
+function fixture(resume = false, ignorePermissions = false, stallEvent = false, textOnly?: { wrongModel?: boolean; tool?: boolean; allow?: boolean; startupExit?: boolean }) {
   const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> };
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
   child.kill = vi.fn(() => { queueMicrotask(() => child.emit("exit", 0)); });
-  const spawn = vi.fn(() => { queueMicrotask(() => child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:42101\n"))); return child; });
+  const spawn = vi.fn(() => {
+    queueMicrotask(() => {
+      if (textOnly?.startupExit) child.emit("exit", 1);
+      else child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:42101\n"));
+    });
+    return child;
+  });
   let stream!: ReadableStreamDefaultController<Uint8Array>;
   let complete!: (response: Response) => void;
   const send = (type: string, properties: unknown) => { if (stream.desiredSize === null) return false; stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`)); return true; };
@@ -86,6 +92,16 @@ describe("OpenCode local server transport", () => {
 });
 
 describe("OpenCode text-only completion", () => {
+  it("records a bounded stage when the scoped child exits before startup", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const run = fixture(false, false, false, { startupExit: true });
+      expect(await run.exited).toBe(1);
+      expect(run.fetch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("[coding-agents] OpenCode text completion unavailable", "startup_exit");
+    } finally { warn.mockRestore(); }
+  });
+
   it("uses one verified deny-all session and returns the exact completed text", async () => {
     const run = fixture(false, false, false, {});
     expect(await run.exited).toBe(0);

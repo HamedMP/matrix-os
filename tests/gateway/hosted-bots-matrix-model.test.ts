@@ -23,6 +23,25 @@ const pickerPersonal: HostedBotsAppAiCatalog["routes"][number] = {
 };
 const pickerCatalog = (...routes: HostedBotsAppAiCatalog["routes"]): HostedBotsAppAiCatalog => ({ routes, defaultRoute: null });
 
+it("publishes the longer transport limit only for the confirmed OpenCode Free picker route", async () => {
+  const openCode = { ...pickerPersonal, harnessId: "harness_opencode", accountId: null,
+    accessSourceId: "harness_opencode_opencode", modelId: "opencode:big-pickle", displayName: "OpenCode Free", modelLabel: "Big Pickle" };
+  const bridge = createHostedBotsMatrixModel({
+    providers: {
+      discover: async (_signal, scope) => scope === "managed" ? pickerCatalog(pickerManaged) : pickerCatalog(openCode, pickerPersonal),
+      generate: async () => ({ text: "result" }),
+    },
+  });
+  try {
+    const status = await (await bridge.routes.request("/status?complete=1")).json();
+    expect(status.models).toEqual([
+      { id: MATRIX_BOTS_MODEL_ID, label: "Managed model · Text only", tools: false },
+      { id: expect.stringMatching(/^matrix-route-[a-f0-9]{64}$/), label: "Big Pickle · OpenCode Free · Text only", tools: false, turnTimeoutMs: 100_000 },
+      { id: expect.stringMatching(/^matrix-route-[a-f0-9]{64}$/), label: "Connected model · Claude · Text only", tools: false },
+    ]);
+  } finally { bridge.close(); }
+});
+
 function fixture() {
   const snapshot = {
     accessSources: [{
@@ -315,6 +334,40 @@ it("uses the background funding lane for the original scheduled text while direc
     const sent = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
     expect(sent.messages.at(-1)).toEqual({ role: "user", content: text });
     expect(sent.tool_choice).toBe("none");
+  } finally {
+    bridge.close();
+    direct.close();
+  }
+});
+
+it("saves a cold Matrix schedule using fresh funding authority and refuses it after exact model revocation", async () => {
+  const { bridge: direct, service, snapshot, inventory, fetchImpl } = fixture();
+  const issued = { routineId: "550e8400-e29b-41d4-a716-446655440000", token: "e".repeat(64) };
+  const issue = vi.fn(async () => issued);
+  const bridge = createHostedBotsMatrixModel({ providers: service.hostedBots, schedules: {
+    issue, consume: async () => text, revoke: async () => {},
+  } });
+  const intent = { ...turn, modelId: MATRIX_BOTS_MODEL_ID, scheduledFor: Date.now() + 120_000, prompt: text };
+  try {
+    inventory.mockImplementation(async (options) => {
+      if (options?.admissionScope !== "managed_matrix_authority") {
+        throw new DOMException("Cold relay route observation", "TimeoutError");
+      }
+      return snapshot as unknown as AiProviderSnapshotV3;
+    });
+    expect(await bridge.schedule?.issue(intent)).toEqual(issued);
+    snapshot.accessSources[0]!.eligibleModelIds = [secondModelId];
+    expect(await bridge.schedule?.issue(intent)).toBeNull();
+    const deniedAtExecution = await bridge.routes.request("/schedule/turn", {
+      method: "POST",
+      headers: { authorization: "Bearer " + issued.token, "content-type": "application/json" },
+      body: JSON.stringify({ botId: turn.botId, threadId: turn.threadId, modelId: intent.modelId,
+        routineId: issued.routineId, scheduledFor: Date.now() - 1 }),
+    });
+    expect(deniedAtExecution.status).toBe(503);
+    expect(issue).toHaveBeenCalledOnce();
+    expect(inventory).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).not.toHaveBeenCalled();
   } finally {
     bridge.close();
     direct.close();

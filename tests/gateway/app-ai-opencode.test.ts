@@ -32,6 +32,20 @@ function fixture() {
 }
 
 describe("hosted Bots native OpenCode Free routes", () => {
+  it("gives the exact interactive OpenCode route time for local checks and the provider reply", async () => {
+    const run = fixture();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const signal = new AbortController().signal;
+    try {
+      expect(await run.service.generate({ route, prompt, signal })).toEqual({ text: "11" });
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(60_000);
+      timeout.mockClear();
+      await expect(run.service.generate({ route, prompt, signal, requestClass: "background" })).rejects.toThrow();
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(30_000);
+      expect(run.generate).toHaveBeenCalledOnce();
+    } finally { timeout.mockRestore(); }
+  });
+
   it("only exposes exact built-in free models, as text, and runs the selected route", async () => {
     const run = fixture();
     const signal = AbortSignal.timeout(1000);
@@ -41,6 +55,26 @@ describe("hosted Bots native OpenCode Free routes", () => {
     expect((await run.service.discover(signal, "managed")).routes).toEqual([]);
     expect(await run.service.generate({ route, prompt, signal })).toEqual({ text: "11" });
     expect(run.generate).toHaveBeenCalledWith(expect.objectContaining({ modelId: route.modelId, prompt }));
+  });
+
+  it("selects exact manifest-backed free model IDs with dotted versions", async () => {
+    const run = fixture();
+    const signal = AbortSignal.timeout(1000);
+    const modelId = "opencode:deepseek-v4.1-flash-free";
+    const traversal = "opencode:beam/../other-free";
+    const repeatedDot = "opencode:deepseek-v4..1-flash-free";
+    run.canonical.nativeHarnessCatalog!.profiles[0]!.models.push(
+      { id: modelId, displayName: "DeepSeek V4.1 Flash Free", enabled: true },
+      { id: traversal, displayName: "Path", enabled: true },
+      { id: repeatedDot, displayName: "Invalid Version", enabled: true },
+    );
+    expect((await run.service.discover(signal)).routes.map(row => row.modelId)).toEqual([route.modelId, modelId]);
+    await expect(run.service.generate({ route: { ...route, modelId }, prompt, signal })).resolves.toEqual({ text: "11" });
+    expect(run.generate).toHaveBeenCalledOnce();
+    expect(run.generate).toHaveBeenCalledWith(expect.objectContaining({ modelId, prompt }));
+    for (const invalid of [traversal, repeatedDot, "opencode:deepseek-v4.2-flash-free"])
+      await expect(run.service.generate({ route: { ...route, modelId: invalid }, prompt, signal })).rejects.toThrow();
+    expect(run.generate).toHaveBeenCalledOnce();
   });
 
   it("rejects paid, wrong account, cross-source, and stale selections", async () => {

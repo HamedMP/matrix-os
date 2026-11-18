@@ -4,7 +4,9 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { AppAiInputSchema, type AppAiRouteSelection, type ManagedWorkersAiModelId } from "@matrix-os/contracts";
 import { routeSelection, sameAppAiRoute } from "../app-ai/connected-routes.js";
+import { isOpenCodeFreeAppRoute } from "../app-ai/opencode-completion.js";
 import { HOSTED_BOTS_DISCOVERY_TIMEOUT_MS, hostedBotsRouteIsManaged, type createRuntimeAppAiService, type HostedBotsApiCompletion, type HostedBotsAppAiCatalog } from "../app-ai/runtime.js";
+import { FUNDED_AI_SCHEDULE_AUTHORITY_TIMEOUT_MS } from "../funded-ai-readiness.js";
 import { bindHostedBotsDriveSocket } from "./drive-approval-runtime.js";
 import { createHostedBotsMatrixScheduleRoutes, type HostedBotsScheduleGrantStore } from "./matrix-schedule.js";
 
@@ -24,6 +26,8 @@ const FULL_MAX_AGE_MS = 60_000;
 // Initial browser-facing instance discovery has a shorter proxy deadline.
 const FULL_PICKER_GRACE_MS = 1_500;
 const MAX_PICKER_MODELS = 128;
+// Allow the 60s OpenCode turn plus a cold exact picker lookup and child cleanup.
+const OPENCODE_TURN_TRANSPORT_TIMEOUT_MS = 100_000;
 const MAX_PROMPT = AppAiInputSchema.shape.prompt.maxLength ?? 32_000;
 const id = z.string().regex(/^[\w-]{1,128}$/u);
 const sendId = z.string().regex(/^[\w-]{16,80}$/u);
@@ -44,7 +48,7 @@ const legacyGlmRoute = {
 type OwnerSendTicket = (identity: Identity, text: string) => string | undefined;
 export type HostedBotsModelProvider = ReturnType<typeof createRuntimeAppAiService>["hostedBots"];
 export type HostedBotsManagedCompletion = (input: Parameters<HostedBotsApiCompletion>[0] & { identity: Identity }) => ReturnType<HostedBotsApiCompletion>;
-type PickerModel = { id: string; label: string; tools: boolean };
+type PickerModel = { id: string; label: string; tools: boolean; turnTimeoutMs?: number };
 type PickerCatalog = { available: boolean; default: string; models: PickerModel[] };
 type PickerProjection = { public: PickerCatalog; routes: ReadonlyMap<string, AppAiRouteSelection> };
 const emptyCatalog: PickerProjection = { public: { available: false, default: "", models: [] }, routes: new Map() };
@@ -103,7 +107,10 @@ function projectPicker(catalog: HostedBotsAppAiCatalog, hasManagedTools: boolean
     if (routes.has(key)) continue;
     const tools = hasManagedTools && route.supportsManagedTools;
     const qualifier = route.harnessId === "matrix_ai" ? "" : " · " + route.displayName;
-    models.push({ id: key, label: `${route.modelLabel.slice(0, 120)}${qualifier}${tools ? "" : " · Text only"}`, tools });
+    models.push({
+      id: key, label: `${route.modelLabel.slice(0, 120)}${qualifier}${tools ? "" : " · Text only"}`, tools,
+      ...(!tools && isOpenCodeFreeAppRoute(route) ? { turnTimeoutMs: OPENCODE_TURN_TRANSPORT_TIMEOUT_MS } : {}),
+    });
     routes.set(key, routeSelection(route));
   }
   const preferredId = preferred ? modelKey(preferred) : "";
@@ -227,17 +234,19 @@ export function createHostedBotsMatrixModel(options: Options) {
     }
     return route;
   }
-  async function resolveScheduledModel(key: string) {
-    // Schedule admission never probes personal engines. The actual funded
-    // completion still authorizes the exact route again at execution.
-    refresh("managed");
-    if (!observed(observations.managed)) await waitForObservation(observations.managed.pending);
-    const route = picker().routes.get(key);
-    return route && hostedBotsRouteIsManaged(route) ? route : undefined;
+  async function resolveScheduledModel(key: string, caller?: AbortSignal) {
+    // Read current authoritative funding, not the foreground picker's fast
+    // presentation cache. Relay liveness may take longer than Calendar Save.
+    const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(FUNDED_AI_SCHEDULE_AUTHORITY_TIMEOUT_MS + 1_000),
+      ...(caller ? [caller] : [])]);
+    const current = await options.providers.discover(signal, "managed", "schedule_authority");
+    signal.throwIfAborted();
+    const exact = current.routes.find(route => route.availability === "available" && hostedBotsRouteIsManaged(route) && modelKey(route) === key);
+    return exact ? routeSelection(exact) : undefined;
   }
   const schedule = options.schedules && {
-    async issue(intent: Parameters<HostedBotsScheduleGrantStore["issue"]>[0]) {
-      const route = await resolveScheduledModel(intent.modelId);
+    async issue(intent: Parameters<HostedBotsScheduleGrantStore["issue"]>[0], signal?: AbortSignal) {
+      const route = await resolveScheduledModel(intent.modelId, signal);
       if (lifecycle.signal.aborted || !route) return null;
       return options.schedules!.issue(intent, Date.now());
     },

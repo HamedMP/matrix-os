@@ -1,6 +1,10 @@
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runHostedCodexTextTurn } from "../../packages/gateway/src/app-ai/codex-profile-wire.js";
 import { hostedCodexSandboxLaunch } from "../../packages/gateway/src/app-ai/codex-profile-completion.js";
+import { readHostedCodexModelIntent } from "../../packages/gateway/src/app-ai/codex-model-intent.js";
 
 function fakeServer(behavior = "normal") {
   return `
@@ -10,6 +14,9 @@ const cwd = "/work", threadId = "thread-hosted", turnId = "turn-hosted";
 const behavior = ${JSON.stringify(behavior)};
 let verified = 0;
 let checkedMcp = false;
+const item = (id, isDefault) => ({ id, model:id, displayName:id, hidden:false, isDefault,
+  defaultReasoningEffort:"low", supportedReasoningEfforts:[], inputModalities:["text"] });
+const selectedModel = behavior === "configured-choice" ? "gpt-5.3-codex" : "gpt-5.4";
 readline.createInterface({input: process.stdin}).on("line", line => {
   const call = JSON.parse(line);
   const reply = result => emit({ id: call.id, result });
@@ -23,14 +30,20 @@ readline.createInterface({input: process.stdin}).on("line", line => {
     case "config/read":
       if (!checkedMcp) process.exit(9);
       verified++; reply({ config: {} }); break;
+    case "model/list":
+      if (call.params.includeHidden !== false || call.params.limit !== 64) process.exit(10);
+      reply({ data: [
+        item("gpt-5.3-codex", behavior === "two-defaults"), item("gpt-5.4", behavior !== "no-default"),
+      ], nextCursor: behavior === "partial-catalog" ? "continued" : null });
+      break;
     case "thread/start":
       if (verified !== 0 || call.params.cwd !== cwd || !call.params.ephemeral
-        || call.params.model !== "gpt-5.4" || call.params.approvalPolicy !== "never"
+        || call.params.model !== selectedModel || call.params.approvalPolicy !== "never"
         || call.params.modelProvider !== "openai" || call.params.allowProviderModelFallback !== false
         || call.params.environments?.length !== 0 || call.params.runtimeWorkspaceRoots?.length !== 0
         || call.params.dynamicTools?.length !== 0) process.exit(6);
       reply({ thread: { id: threadId, ephemeral: true }, cwd, modelProvider: "openai",
-        model: behavior === "wrong-model" ? "gpt-5.3-codex" : "gpt-5.4",
+        model: behavior === "wrong-model" ? "gpt-5.3-codex" : selectedModel,
         approvalPolicy: "never", sandbox: { type: "readOnly", networkAccess: false },
         instructionSources: [] });
       break;
@@ -93,6 +106,30 @@ describe("Hosted Bots native Codex text protocol", () => {
     expect(authorize).toHaveBeenCalledTimes(2);
   });
 
+  it("uses the exact native catalog default for the Matrix provider-default alias", async () => {
+    const { options } = setup();
+    await expect(runHostedCodexTextTurn({ ...options, model: "provider-default" })).resolves.toEqual({ text: "31" });
+  });
+
+  it("uses the owner’s configured native model even when the catalog default is different", async () => {
+    const { options } = setup("configured-choice");
+    await expect(runHostedCodexTextTurn({ ...options, model: "provider-default", configuredModel: "gpt-5.3-codex" }))
+      .resolves.toEqual({ text: "31" });
+  });
+
+  it.each(["no-default", "two-defaults", "partial-catalog"])("refuses a catalog with %s", async behavior => {
+    const { options, authorize } = setup(behavior);
+    await expect(runHostedCodexTextTurn({ ...options, model: "provider-default" })).rejects.toMatchObject({ stage: "model" });
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unavailable configured native model before spending", async () => {
+    const { options, authorize } = setup();
+    await expect(runHostedCodexTextTurn({ ...options, model: "provider-default", configuredModel: "missing" }))
+      .rejects.toMatchObject({ stage: "model" });
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
   it.each(["wrong-model", "wrong-turn", "mcp", "request", "item"])("refuses %s without returning text", async behavior => {
     await expect(runHostedCodexTextTurn(setup(behavior).options)).rejects.toThrow("Native Codex text completion unavailable");
   });
@@ -112,5 +149,50 @@ describe("Hosted Bots native Codex text protocol", () => {
     authorize.mockImplementationOnce(async request => { await request("config/read", { cwd: "/work" }); });
     authorize.mockImplementationOnce(async () => { throw new Error("Revoked"); });
     await expect(runHostedCodexTextTurn(options)).rejects.toThrow("Native Codex text completion unavailable");
+  });
+
+  it("refuses a new turn when admission changes during thread setup", async () => {
+    const { options, authorize } = setup();
+    authorize.mockImplementationOnce(async () => { throw new Error("Revoked"); });
+    await expect(runHostedCodexTextTurn(options)).rejects.toMatchObject({ stage: "proof" });
+    expect(authorize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Hosted Bots native Codex model intent", () => {
+  it("reads just the owner model and treats an absent config as native default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hosted-codex-intent-"));
+    try {
+      await expect(readHostedCodexModelIntent(dir)).resolves.toBeUndefined();
+      await writeFile(join(dir, "config.toml"), 'model = "gpt-5.3-codex"\n[mcp_servers.other]\ncommand = "/never-run"\n');
+      await expect(readHostedCodexModelIntent(dir)).resolves.toBe("gpt-5.3-codex");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    'model_provider = "custom"\nmodel = "gpt-5.3-codex"',
+    'profile = "mutable"\nmodel = "gpt-5.3-codex"',
+    'model = "provider-default"',
+    'model = 5',
+  ])("refuses an unsupported model intent (%s)", async configuration => {
+    const dir = await mkdtemp(join(tmpdir(), "hosted-codex-intent-"));
+    try {
+      await writeFile(join(dir, "config.toml"), configuration);
+      await expect(readHostedCodexModelIntent(dir)).rejects.toThrow("Native Codex model unavailable");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("refuses a symlinked or oversized configuration instead of using a default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hosted-codex-intent-"));
+    try {
+      const other = join(dir, "other.toml");
+      const config = join(dir, "config.toml");
+      await writeFile(other, 'model = "gpt-5.4"');
+      await symlink(other, config);
+      await expect(readHostedCodexModelIntent(dir)).rejects.toThrow("Native Codex model unavailable");
+      await rm(config);
+      await writeFile(config, "#".repeat(64 * 1024 + 1));
+      await expect(readHostedCodexModelIntent(dir)).rejects.toThrow("Native Codex model unavailable");
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

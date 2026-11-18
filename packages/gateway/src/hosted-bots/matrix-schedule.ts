@@ -70,7 +70,7 @@ export function readHostedBotsScheduleRequest(
 
 export function createHostedBotsMatrixScheduleRoutes(options: {
   consume: HostedBotsScheduleGrantStore["consume"];
-  resolve: (id: string) => Promise<AppAiRouteSelection | undefined>;
+  resolve: (id: string, signal: AbortSignal) => Promise<AppAiRouteSelection | undefined>;
   generate: HostedBotsModelProvider["generate"];
   now?: () => number;
   lifecycle?: AbortSignal;
@@ -90,9 +90,9 @@ export function createHostedBotsMatrixScheduleRoutes(options: {
     try {
       const prompt = await options.consume(token, payload.data, now);
       if (prompt === null) return c.json({ error: "forbidden" }, 403);
-      const route = await options.resolve(payload.data.modelId);
-      if (!route || !hostedBotsRouteIsManaged(route)) return c.json({ error: "unavailable" }, 503);
       const signal = AbortSignal.any([c.req.raw.signal, ...(options.lifecycle ? [options.lifecycle] : [])]);
+      const route = await options.resolve(payload.data.modelId, signal);
+      if (!route || !hostedBotsRouteIsManaged(route)) return c.json({ error: "unavailable" }, 503);
       // The row holds the approved instructions. This path does not pass any
       // tools, transcript, attachments, or user/provider data from the workload.
       return c.json(await options.generate({ route, prompt, signal, requestClass: "background" }));

@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { AppAiResultSchema, type AppAiResult } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { selectCodexTextCompletionModel } from "../chat/codex-model-catalog.js";
 import { createCodingOutputBuffer } from "../coding-agents/coding-output-buffer.js";
+import { CODEX_CONFIGURED_MODEL_ID } from "./codex-model-intent.js";
 
 const WORKSPACE = "/work";
 const MAX_WIRE_BYTES = 512 * 1024;
@@ -41,7 +43,7 @@ const McpInventory = z.object({ data: z.tuple([]), nextCursor: z.null() });
 const SafeItemNotices = /^(item\/(agentMessage|reasoning)\/[A-Za-z]+)$/;
 
 export type HostedCodexRequest = (method: string, params: unknown) => Promise<unknown>;
-type FailureStage = "launch" | "initialize" | "proof" | "thread" | "mcp" | "turn" | "cleanup";
+type FailureStage = "launch" | "initialize" | "model" | "proof" | "thread" | "mcp" | "turn" | "cleanup";
 
 export class HostedCodexTextError extends Error {
   constructor(readonly stage: FailureStage) { super(UNAVAILABLE); }
@@ -52,6 +54,7 @@ export interface HostedCodexTextTurn {
   args: string[];
   env: Record<string, string>;
   model: string;
+  configuredModel?: string;
   prompt: string;
   signal: AbortSignal;
   authorize: (request: HostedCodexRequest) => Promise<void>;
@@ -146,14 +149,19 @@ export async function runHostedCodexTextTurn(options: HostedCodexTextTurn): Prom
     stage = "initialize";
     Initialization.parse(await request("initialize", { clientInfo: { name: "matrix-os", title: "Matrix OS", version: "1" }, capabilities: { experimentalApi: true } }));
     send({ method: "initialized", params: {} });
+    stage = "model";
+    const model = options.model === CODEX_CONFIGURED_MODEL_ID
+      ? selectCodexTextCompletionModel(await request("model/list", { limit: 64, includeHidden: false }), options.configuredModel)
+      : options.model;
+    if (model === CODEX_CONFIGURED_MODEL_ID) throw unavailable();
     stage = "thread";
     const started = Thread.parse(await request("thread/start", {
-      cwd: WORKSPACE, model: options.model, modelProvider: "openai", allowProviderModelFallback: false,
+      cwd: WORKSPACE, model, modelProvider: "openai", allowProviderModelFallback: false,
       approvalPolicy: "never", sandbox: "read-only", ephemeral: true,
       environments: [], runtimeWorkspaceRoots: [], dynamicTools: [], selectedCapabilityRoots: [],
       developerInstructions: "Answer using only the supplied text. Do not request tools or additional permissions.",
     }));
-    if (started.model !== options.model) throw unavailable();
+    if (started.model !== model) throw unavailable();
     thread = started.thread.id;
     stage = "mcp";
     McpInventory.parse(await request("mcpServerStatus/list", { threadId: thread, limit: 1 }));
