@@ -84,6 +84,7 @@ export function createMacExistingTerminalService(deps: Dependencies) {
       if (!await sameRegisteredChat()) return { status: "unavailable" };
       await reader.assertCurrent(terminal.id, signal);
       if (!isCurrent() || !await lease.check(signal) || !isCurrent()) return { status: "unavailable" };
+      reader.assertConnected();
       phase = "returned";
       return { status: "ready", terminalId: terminal.id, title: terminal.title, output };
     } catch (error: unknown) {

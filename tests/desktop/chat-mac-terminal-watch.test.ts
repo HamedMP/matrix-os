@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMacTerminalWatch } from "@desktop/main/chat-mac-terminal/watch-existing-terminal-service";
 
 const target = { chatId: "chat_original", worktreeId: "wt_abcdef012345" };
+const request = { ...target, requestId: "d11056d7-104b-4d70-aadc-40188a5be0d8" };
+const nextRequest = { ...target, requestId: "56c65d15-a346-45fe-acf4-b6a9aee86575" };
 const context = { ...target, projectId: "proj_test", scopeKey: "owner-and-computer" };
 const selected = { id: "t7", title: "Selected Terminal" };
 const other = { id: "t8", title: "Another Terminal" };
@@ -38,7 +40,7 @@ function setup() {
     },
   };
   const service = createMacTerminalWatch(deps);
-  const start = () => service.start(target, native);
+  const start = () => service.start(request, native);
   async function ready() {
     const result = await start();
     if (result.status !== "ready") throw new Error("Expected watch approval");
@@ -93,6 +95,40 @@ describe("watch an existing Mac Terminal", () => {
     expect(await service.stop(ref, {})).toEqual({ ok: false });
     expect(reader.read).toHaveBeenCalledOnce();
     expect(await service.stop(ref, native.sender)).toEqual({ ok: true });
+  });
+
+  it("cancels only the originating pending watch before its delayed reader can open the picker", async () => {
+    const { service, start, native, deps, reader } = setup();
+    const opening = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<typeof reader>();
+    deps.openReader.mockImplementationOnce(() => { opening.resolve(); return opened.promise; });
+    const result = start();
+    await opening.promise;
+
+    const denials = [
+      service.stop({ ...request, chatId: "chat_elsewhere" }, native.sender),
+      service.stop({ ...request, worktreeId: "wt_abcdef012346" }, native.sender),
+      service.stop(nextRequest, native.sender),
+      service.stop(request, {}),
+    ];
+    const stopping = service.stop(request, native.sender);
+    const overlapping = service.start(nextRequest, native);
+    opened.resolve(reader);
+    expect(await Promise.all(denials)).toEqual(Array.from({ length: 4 }, () => ({ ok: false })));
+    expect(await overlapping).toEqual({ status: "busy" });
+    expect(await result).toEqual({ status: "unavailable" });
+    expect(await stopping).toEqual({ ok: true });
+    expect(native.pick).not.toHaveBeenCalled();
+    expect(native.approve).not.toHaveBeenCalled();
+    expect(reader.read).not.toHaveBeenCalled();
+    expect(service.isBusy()).toBe(false);
+
+    const next = await service.start(nextRequest, native);
+    if (next.status !== "ready") throw new Error("Expected watch approval");
+    expect(await service.stop(request, native.sender)).toEqual({ ok: false });
+    expect(await service.read({ ...target, watchId: next.watchId }, native.sender)).toMatchObject({ status: "ready" });
+    expect(await service.stop(nextRequest, native.sender)).toEqual({ ok: true });
+    expect(service.isBusy()).toBe(false);
   });
 
   it("keeps cancellation scoped, drains the pending read and discards a late result", async () => {
