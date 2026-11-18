@@ -2,7 +2,7 @@ import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
-import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationTerminalIntent } from "@matrix-os/contracts";
+import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationTerminalIntent } from "@matrix-os/contracts/mac-verification-terminal";
 import {
   createChatElectronPreviewTransport,
   MacTerminalDeliveryRejectedError,

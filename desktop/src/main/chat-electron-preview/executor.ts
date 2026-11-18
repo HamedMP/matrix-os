@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationRecipe } from "@matrix-os/contracts";
+import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationRecipe } from "@matrix-os/contracts/mac-verification-terminal";
 import { isAbsolute, join } from "node:path";
 import {
   CHAT_ELECTRON_PREVIEW_SOURCE,

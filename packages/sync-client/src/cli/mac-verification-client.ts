@@ -5,15 +5,14 @@ import { open, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
-  CanonicalChatDetailResponseSchema,
   MAC_VERIFICATION_SOURCE_BY_RECIPE,
   MAC_VERIFICATION_TERMINAL_MAX_AGE_MS,
   MAC_VERIFICATION_TERMINAL_MAX_BYTES,
   MacVerificationTerminalIntentSchema,
-  chatMessageVersionUrl,
   macVerificationTerminalIntentPath,
   type MacVerificationTerminalIntent,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/mac-verification-terminal";
+import { CanonicalChatDetailResponseSchema, chatMessageVersionUrl } from "@matrix-os/contracts";
 import { runtimeApiUrl } from "../mcp/profile-context.js";
 import { cliFetchError } from "./output.js";
 

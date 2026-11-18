@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   MAC_VERIFICATION_SOURCE_BY_RECIPE, macVerificationTerminalIntentPath,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/mac-verification-terminal";
 import { queueMacVerification } from "../../packages/sync-client/src/cli/mac-verification-client.js";
 
 const chatId = "chat_original";

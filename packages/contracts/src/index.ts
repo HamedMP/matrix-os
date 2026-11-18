@@ -1530,4 +1530,3 @@ export * from "#routine-chat-origin";
 export * from "#routine-origin-proof";
 
 export * from "#runtime-substrate";
-export * from "./mac-verification-terminal.js";

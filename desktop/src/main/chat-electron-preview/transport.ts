@@ -5,10 +5,12 @@ import {
   CanonicalChatDetailResponseSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema,
   CanonicalChatSafeErrorSchema, CanonicalChatTurnAdmissionResponseSchema, CanonicalCreateChatTurnRequestSchema,
   FileReadResponseSchema, WorktreeIdSchema, chatMessageVersionUrl,
-  MAC_VERIFICATION_SOURCE_BY_RECIPE, MAC_VERIFICATION_TERMINAL_MAX_BYTES,
-  MacVerificationTerminalIntentSchema, macVerificationTerminalIntentPath, type MacVerificationRecipe,
   type CanonicalChatDetailResponse, type CanonicalChatRun, type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
+import {
+  MAC_VERIFICATION_SOURCE_BY_RECIPE, MAC_VERIFICATION_TERMINAL_MAX_BYTES,
+  MacVerificationTerminalIntentSchema, macVerificationTerminalIntentPath, type MacVerificationRecipe,
+} from "@matrix-os/contracts/mac-verification-terminal";
 import {
   CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX,
   CHAT_ELECTRON_PREVIEW_BASE_LABEL, CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, CHAT_ELECTRON_PREVIEW_SOURCE,

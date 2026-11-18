@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MacVerificationTerminalIntentSchema,
   macVerificationTerminalIntentPath,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/mac-verification-terminal";
 
 const intent = {
   version: 1,
