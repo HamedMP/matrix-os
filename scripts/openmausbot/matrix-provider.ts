@@ -93,7 +93,6 @@ async function query(
     req.end(body);
   });
   try {
-    if (response.statusCode !== 200) throw new Error("Matrix AI unavailable");
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const part of response) {
@@ -102,9 +101,23 @@ async function query(
       if (size > RESPONSE_LIMIT) throw new Error("Matrix AI response limit");
       chunks.push(chunk);
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (response.statusCode !== 200) {
+      if (path === "/turn" && response.statusCode === 503 && value && typeof value === "object"
+        && !Array.isArray(value) && Object.keys(value).length === 1 && "error" in value && value.error === "source_limit")
+        throw new MatrixSourceLimitError();
+      throw new Error("Matrix AI unavailable");
+    }
+    return value;
   } finally {
     response.destroy();
+  }
+}
+
+class MatrixSourceLimitError extends Error {
+  constructor() {
+    super("This model's free usage is currently unavailable. Choose another model.");
+    this.name = "MatrixSourceLimitError";
   }
 }
 
@@ -215,7 +228,8 @@ export const matrixHostedDriver: ProviderDriver<null> = {
             if (abort.signal.aborted) stopReason = "interrupted";
             else {
               console.warn("[matrix-ai] Text turn failed", error instanceof Error ? error.name : "UnknownError");
-              emit({ ...base(), type: "runtime.error", message: "Matrix AI could not complete this message. Send a new message to retry." });
+              emit({ ...base(), type: "runtime.error", message: error instanceof MatrixSourceLimitError
+                ? error.message : "Matrix AI could not complete this message. Send a new message to retry." });
             }
           } finally {
             if (active.get(input.threadId)?.turnId === turnId) active.delete(input.threadId);

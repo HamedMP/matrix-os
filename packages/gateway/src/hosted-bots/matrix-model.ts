@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { AppAiInputSchema, type AppAiRouteSelection, type ManagedWorkersAiModelId } from "@matrix-os/contracts";
 import { routeSelection, sameAppAiRoute } from "../app-ai/connected-routes.js";
 import { isOpenCodeFreeAppRoute } from "../app-ai/opencode-completion.js";
+import { OpenCodeFreeUsageLimitError } from "../coding-agents/opencode-server-process.js";
 import { HOSTED_BOTS_DISCOVERY_TIMEOUT_MS, hostedBotsRouteIsManaged, type createRuntimeAppAiService, type HostedBotsApiCompletion, type HostedBotsAppAiCatalog } from "../app-ai/runtime.js";
 import { FUNDED_AI_SCHEDULE_AUTHORITY_TIMEOUT_MS } from "../funded-ai-readiness.js";
 import { bindHostedBotsDriveSocket } from "./drive-approval-runtime.js";
@@ -285,6 +286,7 @@ export function createHostedBotsMatrixModel(options: Options) {
       return c.json(result);
     } catch (error) {
       warn(error);
+      if (error instanceof OpenCodeFreeUsageLimitError) return c.json({ error: "source_limit" }, 503);
       return c.json({ error: "unavailable" }, 503);
     }
   });

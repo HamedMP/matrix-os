@@ -3,7 +3,7 @@ import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { AppAiResultSchema, type AiProviderSnapshotV3, type AppAiRoute, type AppAiRouteSelection, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { createOpenCodeServerProcess } from "../coding-agents/opencode-server-process.js";
+import { createOpenCodeServerProcess, OpenCodeFreeUsageLimitError } from "../coding-agents/opencode-server-process.js";
 import { resolveOpenCodeCommand } from "../coding-agents/pi-process-environment.js";
 import { buildIsolatedProviderLaunch } from "../coding-agents/provider-process-isolation.js";
 
@@ -122,9 +122,11 @@ export function createOpenCodeAppCompletion() {
       try {
         const text = await new Promise<string>((resolve, reject) => {
           let result: string | undefined;
+          let freeLimit = false;
           child.stdout.on("data", chunk => {
             try {
               const event = JSON.parse(chunk.toString("utf8"));
+              if (event.type === "error" && event.code === "free_limit") freeLimit = true;
               if (event.type === "text") result = AppAiResultSchema.parse({ text: event.part?.text }).text;
             } catch (error) {
               console.warn("[app-ai] OpenCode result unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -132,7 +134,8 @@ export function createOpenCodeAppCompletion() {
             }
           });
           child.once("exit", code => {
-            if (code === 0 && result !== undefined) resolve(result);
+            if (freeLimit) reject(new OpenCodeFreeUsageLimitError());
+            else if (code === 0 && result !== undefined) resolve(result);
             else reject(new Error("OpenCode response unavailable"));
           });
         });

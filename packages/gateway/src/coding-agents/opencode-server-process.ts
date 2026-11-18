@@ -12,6 +12,12 @@ import type { OpenCodeProcess, OpenCodeSpawnFn } from "./opencode-provider.js";
 import { AppAiResultSchema } from "@matrix-os/contracts";
 
 const DENY_ALL = [{ permission: "*", pattern: "*", action: "deny" }] as const;
+export class OpenCodeFreeUsageLimitError extends Error {
+  constructor() {
+    super("The selected model's free usage is currently unavailable.");
+    this.name = "OpenCodeFreeUsageLimitError";
+  }
+}
 export const OPENCODE_READ_ONLY_PERMISSIONS = [
   ...DENY_ALL,
   ...["read", "glob", "grep", "list", "question"].map(permission => ({ permission, pattern: "*", action: "allow" })),
@@ -142,6 +148,14 @@ export function createOpenCodeServerProcess(
     const part = object(properties.part);
     const eventSession = properties.sessionID ?? part?.sessionID ?? object(properties.info)?.sessionID;
     if (!sessionId || eventSession !== sessionId) return;
+    if (textOnly) {
+      const status = object(properties.status);
+      if (event?.type === "session.status" && status?.type === "retry" && object(status.action)?.reason === "free_tier_limit") {
+        emit({ type: "error", code: "free_limit" });
+        stop(1);
+      }
+      return;
+    }
     if (event?.type === "message.updated") { const info = object(properties.info); if (info) routine?.observeMessage(info); }
     if (event?.type === "message.part.updated" && part) routine?.observePart(part);
     if (event?.type === "question.asked") inputs.asked(properties);
@@ -209,6 +223,8 @@ export function createOpenCodeServerProcess(
     if (textOnly && model) {
       const providerID = model.slice(0, separator);
       const modelID = model.slice(separator + 1);
+      const subscribed = await executionRequest("/event", undefined, true);
+      const eventStream = stream(subscribed).catch(fail);
       textStage = "authorize_before";
       if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
       textStage = "message";
@@ -229,6 +245,7 @@ export function createOpenCodeServerProcess(
       if (!await textOnly.revalidate() || stopped) throw new Error("OpenCode route revoked");
       emit({ type: "text", sessionID: sessionId, part: { type: "text", text } });
       stop(0);
+      await eventStream;
       return;
     }
     emit({ type: "step_start", sessionID: sessionId });

@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { AiProviderSnapshotV3, AppAiRouteSelection } from "@matrix-os/contracts";
 import { createRuntimeAppAiService, type HostedBotsAppAiCatalog } from "../../packages/gateway/src/app-ai/runtime.js";
 import type { ProviderSnapshotReadOptions } from "../../packages/gateway/src/ai-providers/snapshot-read-options.js";
+import { OpenCodeFreeUsageLimitError } from "../../packages/gateway/src/coding-agents/opencode-server-process.js";
 import {
   createHostedBotsMatrixModel, issueHostedBotsMatrixTurn, MATRIX_BOTS_MODEL_ID,
 } from "../../packages/gateway/src/hosted-bots/matrix-model.js";
@@ -22,6 +23,24 @@ const pickerPersonal: HostedBotsAppAiCatalog["routes"][number] = {
   reason: null, modelLabel: "Connected model", supportsManagedTools: false,
 };
 const pickerCatalog = (...routes: HostedBotsAppAiCatalog["routes"]): HostedBotsAppAiCatalog => ({ routes, defaultRoute: null });
+
+it("returns only a safe source limit code for an exact native free-usage rejection", async () => {
+  const bridge = createHostedBotsMatrixModel({
+    providers: {
+      discover: async () => pickerCatalog(pickerPersonal),
+      generate: async () => { throw new OpenCodeFreeUsageLimitError(); },
+    },
+  });
+  try {
+    const status = await (await bridge.routes.request("/status?complete=1")).json();
+    const response = await bridge.routes.request("/turn", {
+      method: "POST", headers: { authorization: "Bearer " + bridge.issue(turn, text)!, "content-type": "application/json" },
+      body: JSON.stringify({ ...turn, modelId: status.models[0].id, history: [] }),
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "source_limit" });
+  } finally { bridge.close(); }
+});
 
 it("publishes the longer transport limit only for the confirmed OpenCode Free picker route", async () => {
   const openCode = { ...pickerPersonal, harnessId: "harness_opencode", accountId: null,
