@@ -1,7 +1,7 @@
 import { sign } from "node:crypto";
 import { desktopPairingActionProofMessage } from "@matrix-os/contracts";
-import type { createPairingKeyStore } from "./key-store";
-import { createPairingTransport, matchingPairingState, PairingBadGatewayError, type PairingAuth } from "./transport";
+import type { createPairingKeyStore, KeyScope } from "./key-store";
+import { createPairingTransport, matchingPairingState, PairingBadGatewayError, type PairingAuth, type PairingState } from "./transport";
 
 const CHECK_INTERVAL_MS = 3_000;
 const MAX_TRACKED_ACTIONS = 4;
@@ -32,16 +32,17 @@ export function createMacActionPairing(options: {
   auth: PairingAuth;
   keys: Pick<ReturnType<typeof createPairingKeyStore>, "load">;
   fetchFn: typeof fetch;
+  hasChatFullAccess: (scope: KeyScope, state: PairingState) => Promise<boolean>;
 }) {
-  const tracked = new Set<AbortController>();
+  const tracked = new Map<AbortController, boolean>();
 
-  const acquire: MacActionPairing = async (operation, admissionSignal) => {
+  async function acquire(operation: AbortController, admissionSignal: AbortSignal | undefined, fullAccess: boolean) {
     if (operation.signal.aborted || admissionSignal?.aborted
       || tracked.has(operation) || tracked.size >= MAX_TRACKED_ACTIONS) return null;
     const worker = new AbortController();
     const transport = createPairingTransport(options.auth, options.fetchFn, worker.signal);
     if (!transport || operation.signal.aborted) return null;
-    tracked.add(operation);
+    tracked.set(operation, fullAccess);
     let timer: ReturnType<typeof setTimeout> | undefined;
     operation.signal.addEventListener("abort", close, { once: true });
 
@@ -68,7 +69,10 @@ export function createMacActionPairing(options: {
       const state = await transport.read(admissionSignal);
       if (!state.deviceId) return null;
       const { origin, ownerId } = transport;
-      const key = await options.keys.load({ origin, ownerId });
+      const scope = { origin, ownerId };
+      const consentCurrent = () => !fullAccess || options.hasChatFullAccess(scope, state);
+      if (!await consentCurrent()) return null;
+      const key = await options.keys.load(scope);
       if (!key || key.deviceId !== state.deviceId) return null;
       const challenge = await transport.actionChallenge(key.deviceId, state.revision, admissionSignal);
       if (!matchingPairingState(state, challenge) || challenge.expiresAt <= Date.now()) return null;
@@ -79,7 +83,12 @@ export function createMacActionPairing(options: {
         revoke();
         return null;
       }
+      if (!await consentCurrent()) {
+        revoke();
+        return null;
+      }
       if (admissionSignal?.aborted || worker.signal.aborted) return null;
+      transport.assertCurrent();
 
       const authority = transport;
       let pending: Promise<boolean> | undefined;
@@ -90,7 +99,9 @@ export function createMacActionPairing(options: {
               || !retryBadGateway?.()) throw error;
             return authority.read();
           });
-          return matchingPairingState(state, current) || revoke();
+          if (!matchingPairingState(state, current) || !await consentCurrent()) return revoke();
+          authority.assertCurrent();
+          return true;
         } catch (error: unknown) {
           return revoke(error);
         }
@@ -133,12 +144,18 @@ export function createMacActionPairing(options: {
     } finally {
       if (!granted) close();
     }
-  };
+  }
 
   return {
-    acquire,
+    acquire: ((operation, signal) => acquire(operation, signal, false)) satisfies MacActionPairing,
+    acquireFullAccess: ((operation, signal) => acquire(operation, signal, true)) satisfies MacActionPairing,
     revokeAll() {
-      for (const operation of [...tracked]) operation.abort("revoked");
+      for (const operation of [...tracked.keys()]) operation.abort("revoked");
+    },
+    revokeFullAccess() {
+      for (const [operation, fullAccess] of [...tracked]) {
+        if (fullAccess) operation.abort("revoked");
+      }
     },
   };
 }
