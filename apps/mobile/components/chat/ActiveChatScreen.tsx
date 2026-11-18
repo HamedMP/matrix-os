@@ -44,7 +44,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
     attachmentKinds, composer,
   } = useActiveChat();
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice, matrixAttachmentScope,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
@@ -161,9 +161,6 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
           draft,
           onChangeDraft: handleDraftChange,
           enabled: isConnected,
-          matrix: gatewayUrl && !isSending && (activeChatId === null
-            || (detail?.record.chat.ownerScope.type === "personal" && !detail.record.chat.collaboration && !chatReadFailed))
-            ? { gatewayUrl, scope: matrixAttachmentScope } : undefined,
         }),
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker

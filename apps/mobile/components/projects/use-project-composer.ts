@@ -44,8 +44,6 @@ interface ProjectComposerOptions {
    * while one of another kind is waiting. Left out, nothing is held back.
    */
   attachmentKinds?: readonly ChatAttachmentKind[];
-  /** Owner, computer and project binding for Matrix file selections. */
-  matrixAttachmentScope?: string;
   /** Holds sends back, as while there is no model to send to yet. */
   disabled?: boolean;
   /** Called once the new chat's first message is admitted, with the model and permission mode it was started with. */
@@ -65,25 +63,13 @@ export function useProjectComposer({
   catalog,
   turnModes,
   attachmentKinds,
-  matrixAttachmentScope,
   disabled = false,
   onChatStarted,
 }: ProjectComposerOptions) {
   const sendMessage = useSendChatMessage();
   const isSending = sendMessage.isPending;
   const [draft, setDraftValue] = useState("");
-  const [attachmentDraft, setAttachmentDraft] = useState<{
-    scope: string | undefined;
-    generation: number;
-    items: readonly ComposerAttachment[];
-  }>({ scope: matrixAttachmentScope, generation: 0, items: [] });
-  const currentDraft = attachmentDraft.scope === matrixAttachmentScope ? attachmentDraft : {
-    scope: matrixAttachmentScope,
-    generation: attachmentDraft.generation + 1,
-    items: attachmentDraft.items.filter(attachment => !attachment.matrixSource),
-  };
-  if (currentDraft !== attachmentDraft) setAttachmentDraft(currentDraft);
-  const { items: attachments, generation: matrixGeneration } = currentDraft;
+  const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>([]);
   const failedSends = useRef<FailedSend[]>([]);
 
   const text = draft.trim();
@@ -105,15 +91,11 @@ export function useProjectComposer({
   };
   const addAttachments = (added: readonly ComposerAttachment[]) => {
     clearSendError();
-    setAttachmentDraft(current => ({
-      ...current,
-      items: appendAttachments(current.items, current.generation === matrixGeneration ? added
-        : added.filter(attachment => !attachment.matrixSource)),
-    }));
+    setAttachments((current) => appendAttachments(current, added));
   };
   const removeAttachment = (id: string) => {
     clearSendError();
-    setAttachmentDraft(current => ({ ...current, items: current.items.filter(attachment => attachment.id !== id) }));
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
   };
 
   const send = () => {
@@ -144,10 +126,7 @@ export function useProjectComposer({
         // The box stays editable while the server answers, so it may hold
         // newer text and attachments by now. Only what was sent is cleared.
         setDraftValue((current) => (current.trim() === text ? "" : current));
-        setAttachmentDraft(current => ({
-          ...current,
-          items: current.items.filter(waiting => !attachments.some(sent => sent.id === waiting.id)),
-        }));
+        setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
         onChatStarted(chatId, attempt.selection, attempt.turnModes.permissionMode);
       },
     }, {

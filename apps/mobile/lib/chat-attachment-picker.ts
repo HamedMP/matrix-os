@@ -5,7 +5,6 @@ import * as ImagePicker from "expo-image-picker";
 
 import {
   MAX_ATTACHMENT_BYTES,
-  MAX_PHOTO_BYTES,
   attachmentIdFrom,
   attachmentKindForMimeType,
   attachmentName,
@@ -17,6 +16,8 @@ import {
 /** The longest side a photo is sent with. A larger photo is scaled down to it. */
 export const MAX_PHOTO_EDGE = 2_048;
 const PHOTO_QUALITY = 0.8;
+/** Preserve photo preparation independently of the larger ordinary-file transport. */
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 // The image types sent as they are. Any other, such as the HEIC an iPhone
 // camera saves, is converted to JPEG, which every model that reads photos reads.
 const SENDABLE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];

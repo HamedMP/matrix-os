@@ -5,7 +5,6 @@ import { chatSlashEntries, draftWithInvocation } from "@/lib/chat-slash-entries"
 
 import type { ComposerProps } from "./Composer";
 import { ComposerAddControl } from "./ComposerAddControl";
-import type { MatrixAttachmentBinding } from "./MatrixAttachmentPicker";
 
 export interface ComposerAddOptions {
   catalog: CanonicalProviderCatalog | null;
@@ -28,7 +27,6 @@ export interface ComposerAddOptions {
   onChangeDraft: (text: string) => void;
   /** False while nothing can be added, as when there is nobody to send as. */
   enabled: boolean;
-  matrix?: MatrixAttachmentBinding;
 }
 
 /**
@@ -50,7 +48,6 @@ export function composerAddProps({
   draft,
   onChangeDraft,
   enabled,
-  matrix,
 }: ComposerAddOptions): Pick<ComposerProps, "attachments" | "onRemoveAttachment" | "attachmentNotice" | "addControl"> {
   const skills = chatSlashEntries(catalog, selection);
   return {
@@ -63,8 +60,6 @@ export function composerAddProps({
         room={room}
         skills={skills}
         disabled={!enabled}
-        matrix={matrix}
-        attachments={attachments}
         onAdd={onAdd}
         onInvoke={(invocation) => {
           onChangeDraft(draftWithInvocation(draft, invocation, skills.map((entry) => entry.invocation)));

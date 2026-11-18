@@ -8,7 +8,6 @@ import { rejectionNotice, type ChatAttachmentKind, type ComposerAttachment } fro
 import type { ChatSlashEntry } from "@/lib/chat-slash-entries";
 
 import { AddMenu, type AddMenuPage } from "./AddMenu";
-import { MatrixAttachmentPicker, type MatrixAttachmentBinding } from "./MatrixAttachmentPicker";
 
 const ADD_ICON_SIZE = 18;
 
@@ -21,8 +20,6 @@ export interface ComposerAddControlProps {
   skills: readonly ChatSlashEntry[];
   /** Nothing can be added, as when there is nobody to send as. */
   disabled?: boolean;
-  matrix?: MatrixAttachmentBinding;
-  attachments?: readonly ComposerAttachment[];
   onAdd: (attachments: readonly ComposerAttachment[]) => void;
   /** A skill or command was chosen, as "/review". */
   onInvoke: (invocation: string) => void;
@@ -37,21 +34,17 @@ export function ComposerAddControl({
   room,
   skills,
   disabled = false,
-  matrix,
-  attachments = [],
   onAdd,
   onInvoke,
 }: ComposerAddControlProps) {
   const { theme } = useUnistyles();
   const { colors, radius, size } = theme.v2;
   // The page last shown stays drawn while the sheet slides away.
-  const [sheet, setSheet] = useState<{ open: boolean; page: AddMenuPage; matrixKey?: string }>({ open: false, page: "menu" });
+  const [sheet, setSheet] = useState<{ open: boolean; page: AddMenuPage }>({ open: false, page: "menu" });
   const [picking, setPicking] = useState(false);
-  const matrixKey = matrix ? JSON.stringify([matrix.scope, matrix.gatewayUrl]) : undefined;
-  const matrixChanged = sheet.page === "matrix" && sheet.matrixKey !== matrixKey;
   // A control that can no longer be used does not leave its sheet behind, and
   // does not bring it back when it can be used again.
-  if ((disabled || matrixChanged) && sheet.open) setSheet({ ...sheet, open: false });
+  if (disabled && sheet.open) setSheet({ ...sheet, open: false });
 
   function close() {
     setSheet((current) => (current.open ? { ...current, open: false } : current));
@@ -99,12 +92,8 @@ export function ComposerAddControl({
         // starts on what can be attached.
         onPress={() => setSheet((current) => (current.open ? { ...current, open: false } : { open: true, page: "menu" }))}
       />
-      <Sheet visible={sheet.open && !matrixChanged} onClose={close} testID="composer-add-sheet">
-        {matrix && sheet.open && sheet.page === "matrix" && !matrixChanged ? (
-          <MatrixAttachmentPicker binding={matrix} kinds={kinds} room={room} attachments={attachments}
-            onBack={() => setSheet({ open: true, page: "menu" })}
-            onAdd={attachment => { onAdd([attachment]); close(); }} />
-        ) : <AddMenu
+      <Sheet visible={sheet.open} onClose={close} testID="composer-add-sheet">
+        <AddMenu
           page={sheet.page}
           kinds={kinds}
           remaining={room}
@@ -112,11 +101,10 @@ export function ComposerAddControl({
           busy={picking}
           onPhotos={() => { void attach("photos"); }}
           onFiles={() => { void attach("files"); }}
-          onMatrixFiles={matrix ? () => setSheet({ open: true, page: "matrix", matrixKey }) : undefined}
           onShowSkills={() => setSheet({ open: true, page: "skills" })}
           onShowMenu={() => setSheet({ open: true, page: "menu" })}
           onSelectSkill={invoke}
-        />}
+        />
       </Sheet>
     </>
   );

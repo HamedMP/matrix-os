@@ -8,12 +8,6 @@ import {
 
 export type ChatAttachmentKind = "image" | "file";
 
-export interface MatrixAttachmentSource {
-  gatewayUrl: string;
-  userId: string;
-  path: string;
-}
-
 /** A photo or file chosen for a message that has not been sent yet. It is still on the phone. */
 export interface ComposerAttachment {
   /** Names it in the composer, and is part of where its upload is kept. */
@@ -25,7 +19,6 @@ export interface ComposerAttachment {
   mimeType: string;
   kind: ChatAttachmentKind;
   sizeBytes: number;
-  matrixSource?: MatrixAttachmentSource;
 }
 
 /** An attachment as a message in the transcript shows it. */
@@ -48,7 +41,6 @@ export type AttachmentRejection = "too_large" | "unsupported" | "over_limit" | "
 export const MAX_MESSAGE_ATTACHMENTS = 8;
 /** Shared raw-upload transport ceiling; managed image policy is checked separately. */
 export const MAX_ATTACHMENT_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
-export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 // The computer clears this folder of old uploads by itself, and removes a
 // single upload from nowhere else.
 const UPLOAD_DIRECTORY = "temporary/desktop-chat";
@@ -172,11 +164,7 @@ export function appendAttachments(
   const merged = [...current];
   for (const attachment of added) {
     if (merged.length >= limit) break;
-    const source = attachment.matrixSource;
-    if (!merged.some(existing => existing.id === attachment.id || (source
-      && source.path === existing.matrixSource?.path
-      && source.gatewayUrl === existing.matrixSource.gatewayUrl
-      && source.userId === existing.matrixSource.userId))) merged.push(attachment);
+    if (!merged.some((existing) => existing.id === attachment.id)) merged.push(attachment);
   }
   return merged;
 }
