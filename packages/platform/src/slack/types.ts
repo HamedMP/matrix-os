@@ -30,6 +30,7 @@ export interface SlackApi {
   replies(input: { token: string; channelId: string; ts: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;
   history(input: { token: string; channelId: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;
   conversationInfo(input: { token: string; channelId: string; signal?: AbortSignal }): Promise<{ isExternalShared: boolean; canAccess: boolean }>;
+  hasChannelMember?(input: { token: string; channelId: string; userId: string; signal?: AbortSignal }): Promise<boolean>;
   addReaction(input: { token: string; channelId: string; ts: string; name: string; signal?: AbortSignal }): Promise<void>;
 }
 export interface SlackMessagePage { messages: Array<{ user?: string; text?: string; ts: string; thread_ts?: string }>; nextCursor?: string; hasMore: boolean }

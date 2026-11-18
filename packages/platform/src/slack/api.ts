@@ -89,6 +89,24 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
       return { isExternalShared: result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true || (result.channel.pending_connected_team_ids?.length ?? 0) > 0,
         canAccess: channelId.startsWith("D") || (result.channel.is_member === true && result.channel.is_ext_shared === false) };
     },
+
+    async hasChannelMember(input) {
+      const channel = SlackChannelIdSchema.parse(input.channelId);
+      const member = SlackUserIdSchema.parse(input.userId);
+      const pageSchema = z.object({
+        members: z.array(SlackUserIdSchema).max(200),
+        response_metadata: z.object({ next_cursor: z.string().max(1024).optional() }).optional(),
+      });
+      let cursor: string | undefined;
+      for (let page = 0; page < 3; page += 1) {
+        const result = pageSchema.parse(await call("conversations.members", { channel, limit: 200, ...(cursor ? { cursor } : {}) }, input.token, input.signal));
+        if (result.members.includes(member)) return true;
+        const next = result.response_metadata?.next_cursor;
+        if (!next || next === cursor) return false;
+        cursor = next;
+      }
+      return false;
+    },
     async addReaction(input) {
       await call("reactions.add", { channel: SlackChannelIdSchema.parse(input.channelId), timestamp: SlackTimestampSchema.parse(input.ts),
         name: z.string().regex(/^[a-z0-9_+-]{1,64}$/).parse(input.name) }, input.token, input.signal);

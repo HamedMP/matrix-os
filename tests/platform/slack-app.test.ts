@@ -22,7 +22,7 @@ let admin: boolean;
 const dispatch = vi.fn();
 const authorizeChannelBinding = vi.fn();
 const authorizeReply = vi.fn();
-const api = { exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(), conversationInfo: vi.fn() };
+const api = { exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(), conversationInfo: vi.fn(), hasChannelMember: vi.fn() };
 function signed(payload: unknown) {
   return signedBody(JSON.stringify(payload));
 }
@@ -57,6 +57,7 @@ beforeEach(async () => {
     expect(destination.ownerId).toBe(ownerId);
     return member;
   });
+  api.hasChannelMember.mockResolvedValue(true);
   api.conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true });
   api.replies.mockResolvedValue({ messages: [{ user: "U123", ts: "123.456", text: "original thread" }], hasMore: false });
   api.postMessage.mockResolvedValue({ ts: "123.999" });
@@ -544,4 +545,23 @@ describe("Slack authority RPC revocation fence", () => {
     expect(api.postMessage).not.toHaveBeenCalled();
     expect(api.addReaction).not.toHaveBeenCalled();
   });
+});
+
+it("dispatches a signed ordinary public-channel thread reply through the read-only grant", async () => {
+  await linkEmployee();
+  const dispatchContext = vi.fn(async () => {});
+  app = makeApp({
+    contextGrant: {
+      appId: config.appId, teamId: "T123", organizationId: org, ownerId: "user_employee", ownerSlackId: "U123",
+      runtimeId: "runtime_original", channelId: "C123", threadTs: "123.456", botId: "bot_12345678",
+      chatId: "chat_12345678", installationGeneration: 1, linkCreatedAt: clock.toISOString(),
+    },
+    dispatchContext,
+  });
+  const recorded = signed(envelope({ type: "message", channel_type: "channel", user: "U456", channel: "C123",
+    thread_ts: "123.456", ts: "123.789", text: "Unmentioned reply" }, "EvPlainChannelReply"));
+  expect((await app.request("/webhooks/slack/events", recorded)).status).toBe(200);
+  expect(dispatchContext).toHaveBeenCalledTimes(1);
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
 });

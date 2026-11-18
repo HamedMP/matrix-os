@@ -1,8 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSlackApi, SLACK_BOT_SCOPES, SlackApiRateLimitError } from "../../packages/platform/src/slack/api.js";
+import { loadSlackThreadContextGrant } from "../../packages/platform/src/slack/thread-context.js";
 import { loadSlackAppConfig } from "../../packages/platform/src/slack/wiring.js";
 
 describe("Slack API boundary", () => {
+  it("checks exact public-channel membership and caps cursor traversal", async () => {
+    const page = (members: string[], nextCursor: string) =>
+      Response.json({ ok: true, members, response_metadata: { next_cursor: nextCursor } });
+    const fetchImpl = vi.fn().mockResolvedValueOnce(page(["U456"], "next"))
+      .mockResolvedValueOnce(page(["U123"], "")).mockResolvedValueOnce(page([], "one"))
+      .mockResolvedValueOnce(page([], "two")).mockResolvedValueOnce(page([], "three"));
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl });
+    const input = { token: "xoxb-fixture", channelId: "C123", userId: "U123", signal: AbortSignal.timeout(1_000) };
+    await expect(api.hasChannelMember!(input)).resolves.toBe(true);
+    await expect(api.hasChannelMember!(input)).resolves.toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(fetchImpl.mock.calls[1]![0]).toBe("https://slack.com/api/conversations.members");
+    expect(fetchImpl.mock.calls[1]![1].body.get("cursor")).toBe("next");
+  });
+
+  it("keeps the exact context grant optional and restricted to Preview", () => {
+    const env = { SLACK_PREVIEW_THREAD_CONTEXT_GRANT: JSON.stringify({
+      appId: "A123", teamId: "T123", organizationId: "org_preview", ownerId: "user_owner", ownerSlackId: "U123",
+      runtimeId: "runtime_preview", botId: "bot_12345678", chatId: "chat_12345678", channelId: "C123",
+      threadTs: "123.456", installationGeneration: 1, linkCreatedAt: "2026-09-30T12:00:00.000Z",
+    }) };
+    expect(loadSlackThreadContextGrant({})).toBeUndefined();
+    expect(() => loadSlackThreadContextGrant(env)).toThrow();
+    expect(loadSlackThreadContextGrant(env, "pr-3482")).toMatchObject({ channelId: "C123", threadTs: "123.456" });
+    expect(() => loadSlackThreadContextGrant({ SLACK_PREVIEW_THREAD_CONTEXT_GRANT: "{bad" }, "pr-3482")).toThrow();
+  });
+
   it("posts bounded plain text with mentions, broadcast and unfurls disabled and a deadline", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, ts: "123.456" })));
     const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl });
