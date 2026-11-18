@@ -3,6 +3,7 @@ import { PassThrough, Readable } from "node:stream";
 import type { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { issueHostedBotsMatrixTurn, MATRIX_BOTS_TURN_HEADER } from "./matrix-model.js";
 import { createOpenMausBotSockets, openMausBotWebSocketPath } from "./oss-sockets.js";
 
 export const OPENMAUSBOT_PROXY_BASE = "/api/hosted-bots/runtime";
@@ -181,6 +182,7 @@ export function createOpenMausBotGateway(options: {
   isOwner: (c: Context) => boolean;
   upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   eventsWindowMs?: number;
+  issueModelTurn?: Parameters<typeof issueHostedBotsMatrixTurn>[0];
 }) {
   const app = new Hono();
   const active = new Set<AbortController>();
@@ -266,6 +268,10 @@ export function createOpenMausBotGateway(options: {
       }
       const body = c.req.raw.body ? new Uint8Array(await c.req.arrayBuffer()) : undefined;
       if (body) headers["content-length"] = body.byteLength;
+      if (options.issueModelTurn && headers.cookie) {
+        const ticket = issueHostedBotsMatrixTurn(options.issueModelTurn, path, method, body, c.req.header("content-type"));
+        if (ticket) headers[MATRIX_BOTS_TURN_HEADER] = ticket;
+      }
       const reply = await requestUnix(options.socketPath, path, {
         method, headers, body, signal: AbortSignal.any([c.req.raw.signal, lifetime.signal]),
       });

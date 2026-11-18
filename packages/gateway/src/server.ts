@@ -135,6 +135,7 @@ import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-ow
 import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
 import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
 import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
+import { initializeHostedBotsMatrixModel } from "./hosted-bots/matrix-model.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1296,8 +1297,10 @@ export async function createGateway(config: GatewayConfig) {
     admitted: openMausBotAdmitted,
     isOwner: isOpenMausBotOwner,
     upgradeWebSocket,
+    issueModelTurn: (identity, text) => hostedBotsMatrixModel.issue?.(identity, text),
   });
   app.route(OPENMAUSBOT_PROXY_BASE, openMausBotGateway.routes);
+
   const hostedBotsDrive = await initializeHostedBotsDrive({
     admitted: openMausBotAdmitted,
     isOwner: isOpenMausBotOwner,
@@ -1521,6 +1524,10 @@ export async function createGateway(config: GatewayConfig) {
       codexHome: process.env.CODEX_HOME,
       accessSourceId: "owner_openai_profile",
     }) } : {}),
+  });
+  const hostedBotsMatrixModel = await initializeHostedBotsMatrixModel({
+    admitted: openMausBotAdmitted, homePath, fundedCredentialProvider, fundedAdmission,
+    inventory: () => aiProviderService.getSnapshot({ admissionScope: "managed_matrix", signal: AbortSignal.timeout(5_000) }),
   });
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     codexExecutable: codexExecutable ?? undefined,
@@ -1923,6 +1930,7 @@ export async function createGateway(config: GatewayConfig) {
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
       openMausBotGateway.close();
+      await hostedBotsMatrixModel.close();
       await hostedBotsDrive.close();
       await hostedBotsRuntime.close();
       chatDriveContext.close();

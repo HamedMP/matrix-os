@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { createOpenMausBotPreviewOwnerCheck } from "../../packages/gateway/src/hosted-bots/oss-preview-owner.js";
 import { markAuthContextReady, markVerifiedRuntimeBearer, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE } from "../../packages/gateway/src/hosted-bots/oss-gateway.js";
 
 const proxyHeaders = { "x-matrix-hosted-bots-proxy": "1" };
@@ -61,6 +61,30 @@ describe("OpenMausBot gateway transport", () => {
     app.route(OPENMAUSBOT_PROXY_BASE, gateway.routes);
     return { app, gateway };
   }
+
+  it("injects a private model ticket only for an admitted, owner-approved paired text POST", async () => {
+    const issueModelTurn = vi.fn(() => "c".repeat(64));
+    const base = OPENMAUSBOT_PROXY_BASE + "/api/bots/pebble/messages";
+    const body = JSON.stringify({ threadId: "chat", sendId: "send-0123456789abcdef", text: "summarize" });
+    const headers = { ...proxyHeaders, "content-type": "application/json",
+      "x-matrix-hosted-bots-model-turn": "spoof", "x-matrix-hosted-bots-session": "omb_session_8799_abc123=omb_sess_existing" };
+    const send = (admitted: boolean, owner: boolean, requestHeaders: Record<string, string>) => {
+      const gateway = createOpenMausBotGateway({ socketPath, admitted, isOwner: () => owner, issueModelTurn });
+      const app = new Hono();
+      app.route(OPENMAUSBOT_PROXY_BASE, gateway.routes);
+      return app.request(base, { method: "POST", headers: requestHeaders, body });
+    };
+    expect((await send(false, true, headers)).status).toBe(404);
+    expect((await send(true, false, headers)).status).toBe(403);
+    await (await send(true, true, { ...proxyHeaders, "content-type": "application/json" })).text();
+    expect(issueModelTurn).not.toHaveBeenCalled();
+    expect(received[0]?.headers).not.toHaveProperty("x-matrix-hosted-bots-model-turn");
+    const response = await send(true, true, headers);
+    await response.text();
+    expect(issueModelTurn).toHaveBeenCalledWith({ botId: "pebble", threadId: "chat", sendId: "send-0123456789abcdef" }, "summarize");
+    expect(received[1]?.headers["x-matrix-hosted-bots-model-turn"]).toBe("c".repeat(64));
+    expect(response.headers.get("x-matrix-hosted-bots-model-turn")).toBeNull();
+  });
 
   it("exposes only owner readiness from the real Unix HTTP service", async () => {
     expect((await mount(false).app.request(OPENMAUSBOT_PROXY_BASE)).status).toBe(404);

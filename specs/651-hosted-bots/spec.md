@@ -73,6 +73,17 @@ The hosted Bots view follows the effective Matrix Electron Desktop theme, includ
 
 Connected Apps and custom MCP use upstream configuration on the preview. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
 
+### Matrix AI for a direct Bots conversation
+
+The owner-only Electron preview offers **Matrix AI · Text only** for direct messages using an eligible managed Matrix AI model. The picker reflects the existing Matrix provider catalog and readiness. The Gateway uses the existing App AI text completion, funded admission, Relay and usage settlement. The selected provider and its result appear in the upstream Bots conversation. This first route supports direct, unqueued text messages. Other provider connections, attachments, tools and unattended execution need their own authorization and acceptance.
+
+| Boundary | Authorization |
+| --- | --- |
+| Matrix owner → `POST /api/hosted-bots/runtime/api/bots/:botId/messages` | Existing exact Preview owner admission and upstream paired session. The Gateway issues an expiring, single-use turn authorization linked to the Bot, conversation and send ID for an eligible text message. |
+| Upstream provider → `GET /status`, `POST /turn` on the private model socket | Readiness projects a boolean. Inference consumes the matching turn authorization before dispatch and rechecks the selected model in the current catalog. The upstream provider receives bounded text output. |
+
+The Gateway owns the original user text, supported model and provider credentials. The turn authorization stays in server memory and is discarded on use, expiry or Gateway shutdown. The model socket is local to the isolated Preview runtime. No Matrix or vendor credentials reach the renderer or the upstream workload. A real Preview acceptance must select Matrix AI inside Pebble, submit one identifiable test message, confirm the Relay model and usage classification, and reopen the same conversation to read the saved result. A catalog entry or local provider fixture alone does not establish live acceptance.
+
 ### Matrix-managed integration reads in Private Preview
 
 **Scope.** Direct conversations with a paired user in an opted-in, owner-only Private Preview can request a registered integration read. Matrix Electron Desktop reviews each request. GitHub reads use GitHub Developer on the selected computer. Other supported apps use existing Matrix-managed Pipedream accounts under Platform's personal integration checks. Tool discovery in the upstream conversation exposes tool definitions. The Matrix review owns the connected-account list.

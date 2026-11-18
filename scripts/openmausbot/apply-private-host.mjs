@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -83,8 +83,41 @@ export function patchPrivateHost(source) {
     "      tunnelListener?.close(); matrixPairingListener?.close(); stopCloudHomeConnectedApps();");
 }
 
+export function patchMatrixProviderRegistry(source) {
+  let patched = replacePinned(source, 'import { basename, join } from "node:path";',
+    'import { basename, join } from "node:path";\nimport { MATRIX_HOSTED_INSTANCE, matrixHostedDriver, matrixHostedProviderConfigs, runMatrixHostedModelTurn, takeMatrixHostedOwnerSend, type MatrixHostedTurnTicket } from "./drivers/matrix-provider.ts";');
+  patched = replacePinned(patched, "const providerConfigs = () => hostedModels ? hostedModels.configs() : instanceConfigs(cfg);",
+    "const providerConfigs = () => matrixHostedProviderConfigs(hostedModels ? hostedModels.configs() : instanceConfigs(cfg));");
+  patched = replacePinned(patched, 'const registry = new ProviderRegistry(BUILT_IN_DRIVERS, { statusFile:',
+    'const registry = new ProviderRegistry(process.env.OMB_MATRIX_PAIR_SOCKET ? [...BUILT_IN_DRIVERS, matrixHostedDriver] : BUILT_IN_DRIVERS, { statusFile:');
+  const direct = "  const message = await startTurn(botId, text, { threadId, replyTo, sendId, sender, trigger, via, callId, dataContext, app, mentions, allowRoomTurnElsewhere: true });";
+  patched = replacePinned(patched, direct, direct.replace("allowRoomTurnElsewhere: true", "allowRoomTurnElsewhere: true, matrixHostedTurn: takeMatrixHostedOwnerSend(botId, threadId, sendId)"));
+  patched = replacePinned(patched, "    requestMessageId?: string;\n    origin?: WorkOrigin;", "    requestMessageId?: string;\n    matrixHostedTurn?: MatrixHostedTurnTicket;\n    origin?: WorkOrigin;");
+  const turnDispatch = '(input) => quickFallback.sendTurn(instance, input, route.quickModel ? { model, own: bot.modelSelection, onFallback: () => store.patchMessage(threadId, userMessage.id, { quickModel: undefined }) } : undefined)';
+  patched = replacePinned(patched, turnDispatch,
+    '(input) => runMatrixHostedModelTurn(instance.instanceId, opts?.matrixHostedTurn, () => ' + turnDispatch.slice('(input) => '.length) + ')');
+  const readOnly = '    if (hostedModels) return { ...described, readOnly: true,';
+  return replacePinned(patched, readOnly, readOnly.replace('hostedModels', 'hostedModels || instance.instanceId === MATRIX_HOSTED_INSTANCE'));
+}
+
+export function patchMatrixProviderDispatch(source) {
+  let patched = replacePinned(source, 'import { z } from "zod";',
+    'import { z } from "zod";\nimport { withMatrixHostedOwnerSend } from "../drivers/matrix-provider.ts";');
+  patched = replacePinned(patched, "        const receipt = await acceptDirectSend({", "        const dispatch = () => acceptDirectSend({");
+  return replacePinned(patched, "        }, guardedStart);", `        }, guardedStart);
+        let receipt: DirectSendReceipt;
+        if (!guarded && !press && !appSent && !pointed && !pageOpen && !followUp && auth.kind === "session" && sendId) {
+          receipt = await withMatrixHostedOwnerSend(req.headers["x-matrix-hosted-bots-model-turn"], { botId: bot.id, threadId, sendId }, dispatch);
+        } else {
+          receipt = await dispatch();
+        }`);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.length !== 3) throw new Error("Usage: apply-private-host.mjs <upstream source directory>");
   const file = resolve(process.argv[2], "server/index.ts");
-  await writeFile(file, patchPrivateHost(await readFile(file, "utf8")));
+  const route = resolve(process.argv[2], "server/routes/bot-messages.ts");
+  await writeFile(file, patchPrivateHost(patchMatrixProviderRegistry(await readFile(file, "utf8"))));
+  await writeFile(route, patchMatrixProviderDispatch(await readFile(route, "utf8")));
+  await copyFile(new URL("./matrix-provider.ts", import.meta.url), resolve(process.argv[2], "server/drivers/matrix-provider.ts"));
 }

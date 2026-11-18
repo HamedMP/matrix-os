@@ -30,6 +30,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     githubDeveloperSetup: service("GitHub developer setup"),
     jevInboxRuntime: null,
     openMausBotGateway: { close: vi.fn(() => { calls.push("OpenMausBot gateway.close"); }) },
+    hostedBotsMatrixModel: service("Hosted Bots model"),
     hostedBotsDrive: service("Hosted Bots integrations"),
     hostedBotsRuntime: service("Hosted Bots"),
     chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
@@ -89,9 +90,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("push.dispose")).toBeGreaterThan(-1);
   expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-  expect(shutdown.calls.slice(0, 6)).toEqual([
+  expect(shutdown.calls.slice(0, 7)).toEqual([
     "native Claude.beginShutdown", "managed feature restart.close", "GitHub developer setup.close",
-    "OpenMausBot gateway.close", "Hosted Bots integrations.close", "Hosted Bots.close",
+    "OpenMausBot gateway.close", "Hosted Bots model.close", "Hosted Bots integrations.close", "Hosted Bots.close",
   ]);
 });
 
