@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
-import { watchFileBrowserAuthority } from "@/hooks/useFileBrowser";
+import { useFileBrowser, watchFileBrowserAuthority } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { Button } from "@/components/ui/button";
 import { Trash2Icon, RotateCcwIcon } from "@/lib/hugeicons";
@@ -85,7 +85,10 @@ function TrashViewForAuthority({ gatewayUrl, draftAuthority }: { gatewayUrl: str
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (!res.ok && !signal.aborted) setError(failure);
+      if (!signal.aborted && authority.isCurrent()) {
+        if (!res.ok) setError(failure);
+        else if (path === "/restore") useFileBrowser.getState().refresh();
+      }
     } catch (error: unknown) {
       if (!signal.aborted) {
         console.warn("[file-browser] Trash operation unavailable:", error instanceof Error ? error.name : "UnknownError");

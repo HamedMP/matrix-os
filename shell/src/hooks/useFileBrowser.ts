@@ -118,17 +118,21 @@ interface FileBrowserActions {
   consumeViewRequest(expectedView?: "files" | "trash", expectedFolder?: FileBrowserFolderRequest | null): boolean;
 }
 
-async function fetchEntries(path: string): Promise<FileEntry[] | undefined> {
+async function fetchEntries(
+  path: string,
+  gatewayUrl = getGatewayUrl(),
+  signal = AbortSignal.timeout(10_000),
+): Promise<FileEntry[] | undefined> {
   try {
-    const res = await fetch(`${getGatewayUrl()}/api/files/list?path=${encodeURIComponent(path)}`, {
-      signal: AbortSignal.timeout(10_000),
+    const res = await fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, {
+      signal, cache: "no-store",
     });
     if (!res.ok) return undefined;
     const data = await res.json();
     const entries = data.entries ?? data;
     return Array.isArray(entries) ? entries : undefined;
   } catch (err: unknown) {
-    console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.message : String(err));
+    if (!signal.aborted) console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.name : "UnknownError");
     return undefined;
   }
 }
@@ -301,17 +305,20 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
 
     refresh() {
       const { currentPath } = get();
+      const gatewayUrl = getGatewayUrl();
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      const signal = AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]);
       set({ loading: true });
       const seq = ++navSeq;
-      fetchEntries(currentPath).then((entries) => {
-        if (seq !== navSeq) return;
+      void fetchEntries(currentPath, gatewayUrl, signal).then((entries) => {
+        if (seq !== navSeq || !authority.isCurrent()) return;
         const { sortBy, sortDirection, error } = get();
         if (!entries) {
           set({ error: error ?? "Could not refresh Files. Try again.", loading: false });
           return;
         }
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
-      });
+      }).finally(authority.unsubscribe);
     },
 
     setViewMode(mode) {
