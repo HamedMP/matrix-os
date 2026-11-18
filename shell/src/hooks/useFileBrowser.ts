@@ -8,6 +8,7 @@ import { usePreviewWindow } from "./usePreviewWindow";
 const GATEWAY_URL = getGatewayUrl();
 
 let navSeq = 0;
+let searchSeq = 0;
 let movingToTrash = false;
 
 export function watchFileBrowserAuthority(gatewayUrl: string) {
@@ -93,7 +94,7 @@ interface FileBrowserActions {
   navigate(path: string): void;
   goBack(): void;
   goForward(): void;
-  refresh(): void;
+  refresh(options?: { includeSearch?: boolean }): void;
   setViewMode(mode: "icon" | "list" | "column"): void;
   setSortBy(sort: "name" | "size" | "modified" | "type"): void;
   setSortDirection(dir: "asc" | "desc"): void;
@@ -252,6 +253,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         searchQuery: "",
         searchResults: null,
+        searching: false,
         loading: true,
         error: null,
       });
@@ -303,7 +305,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       });
     },
 
-    refresh() {
+    refresh({ includeSearch = false } = {}) {
       const { currentPath } = get();
       const gatewayUrl = getGatewayUrl();
       const authority = watchFileBrowserAuthority(gatewayUrl);
@@ -319,6 +321,8 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         }
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       }).finally(authority.unsubscribe);
+      const { searchQuery } = get();
+      if (includeSearch && searchQuery.trim()) get().search(searchQuery);
     },
 
     setViewMode(mode) {
@@ -374,25 +378,34 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
 
     search(query) {
       if (!query.trim()) {
-        set({ searchQuery: "", searchResults: null, searching: false });
+        get().clearSearch();
         return;
       }
+      const gatewayUrl = getGatewayUrl();
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      const signal = AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]);
+      const seq = ++searchSeq;
+      const isCurrent = () => seq === searchSeq && get().searchQuery === query && authority.isCurrent();
       set({ searchQuery: query, searching: true });
-      fetch(
-        `${GATEWAY_URL}/api/files/search?q=${encodeURIComponent(query)}&content=true`,
-        { signal: AbortSignal.timeout(10_000) },
-      )
-        .then((res) => res.json())
-        .then((data: { results: SearchResult[] }) =>
-          set({ searchResults: data.results, searching: false }),
-        )
-        .catch((err: unknown) => {
-          console.warn("[file-browser] Failed to search files:", err instanceof Error ? err.message : String(err));
+      void fetch(`${gatewayUrl}/api/files/search?q=${encodeURIComponent(query)}&content=true`, {
+        signal, cache: "no-store",
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Files search unavailable");
+          const data = await res.json() as { results?: SearchResult[] } | null;
+          if (!Array.isArray(data?.results)) throw new Error("Invalid Files search response");
+          if (isCurrent()) set({ searchResults: data.results, searching: false });
+        })
+        .catch((error: unknown) => {
+          if (!isCurrent()) return;
+          console.warn("[file-browser] Failed to search files:", error instanceof Error ? error.name : "UnknownError");
           set({ searchResults: [], searching: false });
-        });
+        })
+        .finally(authority.unsubscribe);
     },
 
     clearSearch() {
+      searchSeq++;
       set({ searchQuery: "", searchResults: null, searching: false });
     },
 
@@ -488,7 +501,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
             error: moved.length === paths.length ? null : "Move to Trash could not be confirmed for every item. Check Files or Trash.",
           });
         }
-        get().refresh();
+        get().refresh({ includeSearch: moved.length > 0 });
       } finally {
         authority.unsubscribe();
         movingToTrash = false;

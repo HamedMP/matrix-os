@@ -87,7 +87,7 @@ function TrashViewForAuthority({ gatewayUrl, draftAuthority }: { gatewayUrl: str
       });
       if (!signal.aborted && authority.isCurrent()) {
         if (!res.ok) setError(failure);
-        else if (path === "/restore") useFileBrowser.getState().refresh();
+        else if (path === "/restore") useFileBrowser.getState().refresh({ includeSearch: true });
       }
     } catch (error: unknown) {
       if (!signal.aborted) {
