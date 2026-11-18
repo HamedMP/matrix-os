@@ -14,6 +14,7 @@ export function installAppMenu(options: {
   stopBackgroundMacChecks?(): void;
   openMacActivity?(): void;
   openMacPairing?(): void;
+  openMacVerification?(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
 }) {
@@ -34,6 +35,7 @@ export function installAppMenu(options: {
     stopBackgroundMacChecks: options.stopBackgroundMacChecks,
     openMacActivity: options.openMacActivity,
     openMacPairing: options.openMacPairing,
+    openMacVerification: options.openMacVerification,
     ...(options.thirdPartyNoticesPath ? {
       openThirdPartyNotices: () => {
         // openPath resolves to an error string instead of rejecting.
