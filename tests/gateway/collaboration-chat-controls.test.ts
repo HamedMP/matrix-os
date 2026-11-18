@@ -47,6 +47,7 @@ describe("shared Chat durable controls", () => {
     });
 
     await expect(repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat,
       turnId: "cturn_revoked",
       runId: "run_revoked",
@@ -64,6 +65,7 @@ describe("shared Chat durable controls", () => {
       .where("id", "=", collaborationIds.scope).execute();
 
     await expect(repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat,
       turnId: "cturn_stale_auth_epoch",
       runId: "run_stale_auth_epoch",
@@ -446,6 +448,7 @@ describe("shared Chat durable controls", () => {
   async function activeRunWithApproval(approvalId: string) {
     await repository.enqueueSharedQueuedTurn(owner, aiRequest(50, collaborationActors.owner));
     const claimed = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat,
       turnId: `cturn_${approvalId}`,
       runId: `run_${approvalId}`,

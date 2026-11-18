@@ -58,6 +58,7 @@ describe("shared Chat canonical queue", () => {
     expect(first).toMatchObject({ acceptedSequence: 1, pendingCount: 1, alreadyAccepted: false });
 
     const claimed = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat,
       turnId: "cturn_shared_1",
       runId: "run_shared_1",
@@ -77,6 +78,7 @@ describe("shared Chat canonical queue", () => {
 
     const racingClaims = await Promise.all([
       repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
         chatId: collaborationIds.chat,
         turnId: "cturn_shared_2a",
         runId: "run_shared_2a",
@@ -84,6 +86,7 @@ describe("shared Chat canonical queue", () => {
         claimedAt: now,
       }),
       repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
         chatId: collaborationIds.chat,
         turnId: "cturn_shared_2b",
         runId: "run_shared_2b",
@@ -110,6 +113,7 @@ describe("shared Chat canonical queue", () => {
     })).rejects.toMatchObject({ code: "unavailable" });
     await repository.enqueueSharedQueuedTurn(owner, { ...request(94, collaborationActors.editor), executionRoot, executionRootFingerprint });
     const claimed = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: "cturn_root", runId: "run_root", messageId: "msg_root", claimedAt: now,
     });
     expect(claimed?.run).toMatchObject({ executionRoot, executionRootFingerprint });
@@ -122,6 +126,7 @@ describe("shared Chat canonical queue", () => {
     });
     await fixture.db.updateTable("chats").set({ project_id: "project_changed" }).where("id", "=", collaborationIds.chat).execute();
     await expect(repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: "cturn_changed_root", runId: "run_changed_root", messageId: "msg_changed_root", claimedAt: now,
     })).resolves.toBeNull();
     expect((await repository.listSharedQueuedTurns(owner, collaborationIds.chat))[0]?.state).toBe("unavailable");

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
 import { SharedChatControls } from "../../packages/ui/src/collaboration/SharedChatControls";
@@ -39,6 +39,27 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe("shared Chat AI controls", () => {
+  it("places a historical failure and its retry beside the original prompt, outside the composer", async () => {
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ requests: [request({ state: "interrupted", messageId: "msg_original" })],
+        approvals: [], capability, resourceRevision: "4" })),
+      post: vi.fn(async () => ({})), delete: vi.fn() };
+    const { container } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor" resourceRevision="4"
+      draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()} changeDraftMode={vi.fn()}
+      discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0}
+      renderHistory={(status: (messageId: string) => React.ReactNode) => <article data-testid="original-prompt">
+        <p>Ship the release</p>{status("msg_original")}
+      </article>} />);
+    const prompt = await screen.findByTestId("original-prompt");
+    expect(await within(prompt).findByRole("button", { name: "Retry request 1" })).toBeVisible();
+    expect(container.querySelector("footer")).not.toHaveTextContent("interrupted");
+    expect(screen.getAllByText("Ship the release")).toHaveLength(1);
+    fireEvent.click(within(prompt).getByRole("button", { name: "Retry request 1" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/chat/requests/qturn_one/retry`, expect.objectContaining({ expectedRevision: "4" }),
+    ));
+  });
+
   it("does not send or clear a prompt when Enter confirms an IME composition", async () => {
     const updateDraft = vi.fn();
     const api = { baseUrl: "https://app.matrix-os.com",

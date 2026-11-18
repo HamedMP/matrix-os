@@ -18,6 +18,38 @@ const createdAt = "2026-09-17T12:00:00.000Z";
 describe("shared Chat two-account lifecycle", () => {
   afterEach(cleanup);
 
+  it("keeps failure status with its exact prompt when the same text was sent twice", async () => {
+    const actor = { actorId: "user_editor", displayName: "Ada" };
+    const api = { baseUrl: "https://app.matrix-os.com", post: vi.fn(), delete: vi.fn(),
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith(`/scopes/${scopeId}`)) return {
+          id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "inherited",
+          parentScopeId: "10000000-0000-4000-8000-000000000002",
+          lifecycle: "shared", revision: "4", authEpoch: "1", authorityGeneration: "1", role: "editor",
+          capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
+        };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Existing Chat", lifecycle: "active", revision: "4", messageCount: "2" };
+        if (path.includes("/chat/messages?")) return { messages: ["msg_first", "msg_second"].map((id, index) => ({
+          id, chatId, sequence: String(index + 1), role: "user", state: "committed", purpose: "ai_request", actor,
+          parts: [{ type: "text", text: "Same prompt" }], createdAt,
+        })) };
+        if (path.endsWith("/chat/requests")) return { requests: [{
+          id: "qturn_first", chatId, messageId: "msg_first", acceptedSequence: "1", actor, state: "interrupted",
+          text: "Same prompt", selection: defaultSelection, acceptedAt: createdAt, updatedAt: createdAt,
+        }], approvals: [], capability: { status: "available", effectiveSelection: defaultSelection }, resourceRevision: "4" };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    const { container } = render(<SharedChatPanel api={api} actorId="user_editor" runtimeId="runtime_peer" scopeId={scopeId} />);
+    const retry = await screen.findByRole("button", { name: "Retry request 1" });
+    const first = container.querySelector('[data-message-id="msg_first"]');
+    const second = container.querySelector('[data-message-id="msg_second"]');
+    expect(first).toContainElement(retry);
+    expect(second).not.toContainElement(retry);
+    expect(container.querySelector("footer")).not.toContainElement(retry);
+    expect(screen.getAllByText("Same prompt")).toHaveLength(2);
+  });
+
   it("accepts, discusses live, requests AI, and reconnects through the shared Chat panel", async () => {
     let accepted = false;
     let revision = 1;

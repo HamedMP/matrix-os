@@ -276,6 +276,7 @@ export class CollaborationChatExecutionAdapter {
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
       ...(row.runId ? { runId: row.runId } : {}),
+      ...(row.messageId ? { messageId: row.messageId } : {}),
       ...(state === "interrupted" && interruption ? { interruptedReason: interruption.reason } : {}),
       ...(state === "cancelled" && decision ? { decidedBy: { actorId: decision.actorId, relation: decision.relation } } : {}),
       acceptedAt: row.createdAt,
