@@ -46,7 +46,8 @@ function matchesApproval(approved: ChatElectronPreviewRequest, candidate: ChatEl
     && approved.worktreeId === candidate.worktreeId && approved.expiresAt === candidate.expiresAt
     && approved.baseSha === candidate.baseSha && approved.sourceSha256 === candidate.sourceSha256
     && approved.label === candidate.label && approved.operation === candidate.operation
-    && approved.requestKind === candidate.requestKind
+    && approved.requestKind === candidate.requestKind && approved.recipe === candidate.recipe
+    && approved.terminalIntentDigest === candidate.terminalIntentDigest
     && approved.backgroundTargetId === candidate.backgroundTargetId;
 }
 

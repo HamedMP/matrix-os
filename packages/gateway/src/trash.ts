@@ -18,6 +18,7 @@ import {
 } from "./path-security.js";
 
 interface TrashManifestEntry {
+  entryId?: string;
   name: string;
   originalPath: string;
   deletedAt: string;
@@ -77,7 +78,8 @@ const PROTECTED_PATHS = new Set([
 export async function fileDelete(
   homePath: string,
   requestedPath: string,
-): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
+  options?: { withUndo: boolean },
+): Promise<{ ok: boolean; trashPath?: string; entryId?: string; error?: string; status?: number }> {
   const lexicalPath = resolveWithinHome(homePath, requestedPath);
   if (!lexicalPath || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
@@ -109,7 +111,9 @@ export async function fileDelete(
     await rename(resolved, trashFullPath);
 
     const manifest = await readManifest(trashDir);
+    const entryId = options?.withUndo ? randomUUID() : undefined;
     manifest.push({
+      ...(entryId ? { entryId } : {}),
       name,
       originalPath: requestedPath,
       deletedAt: new Date().toISOString(),
@@ -117,7 +121,7 @@ export async function fileDelete(
     });
     await writeManifest(trashDir, manifest);
 
-    return { ok: true, trashPath: `.trash/${trashName}` };
+    return { ok: true, trashPath: `.trash/${trashName}`, ...(entryId ? { entryId } : {}) };
   });
 }
 
@@ -153,6 +157,7 @@ export async function trashList(
 export async function trashRestore(
   homePath: string,
   trashPath: string,
+  expectedEntryId?: string,
 ): Promise<{ ok: boolean; restoredTo?: string; error?: string; status?: number }> {
   const trashDir = join(homePath, ".trash");
   const resolvedTrash = resolveWithinHome(homePath, trashPath);
@@ -173,7 +178,10 @@ export async function trashRestore(
       return { ok: false, error: "Not found in trash", status: 404 };
     }
 
-    const entry = manifest[entryIndex];
+    const entry = manifest[entryIndex]!;
+    if (expectedEntryId !== undefined && entry.entryId !== expectedEntryId) {
+      return { ok: false, error: "Trash entry changed", status: 409 };
+    }
     const normalizedRestore = entry.originalPath.replace(/^\/+/, "");
     if (
       isDeniedFileApiPath(homePath, entry.originalPath) ||

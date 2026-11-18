@@ -13,11 +13,13 @@ import {
 import { Button, ContextMenu } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import {
   parseBrowserEntries,
   isManagedBrowserPath,
   isProtectedFolderCreationParentPath,
   isProtectedFolderPickerPath,
+  isProtectedTrashTarget,
   sortBrowserEntries,
   type BrowserEntry,
   type BrowserSortDirection,
@@ -72,6 +74,8 @@ export default function ComputerFileBrowser({
   onOpenFile,
   onDownload,
   downloadPending = false,
+  onMoveToTrash,
+  trashPending = false,
   onSelectionChange,
   onChooseFolder,
   onCreateFolder,
@@ -97,6 +101,8 @@ export default function ComputerFileBrowser({
   onOpenFile?: (path: string) => void;
   onDownload?: (path: string, size?: number) => void;
   downloadPending?: boolean;
+  onMoveToTrash?: (path: string) => void;
+  trashPending?: boolean;
   onSelectionChange?: (selection: BrowserSelection | null) => void;
   onChooseFolder?: (path: string) => void;
   onCreateFolder?: (path: string) => void;
@@ -145,8 +151,7 @@ export default function ComputerFileBrowser({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepth = useRef(0);
   const [dragActive, setDragActive] = useState(false);
-  const [contextFile, setContextFile] = useState<{ path: string; size?: number; scope: string } | null>(null);
-  const [contextDirectory, setContextDirectory] = useState<{ path: string; name: string } | null>(null);
+  const [context, setContext] = useState<(BrowserSelection & { scope: string; runtime: number; listing: number }) | null>(null);
   const refreshMounted = useRef(false);
 
   const markFocusForRestore = useCallback(() => {
@@ -159,6 +164,9 @@ export default function ComputerFileBrowser({
   // or replacement session never shows the previous owner's directory names or
   // lets stale rows fire onOpenFile/onChooseFolder against the new API.
   const browserScope = `${runtimeSlot}|${authGeneration}`;
+  const contextTarget = context?.scope === browserScope ? context : null;
+  const contextFile = contextTarget?.entry.type === "file" ? contextTarget : null;
+  const contextDirectory = contextTarget?.entry.type === "directory" ? contextTarget : null;
   const [loadedScope, setLoadedScope] = useState(browserScope);
   const scoped = loadedScope === browserScope;
   const viewCurrentPath = scoped ? currentPath : "";
@@ -541,14 +549,27 @@ export default function ComputerFileBrowser({
       ) : null}
       <ContextMenu items={mode === "browse"
         ? [
-            ...(contextFile && contextFile.scope === browserScope && onDownload
-              ? [{ label: "Download", disabled: downloadPending, onSelect: () => onDownload(contextFile.path, contextFile.size) }]
+            ...(contextFile && onDownload
+              ? [{ label: "Download", disabled: downloadPending, onSelect: () => onDownload(contextFile.path, contextFile.entry.sizeBytes) }]
               : []),
             ...(contextDirectory && onOpenFolderInNewTab
-              ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]
+              ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.entry.name) }]
               : []),
             ...(onRequestCreateFolder && !isProtectedFolderCreationParentPath(contextDirectory?.path ?? viewCurrentPath)
               ? [{ label: "New folder…", onSelect: () => onRequestCreateFolder(contextDirectory?.path ?? viewCurrentPath) }]
+              : []),
+            ...(contextTarget && onMoveToTrash && api && viewStatus === "ready" && !viewReadOnly
+              && !contextTarget.entry.name.includes("/") && !isProtectedTrashTarget(contextTarget.path)
+              ? [{
+                  label: "Move to Trash",
+                  danger: true,
+                  disabled: trashPending,
+                  onSelect: () => {
+                    if (contextTarget.listing === requestGeneration.current && isCurrentRuntimeGeneration(contextTarget.runtime)) {
+                      onMoveToTrash(contextTarget.path);
+                    }
+                  },
+                }]
               : []),
           ]
         : []}>
@@ -561,8 +582,9 @@ export default function ComputerFileBrowser({
             ? target.closest<HTMLElement>("[data-files-entry-path]")?.dataset.filesEntryPath
             : undefined;
           const entry = scoped && path ? viewEntries.find((item) => joinPath(viewCurrentPath, item.name) === path) : undefined;
-          setContextDirectory(path && entry?.type === "directory" ? { path, name: entry.name } : null);
-          setContextFile(path && entry?.type === "file" ? { path, size: entry.sizeBytes, scope: browserScope } : null);
+          setContext(path && entry ? {
+            path, entry, scope: browserScope, runtime: captureRuntimeGeneration(), listing: requestGeneration.current,
+          } : null);
         }}
         className={`${compact && !fillAvailableHeight ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
           compact && effectiveView === "list" ? "px-1.5 pb-1.5" : compact || effectiveView === "grid" ? "p-1.5" : "pb-4"

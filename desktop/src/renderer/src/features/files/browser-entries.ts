@@ -42,6 +42,12 @@ export function isProtectedFolderPickerPath(path: string): boolean {
     || normalized === "data";
 }
 
+export function isProtectedTrashTarget(path: string): boolean {
+  return isManagedBrowserPath(path) || path === "data"
+    || ["data/browser-profiles", "data/app-gallery-staging"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+    || path.split("/").some((part) => !part || part === "." || part === ".." || /[\\\u0000-\u001f\u007f]/.test(part));
+}
+
 export function parseBrowserEntries(value: unknown): BrowserEntry[] {
   if (!Array.isArray(value)) return [];
   const entries: BrowserEntry[] = [];
