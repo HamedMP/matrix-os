@@ -225,7 +225,7 @@ describe("SidePanel", () => {
       expect(within(screen.getByTestId("side-panel-needs-you")).getByText("1")).toBeTruthy();
       expect(screen.getByLabelText("1 chat")).toBeTruthy();
       expect(buttonLabels().slice(2)).toEqual([
-        "Weekly report, needs you, Approve before sending, 1h",
+        "Weekly report, Approval required, Approve before sending, 1h",
         "Sales prep this week, Both briefs are ready, Yesterday",
         "Q4 planning, Draft shared with the team, Mon",
       ]);

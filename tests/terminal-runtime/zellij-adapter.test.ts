@@ -145,6 +145,67 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
     ]);
   });
 
+  // Fault detected: zellij focuses a new tab for the active client, so a helper started in
+  // the background moved a person's terminal view to the helper's tab.
+  it("returns a viewer that a new tab moved to the pane it was showing", async () => {
+    const sessionName = "matrix-w-0123456789abcdef0123456789abcdef";
+    let created = false;
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-clients")) {
+        return `CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         ${created ? "terminal_9" : "terminal_3"}     N/A\n`;
+      }
+      if (args.includes("new-tab")) { created = true; return "4\n"; }
+      if (args.includes("list-tabs")) return "[]";
+      if (args.includes("list-panes")) return JSON.stringify([{ id: 9, is_plugin: false, tab_id: 4 }]);
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run, resolveRealpath: lexicalRealpath });
+
+    await adapter.createTab(sessionName, { internalName: "matrix-tab-0123456789abcdef0123456789abcdef", cwd: "" });
+
+    const calls = run.mock.calls.map(([args]) => args.slice(args.indexOf("action") + 1).join(" "));
+    expect(calls.indexOf("focus-pane-id terminal_3")).toBeGreaterThan(calls.findIndex((call) => call.startsWith("new-tab")));
+  });
+
+  // Fault detected (review of #3296): a person who switched panes while a tab was being
+  // created was sent back, because any changed pane counted as a move by new-tab.
+  it("leaves a viewer who moved to another existing pane during creation where they went", async () => {
+    const sessionName = "matrix-w-0123456789abcdef0123456789abcdef";
+    let created = false;
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-clients")) {
+        return `CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         ${created ? "terminal_5" : "terminal_3"}     N/A\n`;
+      }
+      if (args.includes("new-tab")) { created = true; return "4\n"; }
+      if (args.includes("list-tabs")) return "[]";
+      if (args.includes("list-panes")) {
+        return JSON.stringify([{ id: 5, is_plugin: false, tab_id: 2 }, { id: 9, is_plugin: false, tab_id: 4 }]);
+      }
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run, resolveRealpath: lexicalRealpath });
+
+    await adapter.createTab(sessionName, { internalName: "matrix-tab-0123456789abcdef0123456789abcdef", cwd: "" });
+
+    expect(run.mock.calls.some(([args]) => args.includes("focus-pane-id"))).toBe(false);
+  });
+
+  it("leaves viewers alone when creating a tab moved none of them", async () => {
+    const sessionName = "matrix-w-0123456789abcdef0123456789abcdef";
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes("list-clients")) return "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n";
+      if (args.includes("new-tab")) return "4\n";
+      if (args.includes("list-tabs")) return "[]";
+      if (args.includes("list-panes")) return JSON.stringify([{ id: 9, is_plugin: false, tab_id: 4 }]);
+      return "";
+    });
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run, resolveRealpath: lexicalRealpath });
+
+    await adapter.createTab(sessionName, { internalName: "matrix-tab-0123456789abcdef0123456789abcdef", cwd: "" });
+
+    expect(run.mock.calls.some(([args]) => args.includes("focus-pane-id"))).toBe(false);
+  });
+
   it("creates a split in the stable tab without a focus-switch precommand", async () => {
     const run = vi.fn(async () => "terminal_13\n");
     const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });

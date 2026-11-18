@@ -19,7 +19,7 @@ export function claudeBotEnvironment(homePath: string): Record<string, string> {
 /** Official CLI only. No SDK credentials, inner-loop substitution or guessed completed result. */
 export async function runClaudeBotTask(input: {
   command: string; homePath: string; cwd: string; model: string; prompt: string; sessionId?: string;
-  signal: AbortSignal; mcpUrl: string; mcpToken: string; spawn?: NativeTaskSpawn;
+  signal: AbortSignal; onStart?(): Promise<void>; onEnd?(): void; mcpUrl: string; mcpToken: string; spawn?: NativeTaskSpawn;
 }): Promise<{ text: string; sessionId: string }> {
   input.signal.throwIfAborted();
   const args = ['--print', '--verbose', '--output-format', 'stream-json', '--restricted', '--tools', '', '--setting-sources', '',
@@ -31,14 +31,17 @@ export async function runClaudeBotTask(input: {
   return new Promise((resolve, reject) => {
     const decoder = new StringDecoder('utf8');
     let buffer = ''; let bytes = 0; let result: { text: string; sessionId: string } | undefined;
-    let exited = false; let stopped = false; let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const stop = () => { if (stopped) return; stopped = true; if (exited) return; child.kill('SIGTERM'); killTimer = setTimeout(() => child.kill('SIGKILL'), 1000); killTimer.unref(); };
+    let exited = false; let stopped = false; let sourceEnded = false; let killTimer: ReturnType<typeof setTimeout> | undefined;
+    // Authority ends synchronously; stream drainage and profile/session ownership still wait for close.
+    const endSource = () => { if (sourceEnded) return; sourceEnded = true; input.onEnd?.(); };
+    const stop = () => { endSource(); if (stopped) return; stopped = true; if (exited) return; child.kill('SIGTERM'); killTimer = setTimeout(() => child.kill('SIGKILL'), 1000); killTimer.unref(); };
     const cleanup = () => { input.signal.removeEventListener('abort', stop); if (killTimer) clearTimeout(killTimer); };
     const fail = () => new Error('Native task did not complete');
     // close follows actual exit and stdio EOF; exit alone can precede the final stdout bytes.
-    child.once('exit', () => { exited = true; if (killTimer) clearTimeout(killTimer); });
-    child.once('close', (code) => { cleanup(); if (!stopped && code === 0 && result && !(buffer + decoder.end()).trim()) resolve(result); else reject(fail()); });
+    child.once('exit', () => { endSource(); exited = true; if (killTimer) clearTimeout(killTimer); });
+    child.once('close', (code) => { endSource(); cleanup(); if (!stopped && code === 0 && result && !(buffer + decoder.end()).trim()) resolve(result); else reject(fail()); });
     child.once('error', (error) => {
+      endSource();
       if (!('pid' in child && typeof child.pid === 'number') && error && 'code' in error && (error.code === 'ENOENT' || error.code === 'EACCES')) { cleanup(); reject(fail()); }
       else stop();
     });
@@ -53,6 +56,7 @@ export async function runClaudeBotTask(input: {
         try {
           const event = JSON.parse(line);
           if (event.type === 'result') {
+            endSource();
             if (event.subtype !== 'success' || event.is_error !== false || typeof event.result !== 'string'
               || typeof event.session_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(event.session_id)) { stop(); return; }
             const text = sanitizeAssistantText(event.result, { homePath: input.homePath, executionRoot: input.cwd });
@@ -66,15 +70,17 @@ export async function runClaudeBotTask(input: {
     child.stderr.on('data', chunk => { stderrBytes += chunk.byteLength; if (stderrBytes > 64 * 1024) stop(); });
     input.signal.addEventListener('abort', stop, { once: true });
     child.stdin?.on?.('error', stop);
-    try {
+    void Promise.resolve().then(() => { if (!sourceEnded && !stopped && !exited && !input.signal.aborted) return input.onStart?.(); }).then(() => {
+      if (sourceEnded) return;
+      if (stopped || exited || input.signal.aborted) { stop(); return; }
       if (!child.stdin) stop();
       else { child.stdin.write(input.prompt); child.stdin.end?.(); }
-    } catch (error) {
+    }).catch((error: unknown) => {
       // A pipe exception is not evidence that the native child exited. Keep
       // the promise (and caller's durable lease) pending until actual close.
       console.warn('[bot-native] Prompt delivery failed:', error instanceof Error ? error.name : 'UnknownError');
       stop();
-    }
+    });
     if (input.signal.aborted) stop();
   });
 }

@@ -1,4 +1,7 @@
 "use client";
+import { SharedAppBadge, SharedAppDirectoryNotice } from "@matrix-os/ui/collaborative-app-sharing";
+import { LauncherFilterChips, NewAppDot, sharedTileLabel, type ShareOrganization } from "@matrix-os/ui/share";
+import { useLauncherFilter } from "@/hooks/useLauncherFilter";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -72,23 +75,32 @@ export function Launchpad({
   onOpenApp,
   onClose,
   onAddToDesktop,
+  sharedDirectory,
+  organizations = [],
+  isNewShared,
 }: {
   apps: AppEntry[];
   visible: boolean;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  sharedDirectory?: import("@matrix-os/ui/collaborative-app-sharing").SharedAppDirectoryControls;
+  /** Current memberships, used to name and colour org-shared apps (spec 2693 phase 3). */
+  organizations?: ShareOrganization[];
+  isNewShared?: (scopeId: string) => boolean;
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
   const orderedApps = [...groups.mainApps, ...groups.generatedApps, ...groups.gameApps];
+  const launcherFilter = useLauncherFilter(orderedApps, organizations);
+  const organizationFor = (app: AppEntry) => organizations.find((item) => item.organizationId === app.sharedAppTarget?.organizationId) ?? null;
 
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ app: AppEntry; x: number; y: number } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [placementPending, setPlacementPending] = useState(false);
-  const filteredApps = filterLaunchpadApps(orderedApps, query);
+  const filteredApps = filterLaunchpadApps(orderedApps.filter(launcherFilter.matches), query);
 
   // Viewport-derived page size. window is only read inside this effect
   // (SSR-safe); until it runs, everything renders on a single page.
@@ -180,6 +192,7 @@ export function Launchpad({
           if (e.target === e.currentTarget) onClose();
         }}
       >
+        {sharedDirectory ? <SharedAppDirectoryNotice directory={sharedDirectory} /> : null}
         <div className="launchpad-search-row">
           <div className="launchpad-search">
             <SearchIcon className="launchpad-search-icon" aria-hidden />
@@ -198,8 +211,9 @@ export function Launchpad({
           </div>
         </div>
 
+        <LauncherFilterChips chips={launcherFilter.chips} value={launcherFilter.filter} className="px-6 pb-3" onChange={(next) => { launcherFilter.setFilter(next); setPageIndex(0); }} />
         <p className="px-6 pb-4 text-center text-sm text-white/80">
-          Open an installed app, or choose Create app to start in Chat.
+          {launcherFilter.hint(filteredApps.length)}
         </p>
 
         {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes Launchpad only when the empty area around the grid (not a tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
@@ -223,8 +237,10 @@ export function Launchpad({
                 <LaunchpadTile
                   key={app.path}
                   app={app}
+                  organization={organizationFor(app)}
+                  isNew={!!app.sharedAppTarget && !!isNewShared?.(app.sharedAppTarget.scopeId)}
                   onLaunch={() => launch(app)}
-                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : (event) => {
+                  onContextMenu={app.sharedAppTarget || isOsViewDestinationPath(app.path) ? undefined : (event) => {
                     if (placementPending) return;
                     const point = clampOsViewContextMenuPoint(
                       { x: event.clientX, y: event.clientY },
@@ -302,7 +318,7 @@ export function Launchpad({
   );
 }
 
-function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: (event: React.MouseEvent) => void }) {
+function LaunchpadTile({ app, organization, isNew, onLaunch, onContextMenu }: { app: AppEntry; organization: ShareOrganization | null; isNew: boolean; onLaunch: () => void; onContextMenu?: (event: React.MouseEvent) => void }) {
   const bundledIcon = osViewIconUrlForApp(app, getGatewayUrl());
   const iconUrl = bundledIcon ?? app.iconUrl;
   const { showImage, onError } = useIconWithFallback(iconUrl);
@@ -312,7 +328,9 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
     : undefined;
   const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
-    <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
+    <button type="button" aria-label={sharedTileLabel(app.name, organization, isNew)} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
+      <span className="relative inline-flex">
+      {app.sharedAppTarget ? <SharedAppBadge appName={app.name} organization={organization} /> : null}
       <span className="launchpad-icon">
         {showImage && bundledIcon ? (
           <img src={bundledIcon} alt="" draggable={false} onError={onError} />
@@ -360,7 +378,8 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
           </span>
         )}
       </span>
-      <span className="launchpad-label">{app.name}</span>
+      </span>
+      <span className="launchpad-label">{isNew ? <NewAppDot /> : null}{app.name}</span>
     </button>
   );
 }

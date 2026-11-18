@@ -1,3 +1,5 @@
+import { migrateRoutineChatOriginV16 } from "./routine-chat-origin-migration.js";
+import { migrateRoutineCliProposalsV15 } from "./routine-cli-proposal-migration.js";
 /**
  * Versioned migrations for owner bot state (spec 536, data-model.md). Each
  * version runs once, in order, inside its own transaction; the runner in
@@ -9,6 +11,10 @@
  * route and broker boundaries.
  */
 import { sql, type Transaction } from "kysely";
+import { migrateRoutineCliRequestsV14 } from "./routine-cli-request-migration.js";
+import { migrateRoutineCliSourcesV13 } from "./routine-cli-source-migration.js";
+import { migrateRoutineDirectChatV17 } from "./routine-direct-chat-migration.js";
+import { migrateRoutineCliPreferencesV12 } from "./routine-cli-preference-migration.js";
 import { migrateBotRoutinesV11 } from "./routine-migration.js";
 import { migrateBotQuestionSourceV9, migrateBotQuestionThreadsV10 } from "./v9-compatibility.js";
 import { migrateManagedPiState } from "../chat/managed-pi-migration.js";
@@ -347,6 +353,13 @@ async function migrateIsolatedChatPhasesV8(trx: Transaction<OwnerBotDatabase>): 
   )`.execute(trx);
 }
 
+async function migrateBotChatBindingHistoryIndexV18(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  // Target validation locks every binding for the Chat, including removed rows.
+  await sql`
+    CREATE INDEX idx_bot_chat_bindings_chat_history ON bot_chat_bindings USING btree (chat_id, owner_id, bot_id)
+  `.execute(trx);
+}
+
 export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 1, name: "bot_state_m1", up: migrateBotStateV1 },
   { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
@@ -361,4 +374,11 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 9, name: "question_source_run", up: migrateBotQuestionSourceV9 },
   { version: 10, name: "bot_question_threads_bridge", up: migrateBotQuestionThreadsV10 },
   { version: 11, name: "bot_routines", up: migrateBotRoutinesV11 },
+  { version: 12, name: "routine_cli_preferences", up: migrateRoutineCliPreferencesV12 },
+  { version: 13, name: "routine_cli_sources", up: migrateRoutineCliSourcesV13 },
+  { version: 14, name: "routine_cli_requests", up: migrateRoutineCliRequestsV14 },
+  { version: 15, name: "routine_cli_proposals", up: migrateRoutineCliProposalsV15 },
+  { version: 16, name: "routine_chat_origin", up: migrateRoutineChatOriginV16 },
+  { version: 17, name: "routine_direct_chat", up: migrateRoutineDirectChatV17 },
+  { version: 18, name: "bot_chat_binding_history_index", up: migrateBotChatBindingHistoryIndexV18 },
 ];

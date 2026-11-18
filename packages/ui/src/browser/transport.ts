@@ -38,14 +38,22 @@ export async function browserRequest(appBase: string, endpoint: string, signal: 
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
     ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
   });
-  if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error("Browser request unavailable"); }
+  if (!response.ok || !response.body) {
+    try { await response.body?.cancel(); }
+    catch (error) { console.warn("[browser] Response cleanup unavailable", error instanceof TypeError ? "TypeError" : "unknown"); }
+    throw new Error("Browser request unavailable");
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = []; let size = 0;
   try {
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
       size += value.length;
-      if (size > 8192 || chunks.length >= 64) { await reader.cancel(); throw new Error("Browser response too large"); }
+      if (size > 8192 || chunks.length >= 64) {
+        try { await reader.cancel(); }
+        catch (error) { console.warn("[browser] Response cleanup unavailable", error instanceof TypeError ? "TypeError" : "unknown"); }
+        throw new Error("Browser response too large");
+      }
       chunks.push(value);
     }
     const bytes = new Uint8Array(size); let offset = 0;

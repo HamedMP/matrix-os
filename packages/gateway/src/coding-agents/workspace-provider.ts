@@ -1,3 +1,4 @@
+import { nativeCodexRoutineAdmission } from "../chat/codex-routine-source.js";
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
 import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import type { SessionStartScope } from "../session-start-guard.js";
@@ -269,6 +270,7 @@ export function createWorkspaceCodingAgentProvider(
       const sessionId = sessionIdForThread(thread.id);
       const start = async (scope?: SessionStartScope<Parameters<WorkspaceRuntime["startSession"]>[0], Awaited<ReturnType<WorkspaceRuntime["startSession"]>>>) => {
         const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
+        if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
         if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");
         const nativeAccountBinding = agent === "codex" ? await options.codexAdmission?.start(principal.userId, sessionId) : undefined;
         let result;
@@ -377,6 +379,7 @@ export function createWorkspaceCodingAgentProvider(
           throw error;
         }
       }
+      if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
       if (agent === "codex" && options.codexControl) {
         if (!options.codexEvents) {
           throw new Error("Codex structured events are unavailable");
@@ -397,7 +400,9 @@ export function createWorkspaceCodingAgentProvider(
         const browser = nativeBrowserExecution(principal.userId);
         try {
           await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
-          await options.codexControl.submitTurn({
+          const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
+            ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}) }, `req_${turn.turnId.slice("turn_".length)}`);
+          if (!privateTurn) await options.codexControl.submitTurn({
             sessionId,
             turnId: turn.turnId,
             prompt,

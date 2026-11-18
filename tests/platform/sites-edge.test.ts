@@ -1,5 +1,43 @@
 import { expect, it, vi } from 'vitest';
 import worker from '../../packages/edge-router/src/sites.js';
+it('allows a bounded Clerk bearer only on exact UUID email exchange and sign-out', async () => {
+ const siteId='11111111-1111-4111-8111-111111111111';
+ const env={SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)};
+ const forward=vi.fn(async (_request:Request)=>new Response('{"granted":true}',{headers:{'content-type':'application/json'}}));
+ vi.stubGlobal('fetch',forward);
+ try {
+  for (const suffix of ['/access/email','/access/email/sign-out']) {
+   const response=await worker.fetch(new Request(`https://matrix.page/${siteId}${suffix}`,{
+    method:'POST',headers:{origin:'https://matrix.page',authorization:'Bearer session.jwt.token','content-type':'application/json',cookie:'__session=private'},body:'{}',
+   }),env);
+   expect(response.status).toBe(200);
+   const sent=forward.mock.calls.at(-1)![0];
+   expect(sent.headers.get('authorization')).toBe('Bearer session.jwt.token');
+   expect(sent.headers.get('cookie')).toBeNull();
+   expect(sent.headers.get('x-matrix-sites-origin')).toBe('same-origin');
+  }
+  const count=forward.mock.calls.length;
+  for (const path of [`/${siteId}/access/email/extra`,'/launch-2026/access/email']) {
+   expect((await worker.fetch(new Request(`https://matrix.page${path}`,{
+    method:'POST',headers:{origin:'https://matrix.page',authorization:'Bearer session.jwt.token'},body:'{}',
+   }),env)).status).toBe(404);
+  }
+  for (const headers of [
+   {origin:'https://evil.example',authorization:'Bearer session.jwt.token'},
+   {origin:'https://matrix.page',authorization:`Bearer ${'x'.repeat(8193)}`},
+   {origin:'https://matrix.page',authorization:'Basic invalid'},
+  ]) expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/access/email`,{method:'POST',headers,body:'{}'}),env)).status).not.toBe(200);
+  expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/access/email?token=private`,{
+   method:'POST',headers:{origin:'https://matrix.page',authorization:'Bearer session.jwt.token'},body:'{}',
+  }),env)).status).toBe(400);
+  expect((await worker.fetch(new Request(`https://matrix.page/${siteId}/access/email`,{
+   method:'POST',headers:{origin:'https://matrix.page',authorization:'Bearer session.jwt.token'},body:'x'.repeat(2049),
+  }),env)).status).toBe(413);
+  expect(forward.mock.calls.length).toBe(count);
+  await worker.fetch(new Request(`https://matrix.page/${siteId}`,{headers:{authorization:'Bearer session.jwt.token'}}),env);
+  expect(forward.mock.calls.at(-1)![0].headers.get('authorization')).toBeNull();
+ } finally { vi.unstubAllGlobals(); }
+});
 it.each(['/launch-2026', '/launch-2026/frame', '/launch-2026/assets/11111111-1111-4111-8111-111111111111/assets/main.js'])('serves accepted public reads with query-bearing references (%s)', async path => {
  const forward = vi.fn(async (_request: Request) => new Response('app'));
  vi.stubGlobal('fetch', forward);

@@ -7,7 +7,7 @@ import { SiteClientError, type SiteClient } from "../../shell/src/lib/site-clien
 
 const published = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Join us", slug: "matrix-launch", url: "https://matrix.page/matrix-launch", revision: 1, status: "published" as const, accessMode: "public" as const, activeVersion: "22222222-2222-4222-8222-222222222222", versions: [{ id: "22222222-2222-4222-8222-222222222222", createdAt: "2026-10-09T12:00:00Z" }, { id: "33333333-3333-4333-8333-333333333333", createdAt: "2026-10-08T12:00:00Z" }], config: { data: {}, forms: [] } };
 function client(overrides: Partial<SiteClient> = {}): SiteClient {
-  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(async () => undefined), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
+  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(async () => undefined), emailInvitations: vi.fn(async () => ({ invitations: [], nextCursor: null, siteRevision: 1 })), createEmailInvitations: vi.fn(), resendEmailInvitation: vi.fn(), revokeEmailInvitation: vi.fn(), emailInvitationAudit: vi.fn(async () => ({ events: [], nextCursor: null })), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
 }
 afterEach(cleanup);
 describe("shared app publishing", () => {
@@ -38,6 +38,414 @@ describe("shared app publishing", () => {
     fireEvent.click(screen.getByRole("button",{name:"Revoke link"}));
     await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
     expect(screen.queryByText(url)).toBeNull();
+  });
+  it("uses the collaboration invite hierarchy while keeping email disabled and reusing one-time links", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>({link,url}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" ownerIdentity="owner@example.com" />);
+
+    expect(await screen.findByRole("heading",{name:"Invite"})).toBeTruthy();
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",true);
+    expect(screen.getByRole("button",{name:"Invite"})).toHaveProperty("disabled",true);
+    expect(screen.getByText("You (owner@example.com)")).toBeTruthy();
+    expect(screen.getByText("Owner")).toBeTruthy();
+    expect(screen.queryByText(/upgrade to pro/i)).toBeNull();
+    expect(screen.queryByRole("button",{name:"Create one-time link"})).toBeNull();
+    expect(screen.queryByLabelText("Title")).toBeNull();
+    expect(screen.getByText("One-time invite link")).toBeTruthy();
+    expect(screen.getByText("Unclaimed links expire after 7 days.")).toBeTruthy();
+    expect(screen.queryByText("One-time access for one browser.")).toBeNull();
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    const create=screen.getByRole("button",{name:"Create invite link"});
+    fireEvent.click(create);
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Copy invite link"})).toBeTruthy();
+    expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(publishing);
+    expect(publishing.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByLabelText("Title")).toHaveProperty("value","Launch");
+    expect(screen.getByText("Host the whole app at a stable Matrix.page URL.")).toBeTruthy();
+  });
+  it("uses the existing Share email row for capable email publications and shows ordered results", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const invitation={id:"44444444-4444-4444-8444-444444444444",emailAddress:"first@example.com",state:"pending" as const,
+      deliveryState:"queued" as const,generation:1,revision:0,issuedAt:"2026-11-13T00:00:00.000Z",
+      expiresAt:"2026-11-20T00:00:00.000Z",updatedAt:"2026-11-13T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const createEmailInvitations=vi.fn(async()=>({siteRevision:2,results:[
+      {inputIndex:0,outcome:"queued" as const,invitation},
+      {inputIndex:1,outcome:"invalid" as const},
+    ]}));
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations,
+      emailInvitations:vi.fn(async()=>({invitations:[invitation],nextCursor:null,siteRevision:2}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" ownerIdentity="owner@example.com" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const input=screen.getByLabelText("Invite by email");
+    fireEvent.change(input,{target:{value:"first@example.com, invalid-address"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    await waitFor(()=>expect(createEmailInvitations).toHaveBeenCalledWith("launch",
+      {baseRevision:1,emailAddresses:["first@example.com","invalid-address"]},expect.any(AbortSignal)));
+    expect(await screen.findByText("first@example.com — queued")).toBeTruthy();
+    expect(screen.getByText("invalid-address — invalid address")).toBeTruthy();
+    expect(screen.getAllByRole("heading",{name:"Invite"})).toHaveLength(1);
+    expect(screen.getByText("One-time invite link")).toBeTruthy();
+  });
+  it("shows the state of an existing invitation so an owner can choose to resend it", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const revoked={id:"44444444-4444-4444-8444-444444444444",emailAddress:"first@example.com",state:"revoked" as const,
+      deliveryState:"sent" as const,generation:1,revision:2,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-11-08T00:00:00.000Z",updatedAt:"2026-11-08T00:00:00.000Z",acceptedAt:null,revokedAt:"2026-11-08T00:00:00.000Z"};
+    const api=client({get:vi.fn(async()=>emailSite),
+      createEmailInvitations:vi.fn(async()=>({siteRevision:2,results:[{inputIndex:0,outcome:"existing" as const,invitation:revoked}]})),
+      emailInvitations:vi.fn(async()=>({invitations:[revoked],nextCursor:null,siteRevision:2}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    fireEvent.change(screen.getByLabelText("Invite by email"),{target:{value:"first@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    expect(await screen.findByText("first@example.com — existing invitation (revoked)")).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Resend"})).toBeTruthy();
+  });
+  it("does not silently replace email access when an owner creates a one-time link", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const api=client({get:vi.fn(async()=>emailSite)});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const create=await screen.findByRole("button",{name:"Create invite link"});
+    expect(create).toHaveProperty("disabled",true);
+    fireEvent.click(create);
+    expect(api.update).not.toHaveBeenCalled();
+    expect(api.createAccessLink).not.toHaveBeenCalled();
+  });
+  it("keeps pasted email lines in the shared multiline control", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const createEmailInvitations=vi.fn(async()=>({siteRevision:2,results:[]}));
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    const input=screen.getByLabelText("Invite by email");
+    expect(input.tagName).toBe("TEXTAREA");
+    expect(input.getAttribute("data-slot")).toBe("textarea");
+    fireEvent.change(input,{target:{value:"alice@example.com\nbob@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    await waitFor(()=>expect(createEmailInvitations).toHaveBeenCalledWith("launch",
+      {baseRevision:1,emailAddresses:["alice@example.com","bob@example.com"]},expect.any(AbortSignal)));
+  });
+  it("offers email as a separate access mode only when the capability is ready", async () => {
+    const publicSite={...published,capabilities:{privateEmailInvitations:true}};
+    const emailSite={...publicSite,accessMode:"private_email" as const,revision:2};
+    const api=client({get:vi.fn(async()=>publicSite),update:vi.fn(async()=>emailSite)});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await screen.findByText("Your app is public.");
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",true);
+    fireEvent.click(screen.getByRole("button",{name:/Publish app to a permanent URL/}));
+    fireEvent.change(screen.getByLabelText("Access"),{target:{value:"private_email"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save URL and details"}));
+    await waitFor(()=>expect(api.update).toHaveBeenCalledWith("launch",
+      expect.objectContaining({accessMode:"private_email",baseRevision:1}),expect.any(AbortSignal)));
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    expect(screen.getByText("Your app uses email invitations.")).toBeTruthy();
+  });
+  it("keeps an unsent address visible after a conflict and asks for an authoritative refresh", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const api=client({get:vi.fn(async()=>emailSite),createEmailInvitations:vi.fn(async()=>{throw new SiteClientError(409);})});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",false));
+    fireEvent.change(screen.getByLabelText("Invite by email"),{target:{value:"viewer@example.com"}});
+    fireEvent.click(screen.getByRole("button",{name:"Invite"}));
+    expect((await screen.findByRole("alert")).textContent).toContain("Refresh and try again");
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("value","viewer@example.com");
+    expect(screen.getByRole("button",{name:"Refresh publication"})).toBeTruthy();
+  });
+  it("refreshes invitation revisions after an acceptance conflict without a site revision change", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const stale={id:"44444444-4444-4444-8444-444444444444",emailAddress:"viewer@example.com",state:"pending" as const,
+      deliveryState:"queued" as const,generation:1,revision:1,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-12-01T00:00:00.000Z",updatedAt:"2026-11-01T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const accepted={...stale,state:"accepted" as const,revision:2,acceptedAt:"2026-11-13T00:00:00.000Z"};
+    let refreshed=false, getCalls=0;
+    const get=vi.fn(async()=>{getCalls++;if(getCalls>1)refreshed=true;return emailSite;});
+    const emailInvitations=vi.fn(async()=>({invitations:[refreshed?accepted:stale],nextCursor:null,siteRevision:1}));
+    const revokeEmailInvitation=vi.fn().mockRejectedValueOnce(new SiteClientError(409))
+      .mockResolvedValueOnce({invitation:{...accepted,state:"revoked",revision:3},siteRevision:1});
+    const api=client({get,emailInvitations,revokeEmailInvitation});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Revoke invitation"}));
+    expect(await screen.findByRole("button",{name:"Refresh publication"})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Refresh publication"}));
+    await waitFor(()=>expect(within(screen.getByRole("list",{name:"Email invitations"})).getByText(/accepted/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button",{name:"Revoke invitation"}));
+    await waitFor(()=>expect(revokeEmailInvitation).toHaveBeenNthCalledWith(2,"launch",stale.id,
+      {baseRevision:1,invitationRevision:2},expect.any(AbortSignal)));
+  });
+  it("pages email inventory and resends an expired invitation with its revisions", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const expired={id:"44444444-4444-4444-8444-444444444444",emailAddress:"older@example.com",state:"expired" as const,
+      deliveryState:"failed" as const,generation:1,revision:3,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-11-08T00:00:00.000Z",updatedAt:"2026-11-08T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const emailInvitations=vi.fn().mockResolvedValueOnce({invitations:[],nextCursor:"page-two",siteRevision:1})
+      .mockResolvedValue({invitations:[expired],nextCursor:null,siteRevision:1});
+    const resendEmailInvitation=vi.fn(async()=>({invitation:{...expired,state:"pending" as const,deliveryState:"queued" as const,
+      generation:2,revision:4},siteRevision:2}));
+    const api=client({get:vi.fn(async()=>emailSite),emailInvitations,resendEmailInvitation});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Load more invitations"}));
+    expect(await screen.findByText(/older@example.com/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Resend"}));
+    await waitFor(()=>expect(resendEmailInvitation).toHaveBeenCalledWith("launch",expired.id,
+      {baseRevision:1,invitationRevision:3},expect.any(AbortSignal)));
+    expect(screen.getByText(/older@example.com/)).toBeTruthy();
+  });
+  it("returns to the newest invitations after bounded paging discards them", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const invitations=Array.from({length:150},(_,index)=>({
+      id:`44444444-4444-4444-8444-${index.toString(16).padStart(12,"0")}`,
+      emailAddress:`person${index}@example.com`,state:"pending" as const,deliveryState:"sent" as const,
+      generation:1,revision:0,issuedAt:"2026-11-01T00:00:00.000Z",expiresAt:"2026-11-20T00:00:00.000Z",
+      updatedAt:"2026-11-01T00:00:00.000Z",acceptedAt:null,revokedAt:null,
+    }));
+    const emailInvitations=vi.fn(async(_slug:string,_signal:AbortSignal,cursor?:string)=>{
+      const start=cursor?Number(cursor):0;
+      return {invitations:invitations.slice(start,start+50),nextCursor:start+50<invitations.length?String(start+50):null,siteRevision:1};
+    });
+    const api=client({get:vi.fn(async()=>emailSite),emailInvitations});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    const inventory=await screen.findByRole("list",{name:"Email invitations"});
+    expect(within(inventory).getByText(/person0@example.com/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Load more invitations"}));
+    await waitFor(()=>expect(within(inventory).getAllByRole("listitem")).toHaveLength(100));
+    fireEvent.click(screen.getByRole("button",{name:"Load more invitations"}));
+    await waitFor(()=>expect(within(inventory).queryByText(/person0@example.com/)).toBeNull());
+    expect(within(inventory).getAllByRole("listitem")).toHaveLength(100);
+    fireEvent.click(screen.getByRole("button",{name:"Show newest invitations"}));
+    await waitFor(()=>expect(within(inventory).getByText(/person0@example.com/)).toBeTruthy());
+    expect(within(inventory).getAllByRole("listitem")).toHaveLength(50);
+    expect(emailInvitations).toHaveBeenLastCalledWith("launch",expect.any(AbortSignal));
+  });
+  it("blocks the old paging cursor while the newest invitations reload", async () => {
+    const emailSite={...published,accessMode:"private_email" as const,capabilities:{privateEmailInvitations:true}};
+    const first={id:"44444444-4444-4444-8444-000000000001",emailAddress:"newest@example.com",state:"pending" as const,
+      deliveryState:"sent" as const,generation:1,revision:0,issuedAt:"2026-11-01T00:00:00.000Z",
+      expiresAt:"2026-11-20T00:00:00.000Z",updatedAt:"2026-11-01T00:00:00.000Z",acceptedAt:null,revokedAt:null};
+    const older={...first,id:"44444444-4444-4444-8444-000000000002",emailAddress:"older@example.com"};
+    const newestPage={invitations:[first],nextCursor:"page-two",siteRevision:1};
+    let finishReset!: (value:typeof newestPage)=>void;
+    const resetPending=new Promise<typeof newestPage>(resolve=>{finishReset=resolve;});
+    const emailInvitations=vi.fn().mockResolvedValueOnce(newestPage)
+      .mockResolvedValueOnce({invitations:[older],nextCursor:"page-three",siteRevision:1})
+      .mockImplementationOnce(()=>resetPending)
+      .mockResolvedValue({invitations:[older],nextCursor:null,siteRevision:1});
+    render(<AppSitePanel appSlug="launch" client={client({get:vi.fn(async()=>emailSite),emailInvitations})} variant="share" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Load more invitations"}));
+    await screen.findByText(/older@example.com/);
+    fireEvent.click(screen.getByRole("button",{name:"Show newest invitations"}));
+    await waitFor(()=>expect(emailInvitations).toHaveBeenCalledTimes(3));
+    const loadMore=screen.getByRole("button",{name:"Load more invitations"});
+    expect(loadMore).toHaveProperty("disabled",true);
+    fireEvent.click(loadMore);
+    expect(emailInvitations).toHaveBeenCalledTimes(3);
+    await act(async()=>finishReset(newestPage));
+    await waitFor(()=>expect(within(screen.getByRole("list",{name:"Email invitations"})).queryByText(/older@example.com/)).toBeNull());
+    expect(screen.getByRole("button",{name:"Load more invitations"})).toHaveProperty("disabled",false);
+  });
+  it("creates an invite in one click by privately publishing a new app", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      createAccessLink:vi.fn(async()=>({link,url})),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" ownerIdentity="user_owner" />);
+
+    await screen.findByRole("button",{name:"Create invite link"});
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    expect(screen.queryByText(/publish.*private.*create/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(api.getConfig).toHaveBeenCalledWith("launch",expect.any(AbortSignal));
+    expect(api.deploy).toHaveBeenCalledWith("launch",expect.objectContaining({
+      title:"launch",description:"",slug:null,accessMode:"private_link",baseRevision:0,
+      reviewedConfig:{data:{},forms:[]},
+    }),expect.any(AbortSignal));
+    expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
+  });
+  it("keeps confirmed private publication state when invite creation fails", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const createAccessLink=vi.fn()
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce({link,url});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      createAccessLink,
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText("Your app uses one-time links.")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not complete this action. Please try again.");
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(api.deploy).toHaveBeenCalledTimes(1);
+    expect(createAccessLink).toHaveBeenNthCalledWith(1,"launch",{baseRevision:1},expect.any(AbortSignal));
+    expect(createAccessLink).toHaveBeenNthCalledWith(2,"launch",{baseRevision:1},expect.any(AbortSignal));
+  });
+  it("keeps a created invite when an older empty link list returns later", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    let resolveCreate!: (value:{link:typeof link;url:string})=>void;
+    let resolveList!: (value:{links:typeof link[]})=>void;
+    const createPending=new Promise<{link:typeof link;url:string}>(resolve=>{resolveCreate=resolve;});
+    const listPending=new Promise<{links:typeof link[]}>(resolve=>{resolveList=resolve;});
+    const accessLinks=vi.fn()
+      .mockImplementationOnce(()=>listPending)
+      .mockResolvedValue({links:[link]});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      accessLinks,
+      createAccessLink:vi.fn(()=>createPending),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+    await waitFor(()=>expect(api.accessLinks).toHaveBeenCalledTimes(1));
+    await act(async()=>resolveCreate({link,url}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
+    await act(async()=>resolveList({links:[]}));
+
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
+  });
+  it("refreshes after revocation makes a link-list retry stale", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    let resolveCreate!: (value:{link:typeof link;url:string})=>void;
+    let rejectInitialList!: (reason:Error)=>void;
+    let resolveRetry!: (value:{links:typeof link[]})=>void;
+    const createPending=new Promise<{link:typeof link;url:string}>(resolve=>{resolveCreate=resolve;});
+    const initialList=new Promise<{links:typeof link[]}>((_resolve,reject)=>{rejectInitialList=reject;});
+    const retryPending=new Promise<{links:typeof link[]}>(resolve=>{resolveRetry=resolve;});
+    const accessLinks=vi.fn()
+      .mockImplementationOnce(()=>initialList)
+      .mockImplementationOnce(()=>retryPending)
+      .mockResolvedValue({links:[]});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      accessLinks,
+      createAccessLink:vi.fn(()=>createPending),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(1));
+    await act(async()=>rejectInitialList(new Error("network unavailable")));
+    expect(await screen.findByRole("button",{name:"Retry link list"})).toBeTruthy();
+    await act(async()=>resolveCreate({link,url}));
+    expect(await screen.findByRole("button",{name:"Revoke link"})).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button",{name:"Retry link list"}));
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button",{name:"Revoke link"}));
+    await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
+    await act(async()=>resolveRetry({links:[link]}));
+
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(3));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    expect(screen.queryByRole("button",{name:"Revoke link"})).toBeNull();
+  });
+  it("creates an invite in one click for an existing public app", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,accessMode:"private_link" as const,revision:2};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({
+      update:vi.fn(async()=>privateSite),
+      createAccessLink:vi.fn(async()=>({link,url})),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(api.update).toHaveBeenCalledWith("launch",{
+      title:"Launch",description:"Join us",slug:"matrix-launch",accessMode:"private_link",baseRevision:1,
+    },expect.any(AbortSignal));
+    expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:2},expect.any(AbortSignal));
+  });
+  it("keeps invite conflicts and recovery visible while permanent publishing stays closed", async () => {
+    const privateSite={...published,accessMode:"private_link" as const};
+    const api=client({
+      get:vi.fn(async()=>privateSite),
+      accessLinks:vi.fn(async()=>({links:[]})),
+      createAccessLink:vi.fn(async()=>{throw new SiteClientError(409);}),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("publication changed");
+    expect(screen.getByRole("button",{name:"Refresh publication"})).toBeTruthy();
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+  });
+  it("keeps initial load recovery visible while permanent publishing stays closed", async () => {
+    const api=client({get:vi.fn(async()=>{throw new Error("private internal host");})});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    expect((await screen.findByRole("alert")).textContent).toBe("Publishing is unavailable. Please try again.");
+    expect(screen.getByRole("button",{name:"Retry"})).toBeTruthy();
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+  });
+  it("removes a generated invite after refresh confirms the publication no longer supports links", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,accessMode:"private_link" as const};
+    const unpublishedSite={...privateSite,status:"unpublished" as const,revision:2};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({
+      get:vi.fn().mockResolvedValueOnce(privateSite).mockResolvedValueOnce(unpublishedSite),
+      accessLinks:vi.fn(async()=>({links:[]})),
+      createAccessLink:vi.fn(async()=>({link,url})),
+      update:vi.fn(async()=>{throw new SiteClientError(409);}),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    const create=screen.getByRole("button",{name:"Create invite link"});
+    fireEvent.click(create);
+    expect(await screen.findByText(url)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button",{name:/Publish app to a permanent URL/}));
+    fireEvent.change(screen.getByLabelText("Access"),{target:{value:"public"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save URL and details"}));
+    fireEvent.click(await screen.findByRole("button",{name:"Refresh publication"}));
+
+    await screen.findByText("This app is private.");
+    expect(screen.queryByText(url)).toBeNull();
+    expect(screen.queryByRole("button",{name:"Copy invite link"})).toBeNull();
   });
   it("offers publication refresh when one-time link creation loses a revision race",async()=>{
     const privateSite={...published,accessMode:"private_link" as const};

@@ -1,4 +1,4 @@
-import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalChatModelSelection, CanonicalChatTurnAdmissionResponse } from "@matrix-os/contracts";
 import { useAuth } from "@clerk/clerk-expo";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -14,6 +14,8 @@ import {
   uploadChatAttachment,
 } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { AuthenticatedRequestError } from "@/lib/requests/http";
+import { recoverNewChatAdmission } from "./new-chat-admission-recovery";
 
 interface SendChatMessageInput {
   chatId: string | null;
@@ -148,7 +150,7 @@ export function useSendChatMessage() {
 
       // Uploads stay if this fails: the answer may only have been lost, and
       // the turn it admitted names them. Sending again finds them in place.
-      let admission;
+      let admission: CanonicalChatTurnAdmissionResponse;
       try {
         admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
           clientRequestId: turnRequestId,
@@ -162,13 +164,22 @@ export function useSendChatMessage() {
           permissionMode,
         });
       } catch (error: unknown) {
-        // Read an existing chat again: if the computer did admit the turn,
-        // its message shows up and takes the place of the one marked as not
-        // sent. Not awaited -- the failure is reported either way.
         if (chatId) {
+          // An existing chat can reconcile an admission whose answer was lost
+          // through its normal detail query.
           void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey, chatId) });
+          throw error;
         }
-        throw error;
+
+        // A received client error is a refusal, so there is no uncertain
+        // admission to reconcile. Keep recovery for 5xx and missing responses.
+        if (error instanceof AuthenticatedRequestError && error.status !== undefined
+          && error.status >= 400 && error.status < 500) throw error;
+
+        const recovered = await recoverNewChatAdmission({ gatewayUrl, chatId: targetChatId, turnRequestId, getToken });
+        const { detail } = recovered;
+        queryClient.setQueryData(mobileQueryKeys.canonicalChatDetail(uid, computerKey, targetChatId), detail);
+        admission = recovered.admission;
       }
 
       if (!chatId) {

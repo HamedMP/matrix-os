@@ -5,6 +5,7 @@ import { createTestPGlite } from "../../helpers/pglite-test-helper.js";
 import { singleSessionTestDialect } from "../../helpers/single-session-test-dialect.js";
 import pg from "pg";
 import { bootstrapChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import type { BotMigration } from "../../../packages/gateway/src/bots/database-migrations.js";
 import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 
 export const OWNER = "user_owner_1";
@@ -16,13 +17,13 @@ export function at(offsetMs: number): string {
   return new Date(Date.parse(NOW) + offsetMs).toISOString();
 }
 
-/** A real Postgres (PGlite) with the chat and bot schemas applied. */
+/** A real Postgres (PGlite) with the normal Bot startup schemas applied. */
 export async function createBotStateDatabase(options: { migrate?: boolean; routineAuthority?: boolean } = {}) {
   const instance = await createTestPGlite();
   const db = new Kysely<OwnerBotDatabase>({ dialect: singleSessionTestDialect(instance.dialect) });
   await bootstrapChatDatabase(db);
   if (options.migrate !== false) await bootstrapBotDatabase(db);
-  if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
+  if (options.routineAuthority ?? (options.migrate !== false)) await bootstrapCollaborationDatabase(db as never);
   return { db, destroy: () => db.destroy() };
 }
 
@@ -55,7 +56,10 @@ export async function insertChat(db: Kysely<OwnerBotDatabase>, id: string, owner
  * need true concurrency (PGlite runs every transaction on one session).
  * Requires MATRIX_TEST_POSTGRES_URL naming a dedicated test database.
  */
-export async function createRealBotStateDatabase(connectionString = process.env.MATRIX_TEST_POSTGRES_URL) {
+export async function createRealBotStateDatabase(
+  connectionString = process.env.MATRIX_TEST_POSTGRES_URL,
+  options: { migrations?: readonly BotMigration[]; routineAuthority?: boolean } = {},
+) {
   if (!connectionString) throw new Error("MATRIX_TEST_POSTGRES_URL is required");
   if (!new URL(connectionString).pathname.toLowerCase().includes("test")) {
     throw new Error("MATRIX_TEST_POSTGRES_URL must name a dedicated test database");
@@ -69,7 +73,8 @@ export async function createRealBotStateDatabase(connectionString = process.env.
     }),
   });
   await bootstrapChatDatabase(db);
-  await bootstrapBotDatabase(db);
+  await bootstrapBotDatabase(db, options.migrations);
+  if (options.routineAuthority !== false) await bootstrapCollaborationDatabase(db as never);
   return {
     db,
     destroy: async () => {

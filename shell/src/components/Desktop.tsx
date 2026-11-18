@@ -66,6 +66,8 @@ import {
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
+import { TerminalAttentionNotifier } from "./terminal/TerminalAttentionNotifier";
+import { useOpenTerminalSession } from "./terminal/useOpenTerminalSession";
 import {
   OPEN_PROVIDER_SETTINGS_EVENT,
   OPEN_PROVIDER_TERMINAL_EVENT,
@@ -87,6 +89,7 @@ import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
 import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
+import { WebProjectAgentContextNavigation } from "./chat/WebProjectAgentContext";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
 import {
   WebDesktopControls,
@@ -459,6 +462,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     });
   }, [focusTerminalForHandoff]);
 
+  useOpenTerminalSession(dockXOffset);
+
   const openSettingsTerminal = useCallback((sessionId: string) => {
     setSettingsOpen(false);
     openExistingProviderTerminal(sessionId);
@@ -593,6 +598,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       previousMode,
       desktopMode,
       currentWindows,
+      { width: window.innerWidth, height: window.innerHeight },
     );
     osViewLayoutsRef.current = transition.memory;
     useWindowManager.setState({ windows: transition.windows });
@@ -838,6 +844,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     setTaskBoardOpen(false);
   }, [openSettings]);
 
+  const projectNavigation = useMemo(() => ({
+    openFiles: () => openAppOrFocus("__file-browser__", "Files"),
+    openPreview: () => openAppOrFocus("__preview-window__", "Preview"),
+    openMcpSettings: () => openWebSettings("integrations"),
+  }), [openAppOrFocus, openWebSettings]);
   const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 
   const canvasToolbarChild = desktopMode === "canvas" ? (
@@ -875,6 +886,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   }
 
   return (
+    <WebProjectAgentContextNavigation.Provider value={projectNavigation}>
     <TooltipProvider delayDuration={300}>
       <WebHostedBotsProvider value={botsTransport}>
       <ShellNotificationStack>
@@ -1327,6 +1339,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
+          <TerminalAttentionNotifier />
+
           {vocalMounted && (
             <VocalPanel
               active={vocalActive}
@@ -1396,5 +1410,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           and Escape still exits fullscreen as a keyboard fallback. */}
       </WebHostedBotsProvider>
     </TooltipProvider>
+    </WebProjectAgentContextNavigation.Provider>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createScopeRuntimeChatProviderAdapter } from "../../packages/gateway/src/collaboration/scope-runtime-chat-adapter.js";
+import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const runtimeHandle = "runtime_22222222222222222222222222222222";
 const sandbox = {
@@ -163,6 +164,33 @@ describe("scope runtime canonical Chat adapter", () => {
     await completion;
     await iterator.return?.(undefined);
     expect(client.stopRuntime).toHaveBeenCalledTimes(1);
+  });
+  it("treats a runtime already stopped by revocation as confirmed cancellation", async () => {
+    const release = vi.fn();
+    const client = {
+      capability: () => ({ available: false as const, reason: "supervisor_unavailable" as const }),
+      createRuntime: vi.fn(),
+      runChat: vi.fn(),
+      stopRuntime: vi.fn(async () => { throw new ScopeRuntimeClientError("runtime_not_found"); }),
+    };
+    const adapter = createScopeRuntimeChatProviderAdapter({
+      client,
+      scopeId,
+      executionGeneration: "7",
+      adapterId: "claude-code",
+      harnessVersion: "2.1.240",
+      sandbox,
+      runtimes: { bind: vi.fn(), release },
+      onLoss: noLoss,
+    });
+
+    await expect(adapter.cancel?.({
+      owner: { type: "personal", ownerId: "owner" },
+      chatId: "chat_shared",
+      runId: "run_shared",
+      state: { runtimeHandle, executionGeneration: "7" },
+    })).resolves.toBeUndefined();
+    expect(release).toHaveBeenCalledWith(runtimeHandle);
   });
   it("forwards the authoritative sandbox manifest and never launches without one", async () => {
     const client = {

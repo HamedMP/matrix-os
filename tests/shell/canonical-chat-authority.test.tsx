@@ -7,6 +7,7 @@ import type { CanonicalChatDetailResponse, CanonicalChatNavigationResponse } fro
 import type { CanonicalShellChatClient } from "../../shell/src/lib/canonical-chat-client";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
+import { routineReceiptReadFixture } from "../contracts/fixtures/canonical-chat";
 const state = vi.hoisted(() => ({ store: null as unknown as ReturnType<typeof createChatNavigationStore>, client: null as unknown as CanonicalShellChatClient }));
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 vi.mock("../../shell/src/lib/canonical-chat-client", async original => ({
@@ -42,6 +43,19 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); state.store.dispose(); vi.restoreAllMocks(); });
 const mount = () => renderHook(() => useCanonicalChatState({ navigationScope: "owner/runtime/main", navigationGeneration: "same_session" }));
 const options = { instanceId: "pi_default", model: "model", interactionMode: "default" as const, permissionMode: "supervised" as const };
+it("includes a scheduled result in the displayed read boundary", async () => {
+  const snapshot = detail();
+  snapshot.messages = routineReceiptReadFixture(snapshot.record.chat.id);
+  snapshot.record.chat.messageCount = snapshot.messages.length;
+  vi.mocked(state.client.detail).mockResolvedValue(snapshot);
+
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages).toContainEqual(expect.objectContaining({
+    id: "msg_receipt", content: "The scheduled result",
+  })));
+  expect(hook.result.current.displayedThroughSeq).toBe(2);
+});
+
 it("clears Bot names/approvals and library across same-store revoke/recovery without rotating normal action identity", async () => {
   const hook = renderHook(() => {
     const chat = useCanonicalChatState();
@@ -249,6 +263,17 @@ it("creates a new Chat in the project picked from the composer, and forgets it f
   await act(async () => hook.result.current.newChat());
   expect(hook.result.current.chatProjectId).toBeUndefined();
 });
+it("opens a project-scoped draft without creating or moving a Chat", async () => {
+  state.client.updateProject = vi.fn();
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.sessionId).toBe("chat_same"));
+  await act(async () => { await hook.result.current.newChat("proj_first"); });
+  expect(hook.result.current.sessionId).toBeUndefined();
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  expect(state.client.create).not.toHaveBeenCalled();
+  expect(state.client.updateProject).not.toHaveBeenCalled();
+});
+
 it("moves the open Chat to a project with its revision and shows the saved project", async () => {
   const moved = detail().record;
   state.client.updateProject = vi.fn(async () => ({ ...moved, chat: { ...moved.chat, revision: 1 }, projectId: "proj_first" }));

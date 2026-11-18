@@ -1,6 +1,10 @@
 import { SITE_PUBLISH_PROXY_TIMEOUT_MS } from "@matrix-os/contracts";
+import { fetchWithStaleConnectionRetry } from "./customer-vps-dispatcher.js";
 
-/** Keep header waits bounded without timing out a healthy streaming body. */
+/**
+ * Keep header waits bounded without timing out a healthy streaming body. Pooled
+ * upstream sockets can go stale, so a body-less GET/HEAD is replayed once.
+ */
 export async function fetchRuntimeProxy(
   targetUrl: string,
   init: RequestInit,
@@ -16,13 +20,13 @@ export async function fetchRuntimeProxy(
   if (!releaseTimeoutAfterHeaders) {
     const deadline = AbortSignal.timeout(operationTimeoutMs);
     const upstreamSignal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
-    return fetch(targetUrl, { ...init, signal: upstreamSignal });
+    return fetchWithStaleConnectionRetry(fetch, targetUrl, { ...init, signal: upstreamSignal });
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const upstreamSignal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
-    return await fetch(targetUrl, { ...init, signal: upstreamSignal });
+    return await fetchWithStaleConnectionRetry(fetch, targetUrl, { ...init, signal: upstreamSignal });
   } finally {
     clearTimeout(timeout);
   }

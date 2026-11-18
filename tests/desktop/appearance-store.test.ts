@@ -6,6 +6,8 @@ import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance"
 
 describe("appearance store", () => {
   let eventListeners: Map<string, (payload: unknown) => void>;
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
+  const pristinePlatform = navigator.platform;
 
   beforeEach(() => {
     useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: true, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
@@ -33,7 +35,38 @@ describe("appearance store", () => {
     root.removeAttribute("data-theme");
     root.removeAttribute("data-theme-id");
     root.removeAttribute("style");
+    // jsdom serves `platform` from Navigator.prototype; drop the test-owned
+    // override instead of leaving it for later tests.
+    if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
+    else Reflect.deleteProperty(navigator, "platform");
+    expect(navigator.platform).toBe(pristinePlatform);
     vi.restoreAllMocks();
+  });
+
+  it("keeps Windows native controls aligned with the active toolbar palette", async () => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "Win32" });
+
+    await useAppearance.getState().setMode("dark");
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("window:set-titlebar-overlay", {
+      color: document.documentElement.style.getPropertyValue("--bg-sunken"),
+      symbolColor: document.documentElement.style.getPropertyValue("--text-primary"),
+    });
+  });
+
+  it("does not ask the main process to recolour an overlay outside the Windows main window", async () => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    await useAppearance.getState().setMode("dark");
+
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "Win32" });
+    window.history.replaceState(null, "", "/?window=terminal");
+    try {
+      await useAppearance.getState().setMode("light");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("window:set-titlebar-overlay", expect.anything());
   });
 
   it('blocks writes while the initial preferences remain unread', async () => {
@@ -84,7 +117,7 @@ describe("appearance store", () => {
     await useAppearance.getState().setMode("dark");
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(window.operator.invoke).toHaveBeenLastCalledWith("state:set", {
+    expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
       value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula", zoom: 1 },
     });

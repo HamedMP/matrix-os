@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
+import { sourceChangeScript } from '../../scripts/ci/changes.mjs';
 
 function readWorkflowStepRun(
   root: string,
@@ -82,6 +82,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         FUNDED_POSTGRES_RESULT: 'success',
         COLLABORATION_POSTGRES_RESULT: 'success',
         FUNDED_HOST_ROOT_RESULT: 'success',
+        NATIVE_STDOUT_LINUX_RESULT: 'skipped',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
         PATTERNS_RESULT: 'success',
@@ -185,7 +186,7 @@ function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
   draft: boolean,
-  options: { action?: string; baseEdit?: boolean } = {},
+  options: { action?: string } = {},
 ): {
   output: string;
   status: number | null;
@@ -242,7 +243,6 @@ exit 64
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
         PR_ACTION: options.action ?? 'synchronize',
-        PR_BASE_EDIT: String(options.baseEdit ?? false),
         PR_DRAFT: String(draft),
       },
     });
@@ -306,36 +306,32 @@ describe('CI workflows', () => {
     }
   });
 
-  it('reruns core CI on a base retarget but not on title or body edits', () => {
+  it('never reruns core CI on title or body edits', () => {
     const path = '.github/workflows/ci.yml';
-    const retarget = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited', baseEdit: true });
-    expect(retarget.output).toContain('trigger_requested=true');
+    expect(parse(readFileSync(join(process.cwd(), path), 'utf8')).on.pull_request.types)
+      .toEqual(['opened', 'ready_for_review', 'synchronize', 'reopened']);
     const metadata = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited' });
     expect(metadata.output).toContain('trigger_requested=false');
     const unknown = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'labeled' });
     expect(unknown.output).toContain('trigger_requested=false');
   });
 
-  it('omits the required check only for drafts and executes authenticated metadata verification', () => {
+  it('omits the required check only for drafts', () => {
     // A draft cannot merge; leaving the required check absent shows "expected", never red.
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const results = workflow.jobs['ci-results'];
     const ignored = "(github.event_name == 'pull_request' && github.event.pull_request.draft == true)";
     expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft (ignored)' || 'CI Results' }}`);
     expect(results.if).toBe(`always() && !${ignored}`);
-    expect(results.steps.find(step => step.name === 'Verify exact-source coverage after metadata edit')?.with.script).toContain('verifyMetadataCoverage');
-    expect(results.steps.find(step => step.name === 'Summarize required CI jobs')?.if).toContain("github.event.action == 'edited'");
+    expect(results.steps.map(step => step.name)).toEqual(['Summarize required CI jobs']);
   });
 
-  it('runs every main commit to completion in its own concurrency group', () => {
+  it('runs every main commit to completion and cancels superseded PR heads', () => {
     const root = process.cwd();
-    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const concurrency = parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')).concurrency;
 
-    expect(workflow).toContain("format('CI coverage-v1 · {0}', github.sha)");
-    expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
-    expect(workflow).toContain('queue: max');
-    expect(workflow).not.toContain('cancel-in-progress:');
-    expect(parse(workflow).concurrency.group).toContain("github.event_name == 'push' && github.sha");
+    expect(concurrency.group).toBe("ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}");
+    expect(concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
     expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
     expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);
   });
@@ -349,7 +345,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
+    expect(aggregate.needs).toEqual(['changes', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'native-stdout-linux', 'docs-contract', 'os-view-parity', 'e2e']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -358,12 +354,13 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.agent-sdk-compatibility.result');
     expect(workflow).toContain('needs.unit.result');
+    expect(workflow).toContain('needs.native-stdout-linux.result');
     expect(workflow).not.toContain('needs.symphony.result');
     expect(workflow).not.toContain('mix test --no-start');
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();
@@ -372,7 +369,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
-  it('plans main coverage from the last trusted frontier and wires its range into diff checks', () => {
+  it('diffs main against the commit before the push and wires that range into diff checks', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
@@ -385,7 +382,7 @@ describe('CI workflows', () => {
     const attempts = Number(checkout.env.CHECKOUT_MAX_ATTEMPTS);
     const seconds = Number(checkout.env.CHECKOUT_TIMEOUT_SECONDS);
     const backoff = Number(checkout.env.CHECKOUT_BACKOFF_SECONDS) * attempts * (attempts - 1) / 2;
-    const classifier = readFileSync(join(root, 'scripts/ci/dedicated-changes.mjs'), 'utf8');
+    const classifier = readFileSync(join(root, 'scripts/ci/changes.mjs'), 'utf8');
     const classifierSeconds = Number(classifier.match(/timeout:\s*(\d+)/)?.[1]) / 1000;
     expect(attempts).toBe(3);
     expect(seconds).toBeGreaterThanOrEqual(120);
@@ -400,7 +397,9 @@ describe('CI workflows', () => {
     expect(sourceChangeScript).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
     expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
-    expect(sourceChangeScript).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(sourceChangeScript).toContain('git diff --no-renames --name-only "$MAIN_BEFORE" "$GITHUB_SHA"');
+    expect(sourceChangeScript).toContain('echo "bootstrap=true" >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('MAIN_BEFORE: ${{ github.event.before }}');
     expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
@@ -453,7 +452,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('docs-contract:');
     expect(workflow).toContain('name: Docs Contract Tests');
-    expect(workflow).toContain("docs_contract_tests: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests) }}");
+    expect(workflow).toContain("docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}");
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
     expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
@@ -505,7 +504,7 @@ describe('CI workflows', () => {
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
-    expect(readme).toContain('coverage frontier');
+    expect(readme).toContain('Main plans\nagainst the commit before the push');
     expect(readme).not.toContain('ci-supersede.yml');
     expect(readme).toMatch(/newer merge never cancels or delays an\s+older commit's run/);
     expect(readme).toContain('Screenshot workflow removed');
@@ -1205,7 +1204,7 @@ describe('CI workflows', () => {
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });
 
-  it('publishes mobile OTA updates to preview and reaches production only by a gated promote', () => {
+  it('publishes mobile OTA updates to preview only by hand and reaches production only by a gated promote', () => {
     const root = process.cwd();
     const source = readFileSync(join(root, '.github/workflows/mobile-ota-update.yml'), 'utf8');
     type Job = {
@@ -1217,10 +1216,12 @@ describe('CI workflows', () => {
     };
     const workflow = parse(source) as {
       on?: {
-        push?: { branches?: string[]; paths?: string[] };
+        push?: unknown;
         pull_request?: { paths?: string[] };
+        workflow_dispatch?: { inputs?: { action?: { options?: string[] } } };
       };
       permissions?: Record<string, string>;
+      concurrency?: { group?: string; 'cancel-in-progress'?: boolean | string };
       env?: Record<string, string>;
       jobs?: Record<string, Job>;
     };
@@ -1228,7 +1229,16 @@ describe('CI workflows', () => {
     const runs = (job: Job | undefined) => (job?.steps ?? []).map((step) => step.run ?? '').join('\n');
 
     expect(workflow.permissions).toEqual({ contents: 'read' });
-    expect(workflow.on?.push?.branches).toEqual(['main']);
+
+    // Merging to main never publishes anything: preview moves only when someone
+    // runs the workflow with `publish-preview`.
+    expect(workflow.on?.push).toBeUndefined();
+    expect(Object.keys(workflow.on ?? {}).sort()).toEqual(['pull_request', 'workflow_dispatch']);
+    expect(workflow.on?.workflow_dispatch?.inputs?.action?.options).toEqual([
+      'publish-preview',
+      'promote-production',
+      'rollback',
+    ]);
 
     // The PR job proves tests and bundling without any credential in reach.
     expect(jobs.test?.environment).toBeUndefined();
@@ -1238,7 +1248,7 @@ describe('CI workflows', () => {
     // delivered to every build of that version. The guard runs in the job every
     // publish depends on, needs full history to find where the version began,
     // and also runs for lockfile-only pull requests, which can change native
-    // code without touching the app. A lockfile-only push must not publish.
+    // code without touching the app.
     const guardStep = jobs.test?.steps?.findIndex((step) =>
       step.run?.includes('node scripts/ci/mobile-ota-native-guard.mjs'),
     );
@@ -1246,25 +1256,30 @@ describe('CI workflows', () => {
     const testCheckout = jobs.test?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
     expect(testCheckout?.with?.['fetch-depth']).toBe(0);
     expect(workflow.on?.pull_request?.paths).toContain('pnpm-lock.yaml');
-    expect(workflow.on?.push?.paths).not.toContain('pnpm-lock.yaml');
 
-    // A push can only ever publish to preview, bundled with the production EAS
-    // environment so the promoted bundle is identical to what was tested.
+    // Only a manual `publish-preview` run from main publishes, and only to
+    // preview, bundled with the production EAS environment so the promoted
+    // bundle is identical to what was tested.
     const publish = jobs['publish-preview'];
     expect(publish?.needs).toBe('test');
     expect(publish?.environment).toBe('mobile-ota-preview');
     expect(publish?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(publish?.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(publish?.if).toContain("inputs.action == 'publish-preview'");
+    expect(publish?.if).not.toContain("'push'");
     expect(publish?.concurrency?.['cancel-in-progress']).toBe(false);
     expect(runs(publish)).toContain('--channel preview');
     expect(runs(publish)).toContain('--environment production');
     expect(source).not.toContain('--channel production');
 
-    // Preview only moves forward. Manual publishes share the push queue, and a
-    // run whose commit is older than what preview already carries (a re-run of
-    // an old job, say) is refused before anything is published.
-    expect(source).toContain(
-      "(github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish'",
+    // Preview only moves forward. Manual runs of one action share a queue and
+    // are never cancelled; only a superseded pull request run is. A run whose
+    // commit is older than what preview already carries (a re-run of an old
+    // job, say) is refused before anything is published.
+    expect(workflow.concurrency?.group).toBe(
+      "mobile-ota-${{ github.event_name == 'pull_request' && github.ref || inputs.action }}",
     );
+    expect(workflow.concurrency?.['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
     const publishCheckout = publish?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
     expect(publishCheckout?.with?.['fetch-depth']).toBe(0);
     const publishScript = runs(publish);

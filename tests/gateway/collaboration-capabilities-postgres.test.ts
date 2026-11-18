@@ -103,7 +103,100 @@ describe("S04 capability grants and effective access", () => {
     await expect(sql`SELECT count(*) FROM collaboration_grant_activations`.execute(fixture.db)).resolves.toBeTruthy();
   });
 
+  describe("organization-wide project access", () => {
+    it("gives every active member contributor access without a grant or activation", async () => {
+      const access = await evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.editor,
+      });
+
+      expect(access).toMatchObject({ preset: "contributor", reasons: [] });
+      expect([...access.actions].sort()).toEqual([...expandCollaborationPreset("contributor")].sort());
+      expect(await fixture.db.selectFrom("collaboration_grants").select("id").execute()).toEqual([]);
+      expect(await fixture.db.selectFrom("collaboration_grant_activations").select("grant_id").execute()).toEqual([]);
+    });
+
+    it("requires fresh owner and actor membership for non-owner access while preserving owner access", async () => {
+      members.get(ORG)!.delete(collaborationActors.owner);
+
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.editor,
+      })).resolves.toMatchObject({ preset: null, actions: [], reasons: ["precondition_denied"] });
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.owner,
+      })).resolves.toMatchObject({ preset: "contributor", reasons: [] });
+    });
+
+    it("narrows archived projects to viewer actions and denies outsiders", async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "archived" })
+        .where("id", "=", collaborationIds.scope).execute();
+
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.viewer,
+      })).resolves.toMatchObject({ preset: "viewer", actions: expandCollaborationPreset("viewer"), reasons: [] });
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: newcomer,
+      })).resolves.toMatchObject({ preset: null, actions: [], reasons: ["precondition_denied"] });
+    });
+
+    it("routes inherited project resources through the same membership decision and lifecycle narrowing", async () => {
+      const childScopeId = "10000000-0000-4000-8000-000000000099";
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: childScopeId, owner_type: "personal", owner_id: collaborationActors.owner,
+        organization_id: ORG, kind: "chat", resource_id: "chat_inherited_project",
+        parent_scope_id: collaborationIds.scope, membership_mode: "inherited", lifecycle: "shared",
+        revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime, authority_generation: 1,
+        execution_generation: 1, execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }), deleted_at: null,
+        created_at: NOW, updated_at: NOW,
+      }).execute();
+
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: childScopeId,
+        actorId: collaborationActors.editor,
+      })).resolves.toMatchObject({ preset: "contributor", reasons: [] });
+      const authority = new CollaborationAuthority(repository, {
+        now,
+        organizationPrecondition: createOrganizationPrecondition({ source: membershipSource(now), now }),
+        capabilities: grants,
+      });
+      await expect(authority.authorize({ scopeId: childScopeId, actorId: collaborationActors.editor, action: "discuss" }))
+        .resolves.toMatchObject({ role: "editor", membershipScopeId: collaborationIds.scope });
+
+      await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "archived" })
+        .where("id", "in", [collaborationIds.scope, childScopeId]).execute();
+      await expect(evaluator.evaluateEffectiveAccess({ scopeId: childScopeId, actorId: collaborationActors.editor }))
+        .resolves.toMatchObject({ preset: "viewer", actions: expandCollaborationPreset("viewer") });
+      await expect(authority.authorize({ scopeId: childScopeId, actorId: collaborationActors.editor, action: "discuss" }))
+        .rejects.toMatchObject({ code: "unavailable" });
+    });
+
+    it("ignores historical project grant and activation state", async () => {
+      const created = await grants.createGrant({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.owner,
+        ...request(1),
+        audience: { kind: "organization" },
+        preset: "viewer",
+        policyVersion: "legacy-v1",
+      });
+      await evaluator.declineGrant({ grantId: created.grantId, actorId: collaborationActors.editor });
+
+      await expect(evaluator.evaluateEffectiveAccess({
+        scopeId: collaborationIds.scope,
+        actorId: collaborationActors.editor,
+      })).resolves.toMatchObject({ preset: "contributor", reasons: [] });
+    });
+  });
+
   describe("organization-wide shares stay pending per member", () => {
+    beforeEach(async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: "chat_standalone_compat" })
+        .where("id", "=", collaborationIds.scope).execute();
+    });
     it("denies a member who never opened the share and lists it as pending for them", async () => {
       const created = await grants.createGrant({
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
@@ -219,6 +312,10 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("member grants, conflicts, changes, expiry and revocation", () => {
+    beforeEach(async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: "chat_standalone_compat" })
+        .where("id", "=", collaborationIds.scope).execute();
+    });
     it("unions a member grant with an activated organization grant (deny-wins has no denies in V1)", async () => {
       const memberGrant = await grants.createGrant({
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
@@ -407,6 +504,10 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("atomicity, replay and races", () => {
+    beforeEach(async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: "chat_standalone_compat" })
+        .where("id", "=", collaborationIds.scope).execute();
+    });
     it("advances the scope authorization epoch for grant decisions, but not their idempotent replays", async () => {
       const epoch = async () => Number((await fixture.db.selectFrom("collaboration_scopes")
         .select("auth_epoch").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).auth_epoch);
@@ -590,6 +691,10 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("no permissive fallback", () => {
+    beforeEach(async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: "chat_standalone_compat" })
+        .where("id", "=", collaborationIds.scope).execute();
+    });
     it("denies with a generic reason when the membership source fails and with unavailable when policy lookup fails", async () => {
       const failing = createOrganizationPrecondition({
         source: { async assertMembership() { throw new Error("upstream down"); } }, now,
@@ -625,6 +730,10 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("owner, legacy ceilings and authority integration", () => {
+    beforeEach(async () => {
+      await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: "chat_standalone_compat" })
+        .where("id", "=", collaborationIds.scope).execute();
+    });
     it("never advertises access past the authoritative membership evidence", async () => {
       const shortLived = createOrganizationPrecondition({
         source: {

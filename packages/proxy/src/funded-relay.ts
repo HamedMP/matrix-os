@@ -1,6 +1,8 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
 import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
+import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
+import type { FundedPricingReviews } from "./funded-pricing-review.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
@@ -78,6 +80,7 @@ interface ActiveRequestState {
 }
 
 export interface FundedRelay {
+  pricingReviewsFor(modelId: string, signal: AbortSignal): Promise<FundedPricingReviews | null>;
   register(app: Hono): void;
   close(signal?: AbortSignal): Promise<boolean>;
 }
@@ -256,6 +259,7 @@ function fundedCredential(c: Context): string {
 
 function createDisabledRelay(): FundedRelay {
   return {
+    pricingReviewsFor: async () => null,
     register(app) {
       app.all("/v1/*", async (c, next) => {
         if (!isFundedProxyApiKey(fundedCredential(c))) return next();
@@ -276,8 +280,21 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const now = config.now ?? (() => new Date());
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
   const admission = new AdmissionController(config, () => now().getTime());
-  const platform = config.platformClient ?? createFundedPlatformClient({ ...config, fetch: fetchImpl });
+  const createControlClient = () => createFundedPlatformClient({ ...config, fetch: fetchImpl });
+  const registryClient = config.pricingRegistryEnabled ? createControlClient() : undefined;
+  const platform = config.platformClient ?? registryClient ?? createControlClient();
   const shutdown = new AbortController();
+  const pricingShutdown = new AbortController();
+  const pricingRegistry = registryClient && createFundedPricingRegistry({
+    readPricingReviews: registryClient.readPricingReviews,
+    reportPricingRouteFailure: registryClient.reportPricingRouteFailure,
+    now, shutdown: pricingShutdown.signal,
+  });
+  async function pricingReviewsFor(modelId: string, signal: AbortSignal): Promise<FundedPricingReviews | null> {
+    if (!pricingRegistry) return config.pricingReviews ?? [];
+    const review = await pricingRegistry.read(modelId, signal);
+    return review ? [review] : null;
+  }
   let closing = false;
   let terminalComplete = true;
   let closeResult: Promise<boolean> | undefined;
@@ -386,6 +403,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     } catch (error) {
       return controlPlaneError(c, error);
     }
+    const reviews = pricingRegistry
+      ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : config.pricingReviews;
+    if (reviews === null) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
     const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
     if (!runtimeAttempt) {
@@ -446,7 +467,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         inputTokens,
         maxOutputTokens: parsedBody.max_tokens!,
         now: now(),
-        pricingReviews: config.pricingReviews,
+        pricingReviews: reviews,
       });
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -479,7 +500,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     // Authorization can cross the operator review deadline. Release its
     // untouched reservation before start rather than dispatching stale pricing.
-    if (!isFundedModelPriceCurrent(model.canonicalModelId, now(), config.pricingReviews)) {
+    const startReviews = pricingRegistry
+      ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : reviews;
+    if (startReviews === null || !isFundedModelPriceCurrent(model.canonicalModelId, now(), startReviews)) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -549,12 +572,26 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         throw new Error("Funded AI start response did not match its reservation");
       }
       terminal.started(started);
+      if (pricingRegistry) {
+        const current = await pricingRegistry.read(model.canonicalModelId, generationSignal, true);
+        if (!current || current.version !== estimate.pricingVersion
+          || Date.parse(current.validThrough) <= now().getTime() || generationSignal.aborted) {
+          clearTimeout(firstResponseTimer);
+          // Platform started this reservation. Relay can attest zero provider cost
+          // because the generation request has not been dispatched.
+          await enqueueFinalization({ mode: "exact", actualCostMicrousd: 0 }, "failed");
+          resourceLease.release();
+          state.resourceLease = null;
+          return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+        }
+      }
       dispatched = true;
       const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
+        pricingRegistry?.reportFailure(model.canonicalModelId, estimate.pricingVersion, upstream.status, generationSignal);
         await enqueueFinalization(await classifyFundedUpstreamRejection({
           upstream, canonicalModelId: model.canonicalModelId,
           requestPath: c.req.path, signal: state.lifetimeSignal,
@@ -847,6 +884,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   }
 
   return {
+    pricingReviewsFor,
     register(app) {
       app.use("/v1/*", async (c, next) => {
         if (c.req.path === JEV_READINESS_PATH
@@ -936,6 +974,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (closeResult) return closeResult;
       const signal = shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
       closing = true;
+      pricingShutdown.abort("relay shutting down");
       admission.close();
       settlementQueue.beginShutdown(signal);
       // Install the deadline before cancellation starts, without aborting the

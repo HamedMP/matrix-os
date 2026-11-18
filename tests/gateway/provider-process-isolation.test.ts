@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildIsolatedProviderLaunch,
   cleanupStaleIsolatedProviderProcesses,
+  probeProviderScopeClosed,
+  spawnIsolatedProviderProcess,
 } from "../../packages/gateway/src/coding-agents/provider-process-isolation.js";
 
 describe("provider process isolation", () => {
@@ -111,4 +113,67 @@ describe("provider process isolation", () => {
     expect(missingBus.isolated).toBe(false);
     expect(missingBus.command).toBe("claude");
   });
+
+  it("refuses a required scope instead of falling back to a direct process", () => {
+    vi.stubEnv("MATRIX_PROVIDER_PROCESS_ISOLATION", "0");
+    try {
+      expect(() => spawnIsolatedProviderProcess(process.execPath, ["--version"], {
+        cwd: process.cwd(), env: {}, stdio: ["pipe", "pipe", "pipe", "pipe"], requireIsolation: true,
+      })).toThrow("Provider process isolation unavailable");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  const unitName = "matrix-chat-provider-0123456789abcdef0123456789abcdef";
+  const root = "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service";
+  const scope = `${root}/matrix.slice/matrix-terminal.slice/${unitName}.scope`;
+
+  function closureProbe(properties: string, events: string | Error, parent = "populated 1\n") {
+    const runCommand = vi.fn(async () => ({
+      stdout: `Id=${unitName}.scope\n${properties}`,
+      stderr: "",
+    }));
+    const readEvents = vi.fn(async (path: string) => {
+      if (path === `${root}/cgroup.events`) return parent;
+      if (path !== `${scope}/cgroup.events`) throw new Error("unexpected cgroup");
+      if (events instanceof Error) throw events;
+      return events;
+    });
+    return probeProviderScopeClosed({ unitName, uid: 1001 }, { runCommand, readEvents });
+  }
+
+  it("confirms a dead owned scope only after the cgroup subtree is drained", async () => {
+    const dead = `LoadState=loaded\nActiveState=inactive\nSubState=dead\nSlice=matrix-terminal.slice\nControlGroup=${scope.slice("/sys/fs/cgroup".length)}\n`;
+    await expect(closureProbe(dead, "populated 0\nfrozen 0\n")).resolves.toBe(true);
+    await expect(closureProbe(dead, "populated 1\nfrozen 0\n")).resolves.toBe(false);
+    await expect(closureProbe(dead.replace("ActiveState=inactive", "ActiveState=deactivating"), "populated 0\n")).resolves.toBe(false);
+    await expect(closureProbe(dead.replace("/matrix.slice/", "/other.slice/"), "populated 0\n")).resolves.toBe(false);
+  });
+
+  it("distinguishes collection from an unreadable or mismatched cgroup", async () => {
+    const collected = "LoadState=not-found\nActiveState=inactive\nSubState=dead\nSlice=\nControlGroup=\n";
+    const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+    await expect(closureProbe(collected, missing)).resolves.toBe(true);
+    await expect(closureProbe(collected, missing, "unknown\n")).resolves.toBe(false);
+    await expect(closureProbe(collected, "populated 1\n")).resolves.toBe(false);
+    await expect(closureProbe(collected, Object.assign(new Error("permission"), { code: "EACCES" }))).resolves.toBe(false);
+  });
+});
+
+// Actual credential-free Node descriptor fixture, not systemd or native OpenCode qualification.
+it.each(["ignore", "pipe"] as const)("preserves the fourth owned descriptor with %s stdin through the real direct provider spawn helper", async stdin => {
+  const { spawnIsolatedProviderProcess } = await import("../../packages/gateway/src/coding-agents/provider-process-isolation.js");
+  const { once } = await import("node:events");
+  vi.stubEnv("MATRIX_PROVIDER_PROCESS_ISOLATION", "0");
+  const args = ["--input-type=module", "-e", "import { writeSync } from 'node:fs'; writeSync(3, 'owned-descriptor');"];
+  const options = { cwd: process.cwd(), env: { PATH: process.env.PATH ?? "" } };
+  const child = stdin === "ignore"
+    ? spawnIsolatedProviderProcess(process.execPath, args, { ...options, stdio: ["ignore", "pipe", "pipe", "pipe"] })
+    : spawnIsolatedProviderProcess(process.execPath, args, { ...options, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+  try {
+    const pipe = (child.stdio as unknown as import("node:stream").Duplex[])[3];
+    if (!pipe) throw new Error("Missing owned descriptor");
+    let received = ""; pipe.on("data", (chunk: Buffer) => { received += chunk.toString("utf8"); });
+    expect((await once(child, "close"))[0]).toBe(0);
+    expect(received).toBe("owned-descriptor");
+  } finally { child.kill("SIGKILL"); vi.unstubAllEnvs(); }
 });

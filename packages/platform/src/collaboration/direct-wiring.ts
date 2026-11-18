@@ -24,6 +24,7 @@ import {
 } from "./runtime-endpoints.js";
 import { CollaborationTicketIssuer, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
 import { CollaborationRelay, type RelayHome } from "./relay.js";
+import { createRelayTimingLogger } from "./relay-timing-log.js";
 import { createPlatformDriveContextRuntimeRoutes } from "./drive-context-routes.js";
 
 export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
@@ -126,6 +127,7 @@ export async function createPlatformCollaborationDirect(options: {
     },
     resolveOwnerRuntimeHome: createOwnerRuntimeHomeResolver({ endpoints, resolveRuntimeOrigin: options.resolveRuntimeOrigin }),
     ...(options.relayFetch ? { fetchImpl: options.relayFetch } : {}),
+    onMetadata: createRelayTimingLogger(),
   });
   relay.startSweep();
   const controlStream = new CollaborationControlStream({

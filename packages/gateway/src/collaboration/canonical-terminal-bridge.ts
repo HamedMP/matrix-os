@@ -45,6 +45,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   ownerId: string;
   runtime: TerminalRuntime;
+  retireRoutineSource?(ref: TerminalRef, incarnation: string): void;
 }) {
   const { db, ownerId, runtime } = options;
   if (!ownerId) throw new CanonicalTerminalBridgeError();
@@ -230,6 +231,9 @@ export function createCanonicalTerminalCollaborationBridge(options: {
             .where("id", "=", input.scopeId).forUpdate().executeTakeFirst();
           if (!scope || scope.owner_id !== ownerId || scope.kind !== "terminal"
             || scope.resource_id !== terminalId || scope.lifecycle !== "private") throw new CanonicalTerminalBridgeError();
+          // Fence personal actions before the binding can enable collaborative input. A failed share
+          // can leave I/O live with the old source retired, which is safe for the same incarnation.
+          options.retireRoutineSource?.(current.ref, current.tabIncarnation);
           await trx.insertInto("collaboration_terminal_bindings").values({
             scope_id: input.scopeId,
             owner_id: ownerId,

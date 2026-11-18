@@ -1,10 +1,14 @@
+import { isSharedAppOpenPath } from "@matrix-os/contracts";
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
+import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
   buildPreviewTerminalAccess,
   PREVIEW_TERMINAL_ACCESS_HEADER,
 } from "./preview-terminal-access.js";
 import { randomBytes } from 'node:crypto';
 import { authenticatedApprovalProxyProofs } from './owner-approval-proofs.js';
+import type { BrowserApprovalMachineLookup } from './browser-approval-machine-lookup.js';
+import type { BrowserApprovalPolicy } from './browser-dev-approval-policy.js';
 export { authenticatedApprovalProxyProof } from './canonical-owner-approval-proxy.js';
 import { browserApprovalProofHeader } from './browser-chat-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
@@ -47,6 +51,7 @@ import {
   buildBillingSetupPath,
   buildForwardedQueryString,
   buildPostAuthRedirectPath,
+  routineChatAuthReturnPath,
   getPlatformShellAssetUpstreamPath,
   getAuthShellOrigin,
   isAppDomainGatewayPath,
@@ -82,6 +87,7 @@ import {
   applySandboxedAppAssetCorsHeaders,
   buildAppDomainProxyResponse,
   buildCodeDomainProxyHeaders,
+  buildForwardedProxyHeaders,
   hasValidExplicitVmAppAssetToken,
   isAppDomainStaticAssetPath,
   isCodeDomainStaticAssetPath,
@@ -141,6 +147,7 @@ interface CreateSessionRoutingMiddlewareOpts {
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   appEnv: NodeJS.ProcessEnv;
+  browserApprovals: { policy: BrowserApprovalPolicy; lookup?: BrowserApprovalMachineLookup };
   platformSecret: string;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
@@ -234,6 +241,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     orchestrator,
     clerkAuth,
     appEnv,
+    browserApprovals,
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
@@ -249,12 +257,19 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     getGatewayUrlForHandle,
     logRouteError,
   } = opts;
+  const browserProofOptions = {
+    browserApprovalsEnabled: browserApprovals.policy.kind === 'global',
+    browserApprovalDevScope: browserApprovals.policy.kind === 'scoped' ? browserApprovals.policy.scope : undefined,
+    browserApprovalMachineLookup: browserApprovals.lookup,
+  };
 
   async function proxyAuthShell(
     c: Context,
     host: string,
     proxyOpts: {
       assetRequest?: boolean;
+      /** Data-free public page: on upstream failure answer a bounded 503, never an auth page. */
+      publicPage?: boolean;
       preserveUpstreamCacheHeaders?: boolean;
       redirectToBillingOnFailure?: boolean;
       upstreamPath?: string;
@@ -305,6 +320,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         c.header('Retry-After', '5');
         return c.text('Matrix OS shell asset unavailable', 503);
+      }
+      if (proxyOpts.publicPage) {
+        applyNoStoreHeaders(c);
+        c.header('Retry-After', '5');
+        return c.text('Matrix OS shell unavailable', 503);
       }
       if (isSignupBillingHandoff(c.req.url)) {
         const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -432,6 +452,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirectToBillingOnFailure: false,
         upstreamPath,
       });
+    }
+    // Org-link hand-off (spec 2693): a public, data-free page that only offers
+    // to open the desktop app. Serve it from the platform shell before identity,
+    // computer-boot or billing routing so neither can block the hand-off.
+    if (isAppDomain && isSharedAppOpenPath(reqPath)) {
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+        applyNoStoreHeaders(c);
+        c.header('Allow', 'GET, HEAD');
+        return c.text('Method Not Allowed', 405);
+      }
+      return proxyAuthShell(c, host, { publicPage: true, redirectToBillingOnFailure: false });
     }
     if (isAppDomain && isPostHogRelayPath(reqPath)) {
       return proxyPostHogRelay(c, { logRouteError: logRouteError });
@@ -638,7 +669,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
-      if (isAppDomain && allowAuthShellUnroutedIdentity) {
+      const routineChatTarget = isAppDomain && (c.req.method === 'GET' || c.req.method === 'HEAD')
+        ? routineChatAuthReturnPath(c.req.url) : null;
+      if (isAppDomain && allowAuthShellUnroutedIdentity && !routineChatTarget) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
       }
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
@@ -665,9 +698,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, routineChatTarget ?? buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
     }
 
+    if (isAppDomain) {
+      const handoff = await whatsappPrimaryHandoffResponse(c, { db,
+        verifiedOwner: identity.source === 'auth' ? identity.userId : undefined });
+      if (handoff) return handoff;
+    }
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
     if (isAppDomain && path === '/vm') {
       return c.redirect('/runtime');
@@ -745,17 +783,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
-        identity, platformSecret, machine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        identity, platformSecret, machine, clerkAuth, ...browserProofOptions });
       if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (shouldForwardProxyHeader(key, value)) {
-          headers.set(key, value);
-        }
-      }
+      const headers = buildForwardedProxyHeaders(c.req.header());
       for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');
@@ -771,7 +804,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
-      headers.set('connection', 'close');
+      // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       // Capability-only requests must not inherit the platform's internal
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
@@ -914,7 +947,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
-        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, ...browserProofOptions });
       if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });
@@ -926,13 +959,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             host,
             platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
           )
-        : new Headers();
+        : buildForwardedProxyHeaders(c.req.header());
       if (!isCodeDomain) {
-        for (const [key, value] of Object.entries(c.req.header())) {
-          if (shouldForwardProxyHeader(key, value)) {
-            headers.set(key, value);
-          }
-        }
         for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
         if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
         const rawCookie = c.req.header('cookie');
@@ -948,7 +976,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
         headers.set('accept-encoding', 'identity');
-        headers.set('connection', 'close');
+        // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);

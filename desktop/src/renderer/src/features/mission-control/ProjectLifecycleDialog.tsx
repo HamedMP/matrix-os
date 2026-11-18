@@ -49,7 +49,7 @@ export default function ProjectLifecycleDialog({
         <span
           className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
           style={{
-            color: "var(--danger)",
+            color: "var(--danger-text)",
             background: "var(--danger-muted)",
           }}
         >
@@ -85,7 +85,7 @@ export default function ProjectLifecycleDialog({
             style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
           />
         </label>
-        {error ? <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>{error}</p> : null}
+        {error ? <p role="alert" className="text-sm" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
       </div>
 
       <div className="flex justify-end gap-2 border-t px-5 py-3" style={{ borderColor: "var(--border-subtle)" }}>

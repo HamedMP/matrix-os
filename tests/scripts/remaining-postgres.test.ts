@@ -48,6 +48,33 @@ describe("remaining real PostgreSQL qualification", () => {
     expect(() => remainingPostgresInventory(root, [remaining])).toThrow(/unassigned.*new-race/i);
   });
 
+  it("assigns routine integration only with its dedicated config, mapped URL and bounded selection", () => {
+    const file = "tests/gateway/bots/routine-cli-example.postgres.integration.ts";
+    const { root, write } = fixture({ [file]: "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;" });
+    const command = "pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1 --no-file-parallelism";
+    const assign = (run = command, mapping = "${{ env.MATRIX_TEST_POSTGRES_URL }}", condition = "true") => write(".github/workflows/ci.yml",
+      `jobs:\n  funded-postgres:\n    steps:\n      - run: pnpm exec vitest run ${funded}\n      - if: ${condition}\n        env:\n          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: '${mapping}'\n        run: ${run}\n`);
+    for (const [run, mapping, condition] of [
+      [command.replace("--config vitest.routine-cli-integration.config.ts ", ""), undefined, undefined],
+      [command.replace("vitest.routine-cli-integration.config.ts", "vitest.config.ts"), undefined, undefined],
+      [command, "postgresql://unreviewed.example/test", undefined],
+      [command, "", undefined],
+      [command, undefined, "false"],
+      [command.replace(" --maxWorkers=1", ""), undefined, undefined],
+      [command.replace("routine-cli-*", "*"), undefined, undefined],
+    ]) {
+      assign(run, mapping, condition);
+      expect(() => remainingPostgresInventory(root, [remaining])).toThrow(/unassigned.*routine-cli-example/i);
+    }
+    assign();
+    expect(remainingPostgresInventory(root, [remaining]).requirements.map(row => row.file)).toContain(file);
+    expect(() => remainingPostgresInventory(root, [file, remaining].sort())).toThrow(/already assigned.*routine-cli-example/i);
+    write("tests/gateway/bots/routine-cli-new.postgres.integration.ts", "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;");
+    expect(remainingPostgresInventory(root, [remaining]).requirements).toHaveLength(5);
+    write("tests/gateway/other.postgres.integration.ts", "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;");
+    expect(() => remainingPostgresInventory(root, [remaining])).toThrow(/unassigned.*other/i);
+  });
+
   it("detects aliased real database factories and helper wrappers", () => {
     const { root, write } = fixture({
       "tests/gateway/helper.ts": 'import { createRealBotStateDatabase as create } from "./bots/bot-state-support.js"; export const setup = () => create();',

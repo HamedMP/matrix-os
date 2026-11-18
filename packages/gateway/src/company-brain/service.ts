@@ -99,6 +99,9 @@ export class CompanyBrainService {
 
   /** Remote organization evidence cannot be locked in the owner's database; refresh it before the local write fence. */
   private async recheckOrganization(context: AuthorizedCollaborationContext) {
+    // Project-owner access is intentionally independent of the organization service. Non-owner
+    // project access and every standalone share carry evidence that must still match exactly.
+    if (context.actorId === context.ownerId && context.membershipEvidenceEpoch === undefined) return;
     const evidence=await this.options.authority.organizationPrecondition.require({organizationId:context.organizationId,actorId:context.actorId});
     if(evidence.membershipEpoch!==context.membershipEvidenceEpoch) throw new CompanyBrainError("forbidden");
   }

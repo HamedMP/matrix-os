@@ -157,12 +157,13 @@ async function cancelCaptureSafely<TRecording extends PlatformSpeechRecording>(
 export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecording = Blob>(options: {
   scopeKey: string;
   onDraft(text: string): void;
-  client: PlatformSpeechDraftClient<TRecording>;
+  client: PlatformSpeechDraftClient<TRecording> | null;
   captureAdapter: PlatformSpeechCaptureAdapter<TRecording>;
   requestIdFactory?: () => string;
   safeErrorMessage?: (error: unknown) => string | undefined;
 }): UsePlatformSpeechDraftResult {
   const client = options.client;
+  const clientAvailable = client !== null;
   const [phase, setPhase] = useState<PlatformSpeechDraftPhase>("loading");
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -176,6 +177,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const quotaRefreshRef = useRef<AbortController | null>(null);
 
   const cancelRemote = async (requestId: string): Promise<void> => {
+    if (!client) return;
     await client.cancel(requestId).catch((caught: unknown) => {
       console.warn("[speech-draft] cancellation failed", caught instanceof Error ? caught.name : "UnknownError");
     });
@@ -209,7 +211,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     setCapabilities(null);
     setCapabilitiesStale(false);
     setError(null);
-    if (!options.captureAdapter.isSupported()) {
+    if (!client || !options.captureAdapter.isSupported()) {
       setPhase("unavailable");
       return () => {
         controller.abort();
@@ -238,10 +240,10 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     // instances are stable wiring dependencies and must not restart an active
     // microphone merely because an object identity changes during render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.scopeKey]);
+  }, [options.scopeKey, clientAvailable]);
 
   const finishRecording = async (active: ActiveRecording<TRecording>): Promise<void> => {
-    if (active.stopping) return;
+    if (!client || active.stopping) return;
     active.stopping = true;
     clearTimeout(active.timeout);
     clearInterval(active.elapsedTimer);
@@ -323,7 +325,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   };
 
   async function start(): Promise<void> {
-    if (!capabilities || !["idle", "error"].includes(phase)
+    if (!client || !capabilities || !["idle", "error"].includes(phase)
       || captureStartRef.current || recordingRef.current || requestRef.current || quotaRefreshRef.current) return;
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
@@ -389,7 +391,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     setError(null);
     setElapsedMs(0);
     setInputMeter({ level: 0, sequence: 0 });
-    if (cancelledRequest && cancellation) {
+    if (client && cancelledRequest && cancellation) {
       const controller = new AbortController();
       quotaRefreshRef.current = controller;
       setPhase("loading");
@@ -412,7 +414,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   }
 
   async function retryCapabilities(): Promise<void> {
-    if (captureStartRef.current || recordingRef.current || requestRef.current) return;
+    if (!client || captureStartRef.current || recordingRef.current || requestRef.current) return;
     const generation = generationRef.current;
     quotaRefreshRef.current?.abort();
     const controller = new AbortController();
@@ -438,7 +440,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   return {
     phase,
     error,
-    isSupported: phase !== "loading"
+    isSupported: clientAvailable && phase !== "loading"
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
     previewQuota: capabilities?.previewQuota,

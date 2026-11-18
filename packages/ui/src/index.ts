@@ -291,12 +291,13 @@ export {
   type ConnectPollConnection,
   type ConnectPollOptions,
 } from "./integrations/connect-poll.js";
+export { WhatsAppSettingsPanel } from './messaging/WhatsAppSettingsPanel.js';
 export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
 export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionClient } from "./agents-providers/matrix-anthropic-connection-client.js";
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
-export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry, type ProjectChatSkillCatalog } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
@@ -339,10 +340,27 @@ export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.j
 export { ChatModelPicker } from "./chat/composer/ChatModelPicker.js";
 export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "./chat/composer/ChatProjectContextPicker.js";
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
-export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
+export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
+export { createRoutineActionClient, createRoutineActionBrowserClient, type RoutineActionClient, type RoutineActionRequest } from "./routine-action/client.js";
+export { RoutineActionConfirmation } from "./routine-action/RoutineActionConfirmation.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 
 export { BotsWorkspace } from "./bots/BotsWorkspace.js";
 export { useHostedBotsAvailability, type HostedBotsTransport } from "./bots/hosted-bots-client.js";
+
+export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
+
+export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";
+
+export { isRoutineOriginPath, createRoutineOriginClient, type RoutineOriginClient } from "./chat/routine-origin-client.js";
+export { useRoutineOrigin } from "./chat/use-routine-origin.js";
+export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
+export { routineApprovalPlacement, routineOriginHistoryStatus } from "./chat/routine-approval-placement.js";
+export { RoutineReceipt } from "./chat/RoutineReceipt.js";
+export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
+
+export { ScheduledInputText } from "./chat/ScheduledInputText.js";
+
+export { routineOriginChatEligible } from "./chat/routine-origin.js";

@@ -161,7 +161,7 @@ export function ExpandableFileTree({
       return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--text-tertiary)" }}>Loading files…</p>;
     }
     if (directory.status === "error") {
-      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--danger)" }}>Files are unavailable.</p>;
+      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--danger-text)" }}>Files are unavailable.</p>;
     }
     if (directory.entries.length === 0) {
       return depth === 0

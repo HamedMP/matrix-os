@@ -54,6 +54,7 @@ import {
 } from "../coding-agents/composer-seed";
 import { ProjectChatHero } from "./ProjectChatHero";
 import { startCanonicalProjectChat } from "./start-canonical-project-chat";
+import { useDesktopProjectSlashScope } from "./desktop-project-slash-scope";
 
 function composerOptionsEqual(
   left: CanonicalComposerSelection["options"],
@@ -106,6 +107,8 @@ export function ProjectChatDraft({
   const composerSelections = useProviderPreferences((s) => s.composerSelections);
   const setComposerSelectionPreference = useProviderPreferences((s) => s.setComposerSelection);
   const api = useConnection((state) => state.api);
+  // This legacy workspace may resolve to a different checkout at submission.
+  const projectSlashScope = useDesktopProjectSlashScope(canonicalProjectId, false);
   const initialDraft = useMemo(() => {
     const base = defaultAgentThreadComposerDraft(summary);
     const preferred = preferredProviderId
@@ -438,7 +441,7 @@ export function ProjectChatDraft({
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
           {submissionError || createError ? (
-            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger)" }}>{submissionError ?? createError}</p>
+            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger-text)" }}>{submissionError ?? createError}</p>
           ) : null}
           {canCreate ? (
             <>
@@ -455,6 +458,7 @@ export function ProjectChatDraft({
               />
               <SharedChatComposer
                   value={effectiveDraft.prompt}
+                  projectSlashScope={projectSlashScope}
                   onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
                   referenceTokens={referenceTokens}
                   onReferenceTokensChange={setReferenceTokens}

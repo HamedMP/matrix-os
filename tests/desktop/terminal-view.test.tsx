@@ -714,6 +714,53 @@ describe("TerminalView session switching", () => {
     expect(attachmentWrite.mock.calls[0]?.[0]).not.toMatch(/[\r\n]$/);
   });
 
+  it("writes a pasted image beside a local terminal without a cloud gateway", async () => {
+    const invoke = vi.fn(async () => ({ ok: true, path: "/Users/neo/.matrix-paste/evidence.png" }));
+    const previous = window.operator;
+    window.operator = { invoke, on: () => () => undefined } as typeof window.operator;
+    try {
+      const { container } = render(<TerminalView sessionName="local:t7" />);
+      fireEvent.paste(container.querySelector("[data-terminal-viewport]")!, {
+        clipboardData: { files: [new File(["image"], "evidence.png", { type: "image/png" })] },
+      });
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:put", {
+        id: "t7", name: "evidence.png", dataBase64: "aW1hZ2U=",
+      }));
+      await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith(
+        "\x1b[200~/Users/neo/.matrix-paste/evidence.png\x1b[201~"));
+    } finally { window.operator = previous; }
+  });
+
+  it("keeps a pending local paste when only the cloud API changes", async () => {
+    const upload = deferred<{ ok: true; path: string }>();
+    const invoke = vi.fn(() => upload.promise);
+    const previous = window.operator;
+    window.operator = { invoke, on: () => () => undefined };
+    try {
+      const { container } = render(<TerminalView sessionName="local:t7" />);
+      fireEvent.paste(container.querySelector("[data-terminal-viewport]")!, { clipboardData: { files: [new File(["image"], "evidence.png", { type: "image/png" })] } });
+      await waitFor(() => expect(invoke).toHaveBeenCalled());
+      act(() => useConnection.setState({ api: { post: vi.fn() } as never }));
+      await act(async () => { upload.resolve({ ok: true, path: "/Users/neo/evidence.png" }); });
+      await waitFor(() => expect(attachmentWrite).toHaveBeenCalledWith("\x1b[200~/Users/neo/evidence.png\x1b[201~"));
+    } finally { window.operator = previous; }
+  });
+
+  it("explains the local 8 MB limit before encoding or invoking file IPC", async () => {
+    const invoke = vi.fn();
+    const previous = window.operator;
+    window.operator = { invoke, on: () => () => undefined };
+    try {
+      const { container } = render(<TerminalView sessionName="local:t7" />);
+      fireEvent.paste(container.querySelector("[data-terminal-viewport]")!, { clipboardData: {
+        files: [new File([new Uint8Array(9 * 1024 * 1024)], "large.png", { type: "image/png" })],
+      } });
+      await screen.findByText("Images are limited to 8 MB.");
+      expect(invoke).not.toHaveBeenCalled();
+      expect(attachmentWrite).not.toHaveBeenCalled();
+    } finally { window.operator = previous; }
+  });
+
   it("keeps rich image paste precedence for Command+V", async () => {
     const blob = new Blob(["image"], { type: "image/png" });
     const readText = vi.fn().mockResolvedValue("text fallback");
@@ -1559,6 +1606,11 @@ describe("TerminalView session switching", () => {
 
     expect(writeText).toHaveBeenCalledTimes(2);
     expect(writeText.mock.calls).toEqual([[selectedScrollback], [selectedScrollback]]);
+  });
+
+  it("quotes local paste paths and rejects control characters", () => {
+    expect(bracketTerminalPaths(["/Users/neo/a b.png", "/Users/neo/quote'file.png", "/Users/neo/$(touch nope).png", "/tmp/bad\nname"], "local"))
+      .toBe("\x1b[200~'/Users/neo/a b.png' '/Users/neo/quote'\\''file.png' '/Users/neo/$(touch nope).png'\x1b[201~");
   });
 
   it("filters terminal files to supported image formats and strips nested paste markers", () => {

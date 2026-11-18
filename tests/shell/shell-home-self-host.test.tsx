@@ -8,6 +8,7 @@ const clerk = vi.hoisted(() => ({
   useAuth: vi.fn(() => {
     throw new Error("Clerk useAuth should not run in self-host mode");
   }),
+  useUser: vi.fn(() => ({ user: null })),
 }));
 
 const canonical = vi.hoisted(() => ({ useCanonicalChatState: vi.fn((_options?: { navigationScope?: string }) => ({ newChat: vi.fn() })) }));
@@ -17,7 +18,7 @@ const commands = vi.hoisted(() => ({
   unregister: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs", () => ({ useAuth: clerk.useAuth }));
+vi.mock("@clerk/nextjs", () => ({ useAuth: clerk.useAuth, useUser: clerk.useUser }));
 vi.mock("@/hooks/useMobileViewport", () => ({ useMobileViewport: () => false }));
 vi.mock("@/hooks/useTheme", () => ({ useTheme: vi.fn() }));
 vi.mock("@/hooks/useDesktopConfig", () => ({ useDesktopConfig: vi.fn() }));
@@ -47,6 +48,7 @@ describe("ShellHome self-host mode", () => {
   beforeEach(() => {
     process.env.MATRIX_SELF_HOSTED = "1";
     clerk.useAuth.mockClear();
+    clerk.useUser.mockClear();
     canonical.useCanonicalChatState.mockClear();
     commands.register.mockClear();
     commands.unregister.mockClear();
@@ -72,7 +74,7 @@ describe("ShellHome self-host mode", () => {
 
   it("still reads the Clerk session in managed mode", () => {
     delete process.env.MATRIX_SELF_HOSTED;
-    clerk.useAuth.mockImplementationOnce(() => ({ userId: "user_1", sessionId: "sess_1" }));
+    clerk.useAuth.mockImplementation(() => ({ userId: "user_1", sessionId: "sess_1" }));
     render(<ShellHome />);
     expect(screen.getByTestId("desktop")).toBeTruthy();
     expect(clerk.useAuth).toHaveBeenCalled();

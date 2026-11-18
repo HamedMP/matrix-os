@@ -1,3 +1,4 @@
+import { matrixChatHandoffUrl } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { isWhatsAppSenderAllowed, WhatsAppPhoneSchema, type WhatsAppConfig } from './config.js';
 import { canAdmitWhatsAppMessage, isWhatsAppSenderEligible, isWhatsAppReplyWindowOpen, sendWhatsAppText, sendWhatsAppReaction, WhatsAppSendError, type WhatsAppMessage, type WhatsAppProcessingReaction } from './cloud-api.js';
@@ -146,10 +147,16 @@ export function createWhatsAppService(deps: {
         if (await saveCheckpoint(job, { ...job.payload, failures: 0 })) await repo.retry(job.id, job.fence, 2000);
         return;
       }
+      const chatUrl = matrixChatHandoffUrl(config.publicUrl, payload.checkpoint.chatId);
       const text = result.state === 'attention'
-        ? `Your Matrix agent needs your attention. Open Matrix to continue: ${config.publicUrl}`
+        ? `Your Matrix agent needs your attention. Open this Chat to continue:\n${chatUrl}`
         : (result.state === 'complete' && result.text || 'Your Matrix agent finished. Open Matrix to view the Chat.');
-      await reply(job, text.includes('Open Matrix') ? `${text}\n${config.publicUrl}`.slice(0, 4096) : text, payload.owner, payload.connectionId, result.state === 'complete' ? '✅' : '❌');
+      const fullReplySuffix = '\n\nOpen Matrix for the full reply.';
+      const handoff = fullReplySuffix + '\n' + chatUrl;
+      const deliveryText = result.state === 'complete' && text.endsWith(fullReplySuffix)
+        ? text.slice(0, -fullReplySuffix.length).slice(0, 4096 - handoff.length).replace(/[\uD800-\uDBFF]$/, '') + handoff
+        : text;
+      await reply(job, deliveryText, payload.owner, payload.connectionId, result.state === 'complete' ? '✅' : '❌');
       return;
     }
     if (payload.text?.trim().toUpperCase() === 'STOP' || payload.text?.trim().toLowerCase() === '/disconnect') {

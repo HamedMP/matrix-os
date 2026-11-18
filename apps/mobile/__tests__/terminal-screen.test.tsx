@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+jest.mock("expo/fetch", () => ({ fetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+jest.mock("@clerk/clerk-expo", () => { const getToken = async () => "fixture-owner-clerk"; return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) }; });
+
 const mockPush = jest.fn();
 const mockUseComputerTerminals = jest.fn();
 const mockCreateSession = jest.fn();
@@ -116,6 +119,19 @@ describe("drawer terminal screen", () => {
 
     await React.act(async () => resolveRefresh?.());
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+  });
+
+  it("does not show a routine confirmations entry for the selected Computer", () => {
+    const current = mockUseComputerTerminals();
+    mockUseComputerTerminals.mockReturnValue({
+      ...current,
+      computer: { handle: "fixture-pc", runtimeSlot: "review1", gatewayPath: "/vm/fixture-pc?runtime=review1" },
+    });
+
+    render(<TerminalScreen />);
+
+    expect(screen.getByText("review-pr-42")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
   });
 
   it("renders VPS sessions and uses semantic status colors", () => {

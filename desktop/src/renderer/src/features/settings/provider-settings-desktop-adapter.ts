@@ -24,8 +24,7 @@ import { invoke } from "../../lib/operator";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import { isValidShellSessionName, readShellSessions, useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
-import { useTabs } from "../../stores/tabs";
-import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import { openTerminalSession } from "../mission-control/navigation-roots";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
@@ -129,9 +128,7 @@ export async function openExistingProviderTerminalSession(
     return matches.length === 1 ? matches[0] : undefined;
   };
   const openSession = (session: ShellSessionSummary) => {
-    const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-    useDesktopSurfaces.getState().activateSurface(tabId);
-    useTabs.getState().requestTerminalSession(session.name);
+    openTerminalSession(session.name);
     return true;
   };
   let sequence = useShellSessions.getState().loadSequence;

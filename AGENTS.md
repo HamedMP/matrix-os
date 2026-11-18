@@ -477,7 +477,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Merge stacks through GitHub's atomic stack operation:**
   `gh stack merge <stack-number> --yes --squash`. Verify the stack targets `main`,
   its bottom-to-top membership and exact head SHAs, and current-head Greptile
-  `5/5` (or a carried-over `5/5`, see below), zero unresolved review blockers, ready for review (not a draft), and passing CI for every
+  `5/5` (or a carried-over `5/5`, see below), the risk-tiered approval below, zero unresolved review blockers, ready for review (not a draft), and passing CI for every
   included PR. Native stack merge lands the included layers into the stack base
   together; child PR bases correctly remain their preceding layer.
 - **Use `gh pr merge` only for a standalone PR targeting `main`.** Verify
@@ -501,6 +501,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
 - **Keep native PR stacks bounded** -- plan for about 5-6 PRs per stack; 10 is the hard maximum, including setup, docs, and rollout layers. Count before planning or adding layers. Consolidate closely related work within per-PR size limits or use sequential follow-on stacks after the previous stack merges. See `docs/dev/stacked-prs.md`.
 - **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
+- **Merge approval is risk-tiered.** A trusted `5/5` (current head or accepted by the carry-over check) with Greptile's own `APPROVED` review on that same reviewed commit (Low/Medium risk) satisfies the required approval; restacks keep it without a fresh review. A `5/5` without Greptile's approval is High/Critical risk: report "needs human approval" and wait for a repository writer to approve. Agents never self-approve, never use admin bypass to skip approval, and never treat a merge request as approval of a High/Critical PR. Risk definitions and settings: `docs/dev/review-pipeline.md#risk-tiered-merge-approval`.
 - **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
 
@@ -542,9 +543,10 @@ Read these on demand, not every session:
 
 - `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
-- `docs/dev/fast-ci.md` -- when using the `fast-ci` label, reading Linux CI checks (skipped hosted lanes, `Dedicated CI Results`), or merging a fast-ci PR
+- `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/agent-plugins.md` -- shared developer agent plugins (pstack) for Claude Code and Codex
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
@@ -635,6 +637,15 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
 - Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
+### Unblock tickets
+
+- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
+- It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
+
+### Daily update
+
+- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
@@ -648,5 +659,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current feature plan: specs/2689-collaboration-preview-pair/plan.md
+Current feature plan: specs/2691-email-app-invitations/plan.md
 <!-- SPECKIT END -->

@@ -293,6 +293,8 @@ export interface CollaborationRunBindingsTable {
   harness: "codex" | "claude_code";
   model_id: string;
   policy_revision: number;
+  provider_settings_revision: number | null;
+  route_generation: string | null;
   audience_generation: number;
   execution_root: JsonValue;
   root_fingerprint: string;

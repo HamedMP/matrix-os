@@ -1,5 +1,7 @@
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
+import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -7,7 +9,13 @@ import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
-import { admitChatTurn } from "./turn-admission-repository.js";
+import {
+  NativeScheduledSourceSchema, readNativeScheduledCheckpoint, readNativeScheduledSource,
+  type NativeScheduledCheckpoint, type NativeScheduledSource, type NativeScheduledSourceRecord,
+} from "./native-scheduled-source.js";
+import type { ClaudeNativeRecoveryAdmissionFence } from "./claude-native-recovery-store.js";
+import { SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
+import { admitNativeScheduledChatTurn, admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
@@ -15,6 +23,7 @@ import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-ac
 import { createOwnerToolOutputProjection, stripProtectedCommandPreviews } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
+  CanonicalChatContentSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
@@ -27,6 +36,7 @@ import {
   CollaborationIdSchema,
   TerminalSessionIdSchema,
   type CanonicalChatCollaboration,
+  type CanonicalChatContent,
   type CanonicalChatMessage,
   type CanonicalChatQueuedTurn,
   type CanonicalChatModelSelection,
@@ -90,6 +100,7 @@ import {
   type SharedAiCapability,
   type SharedAiCapabilityProjection,
   type CanonicalSharedProviderAuthority,
+  type SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -127,6 +138,7 @@ export type {
   SharedAiCapability,
   SharedAiCapabilityProjection,
   CanonicalSharedProviderAuthority,
+  SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
@@ -419,6 +431,11 @@ export class ChatRepository {
     this.queue.setSharedAuthorizer(authorize);
   }
 
+  /** Installed with the shared runtime so queued project work can revalidate its exact owner route. */
+  setSharedProviderAuthorityResolver(resolve: SharedProviderAuthorityResolver): void {
+    this.queue.setSharedProviderAuthorityResolver(resolve);
+  }
+
   constructor(
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
@@ -513,6 +530,14 @@ export class ChatRepository {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
   }
 
+  /** Server-only source projection, committed independently of canonical target work. */
+  async appendRoutineReceipt(ownerId: string, input: AppendRoutineReceiptInput) {
+    return this.transact(trx => appendRoutineReceiptWithin(trx, ownerId, input,
+      (executor, owner, revision, message) => this.appendOutbox(
+        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, message,
+      )));
+  }
+
   async appendOutboxEvent(
     ownerInput: ChatOwner,
     chatId: string,
@@ -557,6 +582,7 @@ export class ChatRepository {
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
+    committedReceipt?: CanonicalChatMessage,
   ): Promise<void> {
     if (typeof payload.runId === "string") {
       const queuedRun = await executor.selectFrom("chat_queued_turns")
@@ -595,13 +621,16 @@ export class ChatRepository {
         }
       }
     }
-    const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
-      (projectionOwner, projectionChatId) => hydrateRecord(
-        executor,
-        projectionOwner,
-        projectionChatId,
-        collaborationProjection,
-      ));
+    const getRecord = (projectionOwner: ChatOwner, projectionChatId: string) =>
+      hydrateRecord(executor, projectionOwner, projectionChatId, collaborationProjection);
+    let captured: CanonicalChatContent | undefined;
+    if (committedReceipt) {
+      // Receipt messages have no foreground Run or turn. Publish the exact append.
+      const record = await getRecord(owner, chatId);
+      if (record) captured = CanonicalChatContentSchema.parse({ record, messages: [committedReceipt] });
+    } else {
+      captured = await captureChatContent(executor, owner, chatId, eventType, payload, getRecord);
+    }
     const streamContent = captured && new TextEncoder().encode(JSON.stringify(captured)).byteLength < 512 * 1024 - 2048
       ? captured : undefined;
     const failureTelemetry = captureChatFailureMetadata(eventType, captured, payload.runId, payload.failureDiagnostic);
@@ -1017,6 +1046,52 @@ export class ChatRepository {
     }, ownerInput, input);
   }
 
+  /** Server-only source lookup; the write path revalidates it under the same Chat lock. */
+  async getNativeScheduledSource(ownerInput: ChatOwner, chatId: string, sourceValue: NativeScheduledSource): Promise<NativeScheduledSourceRecord | null> {
+    const owner = validateOwner(ownerInput);
+    const source = NativeScheduledSourceSchema.parse(sourceValue);
+    CanonicalChatIdSchema.parse(chatId);
+    return this.transact(async trx => {
+      const chat = await selectOwnedChat(trx, owner, chatId);
+      if (!chat) return null;
+      return { chat: await toPrincipalRecord(trx, owner, chat), ...await readNativeScheduledSource(trx, owner, chat, source) };
+    });
+  }
+
+  /** Read a recoverable run without fabricating a scheduled callback or granting execution. */
+  async getClaudeNativeRecoveryCheckpoint(
+    ownerInput: ChatOwner,
+    chatId: string,
+    checkpoint: NativeScheduledCheckpoint,
+    { includeHistory = false } = {},
+  ): Promise<(NativeScheduledSourceRecord & {
+    history?: { chatId: string; throughSeq: number; messages: CanonicalChatMessage[] };
+  }) | null> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    return this.transact(async trx => {
+      await sql`SET LOCAL lock_timeout = '2s'`.execute(trx);
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      if (!chat) return null;
+      const source = await readNativeScheduledCheckpoint(trx, owner, chat, checkpoint, { requireLatestRun: true });
+      const record = { chat: await toPrincipalRecord(trx, owner, chat), ...source };
+      if (!includeHistory) return record;
+      const throughSeq = record.chat.chat.messageCount;
+      const rows = await trx.selectFrom("chat_messages").selectAll()
+        .where("chat_id", "=", chatId).where("seq", "<=", throughSeq).where("state", "=", "committed")
+        .where("role", "in", ["user", "assistant"]).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
+      return { ...record, history: { chatId, throughSeq, messages: rows.reverse().map(toMessage) } };
+    });
+  }
+
+  async admitNativeScheduledTurn(owner: ChatOwner, input: AdmitTurnInput, source: NativeScheduledSource,
+    recovery?: ClaudeNativeRecoveryAdmissionFence): Promise<AdmittedTurn> {
+    return admitNativeScheduledChatTurn({ transact: operation => this.transact(operation),
+      appendOutbox: (...args) => this.appendOutbox(...args), selectOwnedChat, hydrateAdmission,
+      toPrincipalRecord, activeRunQuery, postgresUniqueConstraint, preview }, owner, input, source, recovery);
+  }
+
   async enqueueQueuedTurn(
     owner: ChatOwner,
     input: EnqueueQueuedTurnInput,
@@ -1428,7 +1503,7 @@ export class ChatRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
-  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
+  }) {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }
 
@@ -1502,6 +1577,7 @@ export class ChatRepository {
     const owner = validateOwner(ownerInput);
     const rows = await this.kysely.selectFrom("chat_outbox").selectAll()
       .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chat_id")))
       .where("cursor", ">", Math.max(0, Math.trunc(input.afterCursor)))
       .orderBy("cursor").limit(Math.max(1, Math.min(100, Math.trunc(input.limit)))).execute();
     return rows.map(toOutbox);
@@ -1519,6 +1595,7 @@ export class ChatRepository {
       const cursorExists = await this.kysely.selectFrom("chat_outbox").select("cursor")
         .where("owner_type", "=", owner.type)
         .where("owner_id", "=", owner.ownerId)
+        .where(publicChatIdPredicate(sql.ref("chat_id")))
         .where("cursor", "=", afterCursor)
         .executeTakeFirst();
       if (!cursorExists) return { events: [], gap: true };
@@ -1531,6 +1608,7 @@ export class ChatRepository {
     if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
       const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .where(publicChatIdPredicate(sql.ref("chat_id")))
         .orderBy("cursor", "desc").limit(1).executeTakeFirst();
       if (latest && Number(latest.cursor) > (nextCursor ?? 0)) {
         return { events: [], gap: true, nextCursor: Number(latest.cursor) };
@@ -1557,6 +1635,7 @@ export class ChatRepository {
       .selectAll("chats")
       .distinct()
       .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chats.id")))
       .where("chat_messages.state", "=", "committed")
       .where(sql<boolean>`to_tsvector('simple', chat_messages.search_text) @@ plainto_tsquery('simple', ${searchText})`);
     if (projectId !== undefined) {

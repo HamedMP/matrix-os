@@ -1,3 +1,4 @@
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { importedChatAssetContentPath, type CanonicalChatMessage } from "@matrix-os/contracts";
 import { filePreviewContentUrl } from "@matrix-os/ui";
 import type {
@@ -239,11 +240,11 @@ export function messageWork(message: CanonicalChatMessage, context?: ReadonlyMap
       risk: request.risk,
       timestamp,
       ...(resolved ? {} : {
-        actions: request.allowedDecisions.map((decision) => ({
+        actions: request.allowedDecisions.filter(decision => !RoutineActionIdSchema.safeParse(approvalId).success || decision === "approve").map((decision) => ({
           kind: "approval" as const,
           requestId: approvalId,
           decision,
-          label: decision === "approve_for_session"
+          label: RoutineActionIdSchema.safeParse(approvalId).success ? "Confirm in browser" : decision === "approve_for_session"
             ? "Approve for session"
             : decision === "approve" ? "Approve" : decision === "decline" ? "Decline" : "Cancel",
         })),

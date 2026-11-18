@@ -102,6 +102,11 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   "apps/whiteboard/dist/index.html": "whiteboard",
 };
 
+/** True for a built-in OS-view app (Chat, Files, Notes, Whiteboard, …): never one the owner made. */
+export function isOsViewFixedAppPath(path: string): boolean {
+  return Object.hasOwn(OS_VIEW_FIXED_APP_ID_BY_PATH, path);
+}
+
 export function osViewFixedAppAppearanceForPath(path: string) {
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
   return id ? OS_VIEW_FIXED_APP_APPEARANCES[id] : undefined;

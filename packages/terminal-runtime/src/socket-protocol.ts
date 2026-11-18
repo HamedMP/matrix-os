@@ -2,6 +2,7 @@ import {
   ProjectIdSchema,
   SafeDisplayStringSchema,
   TerminalPaneActionSchema,
+  TerminalNativeHostRefSchema,
   TerminalRefSchema,
   TerminalTabIdSchema,
   TerminalWorkspaceIdSchema,
@@ -11,13 +12,37 @@ import { TERMINAL_RUNTIME_PROTOCOL_ERROR_CODES } from "./errors.js";
 import { TerminalCommandStateRefSchema } from "./terminal-command-state.js";
 import { TerminalCommandResultRefSchema } from './terminal-command-state.js';
 import { TerminalEndedTabArchiveRequestSchema } from "./terminal-ended-tab-archive.js";
+import { TerminalScreenCaptureRequestSchema } from "./screen-capture.js";
 
 const RequestIdSchema = z.string().regex(/^req_[0-9a-f]{32}$/);
 const RequestBase = { version: z.literal(1), requestId: RequestIdSchema };
 
+const NativeTabAdmissionSchema = z.object({
+  workspaceId: TerminalWorkspaceIdSchema, tabId: TerminalTabIdSchema,
+  name: SafeDisplayStringSchema, cwd: z.string().max(4096), nativeHost: TerminalNativeHostRefSchema,
+  agent: z.object({ providerId: z.string().min(1).max(80).regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),
+    threadId: z.string().regex(/^thread_[A-Za-z0-9_-]+$/).optional() }).strict().optional(),
+}).strict();
+const NativeTabCompletionSchema = TerminalRefSchema.extend({
+  expectedIncarnation: z.string().regex(/^ti_[a-f0-9]{32}$/), nativeHost: TerminalNativeHostRefSchema, attach: z.boolean(),
+  settlementToken: z.string().regex(/^[a-f0-9]{64}$/), outcome: z.enum(["never-dispatched", "settled", "uncertain"]),
+}).strict();
+
 export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ ...RequestBase, operation: z.literal("PrepareNativeTab"), input: NativeTabAdmissionSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("CompleteNativeTab"), input: NativeTabCompletionSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ListWorkspaces"), input: z.object({}).strict() }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("ListAgentStatuses"), input: z.object({}).strict() }).strict(),
+  z.object({
+    ...RequestBase,
+    operation: z.literal("ResolvePane"),
+    input: z.object({
+      sessionName: z.string().regex(/^matrix-(?:w-|rt_)[0-9a-f]{32}$/),
+      paneId: z.string().regex(/^[0-9]{1,9}$/),
+    }).strict(),
+  }).strict(),
   z.object({ ...RequestBase, operation: z.literal("GetCommandState"), input: TerminalCommandStateRefSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("CaptureScreen"), input: TerminalScreenCaptureRequestSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal('GetCommandResult'), input: TerminalCommandResultRefSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ArchiveEndedTab"), input: TerminalEndedTabArchiveRequestSchema }).strict(),
   z.object({
@@ -34,6 +59,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
       name: SafeDisplayStringSchema,
       cwd: z.string().max(4096),
       accessScope: z.enum(["owner", "chat"]).optional(),
+      nativeHost: TerminalNativeHostRefSchema.optional(),
       command: z.array(z.string().min(1).max(4096)).min(1).max(128).optional(),
       agent: z.object({
         providerId: z.string().min(1).max(80).regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/),

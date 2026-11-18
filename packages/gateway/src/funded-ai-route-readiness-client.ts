@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { IsolatedChatEnvelopeSchema, FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRouteReadinessRequestSchema, JEV_MODEL_ID, type FundedAiRouteReadinessReceipt } from "@matrix-os/contracts";
+import { IsolatedChatEnvelopeSchema, FUNDED_AI_READINESS_CATALOG, FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRouteReadinessRequestSchema, JEV_MODEL_ID, type FundedAiRouteReadinessReceipt } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
 import { createCanonicalPhaseReadiness, type CanonicalPhaseReadinessOptions } from "./chat/canonical-phase-readiness.js";
 import { readBoundedFundedJson } from "./funded-ai-funding-summary-client.js";
@@ -34,6 +34,7 @@ export function createFundedAiRouteReadinessClient(
       const response = await fetchFn(config.routeReadinessUrl, {
         method: "POST", redirect: "error", signal,
         headers: { authorization: `Bearer ${config.runtimeAuthToken}`, "content-type": "application/json", accept: "application/json",
+          ...(options.modelId === undefined ? { [FUNDED_AI_READINESS_CATALOG.header]: FUNDED_AI_READINESS_CATALOG.version } : {}),
           ...(bound ? { "x-matrix-isolated-chat-phase": phase!.phaseId,
             ...(scoped.canonical ? { "x-matrix-isolated-chat-config": scoped.digest! } : {}) } : {}) },
         body: JSON.stringify(FundedAiRouteReadinessRequestSchema.parse({ modelId: options.modelId })),

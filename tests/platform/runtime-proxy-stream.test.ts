@@ -29,6 +29,22 @@ describe("runtime proxy response streaming", () => {
     expect(shouldReleaseRuntimeProxyTimeout("GET", "/api/hosted-bots/runtime/api/bots")).toBe(false);
   });
 
+  it("replays a proxied GET once when its pooled VPS connection was already closed", async () => {
+    // Fault: with keep-alive on, a socket the VPS edge dropped surfaced as a 502 for a page load.
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const stale = new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(stale).mockResolvedValueOnce(new Response("shell"));
+    const response = await fetchRuntimeProxy("https://runtime.invalid/shared/app/x", { method: "GET" }, 30_000, false);
+    expect(await response.text()).toBe("shell");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValue(stale);
+    await expect(fetchRuntimeProxy("https://runtime.invalid/api/files", { method: "POST", body: "{}" }, 30_000, false))
+      .rejects.toThrow("fetch failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("clears the upstream timeout after media response headers arrive", async () => {
     vi.useFakeTimers();
     let requestSignal: AbortSignal | undefined;

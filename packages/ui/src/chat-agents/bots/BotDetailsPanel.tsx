@@ -1,3 +1,4 @@
+import { RoutineDestinationSection } from "./RoutineDestinationSection.js";
 import { useState } from "react";
 import {BotTaskExecutorControl} from "./BotTaskExecutorControl.js";
 import { botExecutionPresentation, isAutomaticBotSelection } from '@matrix-os/contracts';
@@ -11,8 +12,8 @@ import { BotTaskStatus } from "./BotTaskStatus.js";
 import { BotAuthorityPanel } from './BotAuthorityPanel.js';
 import type { BotClient } from './client.js';
 
-export function BotDetailsPanel({ agent, agentId, authority, bots, catalog, catalogLoading, pending, onModelChange, onClose, onChanged, onEdit, tasks = [], onSetup, onRefreshCatalog, hosted = false }: {
-  tasks?: readonly BotTaskSummary[]; onSetup?: () => void; onRefreshCatalog?: () => void;
+export function BotDetailsPanel({ chatId, agent, agentId, authority, bots, catalog, catalogLoading, pending, onModelChange, onClose, onChanged, onEdit, tasks = [], onSetup, onRefreshCatalog, hosted = false }: {
+  chatId?: string; tasks?: readonly BotTaskSummary[]; onSetup?: () => void; onRefreshCatalog?: () => void;
   hosted?: boolean; agent: ChatAgent | null; agentId:string; authority: BotAuthorityView | null; bots: BotClient; catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   pending: boolean; onModelChange(selection: CanonicalChatModelSelection): void; onClose(): void; onChanged(): void; onEdit(): void;
 }) {
@@ -40,6 +41,7 @@ export function BotDetailsPanel({ agent, agentId, authority, bots, catalog, cata
       <button type='button' aria-label='Close bot details' className={chatAgentButtonClass} onClick={() => { setModelDraft(null); onClose(); }}>×</button>
     </header>
     <section className='grid gap-2'><div className='flex items-center justify-between'><h4 className='text-xs font-semibold'>Instructions</h4><button type='button' className='text-xs underline underline-offset-2' disabled={!agent} onClick={() => { setModelDraft(null); onEdit(); }}>Edit bot</button></div><p className='whitespace-pre-wrap text-sm leading-6'>{agent?.instructions ?? "Bot instructions are unavailable."}</p></section>
+    {chatId ? <RoutineDestinationSection client={bots.routineDestination ?? null} botId={agentId} chatId={chatId} eligible={Boolean(agent?.recipeRef && !agent.archived)}/> : null}
     {tasks.length ? <details className="text-xs"><summary className="cursor-pointer font-semibold">Task history</summary><ul className="mt-2 grid gap-2">{tasks.map(task => <li key={task.taskId}><BotTaskStatus task={task}/><time className="text-xs" style={chatAgentMutedStyle} dateTime={task.updatedAt}>{new Date(task.updatedAt).toLocaleString()}</time></li>)}</ul></details> : null}
     {agent && !agent.recipeRef ? <><p className='text-xs' style={chatAgentMutedStyle}>This bot uses its saved runtime and request permissions. Recipe task, app access and memory controls are unavailable for this bot.</p>{modelDetails}</> : authority ? <BotAuthorityPanel compact title="Apps" beforeMemory={modelDetails} view={authority} onRevoke={grantId=>bots.revoke(agentId,grantId)} onMemory={(itemId, action, input)=>bots.memory(agentId,itemId,action,input)} onChanged={onChanged}/> : <><p role='status' className='text-xs' style={chatAgentMutedStyle}>Loading access and memory…</p>{modelDetails}</>}
   </aside>;

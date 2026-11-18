@@ -138,7 +138,7 @@ export function CopyAction({
           "inline-flex size-6 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]",
           className,
         )}
-        style={{ color: feedback === "failed" ? "var(--danger)" : "var(--text-tertiary)" }}
+        style={{ color: feedback === "failed" ? "var(--danger-text)" : "var(--text-tertiary)" }}
         onClick={() => void copy()}
       >
         {feedback === "copied" ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}

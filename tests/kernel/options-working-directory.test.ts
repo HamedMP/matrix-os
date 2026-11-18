@@ -78,7 +78,7 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined);
   });
 
   it("registers owner audio transcription only from an injected managed dependency", async () => {
@@ -91,6 +91,21 @@ describe("kernel working directory", () => {
       "/home/matrix/home",
       undefined,
       ownerAudioTranscriber,
+      undefined,
     );
+  });
+
+  // Fault detected: the kernel is offered terminal tools it cannot call, or never gets them.
+  it("registers terminal tools only when the gateway injects them", async () => {
+    const terminalTools = {
+      list: vi.fn(), templates: vi.fn(), run: vi.fn(), read: vi.fn(), send: vi.fn(),
+      keys: vi.fn(), interrupt: vi.fn(), wait: vi.fn(),
+    };
+    const withoutTools = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    const withTools = await kernelOptions({ db, homePath: "/home/matrix/home", terminalTools: terminalTools as never });
+    expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__terminal_run");
+    expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_run");
+    expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_wait");
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools);
   });
 });

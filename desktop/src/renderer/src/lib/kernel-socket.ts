@@ -48,6 +48,18 @@ const BACKOFF_MAX_MS = 30_000;
 const OFFLINE_AFTER_FAILURES = 3;
 const MAX_FRAME_CHARS = 1_000_000;
 
+function closeOnDispose(socket: WebSocketLike): void {
+  socket.onopen = null;
+  try {
+    socket.close();
+  } catch (err: unknown) {
+    console.warn(
+      "[kernel-socket] close on dispose failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 const requestIdField = z.string().min(1).max(256).optional();
 
 export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
@@ -257,13 +269,13 @@ export class KernelSocket {
       socket.onmessage = null;
       socket.onclose = null;
       socket.onerror = null;
-      try {
-        socket.close();
-      } catch (err: unknown) {
-        console.warn(
-          "[kernel-socket] close on dispose failed:",
-          err instanceof Error ? err.message : err,
-        );
+      if (socket.readyState === WS_CONNECTING) {
+        // Closing mid-handshake makes the browser log "WebSocket is closed
+        // before the connection is established"; close once it opens instead.
+        // A handshake that fails needs no close.
+        socket.onopen = () => closeOnDispose(socket);
+      } else {
+        closeOnDispose(socket);
       }
     }
     this.setState("offline");

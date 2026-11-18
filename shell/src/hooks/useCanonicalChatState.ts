@@ -20,6 +20,7 @@ import {
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
   canonicalChatApprovals,
+  canonicalChatDisplayedIncomingSeq,
   canonicalChatExecutionControls,
 } from "@matrix-os/contracts";
 import {
@@ -45,7 +46,7 @@ import {
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitShellChatTurn } from "./canonical-chat-turn-admission";
+import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -65,6 +66,17 @@ function conversationMeta(record: ChatNavigationRecord) {
     createdAt: Date.parse(record.chat.createdAt),
     updatedAt: Date.parse(record.chat.activityAt ?? record.chat.createdAt),
   };
+}
+
+function canUseProjectSkillRoot(detail: CanonicalChatDetailResponse | null): boolean {
+  if (!detail?.record.projectId || detail.record.chat.collaboration?.mode === "shared") return false;
+  const activeRunId = detail.record.activeRun?.runId;
+  if (activeRunId) {
+    const root = detail.runs.find(run => run.id === activeRunId)?.executionRoot;
+    if (root?.kind !== "project" || root.projectId !== detail.record.projectId) return false;
+  }
+  const latestRoot = detail.runs.at(-1)?.executionRoot;
+  return !latestRoot || latestRoot.kind === "project";
 }
 
 function collaborationViewFromLocation(pathname: string, search = ""): ChatCollaborationView | null {
@@ -163,8 +175,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   // Scoped to the computer and owner it was picked on, so it never follows a runtime switch.
   const [draftProject, setDraftProject] = useState<{ identity: string; projectId: string } | null>(null);
   const draftProjectId = draftProject?.identity === navigationIdentity ? draftProject.projectId : undefined;
+  const draftProjectRef = useRef(draftProject);
   const setDraftProjectId = useCallback((projectId: string | undefined) => {
-    setDraftProject(projectId ? { identity: navigationIdentity, projectId } : null);
+    const next = projectId ? { identity: navigationIdentity, projectId } : null;
+    draftProjectRef.current = next;
+    setDraftProject(next);
   }, [navigationIdentity]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -420,13 +435,30 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setSafeError("Choose an available harness and model.");
       return false;
     }
+    const sourceChatId = activeChatId;
+    const projectSkillProjectId = options.projectSkillProjectId;
+    const currentProjectSkillScope = () => {
+      if (!projectSkillProjectId) return true;
+      if (activeChatIdRef.current !== sourceChatId) return false;
+      if (sourceChatId) {
+        const current = detailRef.current;
+        return current?.record.projectId === projectSkillProjectId && canUseProjectSkillRoot(current);
+      }
+      return draftProjectRef.current?.identity === navigationIdentity
+        && draftProjectRef.current.projectId === projectSkillProjectId;
+    };
+    if (!currentProjectSkillScope()) {
+      setSafeError("The selected project skill is unavailable in this Chat.");
+      return false;
+    }
     submittingRef.current = true;
     latestAdmissionId.current = undefined;
-    const sourceChatId = activeChatId;
     setSubmitting(true);
     setSafeError(null);
     const send = async () => {
       const uploadedReferences: string[] = [];
+      const removeUploads = () => Promise.allSettled(uploadedReferences.map(reference => client.deleteAttachment(reference)));
+      const matchesProjectSkill = (projectId?: string) => currentProjectSkillScope() && (!projectSkillProjectId || projectId === projectSkillProjectId);
       let turnAdmitted = false;
       let admissionAttempted = false;
       let draftRequestId: string | undefined;
@@ -456,7 +488,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             currentSelection: selection,
             ...(draftProjectId ? { projectId: draftProjectId } : {}),
           });
-          if (!isCurrent()) return false;
+          if (!isCurrent() || !matchesProjectSkill(record.projectId)) return false;
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
         const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
@@ -468,10 +500,15 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return reference;
         }));
         if (!isCurrent()) return false;
+        if (!matchesProjectSkill(record.projectId)) {
+          await removeUploads();
+          return false;
+        }
         const failedUpload = uploadResults.find((result) => result.status === "rejected");
         if (failedUpload?.status === "rejected") throw failedUpload.reason;
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
+        record = advanceChatRecordForRoutineReceipts(record, detailRef.current);
         admissionAttempted = true;
         const parts: CanonicalChatMessagePart[] = [
           ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),
@@ -481,9 +518,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         const input = {
           clientRequestId: draftRequestId ?? options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
           parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
+          ...(projectSkillProjectId ? { executionRoot: { kind: "project" as const, projectId: projectSkillProjectId } } : {}),
         };
         const requestScope = record.chat.id;
-        let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
+        let operation = record.activeRun && (options.resources?.length || projectSkillProjectId) ? "queue" as const : "send" as const;
         {
           const { clientRequestId: _generatedId, baseRevision: _revision, ...semanticInput } = input;
           const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, draftRequestId ?? options.clientRequestId);
@@ -546,7 +584,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         if (!isCurrent()) return false;
         const definitelyUnadmitted = !admissionAttempted || isDefinitiveCanonicalChatRejection(error);
         if (!turnAdmitted && definitelyUnadmitted && uploadedReferences.length > 0) {
-          await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
+          await removeUploads();
         }
         if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
@@ -601,10 +639,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [activeChatId, client, loadDetail, isCurrent]);
 
-  const newChat = useCallback(async () => {
+  const newChat = useCallback(async (projectId?: string) => {
     if (!isCurrent()) return;
     draftSendAttempt.current = null;
-    setDraftProjectId(undefined);
+    setDraftProjectId(projectId);
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -617,6 +655,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const switchConversation = useCallback((chatId: string) => {
     if (!isCurrent()) return;
+    if (activeChatIdRef.current === chatId) {
+      void loadDetail(chatId);
+      return;
+    }
     setDraftProjectId(undefined);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
@@ -626,7 +668,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, [setActiveChatId, setDraftProjectId, isCurrent]);
+  }, [setActiveChatId, setDraftProjectId, isCurrent, loadDetail]);
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;
@@ -887,7 +929,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: selectedDetail?.record.readState,
-    displayedThroughSeq: Math.max(0, ...(selectedDetail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    displayedThroughSeq: canonicalChatDisplayedIncomingSeq(selectedDetail?.messages ?? []),
     updateReadState,
     messages,
     sessionId: activeChatId,
@@ -904,10 +946,12 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     composerIdentity,
     isCurrentAuthority: isCurrent,
     botEventRevision,
+    routineOriginChat: selectedDetail?.record.chat,
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
     steerQueuedTurn,
     chatProjectId: activeChatId ? activeRecord?.projectId : draftProjectId,
+    projectSkillRootAvailable: activeChatId ? canUseProjectSkillRoot(selectedDetail) : Boolean(draftProjectId),
     setChatProject,
     canSteerQueuedTurns: selectedDetail?.runs.find((run) => run.id === selectedDetail.record.activeRun?.runId)?.capabilitySnapshot.steering === "same_run",
     providerSelection: selectedDetail?.record.chat.currentSelection,

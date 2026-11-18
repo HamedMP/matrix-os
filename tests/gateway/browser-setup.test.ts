@@ -70,4 +70,24 @@ describe("setup composition identity", () => {
     expect(resolveBrowserSetupOwner({ ...env, MATRIX_USER_ID: undefined })).toBe("user_owner");
     for (const overrides of [{ MATRIX_RUNTIME_SLOT: "preview" }, { MATRIX_HANDLE: "pv-2526-test" }, { MATRIX_MACHINE_ID: undefined }, { MATRIX_USER_ID: "other" }, { MATRIX_CLERK_USER_ID: undefined }]) expect(resolveBrowserSetupOwner({ ...env, ...overrides })).toBeUndefined();
   });
+  it("admits only literal opt-in with the exact Dev slot and an owner-bound customer identity", async () => {
+    const { resolveBrowserSetupOwner } = await import("../../packages/gateway/src/browser-lab/setup.js");
+    const dev = { MATRIX_RUNTIME_SLOT: "dev", MATRIX_HANDLE: "dev-computer", MATRIX_MACHINE_ID: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      MATRIX_CLERK_USER_ID: "user_owner", MATRIX_USER_ID: "user_owner", MATRIX_BROWSER_DEV_SETUP: "true" };
+    expect(resolveBrowserSetupOwner(dev)).toBe("user_owner");
+    for (const overrides of [
+      { MATRIX_BROWSER_DEV_SETUP: undefined }, { MATRIX_BROWSER_DEV_SETUP: "1" },
+      { MATRIX_RUNTIME_SLOT: "other" }, { MATRIX_HANDLE: "pr-123" }, { MATRIX_HANDLE: "pv-123-12345678" },
+      { MATRIX_MACHINE_ID: undefined }, { MATRIX_USER_ID: "user_foreign" },
+    ]) expect(resolveBrowserSetupOwner({ ...dev, ...overrides })).toBeUndefined();
+  });
+  it("keeps an existing native Dev runtime inaccessible when its opt-in is withdrawn", async () => {
+    const { isBrowserRuntimeEnabled } = await import("../../packages/gateway/src/browser-lab/setup.js");
+    const dev = { MATRIX_RUNTIME_SLOT: "dev", MATRIX_HANDLE: "dev-computer", MATRIX_MACHINE_ID: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      MATRIX_CLERK_USER_ID: "user_owner", MATRIX_BROWSER_LAB: "true" };
+    expect(isBrowserRuntimeEnabled(dev)).toBe(false);
+    expect(isBrowserRuntimeEnabled({ ...dev, MATRIX_BROWSER_DEV_SETUP: "true" })).toBe(true);
+    expect(isBrowserRuntimeEnabled({ ...dev, MATRIX_BROWSER_DEV_SETUP: "true", MATRIX_BROWSER_LAB: "false" })).toBe(false);
+    expect(isBrowserRuntimeEnabled({ MATRIX_RUNTIME_SLOT: "pv-123-12345678", MATRIX_BROWSER_LAB: "true" })).toBe(true);
+  });
 });

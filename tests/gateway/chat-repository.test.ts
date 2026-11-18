@@ -212,6 +212,7 @@ describe("ChatRepository", () => {
     expect(tables.map((row) => row.table_name).sort()).toEqual([
       "chat_approval_outcomes",
       "chat_attachments",
+      "chat_claude_native_recovery",
       "chat_credentials",
       "chat_deletions",
       "chat_drive_projects",
@@ -244,6 +245,13 @@ describe("ChatRepository", () => {
     `.execute(repository.kysely);
     expect(sequenceIndex.rows).toEqual([
       expect.objectContaining({ indexdef: expect.stringMatching(/UNIQUE INDEX.*run_id.*run_seq/i) }),
+    ]);
+    const recoveryIndex = await sql<{ indexdef: string }>`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'idx_chat_claude_native_recovery_released'
+    `.execute(repository.kysely);
+    expect(recoveryIndex.rows).toEqual([
+      expect.objectContaining({ indexdef: expect.stringMatching(/\(owner_id, deadline_at, chat_id\).*WHERE.*status = 'released'/i) }),
     ]);
   });
 

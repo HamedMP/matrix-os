@@ -1,35 +1,46 @@
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
+import { DESKTOP_PRODUCTION_APP_NAMES, resolveDesktopChannelIdentity } from "../shared/channel-identity";
 
 export interface DesktopIdentityOptions {
   isPackaged: boolean;
   qaIdentity?: string;
   userDataDir?: string;
   appDataDir: string;
+  /** Build-time update channel; selects the installed app identity. */
+  channel?: string;
 }
 
 export interface DesktopIdentity { appName: string; userDataDir?: string }
 
 /** Resolve before Electron readiness and native encrypted storage setup. */
 export function resolveDesktopIdentity(options: DesktopIdentityOptions): DesktopIdentity {
-  if (options.qaIdentity === undefined) return { appName: "Matrix OS", userDataDir: options.userDataDir };
+  if (options.qaIdentity === undefined) {
+    const identity = resolveDesktopChannelIdentity(options.channel);
+    // Canary pins its own profile so it never opens the stable app's data.
+    const userDataDir = options.userDataDir
+      ?? (identity.channel === "canary" ? join(options.appDataDir, identity.appName) : undefined);
+    return { appName: identity.appName, userDataDir };
+  }
   const invalid = () => new Error("QA identity requires an unpackaged app and an independent existing profile directory");
   if (options.isPackaged || options.qaIdentity !== "isolated"
     || !options.userDataDir || !isAbsolute(options.userDataDir)) throw invalid();
 
   let profile: string;
-  let production: string;
-  let logicalProduction: string;
+  const productionPaths: string[] = [];
   try {
     profile = realpathSync(options.userDataDir);
     if (!statSync(profile).isDirectory()) throw invalid();
-    logicalProduction = join(realpathSync(options.appDataDir), "Matrix OS");
-    try {
-      production = realpathSync(logicalProduction);
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      production = logicalProduction;
+    const appDataDir = realpathSync(options.appDataDir);
+    for (const name of DESKTOP_PRODUCTION_APP_NAMES) {
+      const logicalProduction = join(appDataDir, name);
+      productionPaths.push(logicalProduction);
+      try {
+        productionPaths.push(realpathSync(logicalProduction));
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
   } catch (error: unknown) {
     if (!(error instanceof Error)) throw error;
@@ -39,7 +50,7 @@ export function resolveDesktopIdentity(options: DesktopIdentityOptions): Desktop
   const canonical = (path: string) => process.platform === "darwin"
     ? path.normalize("NFC").toLowerCase() : path;
   const contains = (parent: string, child: string) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
-  for (const productionPath of [production, logicalProduction]) {
+  for (const productionPath of productionPaths) {
     const a = canonical(profile), b = canonical(productionPath);
     if (contains(a, b) || contains(b, a)) throw invalid();
   }
@@ -57,7 +68,10 @@ interface IdentityApp {
   setPath(name: "userData", path: string): void;
 }
 
-export function configureDesktopIdentity(app: IdentityApp, options: Pick<DesktopIdentityOptions, "qaIdentity" | "userDataDir">): void {
+export function configureDesktopIdentity(
+  app: IdentityApp,
+  options: Pick<DesktopIdentityOptions, "qaIdentity" | "userDataDir" | "channel">,
+): void {
   const identity = resolveDesktopIdentity({ ...options, isPackaged: app.isPackaged, appDataDir: app.getPath("appData") });
   app.setName(identity.appName);
   if (identity.userDataDir) app.setPath("userData", identity.userDataDir);

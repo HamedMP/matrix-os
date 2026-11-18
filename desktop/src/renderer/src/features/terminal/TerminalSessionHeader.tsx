@@ -135,7 +135,7 @@ export function TerminalSessionDetails({
               borderColor: "var(--border-subtle)",
               background: "var(--bg-selected)",
               color:
-                status === "Active" ? "var(--success)" : "var(--text-tertiary)",
+                status === "Active" ? "var(--success-text)" : "var(--text-tertiary)",
             }}
           >
             {status}

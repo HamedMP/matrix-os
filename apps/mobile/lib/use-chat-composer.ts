@@ -40,9 +40,26 @@ const MAX_UNSENT_MESSAGES = 8;
 const NEW_CHAT_DRAFT_KEY = chatDraftKey(null);
 const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
+/** The interaction and permission modes a turn is sent in. */
+interface TurnModes {
+  interactionMode: string;
+  permissionMode: string;
+}
+
+/**
+ * The model and modes a message was sent with. The computer may have the
+ * message already, and answers a send under its keys only when it is the same
+ * request, so sending it again goes with these, not with what is chosen now.
+ */
+interface SentWith {
+  selection: CanonicalChatModelSelection;
+  turnModes: TurnModes;
+}
+
 interface PendingMessage extends OptimisticUserMessage {
   /** `ComposerState.navigation` when it was sent. */
   navigation: number;
+  sentWith: SentWith;
   /** The project a new chat was to be created in. */
   projectId: string | null;
   /** The idempotency key of the chat a new chat's send creates. */
@@ -59,6 +76,7 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
+  sentWith: SentWith;
   /** Its text and attachments have not gone back into a composer yet -- see `reconcile`. */
   held: boolean;
 }
@@ -127,7 +145,7 @@ function failedSend(message: PendingMessage, held: boolean): FailedSend {
   return {
     chatId: message.chatId, projectId: message.projectId, text: message.text,
     attachments: message.attachments ?? NO_ATTACHMENTS, chatRequestId: message.chatRequestId,
-    turnRequestId: message.turnRequestId, held,
+    turnRequestId: message.turnRequestId, sentWith: message.sentWith, held,
   };
 }
 
@@ -240,7 +258,7 @@ interface ChatComposerOptions {
   catalog: CanonicalProviderCatalog | null;
   /** A recipe's fixed auto route represents its saved coordinator. */
   recipeAutomatic?: boolean;
-  turnModes: { interactionMode: string; permissionMode: string } | null;
+  turnModes: TurnModes | null;
   /** Only applied when the send creates the chat. */
   projectId: string | null;
   /**
@@ -259,6 +277,11 @@ interface Outgoing {
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
+  /**
+   * What the earlier attempt this send repeats under its keys was sent with.
+   * A model or mode chosen since applies from the next new message.
+   */
+  sentWith?: SentWith;
 }
 
 /**
@@ -345,6 +368,7 @@ export function useChatComposer({
     // Felt as the message leaves, before anything has been heard back.
     tapHaptic();
     const { text, attachments: sent, chatRequestId, turnRequestId } = outgoing;
+    const sentWith = outgoing.sentWith ?? { selection, turnModes };
     const optimisticId = `optimistic-${turnRequestId}`;
     // The send's callbacks land later, possibly after a switch to another
     // account or computer has replaced this state.
@@ -356,7 +380,7 @@ export function useChatComposer({
       ...current,
       pending: withPending(current.pending, {
         id: optimisticId, chatId: activeChatId, text, attachments: sent, turnRequestId, chatRequestId,
-        projectId: outgoing.projectId, createdAt: Date.now(), navigation,
+        projectId: outgoing.projectId, createdAt: Date.now(), navigation, sentWith,
       }),
       ...(fromComposer ? {
         drafts: writeChatDraft(current.drafts, draftKey, ""),
@@ -370,9 +394,9 @@ export function useChatComposer({
       baseRevision: detail?.record.chat.revision ?? 0,
       text,
       attachments: sent,
-      selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
+      selection: sentWith.selection,
+      interactionMode: sentWith.turnModes.interactionMode,
+      permissionMode: sentWith.turnModes.permissionMode,
       projectId: outgoing.projectId,
       chatRequestId,
       turnRequestId,
@@ -457,6 +481,7 @@ export function useChatComposer({
       projectId,
       chatRequestId: retried?.chatRequestId ?? canonicalChatRequestId(),
       turnRequestId: retried?.turnRequestId ?? canonicalChatRequestId(),
+      sentWith: retried?.sentWith,
     }, true);
   }, [canSend, draft, attachments, activeChatId, projectId, state.failed, dispatch]);
 
@@ -465,7 +490,7 @@ export function useChatComposer({
     attachmentErrorIn(message.attachments ?? NO_ATTACHMENTS)
   ), [attachmentErrorIn]);
 
-  /** Sends a message that was not sent again, as the same send: same keys, same text and attachments. */
+  /** Sends a message that was not sent again, as the same send: same keys, text, attachments, model and modes. */
   const retrySend = useCallback((id: string) => {
     const message = state.pending.find((pending) => pending.id === id && pending.failed);
     if (!message || message.chatId !== activeChatId || sendHeldBack || retryErrorIn(message)) return;
@@ -475,6 +500,7 @@ export function useChatComposer({
       projectId: message.projectId,
       chatRequestId: message.chatRequestId,
       turnRequestId: message.turnRequestId,
+      sentWith: message.sentWith,
     }, false);
   }, [state.pending, activeChatId, sendHeldBack, retryErrorIn, dispatch]);
 

@@ -13,6 +13,13 @@ import { collaborationExecutionEligibility, allowAllOrganizationPrecondition, co
 const projectScope = "10000000-0000-4000-8000-000000000020";
 const childScope = "10000000-0000-4000-8000-000000000021";
 const at = new Date("2026-09-30T10:00:00Z");
+const ownerProviderAuthority = {
+  driverKind: "claude_code" as const,
+  selection: { instanceId: "claude_code_default", model: "opus" },
+  currentOwnerRoute: true as const,
+  providerAccessSourceId: "claude-profile-owner",
+  routeGeneration: "c".repeat(64),
+};
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("Company Brain Project/Chat row lock ordering on PostgreSQL", () => {
   let fixture: CollaborationTestDatabase;
@@ -46,6 +53,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("Company Brain Project/Ch
       clientRequestId: "75000000-0000-4000-8000-000000000001", requestingActorId: actors.owner, acceptedAuthEpoch: 1,
       payloadHash: "b".repeat(64), expectedRevision: 1, parts: [{ type: "text" as const, text: "Use approved context" }],
       interactionMode: "default", permissionMode: "supervised", acceptedAt: at.toISOString(),
+      canonicalProviderAuthority: ownerProviderAuthority,
       capabilitySnapshot: { revision: "brain-overlap", rootChat: true, attachments: [], resources: [], tools: [], approvals: true,
         userInput: false, resume: true, cancellation: true, steering: "none" as const, worktrees: "none" as const,
         interactionModes: ["default"], permissionModes: ["supervised"] } };
@@ -114,6 +122,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("Company Brain Project/Ch
     };
     const repository = new ChatRepository(fixture.db.withPlugin(plugin));
     repository.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
+    repository.setSharedProviderAuthorityResolver(async () => ownerProviderAuthority);
     if (queueOperation === "claim") await repository.enqueueSharedQueuedTurn(owner, queueRequest());
     armed = true;
     const queue = queueOperation === "enqueue" ? repository.enqueueSharedQueuedTurn(owner, queueRequest())

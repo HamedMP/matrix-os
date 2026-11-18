@@ -167,4 +167,51 @@ describe("Matrix MCP gateway client", () => {
     await expect(client.runCommand({ command: ["large-output"] }))
       .rejects.toMatchObject({ code: "request_failed" });
   });
+
+  // Fault detected: an MCP agent cannot read or steer a canonical terminal tab.
+  it("reaches canonical terminal tab verbs with exact paths, bodies and send timeout", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const client = createMcpGatewayClient(runtime, { fetch: fetcher });
+    const ref = { workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` };
+    const tab = `https://app.matrix-os.com/vm/neo-review/api/terminal/workspaces/${ref.workspaceId}/tabs/${ref.tabId}`;
+
+    await client.readTerminalTab(ref, 40);
+    await client.sendTerminalTab(ref, { text: "recheck" });
+    await client.pressTerminalKeys(ref, ["down", "enter"]);
+    await client.interruptTerminalTab(ref);
+
+    expect(fetcher.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body])).toEqual([
+      [`${tab}/read?runtime=review&lines=40`, "GET", undefined],
+      // The hold stays inside hosted MCP's 50 s downstream limit.
+      [`${tab}/send?runtime=review`, "POST", JSON.stringify({ text: "recheck", maxHoldMs: 30_000 })],
+      [`${tab}/keys?runtime=review`, "POST", JSON.stringify({ keys: ["down", "enter"] })],
+      [`${tab}/interrupt?runtime=review`, "POST", "{}"],
+    ]);
+  });
+
+  it("reports a blocked agent as a conflict without the server's text", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ error: "terminal_agent_blocked" }), { status: 409 },
+    ));
+    const client = createMcpGatewayClient(runtime, { fetch: fetcher });
+    await expect(client.sendTerminalTab({ workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` }, { text: "yes" }))
+      .rejects.toMatchObject({ code: "conflict" });
+  });
+
+  // Fault detected (third review of #3297): hosted MCP aborts a downstream request
+  // after 50 s, so a wait must check in well before that.
+  it("keeps a terminal wait inside hosted MCP's request deadline", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ reason: "timeout" }), { status: 200 }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    await createMcpGatewayClient(runtime, { fetch: fetcher })
+      .waitTerminalTab({ workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` }, { timeoutMs: 40_000 });
+    expect(timeout).toHaveBeenCalledWith(45_000);
+    timeout.mockRestore();
+  });
+
+  it("caps a template launch's readiness wait so it answers inside the hosted deadline", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ tab: {} }), { status: 201 }));
+    await createMcpGatewayClient(runtime, { fetch: fetcher }).runTerminalAgent({ name: "review", cwd: "", template: "reviewer", task: "go" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ template: "reviewer", readyTimeoutMs: 25_000 });
+  });
 });

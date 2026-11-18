@@ -3,12 +3,25 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 
 const projectScope = "10000000-0000-4000-8000-000000000a01";
 const chatScope = "10000000-0000-4000-8000-000000000c01";
 const push = vi.fn();
+
+beforeEach(() => {
+  const values = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+      clear: () => values.clear(),
+    },
+  });
+});
 
 const scope = {
   id: projectScope,
@@ -104,13 +117,14 @@ describe("web Chats shared project", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("shows the project's name, the member's role and its Chats, and opens a Chat in place", async () => {
+  it("shows organization-wide project access without a member role and opens a Chat in place", async () => {
     const openSharedChat = vi.fn();
     renderChatApp({ collaborationView: { kind: "project", scopeId: projectScope }, onOpenSharedChat: openSharedChat });
 
     expect(await screen.findByRole("heading", { name: "collab testing 12PMOct3" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Shared project" })).toBeVisible();
-    expect(screen.getByText(/Editor · can edit/)).toBeVisible();
+    expect(screen.getByText(/Organization-wide project access/)).toBeVisible();
+    expect(screen.queryByText(/Editor|Viewer|read only|can edit/)).toBeNull();
     expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
     expect(screen.queryByText("proj_542a8126")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Release plan/ }));

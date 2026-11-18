@@ -45,7 +45,7 @@ export interface ChatAgentClient {
 
 /** The surface supplies its existing authenticated, timeout-bounded transport. */
 export function createChatAgentClient(request: (
-  path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, options?: { timeoutMs?: number },
+  path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, options?: { timeoutMs?: number; signal?: AbortSignal },
 ) => Promise<unknown>): ChatAgentClient {
   return {
     driveProjects: createChatDriveProjectClient(request),

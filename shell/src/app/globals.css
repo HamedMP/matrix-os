@@ -7,6 +7,7 @@
 @source "../../../packages/ui/src/bots";
 @source "../../../packages/ui/src/chat-agents";
 @source "../../../packages/ui/src/collaboration";
+@source "../../../packages/ui/src/share";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";

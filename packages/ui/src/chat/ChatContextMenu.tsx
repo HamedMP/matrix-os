@@ -6,7 +6,7 @@ import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
 export type ChatContextMenuAction = { label: string; disabled?: boolean; danger?: boolean; onSelect?: () => void; children?: ChatContextMenuAction[] };
 
-const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40";
+const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40";
 function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContextMenuAction[]; zIndex: number; Menu?: typeof ContextMenu | typeof DropdownMenu }) {
   return items.map(item => item.children ? <Menu.Sub key={item.label}>
     <Menu.SubTrigger disabled={item.disabled} className={`${menuItemClass} flex items-center gap-3`}>
@@ -15,7 +15,7 @@ function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContext
     <Menu.Portal><Menu.SubContent className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{zIndex,background:"var(--bg-overlay, var(--popover))",color:"var(--text-primary, var(--popover-foreground))",borderColor:"var(--border-default, var(--border))"}}>
       <MenuActions items={item.children} zIndex={zIndex} Menu={Menu} />
     </Menu.SubContent></Menu.Portal>
-  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger, var(--destructive))"} : undefined}>{item.label}</Menu.Item></Fragment>);
+  </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger-text, var(--destructive-text, var(--danger, var(--destructive))))"} : undefined}>{item.label}</Menu.Item></Fragment>);
 }
 
 export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange, onContextMenuOpenChange }: {
@@ -66,11 +66,11 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
           borderColor: "var(--border-default, var(--border))",
         }}>
           {primaryAction ? <Menu.Item disabled={primaryAction.disabled} onSelect={primaryAction.onSelect}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40">{primaryAction.label}</Menu.Item> : null}
+            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))] data-[disabled]:opacity-40">{primaryAction.label}</Menu.Item> : null}
           {selectedText && <Menu.Item disabled={feedback === "pending"}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent"
+            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
             onSelect={(event) => copy(selectedText, "selected text", event)}>Copy selected text</Menu.Item>}
-          <Menu.Item disabled={feedback === "pending"} className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent"
+          <Menu.Item disabled={feedback === "pending"} className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--accent))]"
             onSelect={(event) => copy(chatId, "chat ID", event)}>Copy chat ID</Menu.Item>
           {feedback && <div className="px-2.5 py-1.5 text-xs" role={feedback === "failed" ? "alert" : "status"}>
             {feedback === "failed" ? `Could not copy ${copyTarget}. Try again.`

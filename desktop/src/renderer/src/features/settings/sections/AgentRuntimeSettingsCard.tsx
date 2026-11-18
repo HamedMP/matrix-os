@@ -147,7 +147,7 @@ function RuntimeOptions({
             </div>
             <div className="mt-3">
               {active ? (
-                <span className="text-xs font-medium" style={{ color: "var(--success)" }}>
+                <span className="text-xs font-medium" style={{ color: "var(--success-text)" }}>
                   {runtime.displayName} is active
                 </span>
               ) : canInstall ? (
@@ -169,7 +169,7 @@ function RuntimeOptions({
                   <SquareTerminal size={13} />Restart {runtime.displayName}
                 </Button>
               ) : selected ? (
-                <span className="text-xs font-medium" style={{ color: "var(--warning)" }}>
+                <span className="text-xs font-medium" style={{ color: "var(--warning-text)" }}>
                   {runtime.displayName} is selected · {statusLabel(runtime.selectionState)}
                 </span>
               ) : (
@@ -481,7 +481,7 @@ export default function AgentRuntimeSettingsCard() {
   if (legacy) {
     return (
       <Card>
-        <span className="text-sm font-medium" style={{ color: "var(--warning)" }}>Runtime update needed</span>
+        <span className="text-sm font-medium" style={{ color: "var(--warning-text)" }}>Runtime update needed</span>
         <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
           This computer keeps Chat model and effort controls, but needs a newer gateway for runtime and provider controls.
         </p>
@@ -502,7 +502,7 @@ export default function AgentRuntimeSettingsCard() {
           </p>
         </div>
       </div>
-      {error ? <span role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
+      {error ? <span role="alert" className="text-xs" style={{ color: "var(--danger-text)" }}>{error}</span> : null}
       <RuntimeOptions
         view={view}
         busy={busy}

@@ -7,6 +7,7 @@
 @source "../../../../../packages/ui/src/bots";
 @source "../../../../../packages/ui/src/chat-agents";
 @source "../../../../../packages/ui/src/collaboration";
+@source "../../../../../packages/ui/src/share";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/instrument-sans/400.css";
@@ -114,6 +115,10 @@ textarea,
   top: env(titlebar-area-y, 0px);
   width: env(titlebar-area-width, 100%);
 }
+/* Windows caption buttons sit right of titlebar-area-width; keep banner text clear of them. */
+.status-banner-windows {
+  padding-right: calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%) + 16px);
+}
 .titlebar-drag {
   -webkit-app-region: drag;
 }
@@ -173,7 +178,7 @@ textarea,
 .hljs-attr,
 .hljs-addition,
 .hljs-template-tag {
-  color: var(--success);
+  color: var(--success-text);
 }
 .hljs-number,
 .hljs-type,

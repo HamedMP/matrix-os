@@ -9,7 +9,27 @@ import {
   sharedAiAdapterFor,
   sharedAiEligibilitySupportsDriver,
 } from "../../packages/gateway/src/collaboration/shared-ai-eligibility.js";
+import { resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import { collaborationExecutionEligibility } from "./collaboration-test-support.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
+
+function ownerRouteSnapshot() {
+  const base = makeAiProviderSnapshot();
+  return {
+    ...base,
+    revision: 7,
+    instances: base.instances.map((instance) => ({
+      ...instance,
+      id: "claude_code_default",
+      driverId: "claude_code",
+    })),
+    active: {
+      providerInstanceId: "claude_code_default",
+      accessSourceId: "matrix_included",
+      modelId: "claude-sonnet-5",
+    },
+  };
+}
 
 describe("shared AI execution eligibility", () => {
   const both = collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] });
@@ -77,6 +97,37 @@ describe("shared AI execution eligibility", () => {
       adapterId: "codex",
       harnessVersion: SCOPE_RUNTIME_CODEX_VERSION,
     })).toThrow();
+  });
+});
+
+describe("current owner Provider Settings route", () => {
+  it("resolves only the exact active instance, source, and model with immutable freshness", () => {
+    expect(resolveCurrentOwnerRoute(ownerRouteSnapshot(), Date.parse("2026-08-29T21:00:01.000Z")))
+      .toMatchObject({
+        settingsRevision: "7",
+        harness: "claude_code",
+        providerInstanceId: "claude_code_default",
+        accessSourceId: "matrix_included",
+        modelId: "claude-sonnet-5",
+        effectiveSubmitMode: "members",
+      });
+  });
+
+  it("fails closed when the active route is absent or unavailable even if another route is ready", () => {
+    const ready = ownerRouteSnapshot();
+    expect(resolveCurrentOwnerRoute({
+      ...ready,
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+    }, Date.parse("2026-08-29T21:00:01.000Z"))).toBeNull();
+
+    const unavailable = {
+      ...ready,
+      accessSources: ready.accessSources.map((source) => source.id === "matrix_included"
+        ? { ...source, state: "disabled" as const, action: "retry" as const, safeReason: "policy" as const }
+        : source),
+      instances: [...ready.instances, { ...ready.instances[0]!, id: "ready_but_not_active" }],
+    };
+    expect(resolveCurrentOwnerRoute(unavailable, Date.parse("2026-08-29T21:00:01.000Z"))).toBeNull();
   });
 });
 

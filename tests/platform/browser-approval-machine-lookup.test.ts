@@ -3,12 +3,12 @@ import { BrowserApprovalMachineLookup } from "../../packages/platform/src/browse
 describe("owned browser approval machine lookup", () => {
   it("uses its own bounded server-timeout pool and releases it on shutdown", async () => {
     const release = vi.fn(), end = vi.fn(async () => {});
-    const query = vi.fn(async (_statement: string, _parameters: unknown[]) => ({ rows: [{ machine_id: "machine_owner", clerk_user_id: "owner", runtime_slot: "pr-1234", status: "running" }] }));
+    const query = vi.fn(async (_statement: string, _parameters: unknown[]) => ({ rows: [{ machine_id: "machine_owner", clerk_user_id: "owner", runtime_slot: "pr-1234", status: "running", provisioning_class: "preview" }] }));
     const factory = vi.fn(() => ({ connect: vi.fn(async () => ({ query, release })), end, on: vi.fn() }));
     const lookup = new BrowserApprovalMachineLookup({ databaseUrl: "postgresql://synthetic.invalid/platform", poolFactory: factory as never });
     expect(factory).toHaveBeenCalledWith(expect.objectContaining({ max: 2, connectionTimeoutMillis: 3000, query_timeout: 5000 }));
-    expect(await lookup.resolveMachine("pr-1234", "pr-1234")).toEqual({ machineId: "machine_owner", clerkUserId: "owner", runtimeSlot: "pr-1234", status: "running" });
-    expect(query.mock.calls[4]?.[0]).toMatch(/^SELECT machine_id,clerk_user_id,runtime_slot,status FROM user_machines/);
+    expect(await lookup.resolveMachine("pr-1234", "pr-1234")).toEqual({ machineId: "machine_owner", clerkUserId: "owner", runtimeSlot: "pr-1234", status: "running", provisioningClass: "preview" });
+    expect(query.mock.calls[4]?.[0]).toMatch(/^SELECT machine_id,clerk_user_id,runtime_slot,status,provisioning_class FROM user_machines/);
     expect(query.mock.calls[4]?.[1]).toEqual(["pr-1234", "pr-1234"]);
     await lookup.close(); expect(end).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledOnce();
     await expect(lookup.resolveMachine("pr-1234", "pr-1234")).rejects.toThrow("Browser approval unavailable");

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
-import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { isRoutineDirectScheduleDisplayBotId, type BotInteraction, type BotRoutineCenterItem, type BotRoutineCenterResponse, type BotRoutineDetailResponse, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
-import { routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
+import { routineTaskChat, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { Button } from "@/components/ui";
 import { ScheduleEditor } from "./ScheduleEditor";
@@ -15,7 +15,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 
 
 /** Keyed by owner + Computer in the route; every read also has a view-generation fence. */
-export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedule }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?: (chatId: string, botId: string) => void | Promise<void>; onNewSchedule?: () => void }) {
+export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedule }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?: (chatId: string, botId?: string) => void | Promise<void>; onNewSchedule?: () => void }) {
   const [archived, setArchived] = useState(false), [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true), [fresh, setFresh] = useState(false), [error, setError] = useState("");
   const [detail, setDetail] = useState<BotRoutineDetailResponse | null>(null), [selected, setSelected] = useState<string | null>(null);
@@ -104,20 +104,21 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
       if (alive.current) { setFresh(false); setError("The schedule could not be changed. Refresh its current revision before trying again."); }
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
-  async function openHistory(chatId: string, botId: string) {
+  async function openHistory(chatId: string, botId?: string) {
     if (!onOpenChat || mutation.current || !alive.current) return;
     mutation.current = true; setBusy(true); setError("");
-    try { await onOpenChat(chatId, botId); }
+    try { await (botId ? onOpenChat(chatId, botId) : onOpenChat(chatId)); }
     catch (failure: unknown) {
       console.warn("[mobile-schedules] Chat unavailable", failure instanceof Error ? failure.name : "UnknownError");
       if (alive.current) setError("This task’s Chat could not be opened. Try again.");
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
   const current = detail?.routine;
+  const taskChat = current ? routineTaskChat(current) : null;
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Create and approve new schedules in a private Bot Chat.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Review scheduled tasks in the Chat where they were requested.</Text>
     {onNewSchedule ? <Button label="New schedule" disabled={busy} onPress={onNewSchedule} /> : null}
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
@@ -128,29 +129,30 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
         <Text accessibilityRole="header" style={styles.heading}>{current.proposal.name}</Text>
         <Text style={styles.text}>{current.proposal.prompt}</Text>
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
-        {onOpenChat?<Button label="Open task Chat" variant="text" disabled={busy} onPress={()=>{void openHistory(current.chatId,current.botId);}}/>:null}
-        <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
+        <Text style={styles.note}>{`${isRoutineDirectScheduleDisplayBotId(current.botId) ? "Matrix Schedules" : `Bot: ${current.botId}`} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
         {current.status !== "archived" ? <View style={styles.row}>
           <Button label={current.status === "active" ? "Pause" : "Resume"} disabled={busy || !fresh || (current.status === "paused" && (!current.targetAvailable || !current.sourceAvailable || current.requiresReview))}
             onPress={() => void control(current, current.status === "active" ? "paused" : "active")} />
           <Button label="Edit" variant="outline" disabled={busy || !fresh || !current.targetAvailable || !current.sourceAvailable} onPress={() => setEditing(true)} />
-          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and cancels the active occurrence. History is kept; this task cannot be resumed.", [
+          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and requests cancellation of any active run. History remains available in Chat.", [
             {text: "Cancel", style: "cancel"}, {text: "Archive", style: "destructive", onPress: () => void control(current, "archived")},
           ])} />
         </View> : null}
+        {taskChat && onOpenChat ? <Button label={taskChat.label} variant="text" disabled={busy} onPress={() => void openHistory(taskChat.chatId, current.originAvailable && current.originChatId === taskChat.chatId ? undefined : current.botId)} /> : null}
+        {(current.originChatId || isRoutineDirectScheduleDisplayBotId(current.botId)) && !current.originAvailable ? <Text style={styles.note}>Source Chat unavailable.</Text> : null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
-      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Ask a private Bot Chat for a timed task, then review its proposal."}</Text> : null}
+      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Ask in a private Chat to schedule a task, then review its proposal in that Chat."}</Text> : null}
       {data.items.map(item => <View key={item.routineId} style={styles.card}>
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>
-        <Text style={styles.note}>{`${routineScheduleCopy(item.proposal.schedule).timezone} · Bot ${item.botId} · ${item.computerId ?? "Computer unavailable"}`}</Text>
+        <Text style={styles.note}>{`${routineScheduleCopy(item.proposal.schedule).timezone} · ${isRoutineDirectScheduleDisplayBotId(item.botId) ? "Matrix Schedules" : `Bot ${item.botId}`} · ${item.computerId ?? "Computer unavailable"}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(item)}`}</Text>
         {item.lastFire ? <Text style={styles.note}>{`Last run: ${item.lastFire.status} · ${date(item.lastFire.scheduledFor)}`}</Text> : null}
       </View>)}

@@ -717,8 +717,39 @@ dashboards.
   close; they are never referenced by channel pointers. Keep any version that an
   active Private Preview still has confirmed.
 
+### Isolated execution origin
+
+GitHub attaches `workflow_dispatch` and scheduled checks to the dispatched
+ref's commit. So that preview deploys and the daily reaper never mark `main`
+red, `preview-vps.yml` can run them on a separate commit:
+
+- `MATRIX_CI_ISOLATED_EXECUTION=true` makes `main` only route scheduled and
+  `main`-dispatched preview requests to `ci-execution/<MATRIX_CI_CONTROLLER_SHA>`.
+- That branch holds one empty child commit of the pinned, reviewed `main`
+  commit: one parent (the pin) and the same tree. Protect `ci-execution/*`
+  against creation, updates and deletion by anyone but the operator.
+- `scripts/ci/execution-origin.mjs`, loaded from the pin, verifies the ref,
+  parent, tree and that the pin is still on `main` before any preview
+  credential is used.
+- With the variable false or unset, the workflow runs from `main` as before
+  (`legacy` mode). Pull-request previews always run on the PR event.
+
+To move the pin: create the child commit and protected branch for the new
+reviewed `main` commit, read back its parent and tree, wait for running
+preview jobs to finish, then update `MATRIX_CI_CONTROLLER_SHA`. Keep both
+variables while isolated execution is on; they are not part of the retired
+fast-ci system.
+
 ## Collaboration preview pair
 
 For two test-owned computers and matching isolated Electron apps from an unmerged
 PR, see [Collaboration preview pairs](collaboration-preview-pairs.md). Requires
 reviewed protected setup; ordinary Private Previews keep their existing flow.
+
+## Labeling side-by-side Electron Desktop dev runs
+
+Set `MATRIX_DESKTOP_DEV_LABEL` on an unpacked dev run to name it in the window title (`Matrix OS — <label>`) and a top banner with branch, short SHA, and platform origin. Packaged builds ignore it; unset means no banner. Combine with `OPERATOR_USER_DATA_DIR` when runs must not share a profile:
+
+`MATRIX_DESKTOP_DEV_LABEL="PR #<N>" OPERATOR_GATEWAY_URL=<platform-preview-origin> MATRIX_API_ORIGIN=<platform-preview-origin> bun run dev:desktop`, where `<platform-preview-origin>` is the platform preview revision URL for that PR.
+
+In unpacked dev the macOS menu-bar and Dock name come from Electron.app's `Info.plist`; the app is not renamed because `app.setName` would move `userData`.

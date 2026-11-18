@@ -19,3 +19,24 @@ The XML-parser patch changes mobile fingerprint inputs. App runtime 0.2.9 starts
 References: [unpatched node-forge advisory](https://github.com/advisories/GHSA-86w9-cpqp-85rv), [unpatched cache advisory](https://github.com/advisories/GHSA-ch52-4w7c-c8xp).
 
 Review correction: Lodash and Lodash-es 4.18.0 were withdrawn as bad releases. Both overrides and all root-lock consumers now use non-deprecated 4.18.1; reverting to the deprecated notice's 4.17.x advice would reintroduce the known security findings. A frozen install, affected rendering tests and desktop build validate this correction.
+
+## Legacy lockfile review — 10 November 2026
+
+GitHub reported 449 open alerts (11 critical, 183 high). All 11 critical and 155 of the high alerts came from `shell/pnpm-lock.yaml` and `apps/mobile/pnpm-lock.yaml`.
+
+Both lockfiles were removed after a deployment-role review, not to suppress alerts:
+
+- `shell` and `apps/*` are members of the root workspace, so pnpm only reads the root `pnpm-lock.yaml` for them.
+- Docker, the platform image, the host bundle, CI, the mobile OTA workflow and EAS (`eas.json` pins pnpm) all install from the repository root with `--frozen-lockfile`.
+- No script, workflow or test refers to either file.
+- Neither file could be installed. The shell lock pinned Next.js 16.2.3 while `shell/package.json` requires 16.4.1, and the mobile lock pinned Expo 54 while the app is on Expo 58.
+- The root lock already resolves the fixed versions of every critical package these files reported: `next` 16.4.1, `@clerk/nextjs` 6.39.5, `@clerk/shared` 3.47.5 or later, `proxy-addr` 2.0.8, `shell-quote` 1.11.0 and `tar` 7.5.21.
+
+The default-app lockfiles (`home/apps/games/chess`, `home/apps/messages`) are different: the apps install from them on the VPS. They were updated in place within the existing ranges, and both apps still install with a frozen lock and build.
+
+Root highs still open after this change:
+
+- `sharp` and `nanoid`: fixed by open PR #2974.
+- Electron: needs the 42.x major.
+- Zod 3: only `shadcn` 3.x pulls it in, as a CLI dependency, and its fix needs shadcn 4.
+- `decode-uri-component`: its fix (0.5.1) is ESM-only, and it reaches the app through `query-string` 7 in `@react-navigation/core`.

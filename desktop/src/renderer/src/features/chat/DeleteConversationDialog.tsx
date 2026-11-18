@@ -32,7 +32,7 @@ export function DeleteConversationDialog({
             </p>
           </div>
           {error ? (
-            <p role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--danger-muted)", color: "var(--danger)" }}>
+            <p role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--danger-muted)", color: "var(--danger-text)" }}>
               {error}
             </p>
           ) : null}

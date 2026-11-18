@@ -10,10 +10,11 @@ export function registerWindowsProtocolClients(
   electronApp: ProtocolClientApp,
   platform: NodeJS.Platform = process.platform,
   previewContext?: VerifiedDesktopPreviewContext,
+  schemes: readonly string[] = WINDOWS_PROTOCOL_SCHEMES,
 ): string[] {
   if (previewContext || platform !== "win32" || !electronApp.isPackaged) return [];
 
-  return WINDOWS_PROTOCOL_SCHEMES.filter(
+  return schemes.filter(
     (scheme) => !electronApp.setAsDefaultProtocolClient(scheme),
   );
 }

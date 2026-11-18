@@ -1,3 +1,4 @@
+import { routineCreationContext } from "./routine-creation-policy.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -66,9 +67,14 @@ export async function enqueueCanonicalQueuedTurn(options: {
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  beforeRoutineCreationAdmission?: (input: import("./routine-creation-policy.js").RoutineCreationAdmission) => Promise<void>;
+  provenance?: import("./turn-admission.js").CanonicalTurnProvenance;
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
+  if (input.routineCreation && (options.owner.type !== "personal" || options.principal.userId !== options.owner.ownerId)) {
+    throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
+  }
   const record = await options.repository.get(options.owner, options.chatId);
   if (!record) {
     throw new CanonicalQueueAdmissionError(
@@ -79,6 +85,10 @@ export async function enqueueCanonicalQueuedTurn(options: {
   const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
     chatContextRequestHash(input));
   if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
+  if (input.routineCreation) {
+    if (!options.beforeRoutineCreationAdmission) throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
+    await options.beforeRoutineCreationAdmission({ principal: options.principal, owner: options.owner, chatId: options.chatId, body: input, proof: options.provenance?.routineCreationProof, path: "queued-turns" });
+  }
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
       safeError("chat_conflict", "Queue next is available only while a Run is active.", true, ["retry"]),
@@ -155,6 +165,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
       );
     }
   }
+  const context = routineCreationContext(input, prepared?.context);
   const enqueued = await options.repository.enqueueQueuedTurn(options.owner, {
     chatId: options.chatId,
     baseRevision: input.baseRevision,
@@ -166,7 +177,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     selection: validated.selection,
     interactionMode: effective.interactionMode,
     permissionMode: effective.permissionMode,
-    ...(prepared?.context ? { context: prepared.context } : {}),
+    ...(context ? { context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,
       executionRootFingerprint: resolvedRoot.fingerprint,

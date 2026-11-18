@@ -14,7 +14,7 @@ describe("Pi Jev inbox tool", () => {
   it("dispatches server-bound batch operations without credentials or account selectors", async () => {
     const tool = vi.fn().mockResolvedValue({ ok: true, content: [{ type: "text", text: "confirmed" }] });
     const result = await tools({ tool })[0].execute("call_1", { operation: "batch_start", maxThreads: 30 });
-    expect(tool).toHaveBeenCalledWith({ toolCallId: "call_1", capability: "jev.inbox", args: { operation: "batch_start", maxThreads: 30 } });
+    expect(tool).toHaveBeenCalledExactlyOnceWith({ toolCallId: "call_1", capability: "jev.inbox", args: { operation: "batch_start", maxThreads: 30 } }, undefined);
     expect(result.content).toEqual([{ type: "text", text: "confirmed" }]);
   });
   it("rejects arbitrary write instructions before reaching the broker", async () => {

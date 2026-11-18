@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,15 +39,10 @@ ${script}
     AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture",
     PLATFORM_INTERNAL_URL: "https://platform.example.test",
     CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
-    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
-    MATRIX_JEV_PRICING_REVIEWED_AT: "2026-09-30T00:00:00.000Z",
-    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
-    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
-    MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: "2026-10-01T00:00:00.000Z",
-    MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
-    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3-flash"],
-    MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: "2026-10-01T00:00:00.000Z",
-    MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+    RELAY_PRICING_BINDINGS:
+      "|MATRIX_JEV_PRICING_REVIEW_VERSION=typesafe-jev-input-2026-09" +
+      "|MATRIX_JEV_PRICING_REVIEWED_AT=2026-09-30T00:00:00.000Z" +
+      "|MATRIX_JEV_PRICING_VALID_THROUGH=2026-10-30T00:00:00.000Z",
   } });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(0);
@@ -77,8 +73,7 @@ describe("funded relay Cloud Run service", () => {
     for (const model of ["SONNET", "GLM"]) {
       for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
         const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
-        expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
-        expect(workflow).toContain(`${name}=\${${name}}`);
+        expect(workflow).toContain(`${name}: \${{ inputs.environment == 'staging' && vars.${name} || '' }}`);
       }
     }
     expect(workflow).not.toContain('date -u +');
@@ -306,7 +301,7 @@ describe("funded relay Cloud Run service", () => {
 
 function runDeploymentValidation(reviewedAt: string, validThrough: string, extra: NodeJS.ProcessEnv = {}) {
   const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
-  const block = workflow.split("- name: Validate deployment configuration")[1]!
+  const block = workflow.split("- name: Validate staging pricing and origins")[1]!
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
   const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
@@ -351,6 +346,57 @@ it("accepts a current bounded deployment review without altering its attested ti
   expect(result.status).toBe(0);
 });
 
+it("exports the staging review values without introducing extra bindings", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const temp = mkdtempSync(join(tmpdir(), "matrix-relay-staging-"));
+  const envFile = join(temp, "env");
+  try {
+    const optional = {
+      MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/deepseek-ai/deepseek-v4.1-flash-1017"],
+      MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEWED_AT: start,
+      MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: end,
+    };
+    const result = runDeploymentValidation(start, end, {
+      GITHUB_ENV: envFile, MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "false",
+      MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: start, MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: end,
+      MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: start, MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: end,
+      ...optional,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    const output = readFileSync(envFile, "utf8").trim().split("\n");
+    expect(output).toHaveLength(1);
+    expect(output[0]?.split("|")[0]).toBe("RELAY_PRICING_BINDINGS=");
+    const expected = {
+      MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+      MATRIX_JEV_PRICING_REVIEWED_AT: start,
+      MATRIX_JEV_PRICING_VALID_THROUGH: end,
+      MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
+      MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: start,
+      MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: end,
+      MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3-flash"],
+      MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: start,
+      MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: end,
+      ...optional,
+    };
+    expect(output[0]?.split("|").slice(1).sort())
+      .toEqual(Object.entries(expected).map(([name, value]) => `${name}=${value}`).sort());
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+it("rejects extra Cloud Run environment bindings before staging deployment", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const result = runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: "anthropic-2026-08-31-standard|UNREVIEWED_SETTING=true",
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+});
+
 it("validates the optional Workers review bundle before Cloud Run authentication",()=>{
   const start=new Date(Date.now()-dayMs).toISOString(), end=new Date(Date.now()+dayMs).toISOString();
   const env={MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'cloudflare-2026-10-15-workers-eight',MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:start,MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:end};
@@ -358,4 +404,41 @@ it("validates the optional Workers review bundle before Cloud Run authentication
   for(const extra of [{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'bad'},{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:'2026-02-30T00:00:00.000Z'},{...env,MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:new Date(Date.now()+40*dayMs).toISOString()},{MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:env.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION}]){
     const result=runDeploymentValidation(start,end,extra);expect(result.status).toBe(1);expect(result.stderr).toContain('Workers AI review');
   }
+});
+
+it("validates individual DeepSeek and GLM price reviews before Cloud Run authentication", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const individual = {
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/deepseek-ai/deepseek-v4.1-flash-1017"],
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEWED_AT: start,
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: end,
+    MATRIX_FUNDED_GLM_FULL_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3"],
+    MATRIX_FUNDED_GLM_FULL_PRICING_REVIEWED_AT: start,
+    MATRIX_FUNDED_GLM_FULL_PRICING_VALID_THROUGH: end,
+  };
+  expect(runDeploymentValidation(start, end, individual).status).toBe(0);
+  const expired = new Date(Date.now() - 1).toISOString();
+  expect(runDeploymentValidation(start, end, {
+    ...individual, MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: expired,
+  }).status).toBe(1);
+  expect(runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: individual.MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION,
+  }).status).toBe(1);
+});
+
+it("accepts registry mode without requiring legacy managed review dates", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const result = runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "true",
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION: "stale",
+    MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: "stale",
+  });
+  expect(result.status).toBe(0);
+  expect(runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "yes",
+  }).status).toBe(1);
 });

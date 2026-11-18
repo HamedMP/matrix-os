@@ -60,10 +60,12 @@ describe("collaborative app authenticated launch facade", () => {
     ));
     close.mockResolvedValue(undefined);
     upstream = { request, close };
+    let launchSequence = 0;
     sessions = new CollaborativeAppLaunchSessions({
+      db: fixture.collaborationDb,
       open: async () => upstream,
       now: () => currentTime,
-      createId: () => launchId,
+      createId: () => `30000000-0000-4000-8000-${String(++launchSequence).padStart(12, "0")}`,
       startTimer: false,
       maxSessions: 2,
       maxPerActor: 2,
@@ -106,6 +108,62 @@ describe("collaborative app authenticated launch facade", () => {
     vi.restoreAllMocks();
   });
 
+  it("serves a launched app when HTML and module requests reach another platform instance", async () => {
+    const launched = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-actor": actorId },
+      body: JSON.stringify({ clientRequestId: requestId, expectedShareRevision: "1", expectedBuildId: app.buildId }),
+    });
+    expect(launched.status).toBe(201);
+    const launch = await launched.json() as { entryUrl: string };
+    const secondSessions = new CollaborativeAppLaunchSessions({
+      db: fixture.collaborationDb, open: async () => upstream, now: () => currentTime, startTimer: false,
+    });
+    const second = createPlatformCollaborationRoutes({
+      repository, launchSessions: secondSessions,
+      resolveActor: async (context) => context.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async (id) => ({ actorId: id, displayName: "Member" }),
+      resolveInvitationIdentifier: async () => null,
+      isCurrentOrganizationMember: async () => currentMembership,
+    });
+    try {
+      const html = await second.request(launch.entryUrl, { headers: { "x-test-actor": actorId } });
+      expect(html.status).toBe(200);
+      expect(await html.text()).toContain("MatrixOS.collaboration");
+      await sessions.close();
+      const asset = await second.request(launch.entryUrl.replace("index.html", "assets/main.js"), {
+        headers: { origin: "null" },
+      });
+      expect(asset.status).toBe(200);
+      currentMembership = false;
+      expect((await second.request(launch.entryUrl, { headers: { "x-test-actor": actorId } })).status).toBe(404);
+      expect(await secondSessions.resolve(launchId, actorId, scopeId)).toBeNull();
+    } finally { await secondSessions.close(); }
+  });
+
+  it.each(["expired", "revoked"])("does not register a replacement when a recovered launch is %s while the owner opens", async (reason) => {
+    const identity = { actorId, scopeId, organizationId, runtimeId: "runtime_owner", authorityGeneration: 1,
+      appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 };
+    const launch = await sessions.create({ ...identity, clientRequestId: requestId });
+    let finishOpen!: (value: CollaborativeAppLaunchUpstream) => void;
+    const opening = vi.fn(() => new Promise<CollaborativeAppLaunchUpstream>((resolve) => { finishOpen = resolve; }));
+    const recoveredClose = vi.fn();
+    const second = new CollaborativeAppLaunchSessions({ db: fixture.collaborationDb, open: opening,
+      now: () => currentTime, startTimer: false });
+    try {
+      const requested = second.request({ ...launch, actorId, scopeId, assetPath: "index.html" });
+      await vi.waitFor(() => expect(opening).toHaveBeenCalledOnce());
+      if (reason === "expired") currentTime += 60_001;
+      else await sessions.revokeScope(scopeId);
+      finishOpen({ request, close: recoveredClose });
+      await expect(requested).rejects.toMatchObject({ code: "not_found" });
+      await second.sweep();
+      expect(await fixture.collaborationDb.selectFrom("collaboration_app_launches").selectAll().execute()).toEqual([]);
+      expect(recoveredClose).toHaveBeenCalledOnce();
+      expect(second.size).toBe(0);
+    } finally { await second.close(); }
+  });
+
   it("creates an idempotent path-bound launch and serves safe immutable bytes without a browser credential", async () => {
     const create = () => routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
       method: "POST",
@@ -129,13 +187,18 @@ describe("collaborative app authenticated launch facade", () => {
     expect(asset.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
     expect(asset.headers.get("cache-control")).toBe("private, no-store");
-    expect(asset.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
+    // Forms must dispatch submit (React onSubmit) but can never navigate, re-base or embed plugins.
+    expect(asset.headers.get("content-security-policy")?.split(";").map((part) => part.trim())).toEqual([
+      "sandbox allow-scripts allow-forms", "form-action 'none'", "base-uri 'none'", "object-src 'none'",
+    ]);
     const html = await asset.text();
     expect(html).toContain(`<base href="/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/">`);
     expect(html).toContain(`"actorId":"${actorId}"`);
     expect(html).toContain('"organizationId":"org_matrix_team"');
     expect(html).toContain("matrix:shared-app:query");
     expect(html).toContain("matrix:shared-app:mutate");
+    expect(html).toContain("retryMutation");
+    expect(html).toContain("matrix:shared-app:retry");
     expect(html).toContain("matrix:shared-app:changed");
     expect(html).toContain("matrix:shared-app:ready");
     expect(html).toContain("MatrixOS.collaboration");
@@ -237,7 +300,7 @@ describe("collaborative app authenticated launch facade", () => {
     expect(close).toHaveBeenCalledTimes(1);
 
     request.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "https://owner.invalid/secret" } }));
-    await sessions.create({ ...identity, clientRequestId: "40000000-0000-4000-8000-000000000002" });
+    const { launchId } = await sessions.create({ ...identity, clientRequestId: "40000000-0000-4000-8000-000000000002" });
     await expect(sessions.request({ launchId, actorId, scopeId, assetPath: "index.html" }))
       .rejects.toMatchObject({ code: "unavailable" });
     request.mockResolvedValueOnce(new Response("secret", { headers: { "content-type": "text/x-private" } }));

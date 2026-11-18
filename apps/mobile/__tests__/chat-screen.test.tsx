@@ -1,4 +1,5 @@
 import React from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import { TextInput } from "react-native";
 
@@ -8,6 +9,7 @@ import { ActiveChatScreen } from "../components/chat/ActiveChatScreen";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
 import { MicIcon } from "../components/ui/icons";
+import { composerChoices } from "../lib/remembered-composer-choice";
 
 import { flat } from "./ui-test-utils";
 
@@ -69,6 +71,14 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   }),
 }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ chats: mockChats }) }));
+// The model sheet shows the Matrix credit balance, which is read from the server.
+jest.mock("@/lib/queries/use-matrix-credit-balance", () => ({
+  useMatrixCreditBalance: () => ({ label: null, isPending: false, isError: false }),
+}));
+const mockMarkChatRead = jest.fn();
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({
+  useMarkChatRead: (...args: unknown[]) => mockMarkChatRead(...args),
+}));
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
   useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: false, isFetching: false }),
 }));
@@ -144,7 +154,10 @@ function openChat(overrides: Record<string, unknown> = {}) {
 
 const focus = TextInput.prototype.focus as jest.Mock;
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Nothing is remembered on the phone, and the phone's storage has been read.
+  await composerChoices.forget();
+  await composerChoices.load();
   jest.useFakeTimers();
   focus.mockClear();
 });
@@ -254,6 +267,49 @@ describe("chat screen: new chat", () => {
 
     expect(screen.getByText("Matrix AI · Sonnet 5")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add to message" })).toBeTruthy();
+  });
+
+  it("starts a new chat on the model and effort last chosen on this phone for this computer", () => {
+    composerChoices.remember("user_a:amin:primary", {
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    });
+    composerChoices.remember("user_a:other:primary", { selection: { instanceId: "matrix_pi_default", model: "retired" } });
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: null,
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    }), expect.anything());
+  });
+
+  it("holds a new chat's model and Send until the choice saved on this phone has been read", async () => {
+    await composerChoices.forget();
+    let finishRead!: (value: string | null) => void;
+    jest.spyOn(AsyncStorage, "getItem").mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    expect(mockSendMessage).not.toHaveBeenCalled();
+
+    const low = { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] };
+    await act(async () => finishRead(JSON.stringify({ entries: [{ scope: "user_a:amin:primary", choice: { selection: low } }] })));
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: null, selection: low }), expect.anything());
+  });
+
+  it("remembers on this phone the model and effort chosen in the composer", () => {
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Model" }));
+    fireEvent.press(screen.getByRole("button", { name: "Low" }));
+
+    expect(composerChoices.choice("user_a:amin:primary")).toEqual({
+      selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
+    });
   });
 
   it("sends a new chat with no project and the catalog's default modes", () => {
@@ -447,6 +503,13 @@ describe("chat screen: open chat", () => {
 
     expect(mockStartDraftChat).toHaveBeenCalledTimes(1);
     expect(mockStartDraftChat).toHaveBeenCalledWith();
+  });
+
+  it("marks the chat on screen read, so the chat lists stop showing it as Completed", () => {
+    openChat();
+    render(<ChatScreen />);
+
+    expect(mockMarkChatRead).toHaveBeenLastCalledWith(mockDetail);
   });
 
   it("takes the title from the chat list while the chat itself is still loading", () => {

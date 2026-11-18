@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
-import { createCodingAgentProjectMutationService } from "../../packages/gateway/src/coding-agents/project-mutations.js";
-import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { registerGatewayCodingAgentRoutes } from "../../packages/gateway/src/server/project-routes.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const cleanup: string[] = [];
@@ -36,14 +35,14 @@ async function harness(principal: "owner" | "missing" = "owner") {
   cleanup.push(homePath);
   const projects = createProjectManager({ homePath });
   const app = new Hono();
-  app.route("/api/coding-agents", createCodingAgentRoutes({
+  registerGatewayCodingAgentRoutes(app, {
     service: { getSummary: async () => runtimeSummary() },
-    projectMutations: createCodingAgentProjectMutationService({ projects }),
+    projects,
     getPrincipal: () => {
       if (principal === "missing") throw new MissingRequestPrincipalError();
       return testPrincipal;
     },
-  }));
+  });
   return { app, projects };
 }
 

@@ -190,7 +190,7 @@ export class BotRuntimeRegistry {
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
   bind(input: PiRuntimeBinding, releaseTracking?: () => void): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
-    if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
+    if (!parsed.success || !isManagedPiBinding(parsed.data) && parsed.data.capabilities.includes("routine.cli") || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();

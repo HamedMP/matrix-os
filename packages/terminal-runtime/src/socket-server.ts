@@ -1,3 +1,4 @@
+import type { NativeTabAdmission, NativeTabCompletion, NativeTabReservation } from "./native-host-lifecycle.js";
 import { createTerminalOutputHandoff } from "./output-handoff.js";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
@@ -32,10 +33,14 @@ import {
   type TerminalRuntimeRequest,
   type TerminalRuntimeResponse,
 } from "./socket-protocol.js";
+import type { TerminalScreenCapture } from "./screen-capture.js";
 
 export interface TerminalRuntimeControlApi {
+  prepareNativeTab?(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation>;
+  completeNativeTab?(ref: TerminalRef, input: NativeTabCompletion): Promise<TerminalTab>;
   archiveEndedTab?(ref: TerminalRef, input: TerminalEndedTabArchiveInput): Promise<TerminalTab>;
   getCommandState?(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState>;
+  captureScreen?(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null>;
   getCommandResult?(ref: TerminalRef, expectedIncarnation: string): Promise<TerminalCommandResult>;
   scrollState?(ref: TerminalRef, line?: number): Promise<TerminalScrollState | null>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
@@ -45,6 +50,7 @@ export interface TerminalRuntimeControlApi {
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
@@ -82,6 +88,11 @@ function encodeSocketResponseFrame(value: unknown): Buffer {
 export interface TerminalRuntimeSocketServerOptions {
   socketPath: string;
   runtime: TerminalRuntimeControlApi;
+  /** Per-tab agent status reported from inside panes; absent means none is reported. */
+  agentStatus?: {
+    list(): Promise<unknown[]>;
+    resolvePane?(sessionName: string, paneId: string): Promise<unknown>;
+  };
   maxConnections?: number;
   idleTimeoutMs?: number;
 }
@@ -396,10 +407,22 @@ export class TerminalRuntimeSocketServer {
 
   private async dispatch(request: TerminalRuntimeRequest): Promise<unknown> {
     switch (request.operation) {
+      case "PrepareNativeTab": {
+        if (!this.options.runtime.prepareNativeTab) throw new TerminalRuntimeError("unavailable");
+        return this.options.runtime.prepareNativeTab(request.input.workspaceId, request.input);
+      }
+      case "CompleteNativeTab": {
+        if (!this.options.runtime.completeNativeTab) throw new TerminalRuntimeError("unavailable");
+        return this.options.runtime.completeNativeTab(request.input, request.input);
+      }
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
+      case "ListAgentStatuses": return this.options.agentStatus?.list() ?? [];
+      case "ResolvePane": return (await this.options.agentStatus?.resolvePane?.(request.input.sessionName, request.input.paneId)) ?? null;
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);
+      // An older runtime API without capture answers null; readers then use the snapshot.
+      case "CaptureScreen": return (await this.options.runtime.captureScreen?.(request.input)) ?? null;
       case "GetCommandState": {
         const { workspaceId, tabId, expectedIncarnation } = request.input;
         const result = await this.options.runtime.getCommandState?.({ workspaceId, tabId }, expectedIncarnation);

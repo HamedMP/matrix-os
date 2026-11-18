@@ -48,8 +48,10 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
     // The env method is the source of truth; ClerkProvider stays prop-free so
     // a stray prop cannot silently win over (and mask) the env configuration.
     const layout = read("shell/src/app/layout.tsx");
-    expect(layout).toMatch(/<ClerkProvider>/);
-    expect(layout).not.toMatch(/<ClerkProvider[^>]*signUpUrl=/);
+    // allowedRedirectOrigins is the only provider prop: it lets the primary
+    // domain send sign-ins back to the ai-insights.app Clerk satellite.
+    expect(layout).toMatch(/<ClerkProvider allowedRedirectOrigins=\{clerkRedirectOrigins\}>/);
+    expect(layout).not.toMatch(/<ClerkProvider[^>]*(?:signInUrl|signUpUrl)=/);
   });
 
   it("forces shell Clerk completion back into the app shell", () => {
@@ -57,7 +59,10 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
     const signUp = read("shell/src/app/sign-up/[[...sign-up]]/page.tsx");
 
     expect(signIn).toContain('forceRedirectUrl={returnTarget}');
-    expect(signIn).toContain('slackLinkReturnTarget(params.redirect_url) ?? "/"');
-    expect(signUp).toContain('forceRedirectUrl="/"');
+    expect(signIn).toContain(
+      'slackLinkReturnTarget(params.redirect_url) ?? clerkSatelliteReturnTarget(params.redirect_url) ?? "/"',
+    );
+    expect(signUp).toContain('forceRedirectUrl={returnTarget}');
+    expect(signUp).toContain('clerkSatelliteReturnTarget(params.redirect_url) ?? "/"');
   });
 });

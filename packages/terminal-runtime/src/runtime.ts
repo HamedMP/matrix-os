@@ -1,3 +1,5 @@
+import { NativeDispatchLeases } from "./native-dispatch-leases.js";
+import { stopCanonicalNativeHost, tabsRequiringTerminationConfirmation, type NativeTerminalHosts, type NativeTabAdmission, type NativeTabCompletion, type NativeTabReservation } from "./native-host-lifecycle.js";
 import { TerminalScrollLineSchema, type TerminalScrollState } from "@matrix-os/contracts";
 import {
   TerminalRefSchema,
@@ -11,6 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
@@ -21,8 +24,16 @@ import { archiveEndedTerminalTab, TerminalEndedTabArchiveInputSchema, type Termi
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
+import { sweepHeldPaneExits, type HeldPaneExitSweepResult } from "./held-pane-exit-sweep.js";
+import type { HeldPaneExit } from "./terminal-command-state.js";
+import {
+  captureTabScreen,
+  TerminalScreenCaptureRequestSchema,
+  type TerminalScreenCapture,
+} from "./screen-capture.js";
 import {
   TerminalWorkspaceStore,
+  type TerminalRuntimeTabState,
   type TerminalRuntimeWorkspaceState,
   type TerminalSnapshot,
 } from "./workspace-store.js";
@@ -30,11 +41,15 @@ export interface ZellijRuntimeAdapter {
   findTabByInternalNameReadOnly?(sessionName: string, internalName: string,
     expected?: { tabId: number | null; paneId: string | null }): Promise<{ tabId: number; paneId: string } | undefined>;
   getCommandState?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandState>;
+  /** Plain text of a pane's viewport, or its whole scrollback when `full`. */
+  dumpPaneText?(sessionName: string, paneId: string, full: boolean): Promise<string>;
   getCommandResult?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult>;
+  listHeldPaneExits?(sessionName: string): Promise<HeldPaneExit[]>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
     internalName: string;
     cwd: string;
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
   }): Promise<{ tabId: number; paneId: string }>;
   openAttachment(sessionName: string, input: {
@@ -81,6 +96,7 @@ export interface ZellijObserver {
 export interface TerminalRuntimeOptions {
   store: TerminalWorkspaceStore;
   zellij: ZellijRuntimeAdapter;
+  nativeHosts?: NativeTerminalHosts;
   maxTabsPerWorkspace?: number;
   maxTabsTotal?: number;
   maxAttachments?: number;
@@ -111,6 +127,7 @@ interface AttachmentState {
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
   mouseModes: TerminalMouseModeState;
+  inputFenced?: true;
   scrollRead?: { at: number; ttl: number; pending: boolean; result: Promise<TerminalScrollState | null> };
 }
 
@@ -118,6 +135,7 @@ interface InputQueueState {
   chain: Promise<void>;
   pendingBytes: number;
   lastTouched: number;
+  nativeDrainIncarnation?: string;
 }
 
 interface ObserverState extends ZellijObserver {
@@ -138,6 +156,8 @@ export class TerminalRuntime {
   private readonly attachments = new Map<string, AttachmentState>();
   private readonly observers = new Map<string, ObserverState>();
   private readonly observerReservations = new Map<string, number>();
+  private readonly nativeHosts?: NativeTerminalHosts;
+  private readonly nativeDispatchLeases = new NativeDispatchLeases();
   private readonly inputQueues = new Map<string, InputQueueState>();
   private readonly terminatingTabKeys = new Set<string>();
   private readonly closingPaneTabKeys = new Map<string, number>();
@@ -162,6 +182,7 @@ export class TerminalRuntime {
   constructor(options: TerminalRuntimeOptions) {
     this.store = options.store;
     this.zellij = options.zellij;
+    this.nativeHosts = options.nativeHosts;
     this.maxTabsPerWorkspace = z.number().int().min(1).max(10_000).parse(options.maxTabsPerWorkspace ?? 64);
     this.maxTabsTotal = z.number().int().min(this.maxTabsPerWorkspace).max(10_000)
       .parse(options.maxTabsTotal ?? 256);
@@ -192,22 +213,48 @@ export class TerminalRuntime {
     }
   }
 
-  async createTab(workspaceIdInput: string, input: {
+  createTab(workspaceId: string, input: Parameters<TerminalRuntime["createTabInternal"]>[1]): Promise<TerminalTab> {
+    return this.createTabInternal(workspaceId, input);
+  }
+
+  async prepareNativeTab(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation> {
+    const lease = this.nativeDispatchLeases.begin({ workspaceId, tabId: input.tabId }, input.nativeHost);
+    try {
+      const tab = await this.createTabInternal(workspaceId, { ...input, accessScope: "owner" }, { kind: "prepare" });
+      lease.bind(tab); return { tab, settlementToken: lease.token };
+    } catch (error) { lease.cancel(); throw error; }
+  }
+
+  completeNativeTab(ref: TerminalRef, input: NativeTabCompletion): Promise<TerminalTab> {
+    return this.createTabInternal(ref.workspaceId, { tabId: ref.tabId, name: "", cwd: "", nativeHost: input.nativeHost },
+      { kind: "complete", ...input });
+  }
+
+  private async createTabInternal(workspaceIdInput: string, input: {
     tabId?: string;
     name: string;
     cwd: string;
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
     agent?: TerminalTab["agent"];
     git?: TerminalTab["git"];
     accessScope?: TerminalTab["accessScope"];
-  }): Promise<TerminalTab> {
+  }, phase?: { kind: "prepare" } | ({ kind: "complete" } & NativeTabCompletion)): Promise<TerminalTab> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const requestedTabId = input.tabId ? TerminalTabIdSchema.parse(input.tabId) : undefined;
     return this.runWorkspaceMutation(async () => {
-      const existing = requestedTabId
+      let existing = requestedTabId
         ? await this.store.getTab({ workspaceId, tabId: requestedTabId })
         : undefined;
-      if (existing && existing.status !== "starting") return existing;
+      if (phase?.kind === "prepare" && existing) throw new TerminalRuntimeError("conflict");
+      if (phase?.kind === "complete") {
+        if (!existing?.nativeHost?.dispatchPending || !input.nativeHost) throw new TerminalRuntimeError("conflict");
+        this.nativeDispatchLeases.consume({ workspaceId, tabId: existing.id }, phase);
+        existing = await this.store.completeNativeDispatch({ workspaceId, tabId: existing.id }, phase.expectedIncarnation, input.nativeHost, phase.outcome);
+        if (phase.outcome === "never-dispatched") return existing;
+        if (!phase.attach || existing.nativeHost?.stopRequested) return this.store.markTabExited({ workspaceId, tabId: existing.id });
+        input = { ...input, name: existing.name, cwd: existing.cwd, agent: existing.agent, accessScope: existing.accessScope };
+      } else if (existing?.nativeHost?.dispatchPending || existing && existing.status !== "starting") return existing;
       const workspaces = await this.listWorkspaces();
       const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
       if (!workspace) throw new TerminalRuntimeError("not_found");
@@ -222,7 +269,7 @@ export class TerminalRuntime {
       }
       const releaseObserverReservation = this.reserveObserverSlot(workspaceId);
       let stagedTab: TerminalTab | undefined = existing;
-      let runtimeIds: { tabId: number; paneId: string } | undefined;
+      let runtimeIds: { tabId: number; paneId: string; launchedAt?: Date } | undefined;
       let createdRuntimeTab = false;
       let sessionName: string | undefined;
       let startupCommand: string[] = [];
@@ -230,30 +277,46 @@ export class TerminalRuntime {
         const runtimeWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         sessionName = runtimeWorkspace.zellijSessionName;
         await this.zellij.ensureSession(runtimeWorkspace.zellijSessionName, runtimeWorkspace.canonicalSize);
+        // Establish the observer before dispatch as part of actual canonical admission.
+        if (phase?.kind === "prepare") await this.restartObserver(workspaceId);
         stagedTab ??= await this.store.createTab(workspaceId, {
           ...input,
+          ...(phase?.kind === "prepare" ? { nativeHost: { ...input.nativeHost!, dispatchPending: true as const } } : {}),
           accessScope: input.accessScope ?? "owner",
         });
+        if (phase?.kind === "prepare") return stagedTab;
         const stagedWorkspace = await this.requireRuntimeWorkspace(workspaceId);
         const internalTab = stagedWorkspace.tabs[stagedTab.id];
         if (!internalTab) throw new Error("Terminal tab staging failed");
-        startupCommand = internalTab.startupCommand ?? input.command ?? [];
+        if (internalTab.nativeHost) {
+          if (!this.nativeHosts || input.command) throw new TerminalRuntimeError("unavailable");
+          startupCommand = await this.nativeHosts.attachCommand(internalTab.nativeHost);
+        } else startupCommand = internalTab.startupCommand ?? input.command ?? [];
         runtimeIds = existing
           ? await this.zellij.findTabByInternalName?.(stagedWorkspace.zellijSessionName, internalTab.zellijTabName)
           : undefined;
         if (!runtimeIds) {
-          runtimeIds = await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
-            internalName: internalTab.zellijTabName,
-            cwd: internalTab.cwd,
-            ...(startupCommand?.length ? { command: startupCommand } : {}),
-          });
+          // The command starts inside createTab: mark the pane's start before it.
+          const launchedAt = this.store.currentTime();
+          runtimeIds = {
+            ...await this.zellij.createTab(stagedWorkspace.zellijSessionName, {
+              internalName: internalTab.zellijTabName,
+              cwd: internalTab.cwd,
+              ...(startupCommand?.length ? { command: startupCommand } : {}),
+            }),
+            launchedAt,
+          };
           createdRuntimeTab = true;
         }
         const tab = await this.store.activateTab({ workspaceId, tabId: stagedTab.id }, runtimeIds);
         await this.restartObserver(workspaceId);
         return tab;
       } catch (error) {
-        if (stagedTab && sessionName && (!existing || createdRuntimeTab)) {
+        if (stagedTab?.nativeHost) {
+          // Native dispatch may already have happened. Retain canonical I/O recovery
+          // rather than deleting a possibly live host association on pane failure.
+          await this.store.markTabExited({ workspaceId, tabId: stagedTab.id });
+        } else if (stagedTab && sessionName && (!existing || createdRuntimeTab)) {
           try {
             await this.rollbackTabCreation(sessionName, {
               workspaceId,
@@ -275,6 +338,16 @@ export class TerminalRuntime {
 
   listWorkspaces(): Promise<TerminalWorkspace[]> {
     return this.store.listWorkspaces();
+  }
+
+  /** A tab's screen from zellij now (see `captureTabScreen`); null means use the snapshot. */
+  async captureScreen(input: { workspaceId: string; tabId: string; lines: number }): Promise<TerminalScreenCapture | null> {
+    const request = TerminalScreenCaptureRequestSchema.parse(input);
+    const dump = this.zellij.dumpPaneText?.bind(this.zellij);
+    if (!dump) return null;
+    // Read-only, so it does not join the workspace mutation queue.
+    const workspace = await this.store.getRuntimeWorkspace(request.workspaceId);
+    return captureTabScreen({ workspace, tabId: request.tabId, lines: request.lines, dump });
   }
 
   async getCommandState(refInput: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState> {
@@ -328,7 +401,13 @@ export class TerminalRuntime {
           )
         : undefined;
       for (const tab of restorableTabs) {
-        let ids = recoveredTabs
+        // Stop fences survive restart. Restore must never rerun a native launch or recover proof.
+        if (tab.nativeHost?.stopRequested) continue;
+        if (tab.nativeHost && (!this.nativeHosts || (await this.nativeHosts.inspect(tab.nativeHost)).status !== "running")) {
+          await this.store.markTabExited({ workspaceId, tabId: tab.id });
+          continue;
+        }
+        let ids: { tabId: number; paneId: string; launchedAt?: Date } | undefined = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
         if (tab.status === "starting" && tab.startupCommand === undefined) {
@@ -340,16 +419,30 @@ export class TerminalRuntime {
           else await this.store.markTabExited({ workspaceId, tabId: tab.id });
           continue;
         }
+        if (!ids && tab.nativeHost) {
+          const command = await this.nativeHosts!.attachCommand(tab.nativeHost);
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName, cwd: tab.cwd, command,
+            }),
+            launchedAt,
+          };
+        }
         if (!ids) {
           if (tab.status !== "starting") {
             await this.store.markTabExited({ workspaceId, tabId: tab.id });
             continue;
           }
-          ids = await this.zellij.createTab(workspace.zellijSessionName, {
-            internalName: tab.zellijTabName,
-            cwd: tab.cwd,
-            ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
-          });
+          const launchedAt = this.store.currentTime();
+          ids = {
+            ...await this.zellij.createTab(workspace.zellijSessionName, {
+              internalName: tab.zellijTabName,
+              cwd: tab.cwd,
+              ...(tab.startupCommand?.length ? { command: tab.startupCommand } : {}),
+            }),
+            launchedAt,
+          };
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
@@ -372,14 +465,10 @@ export class TerminalRuntime {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    const tab = workspace.tabs[ref.tabId];
-    if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
-    await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
-    return this.store.renameTab(ref, input);
+  renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+    // The display name is owner metadata. Zellij's random internal name is the
+    // durable identity used by reconciliation and must survive a UI rename.
+    return this.store.renameTab(refInput, input);
   }
 
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace> {
@@ -440,6 +529,9 @@ export class TerminalRuntime {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
         if (!tab || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
+        try { await this.fenceNativeInput(ref, tab); }
+        finally { await this.drainTabInput(key); }
+        await stopCanonicalNativeHost(this.store, this.nativeHosts, ref);
         const terminalAlreadyExited = tab.status === "exited" || tab.status === "failed";
         let zellijTabId = terminalAlreadyExited ? null : tab.zellijTabId;
         if (removeCanonicalRecord && terminalAlreadyExited) {
@@ -459,7 +551,6 @@ export class TerminalRuntime {
         if (zellijTabId !== null && !this.zellij.closeTab) {
           throw new TerminalRuntimeError("unavailable");
         }
-        await this.drainTabInput(key);
         await this.closeAttachment(key, true);
         if (zellijTabId !== null) {
           await this.zellij.closeTab!(workspace.zellijSessionName, zellijTabId);
@@ -480,10 +571,10 @@ export class TerminalRuntime {
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null
         || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
-      if (
-        (tab.status !== "running" && tab.status !== "idle") ||
-        !this.zellij.writeToPane
-      ) throw new TerminalRuntimeError("unavailable");
+      const draining = tab.status === "unavailable" && tab.nativeHost?.stopRequested && !tab.nativeHost.managerStopped
+        && this.inputQueues.get(refKey(ref))?.nativeDrainIncarnation === terminalTabIncarnation(tab);
+      if ((!draining && tab.status !== "running" && tab.status !== "idle") || !this.zellij.writeToPane)
+        throw new TerminalRuntimeError("unavailable");
       await this.zellij.writeToPane(workspace.zellijSessionName, tab.zellijPaneId, data);
     });
   }
@@ -523,46 +614,52 @@ export class TerminalRuntime {
   async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const action = TerminalPaneActionSchema.parse(actionInput);
-    await this.runWorkspaceMutation(async () => {
-      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-      const tab = workspace.tabs[ref.tabId];
-      if (
-        !tab
-        || tab.zellijTabId === null
-        || tab.zellijPaneId === null
-        || !this.zellij.paneAction
-      ) {
-        throw new Error("Terminal tab unavailable");
-      }
-      await this.zellij.paneAction(
-        workspace.zellijSessionName,
-        tab.zellijTabId,
-        tab.zellijPaneId,
-        action,
-      );
-    });
+    const key = refKey(ref);
+    const release = action.type === "close" ? this.reservePaneClosure(key) : undefined;
+    try {
+      await this.runWorkspaceMutation(async () => {
+        const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+        const tab = workspace.tabs[ref.tabId];
+        if (!tab || tab.zellijTabId === null || tab.zellijPaneId === null || !this.zellij.paneAction)
+          throw new Error("Terminal tab unavailable");
+        if (action.type === "close") {
+          try { await this.fenceNativeInput(ref, tab); }
+          finally { await this.drainTabInput(key); }
+          await stopCanonicalNativeHost(this.store, this.nativeHosts, ref);
+        }
+        await this.zellij.paneAction(workspace.zellijSessionName, tab.zellijTabId, tab.zellijPaneId, action);
+      });
+    } finally { release?.(); }
   }
 
   async deletionImpact(workspaceIdInput: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = (await this.listWorkspaces()).find((item) => item.id === workspaceId);
     if (!workspace) throw new TerminalRuntimeError("not_found");
-    const tabs = workspace.tabs.filter((tab) => tab.status === "running" || tab.status === "starting" || tab.status === "idle");
+    const tabs = await tabsRequiringTerminationConfirmation(workspace.tabs, this.nativeHosts);
     return { runningTabs: tabs.length, tabs };
   }
 
   async deleteWorkspace(workspaceIdInput: string, input: { confirmTerminate: boolean }): Promise<void> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     await this.runWorkspaceMutation(async () => {
-      const impact = await this.deletionImpact(workspaceId);
-      if (impact.runningTabs > 0 && !input.confirmTerminate) {
+      if (!input.confirmTerminate && (await this.deletionImpact(workspaceId)).runningTabs > 0) {
         throw new TerminalRuntimeError("confirmation_required");
       }
       const workspace = await this.requireRuntimeWorkspace(workspaceId);
       if (!this.zellij.deleteSession) throw new TerminalRuntimeError("unavailable");
       this.deletingWorkspaceId = workspaceId;
       try {
-        await this.drainWorkspaceInput(workspaceId);
+        const tabs = Object.values(workspace.tabs);
+        // Without confirmation, the read-only recheck proved that no host needs a stop.
+        try {
+          if (input.confirmTerminate) {
+            for (const tab of tabs) await this.fenceNativeInput({ workspaceId, tabId: tab.id }, tab);
+          }
+        } finally { await this.drainWorkspaceInput(workspaceId); }
+        if (input.confirmTerminate) {
+          for (const tab of tabs) await stopCanonicalNativeHost(this.store, this.nativeHosts, { workspaceId, tabId: tab.id });
+        }
         for (const key of [...this.attachments.keys()]) {
           if (key.startsWith(`${workspaceId}:`)) await this.closeAttachment(key, true);
         }
@@ -613,12 +710,14 @@ export class TerminalRuntime {
     await this.sweepStaleViewers();
     const key = refKey(ref);
     let attachment = this.attachments.get(key);
+    if (attachment?.inputFenced) throw new TerminalRuntimeError("unavailable");
     let bootstrap: Awaited<ReturnType<typeof openBufferedAttachment>> | undefined;
     if (!attachment) {
       if (this.attachments.size >= this.maxAttachments) throw new TerminalRuntimeError("capacity");
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
+      if (tab.nativeHost?.stopRequested) throw new TerminalRuntimeError("unavailable");
       const paneId = tab.zellijPaneId;
       const next: AttachmentState = {
         ref,
@@ -638,14 +737,20 @@ export class TerminalRuntime {
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
-            void this.handleAttachmentExit(key, exitCode)
-              .catch((error: unknown) => { console.error("[terminal-runtime] failed to record terminal attachment exit", error); })
-              .finally(releasePaneClosure);
+            void this.runWorkspaceMutation(async () => {
+              try {
+                await disconnectAttachmentClient({
+                  current: () => this.attachments.get(key) === next,
+                  viewers: [...next.viewers.values()],
+                  close: () => this.closeAttachment(key, true),
+                });
+              } finally { releasePaneClosure(); }
+            }).catch((error: unknown) => { console.error("[terminal-runtime] failed to disconnect terminal client", error); });
           },
         }), (data) => { void this.broadcast(key, data); });
         next.handle = bootstrap.handle;
         this.attachments.set(key, next);
-        if (openingExit) { await this.handleAttachmentExit(key, openingExit.exitCode); throw new Error("Terminal tab unavailable"); }
+        if (openingExit) { await this.closeAttachment(key, true); throw new Error("Terminal tab unavailable"); }
       } finally { openingExit?.release(); }
       attachment = next;
     }
@@ -703,6 +808,7 @@ export class TerminalRuntime {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.nativeDispatchLeases.close();
     clearInterval(this.sweepTimer);
     await this.workspaceMutationChain;
     await this.observerChain;
@@ -738,6 +844,32 @@ export class TerminalRuntime {
       const tab = workspace.tabs[parsed.tabId];
       if (!tab || terminalTabIncarnation(tab) !== expectedIncarnation) throw new TerminalRuntimeError("not_found");
       return this.store.readSnapshot(parsed);
+    });
+  }
+
+  /** Records exits zellij reports only through held panes (no pane_closed fires for them). */
+  async sweepHeldPaneExits(): Promise<HeldPaneExitSweepResult> {
+    const listHeldPaneExits = this.zellij.listHeldPaneExits?.bind(this.zellij);
+    if (!listHeldPaneExits || this.shuttingDown) return { sessions: 0, exited: 0 };
+    return sweepHeldPaneExits({
+      // One read of the state file per pass, not one per saved workspace.
+      workspaces: await this.store.listRuntimeWorkspaces(),
+      maxSessions: this.maxObservers,
+      listHeldPaneExits,
+      record: (ref, expected, exitCode) => this.runWorkspaceMutation(async () => {
+        const tab = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];
+        if (!tab || tab.nativeHost || tab.status === "exited" || tab.status === "failed" || tab.zellijTabName !== expected.zellijTabName
+          || tab.zellijPaneId !== expected.paneId) return false;
+        const key = refKey(ref);
+        if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);
+        else await this.store.markTabExited(ref, exitCode);
+        // As on pane close: a workspace with no live tab left releases its observer slot.
+        await this.restartObserver(ref.workspaceId);
+        return true;
+      }),
+      logFailed: (error) => {
+        console.warn("[terminal-runtime] held-pane exit check failed", error instanceof Error ? error.name : "unknown_error");
+      },
     });
   }
 
@@ -927,7 +1059,7 @@ export class TerminalRuntime {
         workspace.zellijSessionName,
         tab.zellijTabName,
       );
-      if (replacement) {
+      if (replacement && !tab.nativeHost?.stopRequested) {
         await this.store.activateTab(ref, replacement);
       } else {
         const key = refKey(ref);
@@ -976,6 +1108,7 @@ export class TerminalRuntime {
     }
     const key = refKey(ref);
     this.assertTabAcceptsInput(key);
+    if (this.attachments.get(key)?.inputFenced) throw new TerminalRuntimeError("unavailable");
     let queue = this.inputQueues.get(key);
     if (!queue) {
       if (this.inputQueues.size >= this.maxAttachments * 2) {
@@ -1047,6 +1180,19 @@ export class TerminalRuntime {
     else this.closingPaneTabKeys.set(key, count - 1);
   }
 
+  /** With admission closed, the existing queue alone can still write to this exact pane incarnation. */
+  private async fenceNativeInput(ref: TerminalRef, tab: TerminalRuntimeTabState): Promise<void> {
+    if (!tab.nativeHost) return;
+    const key = refKey(ref);
+    const attachment = this.attachments.get(key);
+    if (attachment) attachment.inputFenced = true;
+    if (tab.nativeHost.stopRequested) return;
+    const queue = this.inputQueues.get(key);
+    if (queue && (tab.status === "running" || tab.status === "idle"))
+      queue.nativeDrainIncarnation = terminalTabIncarnation(tab);
+    await this.store.fenceNativeHost(ref);
+  }
+
   private async drainWorkspaceInput(workspaceId: string): Promise<void> {
     const prefix = `${workspaceId}:`;
     const queues = [...this.inputQueues.entries()]
@@ -1116,6 +1262,7 @@ export class TerminalRuntime {
     try { await this.closeAttachment(key, true); }
     catch (error: unknown) { closeFailure = error; }
     let persistenceFailure: unknown;
+    if ((await this.store.getTab(attachment.ref))?.nativeHost) exitCode = null;
     try {
       await this.retryPaneClosureCheckpoint(() => this.store.markTabExited(attachment.ref, exitCode));
     }

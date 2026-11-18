@@ -29,7 +29,7 @@ export default function GitGraphView({ graph }: { graph: CommitGraphController }
         </div>
       ) : graph.status === "error" && graph.commits.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4">
-          <div role="status" className="text-center text-xs" style={{ color: "var(--danger)" }}>
+          <div role="status" className="text-center text-xs" style={{ color: "var(--danger-text)" }}>
             {categoryMessage(graph.error ?? "server")}
           </div>
           <button
@@ -59,7 +59,7 @@ export default function GitGraphView({ graph }: { graph: CommitGraphController }
         />
       )}
       {graph.error && graph.commits.length > 0 ? (
-        <div role="status" className="shrink-0 px-3 py-1 text-[10px]" style={{ color: "var(--danger)" }}>
+        <div role="status" className="shrink-0 px-3 py-1 text-[10px]" style={{ color: "var(--danger-text)" }}>
           {categoryMessage(graph.error)}
         </div>
       ) : null}

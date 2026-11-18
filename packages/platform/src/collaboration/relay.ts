@@ -119,12 +119,17 @@ export interface RelayMetadata {
   actorId: string;
   runtimeId: string | null;
   resourceId: string | null;
+  /** Coarse route class, null when the path matched no relay route. */
+  routeKind: RelayRoute["kind"] | null;
   method: string;
   path: string;
   requestBytes: number;
   responseBytes: number;
   status: number;
+  /** Until the relayed body finished (or the request was refused). */
   durationMs: number;
+  /** Until the owner home answered with headers; null when no home was contacted. */
+  upstreamHeadersMs: number | null;
   outcome: "forwarded" | "unroutable" | "rejected" | "upstream_error" | "limit";
 }
 
@@ -227,12 +232,14 @@ export class CollaborationRelay {
     // a client header.
     let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
+    let upstreamHeadersMs: number | null = null;
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
       try {
         this.options.onMetadata?.({
-          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
+          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, routeKind: route?.kind ?? null,
+          method: input.method, path: input.path,
           requestBytes, responseBytes,
-          status, durationMs: this.now() - startedAt, outcome,
+          status, durationMs: this.now() - startedAt, upstreamHeadersMs, outcome,
         });
       } catch (error: unknown) {
         // Observability cannot change a home-authenticated content result.
@@ -293,6 +300,7 @@ export class CollaborationRelay {
         redirect: "error",
         signal: AbortSignal.timeout(responseTimeoutMs),
       } as RequestInit);
+      upstreamHeadersMs = this.now() - startedAt;
     } catch (error: unknown) {
       if (overflowed) {
         finish(413, "limit", home.runtimeId);
