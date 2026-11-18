@@ -3,10 +3,25 @@
 import { create } from "zustand";
 import { FileLeafNameSchema } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
+import { usePreviewWindow } from "./usePreviewWindow";
 
 const GATEWAY_URL = getGatewayUrl();
 
 let navSeq = 0;
+let movingToTrash = false;
+
+export function watchFileBrowserAuthority(gatewayUrl: string) {
+  const { draftAuthority } = usePreviewWindow.getState();
+  const controller = new AbortController();
+  const unsubscribe = usePreviewWindow.subscribe(state => {
+    if (state.draftAuthority !== draftAuthority) controller.abort();
+  });
+  return {
+    signal: controller.signal,
+    isCurrent: () => !controller.signal.aborted && getGatewayUrl() === gatewayUrl,
+    unsubscribe,
+  };
+}
 
 export interface FileEntry {
   name: string;
@@ -103,18 +118,18 @@ interface FileBrowserActions {
   consumeViewRequest(expectedView?: "files" | "trash", expectedFolder?: FileBrowserFolderRequest | null): boolean;
 }
 
-async function fetchEntries(path: string): Promise<FileEntry[]> {
+async function fetchEntries(path: string): Promise<FileEntry[] | undefined> {
   try {
     const res = await fetch(`${getGatewayUrl()}/api/files/list?path=${encodeURIComponent(path)}`, {
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return undefined;
     const data = await res.json();
     const entries = data.entries ?? data;
-    return Array.isArray(entries) ? entries : [];
+    return Array.isArray(entries) ? entries : undefined;
   } catch (err: unknown) {
     console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.message : String(err));
-    return [];
+    return undefined;
   }
 }
 
@@ -240,7 +255,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
@@ -260,7 +275,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
@@ -280,7 +295,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
@@ -290,7 +305,11 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       const seq = ++navSeq;
       fetchEntries(currentPath).then((entries) => {
         if (seq !== navSeq) return;
-        const { sortBy, sortDirection } = get();
+        const { sortBy, sortDirection, error } = get();
+        if (!entries) {
+          set({ error: error ?? "Could not refresh Files. Try again.", loading: false });
+          return;
+        }
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       });
     },
@@ -425,24 +444,48 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     },
 
     async deleteFiles(paths) {
-      const errors = await Promise.all(
-        paths.map(async (path) => {
-          const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path }),
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!res.ok) {
-            return `Failed to delete ${path.split("/").pop()}`;
+      if (paths.length === 0 || movingToTrash) return;
+      const label = paths.length === 1 ? `“${paths[0].split("/").at(-1)}”` : `${paths.length} items`;
+      const gatewayUrl = getGatewayUrl();
+      const currentPath = get().currentPath;
+      const moved: string[] = [];
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      movingToTrash = true;
+      try {
+        if (!window.confirm(`Move ${label} to Trash? You can restore them from Trash.`) || !authority.isCurrent()) return;
+        set({ error: null });
+        for (const path of paths) {
+          if (!authority.isCurrent()) return;
+          try {
+            const res = await fetch(`${gatewayUrl}/api/files/delete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path }),
+              signal: AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]),
+            });
+            if (res.ok) moved.push(path);
+          } catch (error) {
+            if (!authority.isCurrent()) return;
+            console.warn("[file-browser] Move to Trash unavailable:", error instanceof Error ? error.name : "UnknownError");
           }
-          return null;
-        }),
-      );
-      const firstError = errors.find((error): error is string => error !== null);
-      if (firstError) set({ error: firstError });
-      set({ selectedPaths: new Set() });
-      get().refresh();
+        }
+        if (!authority.isCurrent()) return;
+        if (get().currentPath === currentPath) {
+          const remaining = new Set(get().selectedPaths);
+          for (const path of moved) {
+            const name = path.split("/").at(-1);
+            if (name && path === (currentPath ? `${currentPath}/${name}` : name)) remaining.delete(name);
+          }
+          set({
+            selectedPaths: remaining,
+            error: moved.length === paths.length ? null : "Move to Trash could not be confirmed for every item. Check Files or Trash.",
+          });
+        }
+        get().refresh();
+      } finally {
+        authority.unsubscribe();
+        movingToTrash = false;
+      }
     },
 
     async duplicate(paths) {

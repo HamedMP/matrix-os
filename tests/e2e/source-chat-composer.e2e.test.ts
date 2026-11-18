@@ -32,6 +32,36 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => { await browser?.close(); });
 
+it("selects and drags real Matrix Files rows into Web Chat and sends their bytes", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.route("https://source-chat-layout.test/**", route => route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html><style>${css}:root{--text-primary:#222;--text-secondary:#666;--text-tertiary:#777;--bg-surface:#fff;--bg-sunken:#eee;--border-subtle:#ddd}body{margin:0;font:14px Arial}#root{height:100vh;width:100%}</style><div id="root"></div></html>`,
+    }));
+    await page.goto("https://source-chat-layout.test/?matrixFiles=true");
+    await page.addScriptTag({ content: script });
+    await page.getByRole("button", { name: "Matrix Files", exact: true }).click();
+    await page.getByRole("button", { name: "Open reports" }).click();
+    const target = page.getByRole("button", { name: "Attach selected.txt" });
+    await target.waitFor();
+    await page.screenshot({ path: join(output, "matrix-attachment-picker.png") });
+    await target.click();
+    const composer = page.locator('[data-slot="chat-composer"]');
+    await composer.getByText("selected.txt", { exact: true }).waitFor();
+    await page.locator('[data-web-file-path="dragged.txt"]').dragTo(composer.getByRole("textbox", { name: "Message chat" }));
+    await composer.getByText("dragged.txt", { exact: true }).waitFor();
+    await page.screenshot({ path: join(output, "matrix-attachments-in-composer.png") });
+    await composer.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(async () => JSON.parse(await page.locator("#root").getAttribute("data-last-submit") ?? "{}")).toEqual({
+      text: "Attached 2 file(s)",
+      files: [["selected.txt", "Original reports/selected.txt"], ["dragged.txt", "Original dragged.txt"]].map(([name, bytes]) => ({
+        name, type: "text/plain", data: `data:text/plain;base64,${Buffer.from(bytes).toString("base64")}`,
+      })),
+    });
+  } finally { await page.close(); }
+});
+
 // Keep the actual responsive composer and its Send control usable without an
 // engine selector in both a new and an existing private Chat.
 it.each([480, 720, 1024].flatMap(width => [false, true].map(empty => ({width, empty}))))(

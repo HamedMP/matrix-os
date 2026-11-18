@@ -3,7 +3,7 @@ import type { ApiClient } from "../../../lib/api";
 import { diagnosticErrorKind, toUserMessage } from "../../../lib/errors";
 
 export const MAX_ATTACHMENT_FILE_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
-const MAX_ATTACHMENTS = 8;
+export const MAX_ATTACHMENTS = 8;
 const MAX_SUBSCRIBERS = 16;
 const MAX_CONCURRENT_UPLOADS = 3;
 const UPLOAD_TIMEOUT_MS = 30_000;
@@ -15,6 +15,7 @@ export interface LocalConversationAttachment {
   uploadId: string;
   uploadPath: string;
   file: File;
+  matrixResourceKey?: string;
   previewUrl?: string;
   status: "ready" | "uploading" | "failed";
   error?: string;
@@ -31,7 +32,7 @@ export interface LocalAttachmentController {
   getSnapshot(): readonly LocalConversationAttachment[];
   getSelectionError(): string | null;
   subscribe(listener: () => void): () => void;
-  add(files: readonly File[]): void;
+  add(files: readonly File[], matrixResourceKey?: string): void;
   remove(localId: string): void;
   retry(localId: string): Promise<void>;
   uploadAll(): Promise<UploadedConversationAttachments | { ok: false; error: string }>;
@@ -147,11 +148,12 @@ export function createLocalAttachmentController(options: {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    add(files) {
+    add(files, matrixResourceKey) {
       if (disposed || uploadInFlight) return;
       selectionError = null;
       let rejectedCount = 0;
       for (const file of files) {
+        if (matrixResourceKey && items.some(item => item.matrixResourceKey === matrixResourceKey)) continue;
         if (items.length >= MAX_ATTACHMENTS) { rejectedCount += 1; continue; }
         if (!validFile(file)) continue;
         const uploadId = (options.createId ?? defaultId)().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 96);
@@ -161,6 +163,7 @@ export function createLocalAttachmentController(options: {
           uploadId,
           uploadPath: `temporary/desktop-chat/${uploadId}-${file.name}`,
           file,
+          ...(matrixResourceKey ? { matrixResourceKey } : {}),
           ...(shouldPreview(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           status: file.size <= MAX_ATTACHMENT_FILE_BYTES ? "ready" : "failed",
           ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MiB." } : {}),

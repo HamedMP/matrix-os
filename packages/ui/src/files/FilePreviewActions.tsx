@@ -4,13 +4,14 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useRef, useEffect, useState, type ReactElement } from "react";
 
 /** File actions belong to the preview's context menu, keeping the image clear. */
-export function FilePreviewActions({ name, children, onDownload, onCopyImage, onCopyPath, onOpenInFiles, pending = false, zIndex = 100 }: {
+export function FilePreviewActions({ name, children, onDownload, onCopyImage, onCopyPath, onOpenInFiles, onMoveToTrash, pending = false, zIndex = 100 }: {
   name: string;
   children: ReactElement;
   onDownload?: () => Promise<void> | void;
   onCopyImage?: () => Promise<void>;
   onCopyPath?: () => Promise<void>;
   onOpenInFiles?: () => Promise<void> | void;
+  onMoveToTrash?: () => void;
   pending?: boolean;
   zIndex?: number;
 }) {
@@ -31,7 +32,7 @@ export function FilePreviewActions({ name, children, onDownload, onCopyImage, on
       if (active.current) setState({ error: { copy: "Could not copy image. Try again.", download: "Could not download file. Try again.", path: "Could not copy path. Try again.", files: "Could not open Files. Try again." }[kind] });
     } finally { inFlight.current = false; }
   };
-  if (!onDownload && !onCopyImage && !onCopyPath && !onOpenInFiles) return children;
+  if (!onDownload && !onCopyImage && !onCopyPath && !onOpenInFiles && !onMoveToTrash) return children;
   const actions: Array<{ kind: Action; label: string; busyLabel?: string; available: boolean }> = [
     { kind: "files", label: "Open in Files", available: Boolean(onOpenInFiles) },
     { kind: "path", label: "Copy path", available: Boolean(onCopyPath) },
@@ -50,6 +51,8 @@ export function FilePreviewActions({ name, children, onDownload, onCopyImage, on
           onSelect={(event) => { event.preventDefault(); void run(action.kind); }}>
           {action.busyLabel && (state.busy === action.kind || action.kind === "download" && pending) ? action.busyLabel : action.label}
         </ContextMenu.Item>)}
+        {onMoveToTrash ? <ContextMenu.Item aria-label={`Move to Trash ${name}`} disabled={pending || Boolean(state.busy)}
+          className={itemClass} onSelect={onMoveToTrash}>Move to Trash</ContextMenu.Item> : null}
         {state.error ? <div role="alert" className="max-w-xs px-2.5 py-1.5 text-xs">{state.error}</div> : state.copied ? <div role="status" className="px-2.5 py-1.5 text-xs">{state.copied}</div> : null}
       </ContextMenu.Content>
     </ContextMenu.Portal>

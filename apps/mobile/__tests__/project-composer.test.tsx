@@ -254,6 +254,22 @@ describe("useProjectComposer", () => {
       expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["b.jpg"]);
     });
 
+    it("drops Matrix attachments on an account, computer or project change while keeping device attachments", () => {
+      const { result, rerender, initialProps } = renderComposer({ matrixAttachmentScope: "account:computer:project" });
+      const fromMatrix = {
+        ...photo("a"),
+        matrixSource: { gatewayUrl: "https://matrix.test/vm/computer", userId: "account", path: "a.jpg" },
+      };
+      act(() => result.current.addAttachments([fromMatrix, photo("b")]));
+      expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["a.jpg", "b.jpg"]);
+      const staleAdd = result.current.addAttachments;
+      rerender({ ...initialProps, matrixAttachmentScope: "account:another-computer:project" });
+      act(() => staleAdd([fromMatrix]));
+      rerender(initialProps);
+      act(() => staleAdd([fromMatrix]));
+      expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["b.jpg"]);
+    });
+
     it.each(["add", "remove"])("clears the old send error on attachment %s", (action) => {
       const { result, rerender, initialProps } = renderComposer();
       act(() => result.current.addAttachments([photo("a")]));

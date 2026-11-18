@@ -63,6 +63,7 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
+import { useMatrixAttachmentControls } from "./attachments/use-matrix-attachment-controls";
 import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
@@ -303,6 +304,7 @@ function CanonicalChatWorkspaceContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
+  const attachmentDraftScope = JSON.stringify([draftScope, draftRequestIdentity, draftProjectId]);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
   const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
@@ -420,6 +422,24 @@ function CanonicalChatWorkspaceContent({
   const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
+  const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
+  const draftAttachmentProject = !routedComposerChatId
+    ? projects.find(project => project.id === draftProjectId || project.slug === draftProjectId)
+    : undefined;
+  const matrixAttachments = useMatrixAttachmentControls({
+    api: api ?? null,
+    scopeKey: attachmentDraftScope,
+    project: existingFilesScope?.kind === "project" ? existingFilesScope : draftAttachmentProject
+      ? { kind: "project", projectId: draftAttachmentProject.slug, label: draftAttachmentProject.name, chatId: "attachment-picker" }
+      : undefined,
+    enabled: Boolean(active && live && attachmentPolicy.enabled && !inspectorExclusive && !botIdentityUnknown
+      && !explicitSharedRoute && !projectedSharedChat
+      && (!routedComposerChatId || (slashRecord && privateOwner?.type === "personal" && privateOwner.ownerId === actorId))),
+    locked: uploadingAttachments || controller.status === "loading",
+    queue: attachments,
+    deviceInput: fileInputRef,
+    validate: attachmentPolicy.error,
+  });
   const credentialScopeKey = active && live && api && authStatus === "signed-in" && actorId
     && privateOwner?.type === "personal" && privateOwner.ownerId === actorId
     && !sharedScopeId && !projectedSharedChat && chatConnection === "open"
@@ -531,6 +551,7 @@ function CanonicalChatWorkspaceContent({
       || !selectionAvailable
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
+      || matrixAttachments.pending
     ) return;
     const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
     if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
@@ -612,6 +633,7 @@ function CanonicalChatWorkspaceContent({
       || !selectionAvailable
       || composerAction
       || uploadingAttachments
+      || matrixAttachments.pending
     ) return;
     const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
     if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
@@ -806,7 +828,7 @@ function CanonicalChatWorkspaceContent({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments}
-        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && (
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
@@ -820,11 +842,11 @@ function CanonicalChatWorkspaceContent({
         instanceLocked={controller.detail?.record.providerBinding !== undefined}
         resources={resources}
         resourceSearch={resourceSearch}
-        onAttach={() => fileInputRef.current?.click()}
+        onAttach={matrixAttachments.onAttach}
         attachments={(
           <AttachmentPreviewRow
             items={attachments.items}
-            selectionError={attachments.selectionError}
+            selectionError={matrixAttachments.error ?? attachments.selectionError}
             disabled={uploadingAttachments}
             onRemove={attachments.remove}
             onRetry={(localId) => void attachments.retry(localId)}
@@ -987,8 +1009,9 @@ function CanonicalChatWorkspaceContent({
           "matrix-bot-chat-layout @container/bot-chat relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
           inspectorExclusive ? "hidden" : "flex",
         )}
-        {...attachments.paneProps}
+        {...matrixAttachments.paneProps}
       >
+        {matrixAttachments.dialog}
         {sharedScopeId || projectedSharedChat ? (
           collaborationApi && actorId ? (
             sharedScopeId ? <SharedChatPanel api={collaborationApi} actorId={actorId}

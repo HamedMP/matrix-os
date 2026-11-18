@@ -1,7 +1,11 @@
 "use client";
-import { mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
 import { matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
+import { MatrixAttachmentPicker } from "./MatrixAttachmentPicker";
+import { ATTACHMENT_COUNT_LIMIT, useMatrixAttachment } from "./use-matrix-attachment";
+import { hasMatrixFileDrag, takeMatrixFileDrag } from "@/lib/matrix-file-drag";
+import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   BOT_ATTACHMENT_HANDOFF_REASON,
@@ -43,7 +47,7 @@ export function ChatInput({
   draftRequest,
   onDraftConsumed,
   unavailablePlaceholder,
-  attachmentsEnabled, attachmentPolicy,
+  attachmentsEnabled, attachmentPolicy, matrixGatewayUrl,
   driveContextEnabled = false,
   botContext = false,
   botControls, botConsentResources = [], botRequiresFullAccess = false,
@@ -74,6 +78,7 @@ export function ChatInput({
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
   attachmentPolicy?: (files: readonly File[]) => string | null;
+  matrixGatewayUrl?: string;
   driveContextEnabled?: boolean;
   botContext?: boolean;
   botControls?: React.ReactNode;
@@ -120,6 +125,18 @@ export function ChatInput({
   // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
   const mergedDraft = useRef<TrySuggestionDraft | null>(null);
   const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  const fileAuthority = usePreviewWindow(state => state.draftAuthority);
+  const [matrixPickerOpen, setMatrixPickerOpen] = useState(false);
+  const matrixAttachment = useMatrixAttachment({
+    authority: fileAuthority,
+    enabled: attachmentsEnabled && connected && !sending,
+    files: attachments.map(item => item.file),
+    gatewayUrl: matrixGatewayUrl,
+    isCurrentAuthority,
+    policy: attachmentPolicy,
+    scope: JSON.stringify([scope, composer.permissionIdentity]),
+    onAdd: file => addFiles([file]),
+  });
   const currentComposer = useRef({ composer, scope });
   useLayoutEffect(() => { currentComposer.current = { composer, scope }; }, [composer, scope]);
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
@@ -140,7 +157,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
+  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);
@@ -223,8 +240,48 @@ export function ChatInput({
 
   const editorPlaceholder = connected ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
 
+  function addDroppedFiles(list: FileList) {
+    if (list.length + attachments.length > ATTACHMENT_COUNT_LIMIT) {
+      setError(`A message carries up to ${ATTACHMENT_COUNT_LIMIT} attachments.`);
+      return;
+    }
+    const files = Array.from(list);
+    if (files.some(file => file.size > MAX_AGENT_ATTACHMENT_BYTES)) {
+      setError("A file exceeds the attachment size limit.");
+      return;
+    }
+    setError(null);
+    addFiles(files);
+  }
+
   return (
-    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer">
+    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer"
+      onDragOver={event => {
+        if (event.dataTransfer && (hasMatrixFileDrag(event.dataTransfer) || event.dataTransfer.types?.includes("Files"))) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = attachmentsEnabled && connected && !sending ? "copy" : "none";
+        }
+      }}
+      onDrop={event => {
+        const transfer = event.dataTransfer;
+        if (!transfer) return;
+        const isMatrix = hasMatrixFileDrag(transfer);
+        if (!isMatrix && !transfer.files?.length) return;
+        event.preventDefault();
+        if (!attachmentsEnabled || !connected || sending) return;
+        if (isMatrix) {
+          const path = matrixGatewayUrl && takeMatrixFileDrag(transfer, fileAuthority, matrixGatewayUrl);
+          if (path) {
+            setError(null);
+            void matrixAttachment.attach(path);
+          } else if (matrixGatewayUrl) setError("Drag the file from the active Matrix Files window.");
+        } else addDroppedFiles(transfer.files);
+      }}
+      onPaste={event => {
+        if (!attachmentsEnabled || !connected || sending || !event.clipboardData?.files?.length) return;
+        if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+        addDroppedFiles(event.clipboardData.files);
+      }}>
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
         const text = input.replace(/@[^\s@]*$/, "");
         const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
@@ -239,6 +296,18 @@ export function ChatInput({
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {!matrixPickerOpen && matrixAttachment.error ? <p role="alert" className="text-xs text-destructive">{matrixAttachment.error}</p> : null}
+      {!matrixPickerOpen && matrixAttachment.pending ? <p role="status" className="text-xs">Reading Matrix file…</p> : null}
+      {matrixGatewayUrl && matrixPickerOpen ? <MatrixAttachmentPicker gatewayUrl={matrixGatewayUrl}
+        pending={matrixAttachment.pending} error={matrixAttachment.error}
+        close={() => { matrixAttachment.clear(); setMatrixPickerOpen(false); textareaRef.current?.focus(); }}
+        select={path => {
+          void matrixAttachment.attach(path).then(attached => {
+            if (!attached) return;
+            setMatrixPickerOpen(false);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+          });
+        }} /> : null}
       <div ref={slashAnchorRef} className="relative flex flex-col">
         <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} projectSlash={projectSlash} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
           onOutsideDismiss={()=>setSlashDismissal(slashKey)}
@@ -315,6 +384,10 @@ export function ChatInput({
           controls={(
             <>
               {attachmentsEnabled ? <ChatComposerAttachButton disabled={!connected} onClick={() => fileInputRef.current?.click()} /> : null}
+              {attachmentsEnabled && matrixGatewayUrl ? <button type="button"
+                disabled={!connected || sending || matrixAttachment.pending}
+                className="h-7 shrink-0 rounded-lg border border-[var(--border-subtle)] px-2 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"
+                onClick={() => { matrixAttachment.clear(); setMatrixPickerOpen(true); }}>Matrix Files</button> : null}
               {leadingControls}
             </>
           )}

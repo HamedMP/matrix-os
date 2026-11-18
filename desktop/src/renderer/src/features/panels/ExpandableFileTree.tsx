@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactEl
 import { ChevronDown, ChevronRight, Folder } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
 import { EMPTY_INSPECTOR_FILE_VIEW, useInspectorFileViews } from "../../stores/files-navigation";
+import { beginMatrixFileDrag, captureAttachmentConnection, endMatrixFileDrag, type MatrixAttachmentResource } from "../chat/attachments/matrix-file-attachment";
 export type InspectorTreeEntry = { path: string; kind: "file" | "directory" };
 type InspectorTreeDirectory = { status: "loading" | "ready" | "error"; entries: InspectorTreeEntry[] };
 const MAX_EXPANDED_FILE_DIRECTORIES = 200;
@@ -15,6 +16,8 @@ export function ExpandableFileTree({
   revealKey,
   renderEntry,
   searchEntries,
+  draggableResource,
+  fileActionLabel = "Open file",
 }: {
   viewKey?: string;
   loadDirectory: (path: string) => Promise<InspectorTreeEntry[]>;
@@ -24,6 +27,8 @@ export function ExpandableFileTree({
   revealKey?: string;
   renderEntry?: (entry: InspectorTreeEntry, button: ReactElement) => ReactNode;
   searchEntries?: (query: string, signal: AbortSignal) => Promise<InspectorTreeEntry[]>;
+  draggableResource?: (path: string) => MatrixAttachmentResource | undefined;
+  fileActionLabel?: string;
 }) {
   const [initialView] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view ?? EMPTY_INSPECTOR_FILE_VIEW);
   const [localExpandedPaths, setLocalExpandedPaths] = useState<string[]>(initialView.expandedPaths);
@@ -137,6 +142,7 @@ export function ExpandableFileTree({
     });
   };
 
+  const dragConnection = captureAttachmentConnection();
   const renderDirectory = (path: string, depth: number) => {
     let directory = path === "" && filter && searchEntries
       ? search?.query === filter ? search.directory : { status: "loading", entries: [] } as InspectorTreeDirectory
@@ -170,13 +176,17 @@ export function ExpandableFileTree({
     }
     return directory.entries.map((entry) => {
       const expanded = entry.kind === "directory" && expandedPaths.includes(entry.path);
+      const resource = entry.kind === "file" ? draggableResource?.(entry.path) : undefined;
       const button = <button
             type="button"
             ref={entry.path === selectedPath ? selectedElement : undefined}
             aria-current={entry.path === selectedPath ? true : undefined}
             aria-label={entry.kind === "directory"
               ? `${expanded ? "Collapse" : "Expand"} folder ${entry.path}`
-              : `Open file ${entry.path}`}
+              : `${fileActionLabel} ${entry.path}`}
+            draggable={resource ? true : undefined}
+            onDragStart={resource ? event => beginMatrixFileDrag(event.dataTransfer, resource, dragConnection) : undefined}
+            onDragEnd={resource ? endMatrixFileDrag : undefined}
             {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
             className="flex w-full items-center gap-2.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
             style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)", background: entry.path === selectedPath ? "var(--bg-hover)" : undefined }}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
+import { readBoundedFileBlob } from "@/lib/read-bounded-file-blob";
 import {
   FilePreviewDescriptorSchema,
   resolveChatMessageLink,
@@ -27,25 +28,6 @@ function gatewayPreviewUrl(url: string): string {
   return `${getGatewayUrl()}${url}`;
 }
 
-async function readBoundedBlob(response: Response, maxBytes: number): Promise<Blob> {
-  if (!response.ok || !response.body) throw new Error("ChatFileUnavailable");
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) throw new Error("ChatFileTooLarge");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array<ArrayBuffer>[] = [];
-  let bytes = 0;
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      bytes += part.value.byteLength;
-      if (bytes > maxBytes) { await reader.cancel(); throw new Error("ChatFileTooLarge"); }
-      chunks.push(new Uint8Array(part.value));
-    }
-  } finally { reader.releaseLock(); }
-  return new Blob(chunks, { type: response.headers.get("content-type") ?? "application/octet-stream" });
-}
-
 async function fetchPreview(url: string, signal?: AbortSignal): Promise<Response> {
   return fetch(gatewayPreviewUrl(url), {
     signal: signal
@@ -56,7 +38,7 @@ async function fetchPreview(url: string, signal?: AbortSignal): Promise<Response
 
 export async function loadChatFile(path: string, signal?: AbortSignal): Promise<Blob> {
   const resource = resourceForChatPath(path);
-  return readBoundedBlob(await fetchPreview(filePreviewContentUrl(resource), signal), CHAT_FILE_LIMIT_BYTES);
+  return readBoundedFileBlob(await fetchPreview(filePreviewContentUrl(resource), signal), CHAT_FILE_LIMIT_BYTES);
 }
 
 async function loadDescriptor(path: string, signal?: AbortSignal): Promise<FilePreviewDescriptor> {
@@ -67,7 +49,7 @@ async function loadDescriptor(path: string, signal?: AbortSignal): Promise<FileP
 }
 
 async function loadPreviewBlob(url: string, maxBytes: number): Promise<Blob> {
-  return readBoundedBlob(await fetchPreview(url), Math.min(maxBytes, CHAT_FILE_LIMIT_BYTES));
+  return readBoundedFileBlob(await fetchPreview(url), Math.min(maxBytes, CHAT_FILE_LIMIT_BYTES));
 }
 
 async function loadPreviewText(url: string, maxBytes: number): Promise<string> {
@@ -78,18 +60,18 @@ export function ChatFilePanel({ path, onClose }: { path: string; onClose: () => 
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, [path]);
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<
-    { status: "loading" } | { status: "ready"; descriptor: FilePreviewDescriptor } | { status: "failed" }
-  >({ status: "loading" });
+  const [result, setResult] = useState<(
+    { status: "ready"; descriptor: FilePreviewDescriptor } | { status: "failed" }
+  ) & { path: string; attempt: number }>();
+  const state = result?.path === path && result.attempt === attempt ? result : { status: "loading" as const };
   useEffect(() => {
     const controller = new AbortController();
-    setState({ status: "loading" });
     void loadDescriptor(path, controller.signal).then((descriptor) => {
-      if (!controller.signal.aborted) setState({ status: "ready", descriptor });
+      if (!controller.signal.aborted) setResult({ status: "ready", descriptor, path, attempt });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[chat-file] preview failed", error instanceof Error ? error.name : "UnknownError");
-      setState({ status: "failed" });
+      setResult({ status: "failed", path, attempt });
     });
     return () => controller.abort();
   }, [attempt, path]);
@@ -105,6 +87,7 @@ export function ChatFilePanel({ path, onClose }: { path: string; onClose: () => 
               contentUrl={filePreviewContentUrl(state.descriptor.resource)}
               loadBlob={loadPreviewBlob}
               loadText={loadPreviewText}
+              showImageDownload
               retry={retry}
             />}
     </div>

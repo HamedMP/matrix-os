@@ -272,7 +272,9 @@ function ChatAppContent({
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
   if (agentDraftRequest && agentDraftRequest.ownerIdentity !== draftIdentity) setAgentDraftRequest(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
-  const submitScope = useMemo(() => ({ composerScope, draftIdentity, authorityKey }), [composerScope, draftIdentity, authorityKey]);
+  const matrixGatewayUrl = collaborationView ? undefined : projectGatewayUrl;
+  const composerKey = JSON.stringify([composerScope, authorityKey, matrixGatewayUrl, chatProjectId]);
+  const submitScope = useMemo(() => ({ composerScope, draftIdentity, authorityKey, chatProjectId }), [composerScope, draftIdentity, authorityKey, chatProjectId]);
   const liveSubmitScope = useRef<typeof submitScope | null>(null);
   useLayoutEffect(() => {
     liveSubmitScope.current = submitScope;
@@ -745,7 +747,8 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
-            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, projectSlash, isCurrentAuthority, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, matrixGatewayUrl, slashInstance, slashCatalogLoading, projectSlash, isCurrentAuthority, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerKey={composerKey}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -867,6 +870,7 @@ function ChatAppContent({
                 toolbarControls={composerToolbar}
                 queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
+                matrixGatewayUrl={matrixGatewayUrl}
                 slashInstance={slashInstance}
                 slashCatalogLoading={slashCatalogLoading}
                 projectSlash={projectSlash}
@@ -875,7 +879,7 @@ function ChatAppContent({
                 botControls={botComposerControls}
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
-                key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
+                key={composerKey} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerReady}
                 busy={busy}
                 activeRunId={activeRunId}
@@ -911,6 +915,7 @@ const NEW_CHAT_LOGO_STYLE = {
 
 function EmptyState({
   composerProps,
+  composerKey,
   onSubmit,
   connected,
   mobile,
@@ -920,7 +925,8 @@ function EmptyState({
   attachmentsEnabled,
   projectHome,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "projectSlash" | "isCurrentAuthority" | "attachmentPolicy">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "projectSlash" | "isCurrentAuthority" | "attachmentPolicy" | "matrixGatewayUrl">;
+  composerKey: string;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   mobile: boolean;
@@ -933,7 +939,7 @@ function EmptyState({
   const layout = mobile ? "narrow" : "wide";
   const input = (
     <ChatInput
-      key={`composer:${composerProps.scope}`} {...composerProps}
+      key={composerKey} {...composerProps}
       connected={connected && providerReady}
       busy={false}
       onSubmit={onSubmit}
