@@ -66,6 +66,24 @@ describe("createAppMenuTemplate", () => {
     expect(pairingItem(options({ platform: "linux", openMacPairing }))).toBeUndefined();
   });
 
+  it("opens Mac Verification setup in the installed macOS client", () => {
+    const openMacVerification = vi.fn();
+    const options = {
+      appName: "Matrix OS", isPackaged: true,
+      openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(), openMacVerification,
+    };
+    const macMenu = createAppMenuTemplate({ ...options, platform: "darwin" });
+    const appMenu = macMenu.find(item => item.label === options.appName);
+    const item = Array.isArray(appMenu?.submenu)
+      ? appMenu.submenu.find(option => option.label === "Mac Verification…") : undefined;
+    if (!item?.click) throw new Error("missing native Mac Verification setup");
+    item.click({} as never, {} as never, {} as never);
+    expect(openMacVerification).toHaveBeenCalledOnce();
+    expect(options.send).not.toHaveBeenCalled();
+    expect(JSON.stringify(createAppMenuTemplate({ ...options, platform: "win32" }))).not.toContain("Mac Verification");
+  });
+
   it("opens local Mac activity history from the native menu without a renderer action", () => {
     const openMacActivity = vi.fn();
     const menuOptions = options({ isPackaged: false, openMacActivity });

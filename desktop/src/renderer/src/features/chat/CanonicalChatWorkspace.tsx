@@ -94,6 +94,7 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
+import type { MacVerificationDraft } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -595,7 +596,7 @@ function CanonicalChatWorkspaceContent({
     return parts.length > 0 ? parts : null;
   };
 
-  const submit = async (submission: SharedChatComposerSubmission) => {
+  const submit = async (submission: SharedChatComposerSubmission, verification?: MacVerificationDraft) => {
     if (
       !selection
       || (!directBotId && providerCatalogLoading)
@@ -633,8 +634,13 @@ function CanonicalChatWorkspaceContent({
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
       const worktreeRequest = terminalRequest || previewRequest;
-      const requestedRoot = worktreeRequest ? composerOwner.current.worktree : null;
+      const requestedRoot = worktreeRequest || verification ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
+      if (verification && (worktreeRequest || submission.projectSkill || permissionResources.length || !verification.isCurrent()
+        || requestedRoot?.projectId !== verification.worktree.projectId || requestedRoot.worktreeId !== verification.worktree.worktreeId)) {
+        setSubmissionError("The Mac verification selection changed. Select Mac Verification again.");
+        return;
+      }
       if (worktreeRequest && (!requestedRoot || staged?.text !== submission.text || staged.scope !== draftScope
         || staged.identity !== owner.identity || staged.root.projectId !== requestedRoot.projectId
         || staged.root.worktreeId !== requestedRoot.worktreeId || (staged.expiresAt !== undefined && staged.expiresAt <= Date.now()))) {
@@ -686,6 +692,7 @@ function CanonicalChatWorkspaceContent({
           () => { if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId); });
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
+        verification?.accept(admitted.run);
         reportedChatId.current = admitted.record.chat.id;
         const admittedProjectId = admitted.record.projectId ?? null;
         if (admittedProjectId !== projectId && onProjectChanged) {
@@ -864,7 +871,7 @@ function CanonicalChatWorkspaceContent({
     restoreNewDraft: () => { controller.startNewChat(); reportedChatId.current = null; onActiveChatChanged?.(null); setGlobalView("draft"); },
   });
 
-  const renderComposer = (mentionActions?: readonly ComposerMentionAction[]) => (
+  const renderComposer = (mentionActions?: readonly ComposerMentionAction[], verification?: MacVerificationDraft) => (
     <>
       <QueuedTurnsPanel
         turns={queuedTurns}
@@ -903,7 +910,7 @@ function CanonicalChatWorkspaceContent({
         onAgentMention={botMention.select}
         mentionActions={mentionActions}
         onSubmit={(submission) => void (
-          editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission)
+          editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission, verification)
         )}
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
@@ -1176,7 +1183,7 @@ function CanonicalChatWorkspaceContent({
                 onDraft={stageWorktreeDraft}
                 onDiscardDraft={discardWorktreeDraft}
               >
-                {mentionActions => (
+                {(mentionActions, verification) => (
                   <>
                     {pendingTool ? (
                       <SupervisedToolApprovalBar
@@ -1184,7 +1191,7 @@ function CanonicalChatWorkspaceContent({
                         onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
                       />
                     ) : null}
-                    {renderComposer(mentionActions)}
+                    {renderComposer(mentionActions, verification)}
                   </>
                 )}
               </ChatWorktreeActions>

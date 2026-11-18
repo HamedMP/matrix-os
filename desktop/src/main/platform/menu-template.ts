@@ -76,6 +76,7 @@ interface AppMenuTemplateOptions {
   stopBackgroundMacChecks?(): void;
   openMacActivity?(): void;
   openMacPairing?(): void;
+  openMacVerification?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
   /** Each registry action shows its first binding as its accelerator. */
@@ -103,6 +104,7 @@ export function createAppMenuTemplate({
   stopBackgroundMacChecks,
   openMacActivity,
   openMacPairing,
+  openMacVerification,
   openThirdPartyNotices,
   shortcuts,
   runShortcut,
@@ -182,6 +184,7 @@ export function createAppMenuTemplate({
             { type: "separator" },
             ...settingsItems,
             ...(openMacPairing ? [{ label: "Mac Pairing…", click: openMacPairing }] : []),
+            ...(openMacVerification ? [{ label: "Mac Verification…", click: openMacVerification }] : []),
             ...(openMacActivity ? [{
               id: RECENT_MAC_ACTIVITY_MENU_ID, label: "Recent Mac Activity…", enabled: false, click: openMacActivity,
             }] : []),

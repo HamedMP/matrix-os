@@ -44,6 +44,27 @@ describe("one-time Electron Desktop preview", () => {
     expect(activity.finish).toHaveBeenCalledWith("revoked");
   });
 
+  it("does not execute a typed verification read which changed request kind during consent", async () => {
+    const { deps, service } = setup(async () => ({
+      check: vi.fn().mockResolvedValue(true),
+      close: vi.fn(),
+    }));
+    const verified = { ...request, requestKind: "verification" as const };
+    deps.read.mockResolvedValueOnce(verified).mockResolvedValueOnce(request);
+    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.returnResult).not.toHaveBeenCalled();
+  });
+
+  it("requires native pairing even if the typed verification has a locally approved operation", async () => {
+    const { deps, service } = setup();
+    const verified = { ...request, requestKind: "verification" as const };
+    deps.read.mockResolvedValue(verified);
+    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
+    expect(deps.approve).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
   it("drops the preview result after a device revision changes during the build", async () => {
     const check = vi.fn().mockResolvedValue(true);
     const close = vi.fn();
