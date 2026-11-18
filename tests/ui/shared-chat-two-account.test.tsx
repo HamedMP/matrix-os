@@ -33,7 +33,7 @@ describe("shared Chat two-account lifecycle", () => {
           id, chatId, sequence: String(index + 1), role: "user", state: "committed", purpose: "ai_request", actor,
           parts: [{ type: "text", text: "Same prompt" }], createdAt,
         })) };
-        if (path.endsWith("/chat/requests")) return { requests: [{
+        if (path.split("?")[0]!.endsWith("/chat/requests")) return { requests: [{
           id: "qturn_first", chatId, messageId: "msg_first", acceptedSequence: "1", actor, state: "interrupted",
           text: "Same prompt", selection: defaultSelection, acceptedAt: createdAt, updatedAt: createdAt,
         }], approvals: [], capability: { status: "available", effectiveSelection: defaultSelection }, resourceRevision: "4" };
@@ -116,7 +116,7 @@ describe("shared Chat two-account lifecycle", () => {
             latestSequence: String(discussionMessages.length),
           };
         }
-        if (path.endsWith("/chat/requests")) return {
+        if (path.split("?")[0]!.endsWith("/chat/requests")) return {
           requests,
           approvals: [],
           capability: { status: "available", effectiveSelection: defaultSelection },
@@ -145,7 +145,7 @@ describe("shared Chat two-account lifecycle", () => {
           notify();
           return message;
         }
-        if (path.endsWith("/chat/requests")) {
+        if (path.split("?")[0]!.endsWith("/chat/requests")) {
           const text = (body as { text: string }).text;
           revision += 1;
           const request = {

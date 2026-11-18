@@ -183,7 +183,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 
   const load = useCallback(async () => {
     try {
-      const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests`));
+      const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests?includeMessageIds=1`));
       latestResourceRevision.current = response.resourceRevision;
       hadAvailable.current = response.capability.status === "available";
       dispatch({ type: "loaded", response });

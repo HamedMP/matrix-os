@@ -128,3 +128,8 @@ Historical request status belongs beside its canonical prompt, linked through
 requests add no status. Unclaimed work retains ordinary progress controls. The
 composer must not repeat the claimed request history or expand horizontally for
 long prompts. Reuse library controls for cancel/retry and tool decisions.
+
+The optional request `messageId` is returned only when the new client asks for
+`includeMessageIds=1`. Default responses retain the old strict shape during
+rolling updates. Validate the bounded opt-in query and reject duplicate keys;
+authentication still signs the canonical path and query separately.
