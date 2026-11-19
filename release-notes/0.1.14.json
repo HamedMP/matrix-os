@@ -1,0 +1,112 @@
+{
+  "version": "0.1.14",
+  "channel": "stable",
+  "date": "2026-10-08T07:33:30Z",
+  "locale": "en",
+  "title": "Connect your apps",
+  "shortTitle": "Connect Apps",
+  "summary": "Connect the tools you use with a few clicks, and a much better mobile app.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Connect Apps",
+      "body": "Browse a catalog of apps and connect them with a sign-in. Your agents can read from them, import your data and take actions you allow.",
+      "art": "sync",
+      "tone": "lime",
+      "prs": [
+        2217,
+        2259,
+        2263,
+        2265,
+        2233
+      ]
+    },
+    {
+      "tag": "Mobile",
+      "title": "A smoother mobile app",
+      "body": "Sign in with Apple, send messages instantly, delete your account in the app and find the privacy policy and terms. The app also opens faster and crashes less.",
+      "surfaces": [
+        "native-mobile"
+      ],
+      "art": "notification",
+      "tone": "sand",
+      "prs": [
+        2230,
+        2231,
+        2125,
+        2184,
+        2178,
+        2180,
+        2249,
+        2171,
+        2168,
+        2242
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Use your personal Codex subscription in Pi chats and bots."
+    },
+    {
+      "kind": "new",
+      "text": "Connect Claude API models in Matrix AI settings."
+    },
+    {
+      "kind": "new",
+      "text": "Choose who gets access before you share a project."
+    },
+    {
+      "kind": "improved",
+      "text": "Share shows member names."
+    },
+    {
+      "kind": "improved",
+      "text": "Projects are now the way to share live work."
+    },
+    {
+      "kind": "improved",
+      "text": "Chat in the desktop app matches the new design."
+    },
+    {
+      "kind": "improved",
+      "text": "The account entry in the desktop app uses the Matrix brand."
+    },
+    {
+      "kind": "improved",
+      "text": "The desktop app remembers available providers for faster chats."
+    },
+    {
+      "kind": "fixed",
+      "text": "Signing in to Claude in Settings shows progress and finishes reliably."
+    },
+    {
+      "kind": "fixed",
+      "text": "Provider status is steadier and icons are easier to see."
+    },
+    {
+      "kind": "fixed",
+      "text": "Agent navigation and provider recovery in Chat are steadier."
+    },
+    {
+      "kind": "fixed",
+      "text": "Access to chats inherited from a shared project works again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Skills work again in Chat in the browser."
+    },
+    {
+      "kind": "fixed",
+      "text": "Matrix AI model and subscription entries line up."
+    },
+    {
+      "kind": "improved",
+      "text": "Workspace apps and mobile release limits are explained more clearly."
+    }
+  ],
+  "hidden": [
+    2229
+  ]
+}

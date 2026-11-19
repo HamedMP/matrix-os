@@ -1,0 +1,79 @@
+{
+  "version": "0.1.24",
+  "channel": "stable",
+  "date": "2026-11-11T17:28:15Z",
+  "locale": "en",
+  "title": "Terminals in their own window",
+  "shortTitle": "Terminal window",
+  "summary": "The desktop app gets a dedicated Terminal window, and you can share apps with your organization.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "The Terminal window",
+      "body": "Open a Terminal window in the desktop app with terminals from every Matrix computer, plus local terminals on your own machine.",
+      "surfaces": [
+        "electron-desktop"
+      ],
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        3250,
+        3251,
+        3252,
+        3253
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Share apps with your organization",
+      "body": "Share an app with your organization. It runs on your computer, and teammates open it in the browser or the desktop app.",
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        3140,
+        3143,
+        3144,
+        3150,
+        3151,
+        3152,
+        3153,
+        3154
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "A private AI activity dashboard shows your agent history, including history from your Mac."
+    },
+    {
+      "kind": "fixed",
+      "text": "Links in the mobile terminal open in the browser."
+    },
+    {
+      "kind": "improved",
+      "text": "Stronger protection for the web requests your Matrix computer makes."
+    }
+  ],
+  "hidden": [
+    3240,
+    3245,
+    3246,
+    3247,
+    3229,
+    3230,
+    3249,
+    3258,
+    3259,
+    3260,
+    3261,
+    3123,
+    3226,
+    3273,
+    3263,
+    3264,
+    3265,
+    3266,
+    3267
+  ]
+}

@@ -99,7 +99,7 @@ describe("release notes catalog", () => {
   });
 
   it("bundles the repository release-notes directory into the renderer", () => {
-    expect(BUNDLED_RELEASE_NOTES.some((entry) => entry.version === "0.1.29")).toBe(true);
+    expect(BUNDLED_RELEASE_NOTES.some((entry) => entry.version === "0.1.24")).toBe(true);
   });
 
   it("falls back to the update's markdown notes when its version has no structured notes", () => {

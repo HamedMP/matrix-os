@@ -1,0 +1,116 @@
+{
+  "version": "0.1.5",
+  "channel": "stable",
+  "date": "2026-09-30T11:16:38Z",
+  "locale": "en",
+  "title": "Bring your work with you",
+  "shortTitle": "Terminal file paste",
+  "summary": "Drop files into the terminal, bring your Codex history into Matrix, and open organization drives in the desktop app.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Files in the terminal",
+      "body": "Paste files, drag them in or attach them to a terminal, so your agent can work with them right away.",
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        2038
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Import your Codex conversations",
+      "body": "Bring local Codex conversations into Matrix as private chats and pick up where you left off.",
+      "art": "sync",
+      "tone": "sand",
+      "prs": [
+        2053
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Organization drives are available in the desktop app."
+    },
+    {
+      "kind": "new",
+      "text": "Dictation now comes with a monthly allowance."
+    },
+    {
+      "kind": "new",
+      "text": "Inbox Triage can apply Gmail labels in batches."
+    },
+    {
+      "kind": "improved",
+      "text": "Links to apps and agent artifacts in chat open more naturally in the desktop app."
+    },
+    {
+      "kind": "improved",
+      "text": "Settings explains access status more clearly and remembers your agent switches."
+    },
+    {
+      "kind": "improved",
+      "text": "The retired Symphony app has been removed."
+    },
+    {
+      "kind": "fixed",
+      "text": "The desktop app keeps its agent routes, drafts and file navigation."
+    },
+    {
+      "kind": "fixed",
+      "text": "The desktop app stays connected to your computer when it is busy."
+    },
+    {
+      "kind": "fixed",
+      "text": "Matrix AI shows up in the model picker, and your own agent routes are kept."
+    },
+    {
+      "kind": "fixed",
+      "text": "Shared projects work reliably on mobile and in the browser."
+    },
+    {
+      "kind": "fixed",
+      "text": "Hermes turns on correctly when no messaging channel is set."
+    },
+    {
+      "kind": "fixed",
+      "text": "The matrix CLI can connect to a shell from an interactive terminal again."
+    }
+  ],
+  "hidden": [
+    1918,
+    1926,
+    1975,
+    1979,
+    1974,
+    1999,
+    2000,
+    2036,
+    2037,
+    2019,
+    1985,
+    1988,
+    2010,
+    2039,
+    2051,
+    2050,
+    1528,
+    1525,
+    1976,
+    1978,
+    1981,
+    2004,
+    2008,
+    2011,
+    2016,
+    2017,
+    2021,
+    2027,
+    2025,
+    2052,
+    2057,
+    1993,
+    2005
+  ]
+}
