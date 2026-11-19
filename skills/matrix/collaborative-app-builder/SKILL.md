@@ -38,8 +38,10 @@ Read [troubleshooting](references/troubleshooting.md) when a concrete check fail
 
 When the request came from **Share app → Organization → Start in Chats**, the
 first message ends with `Share handoff: app <slug>, organization <orgId>, request <requestId>.`
-Do the normal workflow below, then report the outcome by rewriting
-`~/system/share/collaborative/<slug>.json` as a single JSON object:
+Do the normal workflow below, then write the outcome to
+`~/system/share/collaborative/<slug>.json`, replacing it if it exists. The Share
+host keeps the owner's intent in a separate file. Write only the outcome file
+as a single JSON object:
 
 ```json
 { "version": 1, "event": "collaborative_app.preparation", "requestId": "<requestId>",

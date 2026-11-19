@@ -17,7 +17,7 @@ export interface OrganizationSharing {
 
 export type OrganizationShareStep = "idle" | "checking" | "required" | "running" | "applying" | "done";
 
-interface Pending { organizationId: string; reason: "owner" | "completion" }
+type Pending = { organizationId: string } & ({ reason: "owner" } | { reason: "completion"; requestId: string });
 
 const NOT_READY_AFTER_CHAT = "Claude finished, but the app isn’t ready to share yet. Open the chat to keep going.";
 const CHECK_FAILED = "Couldn’t check this app right now. Try again.";
@@ -45,11 +45,12 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
   const attempt = useRef(0);
   const shared = sharing.share?.state === "active" || sharing.share?.state === "needs_recheck";
   const record = handoff.record;
+  const { isCancelled } = handoff;
 
   // Completion event: the skill wrote completed/failed for the active request.
   // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- reacts to an external file record written by the builder skill, then starts a server recheck.
   useEffect(() => {
-    if (!record || handledCompletion.current === record.requestId) return;
+    if (!record || handledCompletion.current === record.requestId || isCancelled(record.requestId)) return;
     if (record.state === "failed") {
       handledCompletion.current = record.requestId;
       // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- the skill reported failure through the external handoff record.
@@ -69,28 +70,30 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     // The share changed after this completion (for example the owner stopped it): never re-share.
     if (sharing.share && Date.parse(sharing.share.updatedAt) >= Date.parse(record.updatedAt)) return;
     attempt.current += 1;
-    setPending({ organizationId: record.organizationId, reason: "completion" });
+    setPending({ organizationId: record.organizationId, reason: "completion", requestId: record.requestId });
     void sharing.recheck({ organizationId: record.organizationId });
-  }, [record, shared, sharing]);
+  }, [record, shared, sharing, isCancelled]);
 
   // Apply a share only when the recheck we asked for settles as ready.
   // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- synchronizes with the async readiness hook; the share must follow its server result.
   useEffect(() => {
     if (!pending || sharing.state === "checking" || sharing.state === "loading" || creating.current) return;
+    const mine = attempt.current;
+    const wanted = () => attempt.current === mine && (pending.reason === "owner" || !isCancelled(pending.requestId));
+    if (!wanted()) { setPending(null); return; }
     if (sharing.state === "ready") {
       creating.current = true;
-      const mine = attempt.current;
-      const wanted = () => attempt.current === mine;
       void sharing.createShare({ organizationId: pending.organizationId }, { shouldContinue: wanted }).then(async (created) => {
         creating.current = false;
         // A cancelled attempt returns null: createShare stops before the share
         // request, or revokes the share it just created when cancel raced it.
-        if (!created) { if (wanted()) setPending(null); return; }
+        if (!wanted()) return;
         setPending(null);
+        if (!created) return;
         setRequired(false); setNotice(null);
         if (pending.reason === "completion") {
           setDone(true);
-          if (!await handoff.markApplied()) await handoff.markApplied();
+          if (!await handoff.markApplied() && wanted()) await handoff.markApplied();
         }
       });
       return;
@@ -102,7 +105,7 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     } else {
       setNotice(CHECK_FAILED);
     }
-  }, [pending, sharing, handoff]);
+  }, [pending, sharing, handoff, isCancelled]);
 
   const running = record?.state === "running" && !shared;
   const step: OrganizationShareStep = shared ? (done ? "done" : "idle")
@@ -115,7 +118,9 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
   return {
     step,
     shared,
-    notice: notice ?? sharing.actionMessage,
+    notice: notice ?? sharing.actionMessage ?? (handoff.writeFailed && record?.state === "cancelled"
+      ? "Couldn’t save the cancellation to your Matrix computer."
+      : null),
     runningOrganizationId: running ? record!.organizationId : null,
     share(organizationId: string) {
       setNotice(null); setDone(false);
@@ -125,15 +130,26 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     },
     async startInChats(organizationId: string) {
       setNotice(null);
+      const mine = attempt.current;
       const started = await handoff.start(organizationId);
+      if (attempt.current !== mine) {
+        if (started) await handoff.cancel(started);
+        return;
+      }
       if (!started) { setNotice("Couldn’t start the chat. Try again."); return; }
+      if (isCancelled(started.requestId)) return;
       const ok = await onStartChat({ organizationId, requestId: started.requestId });
-      if (!ok) { await handoff.cancel(); setNotice("Couldn’t start the chat. Try again."); }
+      if (!ok && attempt.current === mine) {
+        await handoff.cancel(started);
+        if (attempt.current === mine) setNotice("Couldn’t start the chat. Try again.");
+      }
     },
     async cancel() {
       attempt.current += 1;
       setNotice(null); setRequired(false); setPending(null);
-      if (running) await handoff.cancel();
+      if (record && (record.state === "running" || record.state === "completed" || record.state === "failed")) {
+        await handoff.cancel();
+      }
     },
     async stop() {
       attempt.current += 1;

@@ -5,23 +5,22 @@ import { CollaborationOrganizationIdSchema } from "#collaboration-identity";
  * "Make app collaborative" handoff between the Share popover and Matrix Chats
  * (spec 2693 phase 2, builder skill specs/2689-collaborative-app-sharing/builder-skill.md).
  *
- * Record: `~/system/share/collaborative/<appSlug>.json`. Files are the OS's
- * inspectable state surface, so the owner (and the kernel) can read it.
+ * The Share host writes `~/system/share/collaborative/<appSlug>.intent.json`.
+ * The builder reports its result in the adjacent `<appSlug>.json` file.
  *
  *  1. Share popover writes `{ state: "running" }` when the owner picks
  *     "Start in Chats" for an organization.
  *  2. The `matrix-collaborative-app-builder` skill, when its build and owner
- *     preflight pass, rewrites the record with the same `requestId` and
+ *     preflight pass, writes the result with the same `requestId` and
  *     `state: "completed"` (or `"failed"`). This is the AUTOMATIC completion
  *     event; the owner does nothing.
- *  3. The Share host notices the change, rechecks 2689 readiness for that
+ *  3. The Share host matches the result to the running request, rechecks 2689 readiness for that
  *     organization, and creates the org share ONLY if readiness is `ready`
  *     (the server preflight enforces this again). A completion event never
  *     shares by itself.
  *
- * After the share is created the host writes `state: "applied"` so a later
- * "Stop sharing" is never undone by a stale completion. Owner cancel writes
- * `state: "cancelled"`. The record holds no secrets.
+ * The Share host records `applied` and `cancelled` in the intent file so a
+ * delayed builder result cannot override either state. The records hold no secrets.
  */
 export const COLLABORATIVE_HANDOFF_DIRECTORY = "system/share/collaborative";
 export const COLLABORATIVE_HANDOFF_MAX_BYTES = 2048;
