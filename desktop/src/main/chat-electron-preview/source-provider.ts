@@ -1,23 +1,27 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, statfs } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { access, lstat, mkdir, open, readdir, readlink, realpath, rename, rm, statfs } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 
 const run = promisify(execFile);
+const LIMIT = 8 * 1024 ** 3;
+const MAX_FILES = 250_000;
+const Archive = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sizeBytes: z.number().int().positive().max(LIMIT), unpackedBytes: z.number().int().nonnegative().max(LIMIT),
+  fileCount: z.number().int().nonnegative().max(MAX_FILES) });
 const Manifest = z.strictObject({
-  version: z.literal(1), baseSha: z.string().regex(/^[a-f0-9]{40}$/),
+  version: z.literal(2), baseSha: z.string().regex(/^[a-f0-9]{40}$/),
   platform: z.literal("darwin"), arch: z.enum(["arm64", "x64"]),
   nodeVersion: z.string().regex(/^24\.\d+\.\d+$/), pnpmVersion: z.literal("10.33.4"),
   lockfileSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  paths: z.strictObject({ checkout: z.literal("source"), node: z.literal("toolchain/node/bin/node"),
+  paths: z.strictObject({ checkout: z.literal("source.tar"), node: z.literal("toolchain/node/bin/node"),
     pnpm: z.literal("toolchain/pnpm/bin/pnpm.cjs"), electron: z.literal("runtime/Electron.app/Contents/MacOS/Electron"),
-    store: z.literal("pnpm-store") }),
+    store: z.literal("pnpm-store.tar") }),
+  archives: z.strictObject({ checkout: Archive, store: Archive }),
 });
-const LIMIT = 8 * 1024 ** 3;
-const MAX_FILES = 250_000;
 export interface VerificationToolchain { node: string; pnpm: string; store: string }
 export interface PreparedVerificationSource {
   checkout: string; electronPath: string; identity: string; toolchain: VerificationToolchain;
@@ -72,42 +76,71 @@ async function member(root: string, path: string, directory = false) {
   if ((directory ? !info.isDirectory() : !info.isFile()) || info.mode & 0o022) throw supportError();
   return resolved;
 }
-async function treeBytes(root: string, signal: AbortSignal) {
-  const directories = [root]; let bytes = 0; let files = 0;
+async function treeStats(root: string, signal: AbortSignal, allowSymlinks = true) {
+  const directories = [root]; let unpackedBytes = 0; let entries = 0; let fileCount = 0;
   while (directories.length) {
     const directory = directories.pop()!;
     signal.throwIfAborted();
     for (const name of await readdir(directory)) {
       signal.throwIfAborted();
+      if (name.includes("\\") || /[\x00-\x1f\x7f]/.test(name)) throw supportError();
       const path = join(directory, name); const info = await lstat(path);
-      if (++files > MAX_FILES || (bytes += info.size) > LIMIT) throw supportError();
-      if (!info.isSymbolicLink() && info.mode & 0o022) throw supportError();
+      if (++entries > MAX_FILES || (!info.isSymbolicLink() && info.mode & 0o022)) throw supportError();
       if (info.isDirectory()) directories.push(path);
-      else if (info.isSymbolicLink()) {
-        const rel = relative(root, await realpath(path));
-        if (rel === ".." || rel.startsWith("../")) throw supportError();
-      } else if (!info.isFile()) throw supportError();
+      else if (info.isFile() && info.nlink === 1) { unpackedBytes += info.size; fileCount++; }
+      else if (allowSymlinks && info.isSymbolicLink()) {
+        const target = await realpath(path); const rel = relative(root, target);
+        if (isAbsolute(await readlink(path)) || rel === ".." || rel.startsWith("../")) throw supportError();
+        unpackedBytes += info.size; fileCount++;
+      } else throw supportError();
+      if (unpackedBytes > LIMIT) throw supportError();
     }
   }
-  return bytes;
+  return { unpackedBytes, fileCount };
 }
-async function copyBounded(source: string, destination: string, signal: AbortSignal) {
-  let bytes = 0; let files = 0;
-  await cp(source, destination, { recursive: true, dereference: false, verbatimSymlinks: true,
-    mode: constants.COPYFILE_FICLONE, errorOnExist: true, force: false,
-    filter: async path => {
-      signal.throwIfAborted();
-      const info = await lstat(path);
-      if (++files > MAX_FILES || (bytes += info.size) > LIMIT) throw supportError();
-      if (!info.isSymbolicLink() && info.mode & 0o022) throw supportError();
-      if (info.isSymbolicLink()) {
-        const target = await realpath(path);
-        const rel = relative(source, target);
-        if (rel.startsWith("../") || rel === "..") throw supportError();
-      } else if (!info.isFile() && !info.isDirectory()) throw supportError();
-      return true;
-    },
+
+// Copy into an exclusive owner-private file while hashing. Only the verified
+// private copy reaches tar, so a changed app resource cannot race extraction.
+async function copyVerifiedArchive(source: string, destination: string, expected: z.infer<typeof Archive>, signal: AbortSignal) {
+  const input = await open(source, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  try {
+    const before = await input.stat();
+    if (!before.isFile() || before.size !== expected.sizeBytes || before.size > LIMIT) throw supportError();
+    const output = await open(destination, "wx", 0o400);
+    try {
+      const hash = createHash("sha256"); const chunk = Buffer.alloc(1024 * 1024); let total = 0;
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
+      for (;;) {
+        bounded.throwIfAborted();
+        const { bytesRead } = await input.read(chunk, 0, chunk.length, null);
+        if (!bytesRead) break;
+        if ((total += bytesRead) > expected.sizeBytes) throw supportError();
+        hash.update(chunk.subarray(0, bytesRead));
+        let offset = 0;
+        while (offset < bytesRead) {
+          bounded.throwIfAborted();
+          const written = await output.write(chunk, offset, bytesRead - offset, null);
+          if (written.bytesWritten < 1) throw supportError();
+          offset += written.bytesWritten;
+        }
+      }
+      const after = await input.stat();
+      if (total !== expected.sizeBytes || hash.digest("hex") !== expected.sha256
+        || after.size !== before.size || after.mtimeMs !== before.mtimeMs) throw supportError();
+    } finally { await output.close(); }
+  } finally { await input.close(); }
+}
+async function extractArchive(archive: string, destination: string, expected: z.infer<typeof Archive>, signal: AbortSignal, allowSymlinks: boolean) {
+  await mkdir(destination, { mode: 0o700 });
+  // This tar is built from validated files by the signed Matrix build and its
+  // digest was verified before this call. No URL/path from Chat reaches it.
+  const extracted = await run("/usr/bin/tar", ["-xf", archive, "-C", destination,
+    "--no-same-owner", "--no-same-permissions", "--no-acls", "--no-xattrs"], {
+    signal, timeout: 180_000, maxBuffer: 64 * 1024, env: { ...environment(), COPYFILE_DISABLE: "1" },
   });
+  if (extracted.stderr.trim()) throw supportError();
+  const actual = await treeStats(destination, signal, allowSymlinks);
+  if (actual.unpackedBytes !== expected.unpackedBytes || actual.fileCount !== expected.fileCount) throw supportError();
 }
 
 // Electron selects userData and acquires its single-instance lock before
@@ -185,31 +218,18 @@ export function createMacVerificationSourceProvider(options: Options) {
     const profile = await lstat(options.userData);
     if (!profile.isDirectory() || profile.isSymbolicLink() || profile.uid !== process.getuid?.()) throw supportError();
     const workspace = join(await realpath(options.userData), "mac-verification-support");
-    const [source, node, pnpm, electron, store] = await Promise.all([
-      member(root, manifest.paths.checkout, true), member(root, manifest.paths.node), member(root, manifest.paths.pnpm),
-      member(root, manifest.paths.electron), member(root, manifest.paths.store, true),
+    const [sourceArchive, node, pnpm, electron, storeArchive] = await Promise.all([
+      member(root, manifest.paths.checkout), member(root, manifest.paths.node), member(root, manifest.paths.pnpm),
+      member(root, manifest.paths.electron), member(root, manifest.paths.store),
     ]);
-    // Framework aliases and pnpm's bundled support modules are executable
-    // inputs too. A copied absolute donor link must not escape the signed kit
-    // (or appear healthy until Chromium later fails to locate ICU resources).
     const [runtimeRoot, pnpmRoot] = await Promise.all([
       member(root, "runtime/Electron.app", true), member(root, "toolchain/pnpm", true),
     ]);
-    await Promise.all([treeBytes(runtimeRoot, signal), treeBytes(pnpmRoot, signal)]);
-    const marker = await lstat(join(source, ".git"));
-    if (!marker.isDirectory() || marker.isSymbolicLink()) throw supportError();
-    const alternatives = await lstat(join(source, ".git", "objects", "info", "alternates")).catch(error => {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (alternatives) throw supportError();
+    await Promise.all([treeStats(runtimeRoot, signal), treeStats(pnpmRoot, signal)]);
     await Promise.all([access(node, constants.X_OK), access(electron, constants.X_OK)]);
-    const lockfile = join(source, "pnpm-lock.yaml");
-    if (await realpath(lockfile) !== lockfile || sha256(await boundedFile(lockfile, 4 * 1024 * 1024)) !== manifest.lockfileSha256
-      || await command("/usr/bin/git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"], source, signal) !== baseSha
-      || await command(node, ["--version"], root, signal) !== `v${manifest.nodeVersion}`
+    if (await command(node, ["--version"], root, signal) !== `v${manifest.nodeVersion}`
       || await command(node, [pnpm, "--version"], root, signal) !== manifest.pnpmVersion) throw supportError();
-    const pinnedPaths = [join(root, "manifest.json"), source, join(source, ".git"), lockfile, node, pnpm, electron];
+    const pinnedPaths = [join(root, "manifest.json"), sourceArchive, storeArchive, node, pnpm, electron];
     const sourceIdentity = await identity(pinnedPaths);
     await ownedDirectory(workspace);
     const lockPath = join(workspace, "preparation.lock");
@@ -224,11 +244,8 @@ export function createMacVerificationSourceProvider(options: Options) {
     try {
       signal.throwIfAborted();
       const free = await statfs(workspace);
-      const [sourceBytes, storeBytes] = await Promise.all([treeBytes(source, signal), treeBytes(store, signal)]);
-      // Account for the private source projection, disposable Git worktree,
-      // store/install materialization and build output. Do not demand the
-      // maximum accepted kit size when the actual support is much smaller.
-      const requiredBytes = Math.max(2 * 1024 ** 3, 2 * (sourceBytes + storeBytes) + 1024 ** 3);
+      const requiredBytes = Math.max(2 * 1024 ** 3, manifest.archives.checkout.sizeBytes + manifest.archives.store.sizeBytes
+        + 2 * (manifest.archives.checkout.unpackedBytes + manifest.archives.store.unpackedBytes) + 1024 ** 3);
       if (Number(free.bavail) * Number(free.bsize) < requiredBytes) throw new MacVerificationPreparationError("insufficient-disk");
       const cacheName = `store-${sha256(bytes)}`;
       const entries = await readdir(workspace);
@@ -240,19 +257,30 @@ export function createMacVerificationSourceProvider(options: Options) {
         const path = join(workspace, name); const info = await lstat(path);
         if (info.isDirectory() && !info.isSymbolicLink() && info.uid === process.getuid?.()) await rm(path, { recursive: true });
       }
+      await mkdir(requestPath, { mode: 0o700 });
+      const checkout = join(requestPath, "source");
+      const sourceCopy = join(requestPath, "source.tar");
+      await copyVerifiedArchive(sourceArchive, sourceCopy, manifest.archives.checkout, signal);
+      await extractArchive(sourceCopy, checkout, manifest.archives.checkout, signal, true);
+      const marker = await lstat(join(checkout, ".git"));
+      if (!marker.isDirectory() || marker.isSymbolicLink()) throw supportError();
+      const alternatives = await lstat(join(checkout, ".git", "objects", "info", "alternates")).catch(error => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (alternatives || sha256(await boundedFile(join(checkout, "pnpm-lock.yaml"), 4 * 1024 * 1024)) !== manifest.lockfileSha256
+        || await command("/usr/bin/git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"], checkout, signal) !== baseSha) throw supportError();
       const cachedStore = join(workspace, cacheName);
       const existing = await lstat(cachedStore).catch(error => {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
         throw error;
       });
       if (!existing) {
-        const staging = join(workspace, `.store-${randomUUID()}`);
-        try { await copyBounded(store, staging, signal); await rename(staging, cachedStore); }
-        finally { await rm(staging, { recursive: true, force: true }); }
+        const storeCopy = join(requestPath, "pnpm-store.tar"); const staging = join(requestPath, "store");
+        await copyVerifiedArchive(storeArchive, storeCopy, manifest.archives.store, signal);
+        await extractArchive(storeCopy, staging, manifest.archives.store, signal, false);
+        await rename(staging, cachedStore);
       } else if (!existing.isDirectory() || existing.isSymbolicLink() || existing.uid !== process.getuid?.()) throw supportError();
-      await mkdir(requestPath, { mode: 0o700 });
-      const checkout = join(requestPath, "source");
-      await copyBounded(source, checkout, signal);
       signal.throwIfAborted();
       if (await identity(pinnedPaths) !== sourceIdentity) throw supportError();
       return { checkout, electronPath: electron, identity: sourceIdentity,

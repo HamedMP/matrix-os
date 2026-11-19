@@ -21,7 +21,7 @@ describe.runIf(existsSync(main))("Mac verification in built Electron Desktop Fil
       const png = join(temp, "files.png");
       await mkdir(profile, { mode: 0o700 });
       await verifyFilesInElectron({
-        root, profile, png, menuLabel: "Move to Trash",
+        root, profile, png, menuLabel: "Move to Trash", listingDelayMs: 250,
         electronPath: process.env.MATRIX_DESKTOP_E2E_ELECTRON_PATH ?? desktopRequire("electron") as string,
       });
       const evidence = await readFile(png);

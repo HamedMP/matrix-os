@@ -1,21 +1,24 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { sealMacVerificationArchive } from "../../scripts/release/prepare-mac-verification-support.mjs";
 import { createMacVerificationSourceProvider } from "@desktop/main/chat-electron-preview/source-provider";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-const paths = { checkout: "source", node: "toolchain/node/bin/node", pnpm: "toolchain/pnpm/bin/pnpm.cjs",
-  electron: "runtime/Electron.app/Contents/MacOS/Electron", store: "pnpm-store" };
+const paths = { checkout: "source.tar", node: "toolchain/node/bin/node", pnpm: "toolchain/pnpm/bin/pnpm.cjs",
+  electron: "runtime/Electron.app/Contents/MacOS/Electron", store: "pnpm-store.tar" };
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "matrix-source-provider-"))); roots.push(root);
   const kit = join(root, "resources", "mac-verification-support");
   const profile = join(root, "profile");
-  const source = join(kit, paths.checkout);
+  const source = join(root, "original-source");
+  const store = join(root, "original-store");
   await mkdir(source, { recursive: true });
+  await mkdir(kit, { recursive: true });
   await mkdir(profile, { mode: 0o700 });
   await writeFile(join(source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   const git = (...args: string[]) => execFileSync("/usr/bin/git", args, { cwd: source, encoding: "utf8" }).trim();
@@ -27,24 +30,81 @@ async function fixture() {
       ? '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.18.0; else echo 10.33.4; fi\n' : "fixture\n");
     await chmod(join(kit, path), 0o755);
   }
-  await mkdir(join(kit, paths.store), { recursive: true });
-  await writeFile(join(kit, paths.store, "package"), "offline content");
-  const manifest = { version: 1, baseSha: git("rev-parse", "HEAD"), nodeVersion: "24.18.0", pnpmVersion: "10.33.4",
-    platform: "darwin", arch: "arm64", lockfileSha256: createHash("sha256").update(await readFile(join(source, "pnpm-lock.yaml"))).digest("hex"), paths };
+  await mkdir(store, { recursive: true });
+  await writeFile(join(store, "package"), "offline content");
+  const archives = { checkout: await sealMacVerificationArchive(source, join(kit, paths.checkout), { allowSymlinks: true }),
+    store: await sealMacVerificationArchive(store, join(kit, paths.store)) };
+  const manifest = { version: 2, baseSha: git("rev-parse", "HEAD"), nodeVersion: "24.18.0", pnpmVersion: "10.33.4",
+    platform: "darwin", arch: "arm64", lockfileSha256: createHash("sha256").update(await readFile(join(source, "pnpm-lock.yaml"))).digest("hex"), paths, archives };
   await writeFile(join(kit, "manifest.json"), JSON.stringify(manifest));
   const expectedManifestSha256 = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
   const provider = createMacVerificationSourceProvider({ resourcesPath: join(root, "resources"), userData: profile,
     platform: "darwin", arch: "arm64", expectedManifestSha256 });
-  return { kit, profile, source, manifest, provider, expectedManifestSha256, signal: new AbortController().signal,
-    async setManifest(next: unknown) {
-      const bytes = JSON.stringify(next); await writeFile(join(kit, "manifest.json"), bytes);
-      return createMacVerificationSourceProvider({ resourcesPath: dirname(kit), userData: profile,
-        platform: "darwin", arch: "arm64", expectedManifestSha256: createHash("sha256").update(bytes).digest("hex") });
+  async function setManifest(next: unknown) {
+    const bytes = JSON.stringify(next); await writeFile(join(kit, "manifest.json"), bytes);
+    return createMacVerificationSourceProvider({ resourcesPath: dirname(kit), userData: profile,
+      platform: "darwin", arch: "arm64", expectedManifestSha256: createHash("sha256").update(bytes).digest("hex") });
+  }
+  return { kit, profile, source, store, manifest, provider, expectedManifestSha256, signal: new AbortController().signal,
+    setManifest,
+    async repack() {
+      await rm(join(kit, paths.checkout)); await rm(join(kit, paths.store));
+      manifest.archives.checkout = await sealMacVerificationArchive(source, join(kit, paths.checkout), { allowSymlinks: true });
+      manifest.archives.store = await sealMacVerificationArchive(store, join(kit, paths.store));
+      return setManifest(manifest);
     },
   };
 }
 
+// A hostile fixture exercises the actual OS tar boundary; product code does
+// not parse this or accept user-selected archives.
+function hostileTar(name: string, contents: string) {
+  const header = Buffer.alloc(512); const payload = Buffer.from(contents);
+  header.write(name, 0, 100, "utf8");
+  for (const [offset, width, value] of [[100, 8, 0o644], [108, 8, 0], [116, 8, 0], [124, 12, payload.length], [136, 12, 0]]) {
+    header.write(value.toString(8).padStart(width - 1, "0") + "\0", offset, width, "ascii");
+  }
+  header.fill(32, 148, 156); header.write("0", 156); header.write("ustar\0", 257); header.write("00", 263);
+  header.write([...header].reduce((a, b) => a + b, 0).toString(8).padStart(6, "0") + "\0 ", 148, 8, "ascii");
+  return Buffer.concat([header, payload, Buffer.alloc((512 - payload.length % 512) % 512), Buffer.alloc(1024)]);
+}
+
 describe("packaged Mac Verification source preparation", () => {
+  it("keeps a valid-hash traversal tar inside the OS extraction boundary and cleans rejected staging", async () => {
+    const f = await fixture(); const payload = "must not escape";
+    const archive = hostileTar("../../../escaped.txt", payload);
+    await writeFile(join(f.kit, paths.store), archive);
+    const provider = await f.setManifest({ ...f.manifest, archives: { ...f.manifest.archives,
+      store: { sha256: createHash("sha256").update(archive).digest("hex"), sizeBytes: archive.length,
+        unpackedBytes: Buffer.byteLength(payload), fileCount: 1 } } });
+    await expect(provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
+    await expect(lstat(join(f.profile, "escaped.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(join(f.profile, "mac-verification-support"))).toEqual([]);
+  });
+
+  it("rejects mismatched extraction counts without publishing a cache, then permits a clean retry", async () => {
+    const f = await fixture();
+    const mismatch = await f.setManifest({ ...f.manifest, archives: { ...f.manifest.archives,
+      store: { ...f.manifest.archives.store, fileCount: f.manifest.archives.store.fileCount + 1 } } });
+    await expect(mismatch.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
+    expect(await readdir(join(f.profile, "mac-verification-support"))).toEqual([]);
+    const retry = await f.setManifest(f.manifest); const prepared = await retry.prepare(f.manifest.baseSha, f.signal);
+    expect(await readFile(join(prepared.toolchain.store, "package"), "utf8")).toBe("offline content");
+    await prepared.release();
+  });
+
+  it("rejects archive tampering, declared oversize and store links before publishing any support cache", async () => {
+    const f = await fixture();
+    const archive = join(f.kit, paths.store); const contents = await readFile(archive);
+    contents[0] ^= 0xff; await writeFile(archive, contents);
+    await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
+    const large = await f.setManifest({ ...f.manifest, archives: { ...f.manifest.archives,
+      store: { ...f.manifest.archives.store, sizeBytes: 9 * 1024 ** 3 } } });
+    await expect(large.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
+    await symlink(f.source, join(f.store, "linked-package"));
+    await expect(f.repack()).rejects.toThrow("regular files");
+  });
+
   it("rejects pnpm support-module links outside the packaged toolchain before executing pnpm", async () => {
     const f = await fixture();
     await symlink(tmpdir(), join(f.kit, "toolchain/pnpm/external"));
@@ -100,7 +160,8 @@ describe("packaged Mac Verification source preparation", () => {
     const f = await fixture();
     await expect(f.provider.prepare("b".repeat(40), f.signal)).rejects.toThrow("version");
     await writeFile(join(f.source, "pnpm-lock.yaml"), "changed");
-    await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support");
+    const changed = await f.repack();
+    await expect(changed.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support");
   });
 
   it("rejects path escape, missing kit, architecture mismatch and external linked source", async () => {
@@ -111,7 +172,7 @@ describe("packaged Mac Verification source preparation", () => {
     await expect(badArch.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support");
     await f.setManifest(f.manifest);
     await symlink(tmpdir(), join(f.source, "outside"));
-    await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support");
+    await expect(f.repack()).rejects.toThrow("archive");
   });
 
   it("supports sequential restart reuse but fences concurrent preparations and cancellation", async () => {

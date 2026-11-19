@@ -50,14 +50,16 @@ interface FilesVerification {
   png: string;
   menuLabel: string;
   video?: string;
+  listingDelayMs?: number;
 }
 
-async function createFilesFixture(root: string, ownerHome: string) {
+async function createFilesFixture(root: string, ownerHome: string, listingDelayMs: number) {
   const app = new Hono();
   app.use("*", async (c, next) => {
     if (!allowedRoutes.includes(`${c.req.method} ${c.req.path}`)) {
       return c.json({ error: "Not found" }, 404);
     }
+    if (c.req.method === "GET" && c.req.path === "/api/files/list" && listingDelayMs > 0) await setTimeout(listingDelayMs);
     await next();
   });
   registerFileRoutes(app, { homePath: ownerHome });
@@ -70,10 +72,11 @@ async function createFilesFixture(root: string, ownerHome: string) {
 }
 
 /** Built native Electron UI and real Files routes; auth and the Computer are local fixtures. */
-export async function verifyFilesInElectron({ root, electronPath, profile, png, menuLabel, video }: FilesVerification) {
+export async function verifyFilesInElectron({ root, electronPath, profile, png, menuLabel, video, listingDelayMs = 0 }: FilesVerification) {
   assert(isAbsolute(electronPath) && isAbsolute(profile) && isAbsolute(png) && extname(png) === ".png");
   assert(!video || (isAbsolute(video) && extname(video) === ".webm"));
   assert(MacVerificationFilesMenuLabelSchema.safeParse(menuLabel).success, "Invalid Files menu label");
+  assert(Number.isInteger(listingDelayMs) && listingDelayMs >= 0 && listingDelayMs <= 1000);
   assert(await realpath(profile) === profile && (await readdir(profile)).length === 0, "An empty, canonical QA profile is required");
   const temp = await mkdtemp(join(await realpath(tmpdir()), "matrix-files-verification-"));
   let app: ElectronApplication | undefined;
@@ -91,7 +94,7 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
       writeFile(join(ownerHome, neighbor), neighborBytes, { flag: "wx" }),
       writeFile(join(ownerHome, ".trash", ".manifest.json"), "[]", { flag: "wx" }),
     ]);
-    fixture = await createFilesFixture(root, ownerHome);
+    fixture = await createFilesFixture(root, ownerHome, listingDelayMs);
     const unauthorized = await fetch(`${fixture.url}/api/files/list`, { signal: AbortSignal.timeout(2_000) });
     assert.equal(unauthorized.status, 401, "The test owner's Files must require device authorization");
     await unauthorized.body?.cancel();
@@ -160,6 +163,9 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
       const undo = page.getByRole("button", { name: "Undo", exact: true });
       await undo.waitFor();
       await target.waitFor({ state: "detached" });
+      // Deletion refreshes the whole list. Detachment can mean the transient
+      // loading state, so await the surviving row before checking its contents.
+      await adjacent.waitFor({ state: "visible" });
       assert(await adjacent.isVisible(), "The neighboring file should remain visible");
       await assert.rejects(lstat(join(ownerHome, disposable)), { code: "ENOENT" });
       assert.equal(await readFile(join(ownerHome, neighbor), "utf8"), neighborBytes);

@@ -81,6 +81,7 @@ function previewBridge(firstStatus = "returned") {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   initialProps.onDraft.mockClear();
 });
@@ -167,6 +168,130 @@ describe("Electron Chat preview", () => {
 });
 
 describe("Mac Verification", () => {
+  it.each(["unavailable", "busy"])("keeps a %s Terminal check idle until the owner retries", async initialStatus => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const digest = "d".repeat(64);
+    let paired = false;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") {
+        return { available: false, verificationAvailable: true, terminalRequests: true };
+      }
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest };
+      return { status: paired ? "returned" : initialStatus };
+    });
+    vi.stubGlobal("operator", { invoke });
+    await act(async () => {
+      render(<StrictMode><ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} /></StrictMode>);
+    });
+    const dispatches = () => invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run");
+    expect(dispatches()).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(dispatches()).toHaveLength(1);
+    paired = true;
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry Mac verification" })); });
+    expect(screen.getByText("Mac verification returned to this Chat.")).toBeTruthy();
+    expect(dispatches()).toHaveLength(2);
+    expect(dispatches()[1]).toEqual(dispatches()[0]);
+    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
+  });
+
+  it.each(["returned", "declined", "failed", "already-handled"])("does not retry a terminal request after %s", async status => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
+      return { status };
+    });
+    vi.stubGlobal("operator", { invoke });
+    await act(async () => {
+      render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
+    });
+    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(1);
+  });
+
+  it("does not automatically redispatch an unknown IPC outcome", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
+      throw new Error("reply lost after native dispatch");
+    });
+    vi.stubGlobal("operator", { invoke });
+    await act(async () => {
+      render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
+    });
+    expect(screen.getByRole("button", { name: "Retry Mac verification" })).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(1);
+  });
+
+  it("fences duplicate retry clicks and settles a claimed native request without polling replay", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settleRetry!: (reply: { status: string }) => void;
+    let dispatches = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
+      if (++dispatches === 1) return { status: "unavailable" };
+      return new Promise<{ status: string }>(resolve => { settleRetry = resolve; });
+    });
+    vi.stubGlobal("operator", { invoke });
+    await act(async () => { render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />); });
+    const retry = screen.getByRole("button", { name: "Retry Mac verification" });
+    await act(async () => { fireEvent.click(retry); fireEvent.click(retry); });
+    expect(dispatches).toBe(2);
+    await act(async () => { settleRetry({ status: "already-handled" }); });
+    expect(screen.getByText("This Mac verification was already handled.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(dispatches).toBe(2);
+  });
+
+  it.each(["run", "worktree", "navigation", "permission", "permission-upgrade", "permission-cycle", "expiry"] as const)("rejects a late retry after %s changes", async reason => {
+    vi.useFakeTimers();
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
+      return { status: "unavailable" };
+    });
+    vi.stubGlobal("operator", { invoke });
+    const detail = verificationDetail();
+    const initialMode = reason === "permission-upgrade" ? "supervised" : "full_access";
+    let hook!: ReturnType<typeof renderHook<ReturnType<typeof useChatElectronPreview>, Parameters<typeof useChatElectronPreview>[0]>>;
+    await act(async () => {
+      hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, permissionMode: initialMode, detail } });
+    });
+    const children = React.Children.toArray(hook.result.current.verificationFeedback?.props.children);
+    const button = children.find(child => React.isValidElement<{ children: React.ReactNode; onClick: () => void }>(child)
+      && child.type === "button" && child.props.children === "Retry Mac verification");
+    if (!React.isValidElement<{ onClick: () => void }>(button)) throw new Error("missing retry action");
+    const retry = button.props.onClick;
+    if (reason === "expiry") vi.setSystemTime(Date.now() + CHAT_ELECTRON_PREVIEW_MAX_AGE_MS + 1);
+    else {
+      const changed = { ...detail, runs: [...detail.runs] };
+      if (reason === "run") changed.runs = [{ ...detail.runs[0]!, id: "run_replaced" }];
+      if (reason === "worktree") changed.runs = [{ ...detail.runs[0]!, executionRoot: {
+        kind: "worktree", projectId: project!.projectId, worktreeId: "wt_00000000000b",
+      } }];
+      await act(async () => {
+        hook.rerender({ ...initialProps, active: reason !== "navigation", permissionMode: reason === "permission" || reason === "permission-cycle" ? "supervised" : "full_access", detail: changed });
+      });
+    }
+    if (reason === "permission-cycle") await act(async () => {
+      hook.rerender({ ...initialProps, permissionMode: "full_access", detail });
+    });
+    const before = invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run").length;
+    await act(async () => { retry(); });
+    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(before);
+  });
+
   it("dispatches a Terminal intent once through the same Full Access view", async () => {
     const digest = "d".repeat(64);
     const invoke = vi.fn(async (channel: string) => {

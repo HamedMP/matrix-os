@@ -12,7 +12,9 @@ The shipped Skill supplies the agent's preparation/test instructions. The native
 
 `Skill + user task -> canonical private Chat admission with existing worktree root -> exact completed run -> authenticated source manifest -> paired native controller -> offline support source -> tests/build/GUI -> automatic receipt in originating Chat`.
 
-The executable support manifest has version 1, exact Git `baseSha`, `platform: darwin`, architecture, exact Node 24 version, pnpm 10.33.4, lockfile SHA-256 and fixed relative paths for `source`, Node, pnpm, standalone Electron and the offline dependency store. The signed application supplies this kit under `Resources/mac-verification-support`. Unknown versions, path escapes, invalid ownership or changed identities fail closed. The managed runtime projection is private and disposable; it never rewrites the installed application's source, original checkout or Main service tree. Tests and builds use a temporary HOME rather than the owner's settings or caches. The offline package kit omits pnpm build-checkout registration links; only package content/index data is reused.
+The executable support manifest has version 2, exact Git `baseSha`, `platform: darwin`, architecture, exact Node 24 version, pnpm 10.33.4, lockfile SHA-256 and fixed relative paths for source/dependency archives, Node, pnpm and standalone Electron. Archive records pin SHA-256, stored size, unpacked size and file count. The signed application supplies this kit under `Resources/mac-verification-support`; executable tools remain unpacked and signable. Sealing package content avoids signing-tool file-descriptor exhaustion and mutations of content-addressed package bytes.
+
+Before using the system tar extractor, the native controller copies each archive to an exclusively created private file and verifies its full size/digest against the compiled manifest identity. It validates extracted paths, types, links and resource bounds before publishing the private cache atomically. Unknown versions, path escapes, invalid ownership or changed identities fail closed. The managed runtime projection is private and disposable; it never rewrites the installed application's source, original checkout or Main service tree. Tests and builds use a temporary HOME rather than the owner's settings or caches. The offline package kit omits pnpm build-checkout registration links; only package content/index data is reused.
 
 ## 3. Authorization and lifecycle contract
 
@@ -30,7 +32,9 @@ The executable support manifest has version 1, exact Git `baseSha`, `platform: d
 
 The initial executable recipes are sign-in and Files Trash/Undo. A single validated sign-in label edit selects sign-in; a single validated Files menu label edit selects Files. An unchanged snapshot uses the documented sign-in default. Mixed edits, arbitrary executable changes or unsupported app surfaces fail admission rather than return an unrelated screenshot. The Skill explains this boundary and preserves existing edits.
 
-A fresh completed request remains bounded to ten minutes; this execution limit must not hide Skill discovery. An unavailable kit, incompatible Git base, missing system Git, wrong architecture or unavailable offline dependency produces a recoverable failure. Do not fall back to an arbitrary local checkout, network package install, user's shell initialization or app-as-preview executable.
+A fresh completed request remains bounded to ten minutes; this execution limit must not hide Skill discovery. An unavailable kit, incompatible Git base, missing system Git/tar, wrong architecture or unavailable offline dependency produces a recoverable failure. Do not fall back to an arbitrary local checkout, network package install, user's shell initialization or app-as-preview executable.
+
+A queued Terminal request that cannot be admitted may expose contextual Retry after the owner restores pairing or availability. Busy/unknown outcomes remain deduplicated rather than polling execution repeatedly. Retry retains the exact run/worktree/digest, fences permission-generation changes and uses the native persistent claim; it cannot bypass Stop or replay an already claimed action.
 
 ## 5. Good, baseline and bad cases
 
@@ -42,7 +46,7 @@ A fresh completed request remains bounded to ten minutes; this execution limit m
 
 TDD: fresh Skill-alone admission, preserved task text and loaded instructions; visible missing prerequisites; wrong/failed/queued/stale run rejection; native authorization ordering; kit revision/lockfile/path/tool checks; offline absolute-tool execution; automatic recipe selection; Stop/revoke and single receipt. Build tests must prove committed source only, no untracked secrets, pinned package manager and failure cleanup.
 
-Real acceptance uses the existing owner's Main Chat and a separate Mac candidate/profile, without restarting or replacing Main services. Show pairing state, the actual Skill entry, a reversible Files change, tests, automatic source preparation, concrete GUI verification and automatic receipt. Capture the whole Matrix window continuously with English explanation, then restore the trial edit. Record exact candidate commit, cloud worktree version and result provenance privately. Signed builds, fixture integration, live account and clean-Mac acceptance are distinct gates. Existing system Git is an explicit prerequisite; an app-only clean Mac remains unqualified until tested.
+Real acceptance uses the existing owner's Main Chat and a separate Mac candidate/profile, without restarting or replacing Main services. Show pairing state, the actual Skill entry, a reversible Files change, tests, automatic source preparation, concrete GUI verification and automatic receipt. Capture the whole Matrix window continuously with English explanation, then restore the trial edit. Record exact candidate commit, cloud worktree version and result provenance privately. Signed builds, fixture integration, live account and clean-Mac acceptance are distinct gates. Existing system Git and tar are explicit prerequisites; an app-only clean Mac remains unqualified until tested.
 
 ## 7. Wrong and correct implementation
 

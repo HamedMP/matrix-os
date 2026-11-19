@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalChatRun } from "@matrix-os/contracts";
 import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, isCurrentChatElectronPreviewRun } from "../../../../shared/chat-electron-preview";
@@ -45,6 +45,8 @@ export function useMacVerification({ candidate, discoverable = false, available 
     ? JSON.stringify([candidate.chatId, candidate.worktree.projectId, candidate.worktree.worktreeId])
     : null;
   const selection = useRef<Selection | null>(null);
+  const permissionSelection = useMemo(() => ({}), [permissionMode]);
+  const currentPermissionSelection = useRef(permissionSelection);
   const fullAccess = useRef<{ viewId: string; ready: Promise<boolean> } | null>(null);
   const chatId = candidate?.chatId;
   const projectId = candidate?.worktree.projectId;
@@ -84,10 +86,11 @@ export function useMacVerification({ candidate, discoverable = false, available 
   }, [currentRunId, draftRunId]);
 
   useLayoutEffect(() => {
+    currentPermissionSelection.current = permissionSelection;
     if (!pendingIntent.current) return;
     pendingIntent.current = null;
     setIntent(null);
-  }, [permissionMode]);
+  }, [permissionSelection]);
 
   useLayoutEffect(() => {
     if (permissionMode !== "full_access" || !chatId || !projectId || !worktreeId) return;
@@ -173,10 +176,23 @@ export function useMacVerification({ candidate, discoverable = false, available 
     if (prior?.scope === current && prior.runId === requestedRun && prior.digest === digest) return;
     const attempt = { scope: current, runId: requestedRun, digest };
     lastTerminal.current = attempt;
-    void request(digest).then(status => {
-      if (status === "busy" && lastTerminal.current === attempt) lastTerminal.current = null;
-    });
+    // Busy and unknown outcomes stay deduplicated until an explicit owner retry.
+    void request(digest);
   });
+  const terminalRetry = lastTerminal.current;
+  const canRetryTerminal = Boolean(canStart && (status === "unavailable" || status === "busy")
+    && terminalRetry?.scope === selection.current && terminalRetry?.scope.key === key
+    && terminalRetry?.runId === candidate?.run.id);
+  function retryTerminalVerification() {
+    if (!canRetryTerminal || !terminalRetry || selection.current !== terminalRetry.scope
+      || currentPermissionSelection.current !== permissionSelection || lastTerminal.current !== terminalRetry
+      || latestRun.current !== terminalRetry.runId || pendingIntent.current || inFlight.current
+      || !candidate || !isCurrentChatElectronPreviewRun(candidate.run)) return;
+    // Unavailable includes both unpaired admission and an interrupted claimed
+    // action. Retry only on owner input; retain the digest fence so polling does
+    // not loop. The native persistent claim remains the execution authority.
+    void request(terminalRetry.digest);
+  }
 
   // Only the already eligible, currently visible Chat owns a polling loop.
   // A reply from before navigation or the next run is never dispatched.
@@ -266,6 +282,7 @@ export function useMacVerification({ candidate, discoverable = false, available 
           ? "Mac verification is unavailable. Check Mac Pairing, or switch to Supervised to approve once."
           : status ? STATUS[status] : setupMessage}</p>
       {currentIntent ? <button type="button" className="underline" onClick={() => stage(null)}>Cancel verification</button> : null}
+      {canRetryTerminal ? <button type="button" className="underline" onClick={retryTerminalVerification}>Retry Mac verification</button> : null}
     </div>
   ) : null;
   return { action, feedback, draft };
