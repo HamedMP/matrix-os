@@ -34,7 +34,7 @@ suite("Electron Desktop project deletion", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(async () => { await window.operator.invoke("auth:start-device-flow", {}); });
-    await page.getByRole("button", { name: "Help", exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByRole("button", { name: "Search", exact: true }).waitFor({ timeout: 20_000 });
     await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Actions for Matrix OS", exact: true }).waitFor({ timeout: 15_000 });

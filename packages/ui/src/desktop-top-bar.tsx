@@ -1,13 +1,11 @@
 "use client";
 
-import type { CSSProperties, ReactNode, Ref } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Popover from "@radix-ui/react-popover";
-import { Bell, ChevronDown, CircleCheck, CircleHelp, ExternalLink, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
-
-const useHelpPopoverScope = Popover.createPopoverScope();
+import { Bell, ChevronDown, CircleCheck, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
 
 const colors: CSSProperties = {
   color: "var(--text-primary, var(--foreground))",
@@ -27,49 +25,19 @@ function useMenuOverlay(open: boolean, overlay?: MenuOverlay) {
 }
 
 /** Shared structure and ordering; each renderer supplies authenticated actions. */
-export function DesktopTopBarActions({ onSearch, onSupport, onTerminal, inbox, help, computer, update, account }: {
+export function DesktopTopBarActions({ onSearch, onSupport, onTerminal, setup, inbox, computer, update, account }: {
   onSearch(): void; onSupport(): void;
   /** Opens the native Terminal window. Only Electron Desktop has one, so other renderers omit it. */
-  onTerminal?(): void; inbox: ReactNode; help: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
+  onTerminal?(): void;
+  /** Getting started pill; the renderer renders nothing once setup is complete. */
+  setup?: ReactNode; inbox: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
 }) {
   return <nav aria-label="Desktop controls" className="no-drag flex h-full shrink-0 items-center gap-2" style={{ color: colors.color }}>
+    {setup}
     <button type="button" aria-label="Search" title="Search (Cmd+K)" className={actionClass} onClick={onSearch}><Search size={14} aria-hidden="true" /></button>
     {onTerminal ? <button type="button" aria-label="Terminal window" title="Open Terminal window" className={actionClass} onClick={onTerminal}><SquareTerminal size={14} aria-hidden="true" /></button> : null}
-    {inbox}{help}<button type="button" aria-label="Support" title="Support chat" className={actionClass} onClick={onSupport}><MessageCircle size={14} aria-hidden="true" /></button><div className="min-w-0 w-[156px] max-[600px]:w-28">{computer}</div>{update}{account}
+    {inbox}<button type="button" aria-label="Support" title="Support chat" className={actionClass} onClick={onSupport}><MessageCircle size={14} aria-hidden="true" /></button><div className="min-w-0 w-[156px] max-[600px]:w-28">{computer}</div>{update}{account}
   </nav>;
-}
-
-export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, onGettingStartedClose, triggerRef, anchorTrigger, incomplete, onSupport, discordIcon, overlay }: {
-  gettingStarted: ReactNode | ((closeHelp: () => void) => ReactNode);
-  gettingStartedOpen?: boolean; onGettingStartedClose?(): void; triggerRef?: Ref<HTMLButtonElement>;
-  /** The checklist owner supplies its Anchor so it shares that owner's Radix context. */
-  anchorTrigger?: (trigger: ReactNode) => ReactNode;
-  incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
-}) {
-  const helpScope = useHelpPopoverScope(undefined);
-  const [open, setOpen] = useState(false);
-  const helpOpen = open && !gettingStartedOpen;
-  useMenuOverlay(helpOpen, overlay);
-  const trigger = <Popover.Trigger {...helpScope} asChild><button ref={triggerRef} type="button" aria-label="Help" className={actionClass}>
-      <CircleHelp size={14} aria-hidden="true" />
-      {incomplete ? <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
-    </button></Popover.Trigger>;
-  return <Popover.Root {...helpScope} open={helpOpen} onOpenChange={(nextOpen) => {
-    if (nextOpen) onGettingStartedClose?.();
-    setOpen(nextOpen);
-  }}>
-    {anchorTrigger ? anchorTrigger(trigger) : trigger}
-    <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!helpOpen} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
-      onCloseAutoFocus={(event) => { if (gettingStartedOpen) event.preventDefault(); }}
-      forceMount className="data-[state=closed]:hidden no-drag w-[240px] rounded-xl border p-1.5 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
-      {typeof gettingStarted === "function" ? gettingStarted(() => setOpen(false)) : gettingStarted}
-      <div className="my-0.5 h-px" style={{ background: colors.borderColor }} />
-      <button type="button" className={rowClass} onClick={() => { setOpen(false); onSupport(); }}><MessageCircle size={14} aria-hidden="true" />Support chat</button>
-      <a href="https://discord.gg/WHbvTG33w" target="_blank" rel="noopener noreferrer" className={rowClass} onClick={() => setOpen(false)}>
-        {discordIcon}<span className="flex-1">Join Discord</span><ExternalLink size={12} aria-hidden="true" />
-      </a>
-    </Popover.Content></Popover.Portal>
-  </Popover.Root>;
 }
 
 export function DesktopViewMenu({ mode, onModeChange, onShowDesktop, selected, tab = false, overlay }: {
