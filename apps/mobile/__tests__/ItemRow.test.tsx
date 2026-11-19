@@ -136,6 +136,19 @@ describe("ItemRow", () => {
     expect(onLongPress).toHaveBeenCalledTimes(1);
   });
 
+  it("prevents pressing or long-pressing a disabled row while keeping its label available", () => {
+    const onPress = jest.fn();
+    const onLongPress = jest.fn();
+    render(<ItemRow title="Report.pdf" disabled onPress={onPress} onLongPress={onLongPress} />);
+    const row = screen.getByRole("button");
+    expect(row.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(row);
+    fireEvent(row, "longPress");
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onLongPress).not.toHaveBeenCalled();
+    expect(screen.getByText("Report.pdf")).toBeTruthy();
+  });
+
   it("gives a little under the finger, as much as a row as wide as the screen should", () => {
     render(<ItemRow testID="row" title="Case study" onPress={jest.fn()} />);
 

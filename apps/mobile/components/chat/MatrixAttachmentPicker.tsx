@@ -1,14 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { FileResourceRefSchema } from "@matrix-os/contracts";
 
-import { BackIcon, IconButton, SheetGrabber } from "@/components/ui";
 import type { ChatAttachmentKind, ComposerAttachment } from "@/lib/chat-attachments";
 import { discardMatrixAttachment, stageMatrixAttachment } from "@/lib/matrix-attachment";
 import { useActiveGateway } from "@/lib/queries/use-active-gateway";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
+import type { FileEntry } from "@/lib/requests/files";
+
+import { MatrixAttachmentPickerView } from "./MatrixAttachmentPickerView";
 
 export interface MatrixAttachmentBinding {
   scope: string;
@@ -23,13 +22,12 @@ export function MatrixAttachmentPicker({ binding, kinds, room, attachments, onBa
   onBack: () => void;
   onAdd: (attachment: ComposerAttachment) => void;
 }) {
-  const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
   const [path, setPath] = useState("");
   const { entries, isPending, isError, refresh, computer } = useComputerDirectory(path);
   const gateway = useActiveGateway();
   const request = useRef<AbortController | null>(null);
-  const [pending, setPending] = useState(false);
+  const [readingPath, setReadingPath] = useState<string | null>(null);
+  const pending = readingPath !== null;
   const [error, setError] = useState<string | null>(null);
   const kindsKey = kinds.join(",");
   const ready = gateway.ready && gateway.gatewayUrl === binding.gatewayUrl
@@ -48,7 +46,7 @@ export function MatrixAttachmentPicker({ binding, kinds, room, attachments, onBa
     }
     const controller = new AbortController();
     request.current = controller;
-    setPending(true);
+    setReadingPath(fullPath);
     setError(null);
     try {
       const session = await gateway.session();
@@ -68,51 +66,25 @@ export function MatrixAttachmentPicker({ binding, kinds, room, attachments, onBa
       }
     } finally {
       request.current = null;
-      setPending(false);
+      setReadingPath(null);
     }
   }
 
-  return <View style={[styles.container, { paddingBottom: insets.bottom + theme.v2.space[10] }]}>
-    <SheetGrabber />
-    <View style={styles.header}>
-      <IconButton accessibilityLabel="Back" icon={BackIcon} iconSize={22} buttonSize={theme.v2.size.control}
-        onPress={() => {
-          if (!path) { request.current?.abort(); onBack(); }
-          else if (!pending) { setError(null); setPath(path.split("/").slice(0, -1).join("/")); }
-        }} />
-      <Text accessibilityRole="header" style={styles.title}>Matrix Files</Text>
-    </View>
-    <Text numberOfLines={1} style={styles.text}>{path || "Matrix home"}</Text>
-    {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
-    {isPending || pending ? <ActivityIndicator accessibilityLabel={pending ? "Reading file" : "Loading files"} /> : null}
-    {!isPending && (isError || !ready) ? <Pressable accessibilityRole="button" onPress={() => { void refresh(); }} style={styles.row}>
-      <Text style={styles.text}>Files unavailable. Retry</Text>
-    </Pressable> : null}
-    {ready && !isError && !isPending ? <FlatList
-      style={styles.list}
-      data={entries}
-      keyExtractor={entry => entry.name}
-      ListEmptyComponent={<Text style={styles.text}>This folder is empty.</Text>}
-      renderItem={({ item }) => <Pressable accessibilityRole="button"
-        accessibilityLabel={`${item.type === "directory" ? "Open" : "Attach"} ${item.name}`}
-        disabled={pending || room <= 0} style={styles.row}
-        onPress={() => {
-          const next = path ? `${path}/${item.name}` : item.name;
-          if (!FileResourceRefSchema.safeParse({ kind: "home", path: next }).success) return;
-          if (item.type === "directory") { setError(null); setPath(next); }
-          else void select(next);
-        }}>
-        <Text numberOfLines={1} style={styles.text}>{item.name}{item.type === "directory" ? "/" : ""}</Text>
-      </Pressable>}
-    /> : null}
-  </View>;
-}
+  function openEntry(item: FileEntry) {
+    const next = path ? `${path}/${item.name}` : item.name;
+    if (!FileResourceRefSchema.safeParse({ kind: "home", path: next }).success) return;
+    if (item.type === "directory") { setError(null); setPath(next); }
+    else void select(next);
+  }
 
-const styles = StyleSheet.create(theme => ({
-  container: { paddingHorizontal: theme.v2.space[20], gap: theme.v2.space[10] },
-  header: { flexDirection: "row", alignItems: "center", gap: theme.v2.space[4] },
-  title: { ...theme.v2.text.headline, color: theme.v2.colors.textDefault },
-  text: { ...theme.v2.text.body, color: theme.v2.colors.textDefault },
-  list: { maxHeight: 320, flexGrow: 0 },
-  row: { minHeight: theme.v2.size.tapTarget, justifyContent: "center", paddingHorizontal: theme.v2.space[8] },
-}));
+  return <MatrixAttachmentPickerView
+    path={path} entries={entries} loading={isPending} unavailable={isError || !ready}
+    error={error} readingPath={readingPath} room={room} onSelect={openEntry}
+    onBack={() => {
+      if (!path) { request.current?.abort(); onBack(); }
+      else if (!pending) { setError(null); setPath(path.split("/").slice(0, -1).join("/")); }
+    }}
+    onHome={() => { if (!pending) { setError(null); setPath(""); } }}
+    onRetry={() => { void refresh(); }}
+  />;
+}
