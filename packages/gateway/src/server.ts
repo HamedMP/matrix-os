@@ -250,7 +250,7 @@ import { wsConnectionsActive } from "./metrics.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
-import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
+import { registerDataFeatureRoutes } from "./server/routes/data-features.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
 import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
@@ -261,7 +261,7 @@ import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, re
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
-import { registerGatewayMessagingRoutes, registerGatewaySyncAndSocialRoutes } from "./server/owner-data-routes.js";
+import { registerGatewaySyncAndSocialRoutes } from "./server/owner-data-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
@@ -1833,11 +1833,9 @@ export async function createGateway(config: GatewayConfig) {
   });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
-  registerGatewayMessagingRoutes(app, messagingRepository);
-
-  registerCanvasGatewayRoutes({
-    app, upgradeWebSocket, canvasService, canvasSubscriptionHub,
-    gatewayCollaboration, logUnexpectedWsSendFailure,
+  registerDataFeatureRoutes({
+    app, upgradeWebSocket, messagingRepository, canvasService, canvasSubscriptionHub, gatewayCollaboration, logUnexpectedWsSendFailure,
+    messageBoard: ownerDatabaseServices?.messageBoard ?? null, ownerName: process.env.MATRIX_HANDLE,
   });
 
   const socialRoutes = await registerGatewaySyncAndSocialRoutes({
