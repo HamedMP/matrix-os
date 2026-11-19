@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Build-time only. A signed Mac client carries its own exact source and offline
-// tools. Runtime preparation neither downloads code nor uses the owner's PATH.
+// Build-time only. A signed Mac client carries its exact source and fixed tools.
+// Runtime dependencies install from the frozen lockfile into a private cache.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { installFreshMacVerificationElectron, sealMacVerificationArchive, validateMacVerificationElectron } from "./mac-verification-build-assets.mjs";
+export { installFreshMacVerificationElectron, sealMacVerificationArchive, validateMacVerificationElectron } from "./mac-verification-build-assets.mjs";
 
 const exec = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -20,123 +20,13 @@ async function git(repository, args, timeout = 60_000) {
     { cwd: repository, env: gitEnvironment, timeout, maxBuffer: 1024 * 1024 });
   return result.stdout.trim();
 }
-async function install(node, args, options) {
-  await exec(node, args, { ...options, timeout: 12 * 60_000, maxBuffer: 4 * 1024 * 1024 });
-}
 async function regular(path) {
   const info = await lstat(path);
   if (!info.isFile()) throw new Error("Mac Verification tool is not a regular file");
 }
 
-export async function validateMacVerificationElectron(app, arch) {
-  const framework = join(app, "Contents/Frameworks/Electron Framework.framework");
-  const aliases = { "Versions/Current": "A", "Electron Framework": "Versions/Current/Electron Framework", Resources: "Versions/Current/Resources",
-    Helpers: "Versions/Current/Helpers", Libraries: "Versions/Current/Libraries" };
-  for (const path of [framework, join(framework, "Versions"), join(framework, "Versions/A")]) {
-    if (!(await lstat(path)).isDirectory()) throw new Error("Mac Verification Electron framework layout is invalid");
-  }
-  if ((await readdir(framework)).sort().join("|") !== ["Electron Framework", "Helpers", "Libraries", "Resources", "Versions"].join("|")) {
-    throw new Error("Mac Verification Electron framework layout is invalid");
-  }
-  for (const [name, target] of Object.entries(aliases)) {
-    const path = join(framework, name);
-    if (!(await lstat(path)).isSymbolicLink() || await readlink(path) !== target) throw new Error("Mac Verification Electron framework alias is invalid");
-    const contained = relative(await realpath(framework), await realpath(path));
-    if (isAbsolute(contained) || contained === ".." || contained.startsWith("../")) throw new Error("Mac Verification Electron framework alias escapes its bundle");
-  }
-  for (const path of [join(app, "Contents/MacOS/Electron"), join(framework, "Versions/A/Electron Framework")]) {
-    await regular(path);
-    if (process.platform === "darwin") {
-      const result = await exec("/usr/bin/lipo", ["-archs", path], { timeout: 30_000, maxBuffer: 8192 });
-      if (result.stdout.trim() !== (arch === "x64" ? "x86_64" : arch)) throw new Error("Mac Verification Electron architecture mismatch");
-    }
-  }
-}
-
-/** pnpm's side-effects cache flattens framework symlinks. Re-extract with the
- * pinned package's normal checksum-verifying installer, never in shared pnpm. */
-export async function installFreshMacVerificationElectron({ packageRoot, temporaryParent = tmpdir(), cacheRoot, arch = process.arch }) {
-  const source = await realpath(packageRoot);
-  const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
-  if (metadata.name !== "electron" || !/^\d+\.\d+\.\d+$/.test(metadata.version) || !["arm64", "x64"].includes(arch)) throw new Error("Unsupported Electron package");
-  const temporary = await mkdtemp(join(temporaryParent, ".mac-verification-electron-"));
-  const cleanup = () => rm(temporary, { recursive: true, force: true });
-  try {
-    for (const name of ["package.json", "install.js", "checksums.json"]) {
-      await regular(join(source, name)); await copyFile(join(source, name), join(temporary, name));
-    }
-    // Only dependency resolution is shared. dist/path.txt are private writes.
-    await symlink(dirname(source), join(temporary, "node_modules"));
-    for (const name of ["home", "tmp", "cache"]) await mkdir(join(temporary, name));
-    await exec(process.execPath, [join(temporary, "install.js")], { cwd: temporary, timeout: 600_000, maxBuffer: 256 * 1024,
-      env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: join(temporary, "home"), TMPDIR: join(temporary, "tmp"),
-        npm_config_platform: "darwin", npm_config_arch: arch, electron_config_cache: cacheRoot ?? join(temporary, "cache") } });
-    if ((await readFile(join(temporary, "dist/version"), "utf8")).replace(/^v/, "").trim() !== metadata.version
-      || await readFile(join(temporary, "path.txt"), "utf8") !== "Electron.app/Contents/MacOS/Electron") throw new Error("Electron installer version mismatch");
-    const app = join(temporary, "dist/Electron.app");
-    await validateMacVerificationElectron(app, arch);
-    return { app, cleanup };
-  } catch (error) { await cleanup(); throw error; }
-}
-
-const ARCHIVE_LIMIT = 8 * 1024 ** 3;
-const ENTRY_LIMIT = 250_000;
-async function archiveTreeStats(root, allowSymlinks) {
-  const canonical = await realpath(root);
-  const pending = [canonical]; let unpackedBytes = 0; let fileCount = 0; let entries = 0;
-  while (pending.length) {
-    const directory = pending.pop();
-    for (const name of await readdir(directory)) {
-      if (name.includes("\\") || /[\x00-\x1f\x7f]/.test(name) || name === "." || name === "..") throw new Error("Unsafe verification archive member");
-      const path = join(directory, name); const info = await lstat(path);
-      if (++entries > ENTRY_LIMIT || (!info.isSymbolicLink() && info.mode & 0o022)) throw new Error("Unsafe verification archive member");
-      if (info.isDirectory()) pending.push(path);
-      else if (info.isFile() && info.nlink === 1) { unpackedBytes += info.size; fileCount++; }
-      else if (allowSymlinks && info.isSymbolicLink()) {
-        const link = await readlink(path); const target = await realpath(path); const rel = relative(canonical, target);
-        if (isAbsolute(link) || rel === ".." || rel.startsWith("../")) throw new Error("Unsafe verification archive link");
-        unpackedBytes += info.size; fileCount++;
-      } else throw new Error("Verification archive requires regular files and directories");
-      if (unpackedBytes > ARCHIVE_LIMIT) throw new Error("Verification archive is too large");
-    }
-  }
-  return { unpackedBytes, fileCount };
-}
-
-/** The native client accepts only this signed-build-produced archive. Tar is
- * used as an OS tool, never a parser of a user-selected URL or arbitrary tar. */
-export async function sealMacVerificationArchive(root, destination, { allowSymlinks = false } = {}) {
-  const stats = await archiveTreeStats(root, allowSymlinks);
-  // Reserve the output exclusively inside the private build staging root.
-  const reserved = await open(destination, "wx", 0o600); await reserved.close();
-  // Regular CAS blobs stay inside one data resource: signing must not rewrite
-  // their bytes or recursively classify hundreds of thousands of package files.
-  await exec("/usr/bin/tar", ["-cf", destination, "--format=pax", "--no-acls", "--no-xattrs", "-C", root, "."], {
-    // Shared Mac builders need more time to archive the multi-GiB offline store.
-    // This build-only deadline does not change native extraction limits.
-    env: { ...gitEnvironment, COPYFILE_DISABLE: "1" }, timeout: 600_000, maxBuffer: 64 * 1024,
-  });
-  await chmod(destination, 0o644);
-  const file = await open(destination, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const info = await file.stat();
-    if (!info.isFile() || info.size < 1 || info.size > ARCHIVE_LIMIT) throw new Error("Verification archive is too large");
-    const hash = createHash("sha256"); const chunk = Buffer.alloc(1024 * 1024); let readBytes = 0;
-    for (;;) {
-      const { bytesRead } = await file.read(chunk, 0, chunk.length, null);
-      if (!bytesRead) break;
-      readBytes += bytesRead;
-      if (readBytes > info.size) throw new Error("Verification archive changed during hashing");
-      hash.update(chunk.subarray(0, bytesRead));
-    }
-    const after = await file.stat();
-    if (readBytes !== info.size || after.size !== info.size || after.mtimeMs !== info.mtimeMs) throw new Error("Verification archive changed during hashing");
-    return { sha256: hash.digest("hex"), sizeBytes: readBytes, ...stats };
-  } finally { await file.close(); }
-}
-
 export async function prepareMacVerificationSupport({ repository = ROOT, output = join(ROOT, "desktop/build/mac-verification-support"),
-  nodePath = process.execPath, pnpmEntry, electronApp, platform = process.platform, arch = process.arch, install: installDependencies = install }) {
+  nodePath = process.execPath, pnpmEntry, electronApp, platform = process.platform, arch = process.arch }) {
   if (platform !== "darwin" || !["arm64", "x64"].includes(arch) || !process.versions.node.startsWith("24.")) {
     throw new Error("Mac Verification support requires a native macOS Node 24 builder");
   }
@@ -171,9 +61,8 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
   const temporary = await mkdtemp(join(dirname(destination), ".mac-verification-support-"));
   try {
     const paths = { checkout: "source.tar", node: "toolchain/node/bin/node", pnpm: "toolchain/pnpm/bin/pnpm.cjs",
-      electron: "runtime/Electron.app/Contents/MacOS/Electron", store: "pnpm-store.tar" };
+      electron: "runtime/Electron.app/Contents/MacOS/Electron" };
     const source = join(temporary, "source");
-    const store = join(temporary, "pnpm-store");
     await mkdir(source);
     await git(source, ["init", "-q"]);
     await git(source, ["-c", "protocol.file.allow=always", "fetch", "--depth=1", "--no-tags", "--", pathToFileURL(await realpath(repository)).href, baseSha]);
@@ -192,28 +81,12 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
     await mkdir(join(temporary, "runtime"));
     await cp(preview, join(temporary, "runtime/Electron.app"), { recursive: true, dereference: false, verbatimSymlinks: true });
     await validateMacVerificationElectron(join(temporary, "runtime/Electron.app"), arch);
-    const privateHome = join(temporary, "build-home"); await mkdir(privateHome);
-    await mkdir(store);
-    await installDependencies(join(temporary, paths.node), [join(temporary, paths.pnpm), "install", "--frozen-lockfile", "--ignore-scripts",
-      "--store-dir", store, "--config.enable-global-virtual-store=false"], {
-      cwd: source, env: { PATH: `${dirname(join(temporary, paths.node))}:/usr/bin:/bin`, HOME: privateHome, CI: "1", NO_COLOR: "1",
-        npm_config_userconfig: "/dev/null", COREPACK_ENABLE_NETWORK: "0", GIT_TERMINAL_PROMPT: "0" },
-    });
-    // Only the content-addressed dependency store ships, never build node_modules
-    // symlinks, local settings, authentication or a mutable user checkout.
-    // pnpm records a relative symlink back to the build checkout here. It is
-    // project-registration metadata, not content-addressed package data; do
-    // not ship a build-machine path into the offline runtime store.
-    await rm(join(store, "v10/projects"), { recursive: true, force: true });
-    await rm(privateHome, { recursive: true, force: true });
-    await git(source, ["clean", "-ffdx", "-q"], 180_000);
     const lockfileSha256 = sha256(await readFile(join(source, "pnpm-lock.yaml")));
     const archives = {
       checkout: await sealMacVerificationArchive(source, join(temporary, paths.checkout), { allowSymlinks: true }),
-      store: await sealMacVerificationArchive(store, join(temporary, paths.store)),
     };
-    await rm(source, { recursive: true }); await rm(store, { recursive: true });
-    const manifest = { version: 2, baseSha, platform, arch, nodeVersion: process.versions.node, pnpmVersion: PNPM_VERSION,
+    await rm(source, { recursive: true });
+    const manifest = { version: 3, baseSha, platform, arch, nodeVersion: process.versions.node, pnpmVersion: PNPM_VERSION,
       lockfileSha256, paths, archives };
     await writeFile(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     await rename(temporary, destination);
@@ -240,7 +113,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     if (process.argv.includes("--refresh-electron")) freshElectron = await installFreshMacVerificationElectron({ packageRoot });
     const electron = freshElectron?.app ?? join(packageRoot, "dist/Electron.app");
     const result = await prepareMacVerificationSupport({ pnpmEntry, electronApp: electron });
-    console.log(`Mac Verification offline support prepared for ${result.baseSha}`);
+    console.log(`Mac Verification source and tool support prepared for ${result.baseSha}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Mac Verification support build failed");
     if (error && typeof error === "object" && ("killed" in error || "signal" in error)) {

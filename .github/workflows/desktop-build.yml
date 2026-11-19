@@ -329,7 +329,7 @@ jobs:
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
-      - name: Prepare offline Mac Verification support
+      - name: Prepare pinned Mac Verification support
         run: pnpm run prepare:mac-verification-support --refresh-electron
 
       - name: Build desktop app
