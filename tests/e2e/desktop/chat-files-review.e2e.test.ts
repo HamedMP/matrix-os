@@ -20,7 +20,7 @@ const evidence = process.env.ENG507_REVIEW_OUTPUT;
 async function capture(page: Page, name: string) {
   if (!evidence) return;
   await mkdir(evidence, { recursive: true });
-  await page.screenshot({ path: join(evidence, name) });
+  await page.screenshot({ path: join(evidence, name), animations: "disabled" });
 }
 
 suite("Chat attach and recoverable Files Trash in Electron Desktop", () => {
@@ -129,4 +129,69 @@ suite("Chat attach and recoverable Files Trash in Electron Desktop", () => {
     await folder.waitFor();
     expect(await readFile(join(gateway.homePath, MATRIX_TRASH_FOLDER, "child.txt"), "utf8")).toBe(MATRIX_TRASH_CHILD);
   });
+
+  it("keeps the attachment picker readable within both window sizes and appearance modes", async () => {
+    await page.getByRole("button", { name: "Focus Chat", exact: true }).click();
+    const chat = page.getByRole("dialog", { name: "Chat window", exact: true });
+    const setAppearance = async (mode: "Light" | "Dark") => {
+      await chat.getByRole("button", { name: "Open Agents & providers settings", exact: true }).click();
+      const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
+      await settings.getByRole("button", { name: "Appearance", exact: true }).click();
+      await settings.getByRole("button", { name: mode, exact: true }).click();
+      await page.waitForFunction(expected => document.documentElement.dataset.theme === expected, mode.toLowerCase());
+      await settings.getByRole("button", { name: "Close", exact: true }).click();
+    };
+    for (const mode of ["Light", "Dark"] as const) {
+      await setAppearance(mode);
+      for (const width of [1280, 768]) {
+        await page.setViewportSize({ width, height: 820 });
+        await chat.getByRole("button", { name: "Attach files", exact: true }).click();
+        const picker = page.getByRole("dialog", { name: "Attach files", exact: true });
+        const select = picker.getByRole("button", { name: `Attach ${MATRIX_ATTACH_FILE}`, exact: true });
+        await select.waitFor();
+        const title = picker.locator(".matrix-attachment-picker-header p");
+        expect(await title.innerText()).toBe("Attach files");
+        expect(await title.isVisible()).toBe(true);
+        expect(await picker.getByRole("searchbox", { name: "Filter files", exact: true }).isVisible()).toBe(true);
+        expect(await picker.getByRole("button", { name: "Upload from device", exact: true }).isVisible()).toBe(true);
+        expect(await picker.getByRole("button", { name: "Cancel", exact: true }).isVisible()).toBe(true);
+        await capture(page, `electron-matrix-picker-${mode.toLowerCase()}-${width}.png`);
+        const geometry = await picker.evaluate(element => {
+          const bounds = element.getBoundingClientRect();
+          const controls = [
+            element.querySelector(".matrix-attachment-picker-header"),
+            element.querySelector("input[type=search]"),
+            element.querySelector(".matrix-attachment-picker-footer"),
+          ];
+          const inside = controls.every(control => {
+            if (!(control instanceof HTMLElement)) return false;
+            const box = control.getBoundingClientRect();
+            return box.width > 0 && box.height > 0 && box.left >= bounds.left && box.right <= bounds.right + 1
+              && box.top >= bounds.top && box.bottom <= bounds.bottom + 1;
+          });
+          return {
+            inside,
+            x: bounds.x,
+            right: bounds.right,
+            y: bounds.y,
+            bottom: bounds.bottom,
+            opacity: getComputedStyle(element).opacity,
+            background: getComputedStyle(element).backgroundColor,
+            overflow: element.scrollWidth > element.clientWidth + 1,
+          };
+        });
+        expect(geometry.inside).toBe(true);
+        expect(geometry.x).toBeGreaterThanOrEqual(0);
+        expect(geometry.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.y).toBeGreaterThanOrEqual(0);
+        expect(geometry.bottom).toBeLessThanOrEqual(821);
+        expect(geometry.opacity).toBe("1");
+        expect(geometry.background).not.toBe("rgba(0, 0, 0, 0)");
+        expect(geometry.overflow).toBe(false);
+        await picker.getByRole("button", { name: "Close attachment picker", exact: true }).click();
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await setAppearance("Light");
+  }, 60_000);
 });
