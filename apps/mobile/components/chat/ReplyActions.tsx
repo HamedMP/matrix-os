@@ -21,8 +21,6 @@ function formatReplyTime(createdAt: number): string {
   return Number.isFinite(createdAt) ? replyTime.format(createdAt) : "";
 }
 
-const ICON_SIZE = 18;
-
 /**
  * The row under a finished reply: Copy, Share and when it was written, as
  * Electron Desktop draws them under a turn's final reply. Copy and Share are
@@ -66,7 +64,7 @@ function ReplyAction({ icon, label, onPress }: { icon: IconData; label: string; 
       onPress={onPress}
       style={styles.button}
     >
-      <Icon icon={icon} size={ICON_SIZE} color={theme.v2.colors.textSubtle} />
+      <Icon icon={icon} size={theme.v2.size.replyActionIcon} color={theme.v2.colors.textSubtle} />
     </PressableScale>
   );
 }
