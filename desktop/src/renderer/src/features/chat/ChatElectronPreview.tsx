@@ -141,9 +141,11 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
   const canPreview = available && eligible && worktree !== null;
   const verification = useMacVerification({
     permissionMode, terminalRequests,
+    discoverable: eligible && Boolean(window.operator?.invoke),
+    available: verificationAvailable,
     busy: Boolean(activeRun),
     editingQueuedTurn,
-    candidate: verificationAvailable && eligible && worktree && latestRun?.driverKind === "codex"
+    candidate: eligible && worktree && latestRun?.driverKind === "codex"
       ? { chatId: chat.id, run: latestRun, worktree } : null,
   });
   const action: ComposerMentionAction | undefined = canPreview && !activeRun && onDraft ? {

@@ -26,6 +26,7 @@ import type { AuthService } from "../auth/auth-service";
 import { previewRequestKey } from "./claims";
 import { deriveVerificationLabel } from "./source";
 import { deriveFilesTrashLabel } from "./files-source";
+import { MAC_VERIFICATION_PREPARATION_ERRORS } from "./source-provider";
 
 const MAX_CHAT_REPLY_BYTES = 4 * 1024 * 1024;
 const MAX_SOURCE_REPLY_BYTES = 512 * 1024;
@@ -57,13 +58,19 @@ const TerminalResult = z.strictObject({
   terminalId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   output: MacTerminalProbeOutputSchema,
 });
+const PREPARATION_FAILURES = {
+  "support-unavailable": "The matching offline Mac Verification support kit is missing or invalid. Install a matching Matrix client before retrying.",
+  "unsupported-version": "This worktree version is not supported by the installed Mac client. Use a matching verification support version.",
+  "insufficient-disk": "Mac Verification needs more free disk space for its temporary source and dependency cache.",
+  "preparation-busy": "This Mac profile is already preparing verification source. Wait for it to finish or Stop before retrying.",
+};
 const Result = z.union([
   z.strictObject({
     png: z.instanceof(Buffer).refine(bytes => bytes.length > PNG_SIGNATURE.length
       && bytes.length <= MAX_PNG_BYTES && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)),
     testSummary: z.string().min(1).max(256).regex(/^[A-Za-z0-9 ().,:+-]+$/),
   }),
-  z.strictObject({ error: z.literal("build-failed") }),
+  z.strictObject({ error: z.enum(["build-failed", ...MAC_VERIFICATION_PREPARATION_ERRORS]) }),
 ]);
 
 export interface ChatElectronPreviewRequest {
@@ -580,9 +587,15 @@ export function createChatElectronPreviewTransport(
       const queued = ref.terminalIntentDigest ? await readTerminalIntent(authority, ref, { signal }) : null;
       if (ref.terminalIntentDigest && (queued?.digest !== ref.terminalIntentDigest
         || queued.intent.projectId !== candidate.root.projectId || queued.intent.worktreeId !== candidate.root.worktreeId)) return null;
-      const recipe = queued?.intent.recipe;
-      const source = marked ? marked.marker
+      let recipe = queued?.intent.recipe;
+      let source = marked ? marked.marker
         : await readVerificationManifest(authority, candidate.root.worktreeId, recipe ?? "sign-in", signal);
+      // The trusted status/read path admits at most one bounded source edit.
+      // Files changes must select Files, never return an unrelated sign-in image.
+      if (!source && isVerification && !recipe) {
+        source = await readVerificationManifest(authority, candidate.root.worktreeId, "files-trash", signal);
+        if (source) recipe = "files-trash";
+      }
       if (!source || (queued && (source.baseSha !== queued.intent.baseSha || source.sourceSha256 !== queued.intent.sourceSha256))) return null;
       const preview = Object.freeze({
         ...ref, projectId: candidate.root.projectId, worktreeId: candidate.root.worktreeId,
@@ -620,12 +633,13 @@ export function createChatElectronPreviewTransport(
         const trigger = `Mac Verification was requested in Chat after run ${preview.runId} completed.`;
         const snapshot = `Matrix captured the current worktree snapshot for this request. Worktree base commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}.`;
         const status = "error" in result
-          ? "Mac Verification could not build or verify the captured worktree snapshot. No screenshot was captured."
+          ? result.error === "build-failed" ? "Mac Verification could not build or verify the captured worktree snapshot. No screenshot was captured."
+            : `Mac Verification could not prepare the captured worktree snapshot. ${PREPARATION_FAILURES[result.error]} No screenshot was captured.`
           : `Matrix independently verified the snapshot’s HEAD, tracked diff and source bytes. ${result.testSummary.replace(/\.$/, "")}. The attached image is from the Electron preview of that snapshot.`;
         outcome = `${trigger} ${snapshot} ${status}`;
       } else {
         outcome = "error" in result
-          ? `Mac Electron preview build or verification failed for run ${preview.runId}. No screenshot was captured.`
+          ? `Mac Electron preview ${result.error === "build-failed" ? "build or verification failed" : "preparation failed"} for run ${preview.runId}. ${result.error === "build-failed" ? "" : PREPARATION_FAILURES[result.error] + " "}No screenshot was captured.`
           : `Mac Electron preview built for run ${preview.runId} from commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}. Main reported passing checks. Matrix independently verified the worktree HEAD, tracked diff and source bytes. Mac verification: ${result.testSummary.replace(/\.$/, "")}. The attached image is from this preview.`;
       }
       const text = `${outcome} Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`;

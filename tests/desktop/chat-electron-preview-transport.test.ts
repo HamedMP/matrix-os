@@ -186,6 +186,28 @@ function resultWrites(fetchFn: ReturnType<typeof mockTransport>["fetchFn"]) {
 }
 
 describe("authenticated Chat Electron preview transport", () => {
+  it("explains unsupported source support without asking the user to select a checkout", async () => {
+    const mock = mockTransport(); mock.setSource(verificationSource);
+    const request = (await mock.service.read(verificationTarget))!;
+    await mock.service.returnResult(request, { error: "unsupported-version" });
+    const body = JSON.parse(String(resultWrites(mock.fetchFn)[0]?.[1]?.body));
+    expect(body.parts[0].text).toContain("worktree version is not supported");
+    expect(body.parts[0].text).not.toContain("checkout directory");
+    expect(body.parts).toHaveLength(1);
+  });
+
+  it("selects the Files verifier from authenticated worktree bytes without a typed terminal request", async () => {
+    const mock = mockTransport();
+    const path = MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"];
+    const base = 'const item = { label: "Move to Trash", onSelect };\n';
+    const updated = base.replace("Move to Trash", "Send to Trash");
+    mock.setSource(updated, base, path);
+    mock.setGit(originHead, ` M ${path}\0`);
+    expect(await mock.service.read(verificationTarget)).toMatchObject({
+      recipe: "files-trash", label: "Send to Trash", sourceSha256: sha256(updated),
+    });
+  });
+
   it("runs a terminal Files intent only for the exact source, and rejects a changed intent before returning evidence", async () => {
     const mock = mockTransport();
     const filesPath = MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"];

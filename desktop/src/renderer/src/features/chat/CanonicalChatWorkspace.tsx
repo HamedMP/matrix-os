@@ -97,6 +97,7 @@ import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTer
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
 import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
 import type { MacVerificationDraft, MacVerificationSubmission } from "./ChatMacVerification";
+import { macVerificationWorkflowParts } from "./mac-verification-workflow";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -706,6 +707,8 @@ function CanonicalChatWorkspaceContent({
         : selectedCheckout ? controller.detail?.record.projectId : undefined;
       const input = {
         ...chatInput,
+        parts: !directBotId && (verification || pendingReply?.requestedExecutionRoot?.kind === "worktree")
+          ? macVerificationWorkflowParts(parts) : chatInput.parts,
         ...(executionRoot ? { executionRoot }
           : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } }
           : checkoutProjectId ? { executionRoot: { kind: "project" as const, projectId: checkoutProjectId } } : {}),

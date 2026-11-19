@@ -15,6 +15,7 @@ import {
 import { CanonicalChatDetailResponseSchema, chatMessageVersionUrl } from "@matrix-os/contracts";
 import { runtimeApiUrl } from "../mcp/profile-context.js";
 import { cliFetchError } from "./output.js";
+import { resolveCurrentMacVerificationContext } from "./mac-verification-context.js";
 
 const git = promisify(execFile);
 const REQUEST_MS = 10_000;
@@ -22,7 +23,8 @@ const MAX_CHAT_BYTES = 2 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 64 * 1024;
 
 export const MAC_VERIFICATION_ERRORS = {
-  mac_verification_invalid_input: "Use a valid Chat ID, worktree ID and verification recipe.",
+  mac_verification_invalid_input: "Use --current with an authenticated owner profile, or a valid Chat ID and worktree ID, plus a verification recipe.",
+  mac_verification_context_unavailable: "Mac Verification could not identify one current private worktree Chat. Use the Mac Verification Skill in the originating Chat.",
   mac_verification_chat_unavailable: "Open the original private Matrix worktree Chat and finish a matching Codex run before requesting Mac Verification.",
   mac_verification_worktree_unavailable: "Run Mac Verification from the candidate Git worktree with the recipe’s source file available.",
   mac_verification_conflict: "A different verification is already queued for this Chat run. Finish a new run to queue another candidate.",
@@ -36,13 +38,15 @@ function fail(code: ErrorCode): never {
   throw Object.assign(new Error(MAC_VERIFICATION_ERRORS[code]), { code });
 }
 
-type Input = Pick<MacVerificationTerminalIntent, "chatId" | "worktreeId" | "recipe"> & {
+interface Connection {
   gatewayUrl: string;
   token: string;
   ownerId?: string;
   cwd?: string;
   fetchFn?: typeof fetch;
-};
+}
+type Input = Connection & ({ current: true; recipe: MacVerificationTerminalIntent["recipe"] }
+  | (Pick<MacVerificationTerminalIntent, "chatId" | "worktreeId" | "recipe"> & { current?: false }));
 
 function requestUrl(gatewayUrl: string, path: string): URL {
   const base = new URL(gatewayUrl);
@@ -54,7 +58,7 @@ function requestUrl(gatewayUrl: string, path: string): URL {
   return url;
 }
 
-async function request(input: Input, url: string | URL, method: "GET" | "PUT", body?: string) {
+async function request(input: Connection, url: string | URL, method: "GET" | "PUT", body?: string) {
   try {
     return await (input.fetchFn ?? fetch)(url, {
       method, headers: {
@@ -113,7 +117,7 @@ async function readJson(response: Response, maximum: number): Promise<unknown> {
   }
 }
 
-async function readCandidate(input: Input): Promise<Pick<MacVerificationTerminalIntent, "baseSha" | "sourceSha256">> {
+async function readCandidate(input: Connection & { recipe: MacVerificationTerminalIntent["recipe"] }): Promise<Pick<MacVerificationTerminalIntent, "baseSha" | "sourceSha256"> & { root: string }> {
   try {
     const { stdout } = await git("git", [
       "--no-optional-locks", "rev-parse", "--show-toplevel", "HEAD",
@@ -140,7 +144,7 @@ async function readCandidate(input: Input): Promise<Pick<MacVerificationTerminal
         offset += bytesRead;
       }
       if (offset !== stat.size) return fail("mac_verification_worktree_unavailable");
-      return { baseSha, sourceSha256: createHash("sha256").update(bytes.subarray(0, offset)).digest("hex") };
+      return { root, baseSha, sourceSha256: createHash("sha256").update(bytes.subarray(0, offset)).digest("hex") };
     } finally {
       await file.close();
     }
@@ -152,7 +156,31 @@ async function readCandidate(input: Input): Promise<Pick<MacVerificationTerminal
   }
 }
 
+async function queueCurrentMacVerification(input: Connection & { recipe: MacVerificationTerminalIntent["recipe"] }) {
+  if (!input.ownerId || !MacVerificationTerminalIntentSchema.shape.recipe.safeParse(input.recipe).success) {
+    return fail("mac_verification_invalid_input");
+  }
+  const candidate = await readCandidate(input);
+  const binding = await resolveCurrentMacVerificationContext({ ownerId: input.ownerId, root: candidate.root, fail,
+    read: async (path, query = {}) => {
+      const url = requestUrl(input.gatewayUrl, path);
+      for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+      return readJson(await request(input, chatMessageVersionUrl(url.toString()), "GET"), MAX_CHAT_BYTES);
+    },
+  });
+  const intent = MacVerificationTerminalIntentSchema.parse({ version: 1, chatId: binding.chatId, runId: binding.runId,
+    projectId: binding.projectId, worktreeId: binding.worktreeId, recipe: input.recipe,
+    baseSha: candidate.baseSha, sourceSha256: candidate.sourceSha256 });
+  const verified = await readCandidate(input);
+  if (candidate.root !== verified.root || candidate.baseSha !== verified.baseSha || candidate.sourceSha256 !== verified.sourceSha256) {
+    return fail("mac_verification_worktree_unavailable");
+  }
+  await binding.recheck();
+  return uploadIntent(input, intent);
+}
+
 export async function queueMacVerification(input: Input) {
+  if (input.current) return queueCurrentMacVerification(input);
   const fields = MacVerificationTerminalIntentSchema.pick({ chatId: true, worktreeId: true, recipe: true }).safeParse({
     chatId: input.chatId, worktreeId: input.worktreeId, recipe: input.recipe,
   });
@@ -193,13 +221,17 @@ export async function queueMacVerification(input: Input) {
     version: 1, chatId: input.chatId, runId: latest.id, projectId, worktreeId: input.worktreeId,
     recipe: input.recipe, baseSha, sourceSha256,
   });
+  if (!current()) return fail("mac_verification_chat_unavailable");
+  return uploadIntent(input, intent);
+}
+
+async function uploadIntent(input: Connection, intent: MacVerificationTerminalIntent) {
   const path = await macVerificationTerminalIntentPath(intent.chatId, intent.runId);
   const url = requestUrl(input.gatewayUrl, "/api/files/blob");
   url.searchParams.set("path", path);
   const body = JSON.stringify(intent);
   const size = Buffer.byteLength(body);
   if (size > MAC_VERIFICATION_TERMINAL_MAX_BYTES) return fail("mac_verification_invalid_input");
-  if (!current()) return fail("mac_verification_chat_unavailable");
 
   const response = await request(input, url, "PUT", body);
   if (response.status === 409) {

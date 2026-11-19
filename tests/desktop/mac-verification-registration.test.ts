@@ -15,18 +15,20 @@ const electron = vi.hoisted(() => ({
   showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: ["/verified-checkout"] })),
   showMessageBox: vi.fn(),
 }));
+const prepared = vi.hoisted(() => ({
+  checkout: "/managed/source", electronPath: "/managed/Electron", identity: "signed-kit",
+  toolchain: { node: "/managed/node", pnpm: "/managed/pnpm.cjs", store: "/managed/store" },
+  check: vi.fn(async () => true), release: vi.fn(async () => {}),
+}));
+const prepareSource = vi.hoisted(() => vi.fn(async () => prepared));
+vi.mock("@desktop/main/chat-electron-preview/source-provider", async original => ({
+  ...await original<typeof import("@desktop/main/chat-electron-preview/source-provider")>(),
+  createMacVerificationSourceProvider: () => ({ prepare: prepareSource }),
+}));
 const execute = vi.hoisted(() => vi.fn(async () => ({ png: Buffer.from("fixture"), testSummary: "5 passed" })));
 vi.mock("electron", () => ({ dialog: electron }));
 vi.mock("@desktop/main/chat-electron-preview/executor", () => ({ runChatElectronPreview: execute }));
-vi.mock("@desktop/main/chat-electron-preview/verification-setup", async (original) => {
-  const actual = await original<typeof import("@desktop/main/chat-electron-preview/verification-setup")>();
-  return {
-    ...actual,
-    resolveVerificationSource: vi.fn(async () => ({
-      checkout: "/verified-checkout", electronPath: "/pinned/Electron", identity: "verified-local-executable",
-    })),
-  };
-});
+
 
 const Verification = "verification" as const;
 const scope = { chatId: "chat_fixture", projectId: "matrix-os", worktreeId: "wt_00000000000a" };
@@ -86,6 +88,7 @@ async function withPreview(
     return { response: 1 };
   });
   execute.mockClear();
+  prepareSource.mockClear(); prepared.release.mockClear(); prepared.check.mockReset().mockResolvedValue(true);
   const fixture = previewFixture();
   const supervised = vi.fn(async () => actionPairing());
   const fullAccess = vi.fn(async () => actionPairing());
@@ -106,25 +109,71 @@ async function withPreview(
 }
 
 describe("Mac Verification packaged IPC", () => {
+  it("cleans a prepared projection after Stop without starting the build or returning a result", async () => {
+    await withPreview(async ({ run, cancel, transport }) => {
+      const pending = Promise.withResolvers<typeof prepared>();
+      prepareSource.mockReturnValueOnce(pending.promise);
+      const running = run(verified);
+      await vi.waitFor(() => expect(prepareSource).toHaveBeenCalledOnce());
+      const stopping = cancel("stopped");
+      pending.resolve(prepared);
+      expect(await running).toEqual({ status: "unavailable" });
+      await stopping;
+      expect(prepared.release).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
+      expect(transport.returnResult).not.toHaveBeenCalled();
+    });
+  });
+
+  it("automatically prepares the admitted source only after paired supervised approval", async () => {
+    await withPreview(async ({ run, supervised, prompts }) => {
+      supervised.mockImplementationOnce(async () => {
+        expect(prepareSource).not.toHaveBeenCalled();
+        expect(prompts).toEqual(["Approve one Electron Desktop preview?"]);
+        return actionPairing();
+      });
+      expect(await run(verified)).toEqual({ status: "returned" });
+      expect(prepareSource).toHaveBeenCalledWith("a".repeat(40), expect.any(AbortSignal));
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({ checkout: prepared.checkout, toolchain: prepared.toolchain }));
+      expect(prepared.release).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("prepares after Full Access consent and never after denied pairing", async () => {
+    await withPreview(async ({ run, select, fullAccess, prompts }) => {
+      const view = select();
+      fullAccess.mockResolvedValueOnce(null);
+      expect(await run(verified, view)).toEqual({ status: "unavailable" });
+      expect(prepareSource).not.toHaveBeenCalled();
+      expect(prompts).toEqual([]);
+      fullAccess.mockImplementationOnce(async () => {
+        expect(prepareSource).not.toHaveBeenCalled();
+        return actionPairing();
+      });
+      expect(await run({ ...verified, runId: "run_after_pairing" }, view)).toEqual({ status: "returned" });
+      expect(prepareSource).toHaveBeenCalledOnce();
+      expect(prompts).toEqual([]);
+      expect(prepared.release).toHaveBeenCalledOnce();
+    });
+  });
+
   it("uses the currently selected Chat mode with the already-completed run and permits subsequent Full Access runs", async () => {
     await withPreview(async ({ openVerification, run, readAvailable, select, clear, prompts, supervised, fullAccess }) => {
-      expect(readAvailable()).toEqual({ available: false, verificationAvailable: false });
-      expect(await run(verified)).toEqual({ status: "unavailable" });
-      await openVerification?.();
+      expect(readAvailable()).toEqual({ available: false, verificationAvailable: true, terminalRequests: true });
       expect(readAvailable()).toEqual({ available: false, verificationAvailable: true, terminalRequests: true });
       expect(await run({ chatId: verified.chatId, runId: verified.runId })).toEqual({ status: "unavailable" });
       const view = select();
       expect(await run(verified, view)).toEqual({ status: "returned" });
       expect(await run({ ...verified, runId: "run_second" }, view)).toEqual({ status: "returned" });
-      expect(prompts).toEqual(["Enable Mac Verification?"]);
+      expect(prompts).toEqual([]);
       expect(fullAccess).toHaveBeenCalledTimes(2);
       expect(supervised).not.toHaveBeenCalled();
       expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-        checkout: "/verified-checkout", electronPath: "/pinned/Electron", requestKind: Verification,
+        checkout: "/managed/source", electronPath: "/managed/Electron", requestKind: Verification,
       }));
       clear(view);
       expect(await run({ ...verified, runId: "run_third" }, view)).toEqual({ status: "unavailable" });
-      expect(prompts).toEqual(["Enable Mac Verification?"]);
+      expect(prompts).toEqual([]);
       expect(await run({ ...verified, runId: "run_third" })).toEqual({ status: "returned" });
       expect(prompts.at(-1)).toBe("Approve one Electron Desktop preview?");
       expect(supervised).toHaveBeenCalledOnce();
@@ -136,12 +185,11 @@ describe("Mac Verification packaged IPC", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
       await withPreview(async ({ openVerification, run, select, prompts, fullAccess }) => {
-        await openVerification?.();
-        const view = select();
+          const view = select();
         expect(await run(verified, view)).toEqual({ status: "returned" });
         clock.mockReturnValue(now + 16 * 60_000);
         expect(await run({ ...verified, runId: "run_later" }, view)).toEqual({ status: "returned" });
-        expect(prompts).toEqual(["Enable Mac Verification?"]);
+        expect(prompts).toEqual([]);
         expect(fullAccess).toHaveBeenCalledTimes(2);
       });
     } finally {
@@ -207,7 +255,6 @@ describe("Mac Verification packaged IPC", () => {
 
   it("requires the trusted renderer, matching Chat/worktree, and affirmative pairing consent", async () => {
     await withPreview(async ({ openVerification, run, select, clear, prompts, fullAccess }) => {
-      await openVerification?.();
       expect(() => select(scope, randomUUID(), "untrusted")).toThrow("invalid request");
       const wrongView = select({ ...scope, worktreeId: "wt_00000000000b" });
       expect(await run(verified, wrongView)).toEqual({ status: "unavailable" });
@@ -215,10 +262,10 @@ describe("Mac Verification packaged IPC", () => {
       const view = select();
       fullAccess.mockResolvedValueOnce(null);
       expect(await run(verified, view)).toEqual({ status: "unavailable" });
-      expect(prompts).toEqual(["Enable Mac Verification?"]);
+      expect(prompts).toEqual([]);
       clear(view);
       expect(await run(verified)).toEqual({ status: "returned" });
-      expect(prompts).toEqual(["Enable Mac Verification?", "Approve one Electron Desktop preview?"]);
+      expect(prompts).toEqual(["Approve one Electron Desktop preview?"]);
     });
   });
 
@@ -226,8 +273,7 @@ describe("Mac Verification packaged IPC", () => {
     "cancels admission during asynchronous pairing after %s", async (reason) => {
       await withPreview(async (context) => {
         const { openVerification, run, transport, select, clear, fullAccess, supervised } = context;
-        await openVerification?.();
-        const view = select();
+          const view = select();
         const proof = Promise.withResolvers<ReturnType<typeof actionPairing>>();
         fullAccess.mockReturnValueOnce(proof.promise);
         const result = run(verified, view);
@@ -263,8 +309,7 @@ describe("Mac Verification packaged IPC", () => {
     "withholds the result after %s during the build", async (reason) => {
       await withPreview(async (context) => {
         const { openVerification, run, transport, select, fullAccess } = context;
-        await openVerification?.();
-        const view = select();
+          const view = select();
         const lease = actionPairing();
         fullAccess.mockResolvedValueOnce(lease);
         const build = Promise.withResolvers<{ png: Buffer; testSummary: string }>();

@@ -192,6 +192,7 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it.each([
+    ["alone", "/mac-verification", "completed"],
     ["mention", "@mac", "completed"],
     ["slash", "/mac-verification", "completed"],
     ["failed run", "@mac", "failed"],
@@ -223,15 +224,19 @@ describe("CanonicalChatWorkspace", () => {
       initialView="conversation" active catalog={providerCatalog} />);
 
     const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    await setSharedComposerText(editor, `Shorten the sign-in label. ${trigger}`);
+    const request = _mode === "alone" ? "Verify the current worktree changes on my Mac." : "Shorten the sign-in label.";
+    await setSharedComposerText(editor, _mode === "alone" ? trigger : `${request} ${trigger}`);
     fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
     expect(await screen.findByText("Mac verification will run after this message.")).toBeTruthy();
-    await waitFor(() => expect(editor.textContent?.trim()).toBe("Shorten the sign-in label."));
+    await waitFor(() => expect(editor.textContent?.trim()).toBe(request));
     expect(routeClient.admitTurn).not.toHaveBeenCalled();
     expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
-      expect.objectContaining({ executionRoot, parts: [{ type: "text", text: "Shorten the sign-in label." }] }),
+      expect.objectContaining({ executionRoot, parts: [
+        { type: "text", text: request },
+        { type: "text", text: expect.stringContaining("# Mac Verification") },
+      ] }),
       { chatScope: "project" }));
     if (outcome === "failed") {
       expect(await screen.findByText("Mac verification skipped because the requested worktree run did not finish as expected.")).toBeTruthy();
