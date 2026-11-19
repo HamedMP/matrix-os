@@ -10,11 +10,16 @@ import type { SlackAppRouteOptions } from "./routes.js";
 import { OrganizationIdSchema, SlackUserIdSchema, type SlackInstallation } from "./types.js";
 
 const Event = SlackThreadContextEnvelopeSchema.shape.event.shape;
-const GrantSchema = SlackThreadContextAccessSchema.omit({ grantId: true }).extend({
+const ThreadGrantSchema = SlackThreadContextAccessSchema.omit({ grantId: true }).extend({
   appId: Event.appId, teamId: Event.teamId, channelId: Event.channelId, threadTs: Event.threadTs,
   organizationId: OrganizationIdSchema, ownerSlackId: SlackUserIdSchema,
   installationGeneration: z.number().int().positive(), linkCreatedAt: z.iso.datetime(),
+  scope: z.literal("thread").optional(),
 }).strict();
+const GrantSchema = z.union([
+  ThreadGrantSchema,
+  ThreadGrantSchema.omit({ threadTs: true, scope: true }).extend({ scope: z.literal("channel") }).strict(),
+]);
 export type SlackThreadContextGrant = z.infer<typeof GrantSchema>;
 
 export function loadSlackThreadContextGrant(env: NodeJS.ProcessEnv, previewHandle?: string) {
@@ -77,8 +82,10 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     routes,
     async receive(event: Record<string, unknown>, body: string, installation: SlackInstallation, signal: AbortSignal): Promise<200 | 409 | 503> {
       if (!options.dispatchContext || !validInstallation(installation) || event.channelId !== grant.channelId
-        || event.threadTs !== grant.threadTs || event.appId !== grant.appId || event.teamId !== grant.teamId) return 200;
-      const parsed = SlackThreadContextEnvelopeSchema.safeParse({ ...access, event });
+        || event.appId !== grant.appId || event.teamId !== grant.teamId) return 200;
+      if (grant.scope !== "channel" && (event.threadTs !== grant.threadTs || event.ts === event.threadTs)) return 200;
+      const source = grant.scope === "channel" ? { ...event, threadTs: event.threadTs ?? event.ts } : event;
+      const parsed = SlackThreadContextEnvelopeSchema.safeParse({ ...access, event: source });
       if (!parsed.success) return 200;
       const envelope = parsed.data;
       const { appId, teamId, eventId } = envelope.event;

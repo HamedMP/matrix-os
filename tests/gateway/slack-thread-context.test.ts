@@ -27,7 +27,7 @@ const config = { appId, clientId: "123.456", clientSecret: "c".repeat(32), signi
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-it("adds a signed unmentioned reply to only the selected private bot context without creating a Run or Slack write", async () => {
+it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary messages through a %s grant without creating a Run or Slack write", async scope => {
   const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   cleanup.push(fixture.destroy);
   const chatId = "chat_12345678";
@@ -38,6 +38,8 @@ it("adds a signed unmentioned reply to only the selected private bot context wit
   const linkCreatedAt = new Date();
   const grant = { appId, teamId, organizationId, ownerId, ownerSlackId, channelId, threadTs, botId, chatId,
     runtimeId, installationGeneration: 1, linkCreatedAt: linkCreatedAt.toISOString() };
+  const { threadTs: _root, ...channelGrant } = grant;
+  const contextGrant = scope === "channel" ? { ...channelGrant, scope } : scope === "thread" ? { ...grant, scope } : grant;
   const gateway = new Hono();
   let loseNextAck = false;
   const home = createSlackHomeTransport({ fetchImpl: async (url, init) => {
@@ -53,13 +55,15 @@ it("adds a signed unmentioned reply to only the selected private bot context wit
     exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(),
   };
   let requesterRuntimeId = runtimeId;
+  let currentMember = true;
+  const dispatch = vi.fn();
   const platform = await createSlackApp({
     db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => linkCreatedAt,
-    resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => true,
+    resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => currentMember,
     authorizeChannelBinding: async () => false, authorizeReply: async () => true,
-    resolveDestination: async () => ({ ownerId, runtimeId }), dispatch: vi.fn(),
+    resolveDestination: async () => ({ ownerId, runtimeId }), dispatch,
     authenticateRuntime: async () => ({ ownerId, runtimeId: requesterRuntimeId }),
-    contextGrant: grant, dispatchContext: envelope => home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope).then(() => {}),
+    contextGrant, dispatchContext: envelope => home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope).then(() => {}),
   });
   cleanup.push(platform.close);
   await platform.repository.saveInstallation({ appId, teamId, organizationId, installedBy: ownerId, botUserId: "UBOT",
@@ -85,8 +89,19 @@ it("adds a signed unmentioned reply to only the selected private bot context wit
       headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } });
   };
 
-  expect((await push("EvOtherThread", { thread_ts: "1700000000.000300", text: "Other thread reply" })).status).toBe(200);
+  expect((await push("EvOtherThread", { thread_ts: "1700000000.000300", ts: "1700000001.000400", text: "Other thread reply" })).status).toBe(200);
+  expect((await push("EvTopLevel", { thread_ts: undefined, ts: "1700000000.000700", text: "Ordinary top-level post" })).status).toBe(200);
+  expect((await push("EvTopLevel", { thread_ts: undefined, ts: "1700000000.000700", text: "Ordinary top-level post" })).status).toBe(200);
+  expect((await push("EvOtherChannel", { channel: "C456", ts: "1700000001.000600", text: "Wrong channel post" })).status).toBe(200);
   expect((await push("EvExternal", { is_ext_shared: true, ts: "1700000001.000500", text: "External reply" })).status).toBe(200);
+  for (const [id, overrides] of [
+    ["EvBot", { bot_id: "B123", user: "UBOT" }],
+    ["EvApp", { app_id: appId }],
+    ["EvSubtype", { subtype: "message_changed" }],
+    ["EvForeignSender", { user_team: "T456" }],
+  ] as const) {
+    expect((await push(id, { ...overrides, ts: "1700000001.000800", text: "Filtered source" })).status).toBe(200);
+  }
   expect((await push("EvPlainReply")).status).toBe(200);
   expect((await push("EvPlainReply")).status).toBe(200);
   expect((await push("EvSameMessage")).status).toBe(200);
@@ -107,9 +122,21 @@ it("adds a signed unmentioned reply to only the selected private bot context wit
   const source = await read();
   expect(source).toContain("untrusted reference");
   expect(source).toContain("U456");
-  expect(source).not.toMatch(/Other thread reply|External reply/);
+  expect(source).not.toMatch(/Wrong channel post|External reply|Filtered source/);
+  if (scope === "channel") {
+    expect(source).toContain("Other thread reply");
+    expect(source?.match(/Ordinary top-level post/g)).toHaveLength(1);
+    expect(source).toContain('"thread":"1700000000.000700"');
+  } else {
+    expect(source).not.toMatch(/Other thread reply|Ordinary top-level post/);
+  }
   expect(source?.match(/A plain Slack reply/g)).toHaveLength(1);
   expect(await context.prompt({ ownerId, botId: "bot_98765432", chatId, signal: AbortSignal.timeout(5_000) })).toBeUndefined();
+  currentMember = false;
+  expect(await read()).toBeUndefined();
+  expect((await push("EvRevokedMember", { ts: "1700000001.000900", text: "Revoked source" })).status).toBe(200);
+  currentMember = true;
+  expect(await read()).not.toContain("Revoked source");
   requesterRuntimeId = "other_runtime";
   expect(await context.prompt({ ownerId, botId, chatId, signal: AbortSignal.timeout(5_000) })).toBeUndefined();
   requesterRuntimeId = runtimeId;
@@ -118,8 +145,10 @@ it("adds a signed unmentioned reply to only the selected private bot context wit
   await fixture.db.updateTable("bot_chat_bindings").set({ removed_at: null }).where("chat_id", "=", chatId).execute();
   await platform.repository.removeLink(appId, teamId, ownerId);
   expect(await context.prompt({ ownerId, botId, chatId, signal: AbortSignal.timeout(5_000) })).toBeUndefined();
+  expect(await fixture.db.selectFrom("chat_turns").select("id").execute()).toHaveLength(0);
   expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
   expect(await fixture.db.selectFrom("chat_queued_turns").select("id").execute()).toHaveLength(0);
+  expect(dispatch).not.toHaveBeenCalled();
   expect(api.replies).not.toHaveBeenCalled();
   expect(api.postMessage).not.toHaveBeenCalled();
   expect(api.addReaction).not.toHaveBeenCalled();

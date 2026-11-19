@@ -29,6 +29,20 @@ describe("Slack API boundary", () => {
     expect(() => loadSlackThreadContextGrant(env)).toThrow();
     expect(loadSlackThreadContextGrant(env, "pr-3482")).toMatchObject({ channelId: "C123", threadTs: "123.456" });
     expect(() => loadSlackThreadContextGrant({ SLACK_PREVIEW_THREAD_CONTEXT_GRANT: "{bad" }, "pr-3482")).toThrow();
+    const legacy = JSON.parse(env.SLACK_PREVIEW_THREAD_CONTEXT_GRANT);
+    const withoutRoot = { ...legacy };
+    delete withoutRoot.threadTs;
+    const configured = (grant: object) => ({ SLACK_PREVIEW_THREAD_CONTEXT_GRANT: JSON.stringify(grant) });
+    expect(loadSlackThreadContextGrant(env, "pr-3482")).toEqual(legacy);
+    expect(JSON.stringify(loadSlackThreadContextGrant(env, "pr-3482"))).toBe(
+      '{"ownerId":"user_owner","botId":"bot_12345678","chatId":"chat_12345678","runtimeId":"runtime_preview","appId":"A123","teamId":"T123","channelId":"C123","threadTs":"123.456","organizationId":"org_preview","ownerSlackId":"U123","installationGeneration":1,"linkCreatedAt":"2026-09-30T12:00:00.000Z"}',
+    );
+    expect(() => loadSlackThreadContextGrant(configured(withoutRoot), "pr-3482")).toThrow();
+    expect(loadSlackThreadContextGrant(configured({ ...withoutRoot, scope: "channel" }), "pr-3482"))
+      .toEqual({ ...withoutRoot, scope: "channel" });
+    expect(() => loadSlackThreadContextGrant(configured({ ...legacy, scope: "channel" }), "pr-3482")).toThrow();
+    expect(() => loadSlackThreadContextGrant(configured({ ...withoutRoot, scope: "thread" }), "pr-3482")).toThrow();
+    expect(() => loadSlackThreadContextGrant(configured({ ...legacy, scope: "workspace" }), "pr-3482")).toThrow();
   });
 
   it("posts bounded plain text with mentions, broadcast and unfurls disabled and a deadline", async () => {

@@ -33,7 +33,7 @@ export type SlackThreadContextAccess = z.infer<typeof SlackThreadContextAccessSc
 export const SlackThreadContextEnvelopeSchema = SlackThreadContextAccessSchema.extend({
   event: Provenance.extend({
     channelId: z.string().regex(/^C[A-Z0-9]{2,63}$/), threadTs: Timestamp, text: z.string().min(1).max(40_000),
-  }).strict().refine(event => event.ts !== event.threadTs && Boolean(event.text.trim())),
+  }).strict().refine(event => Boolean(event.text.trim())),
 }).strict();
 export type SlackThreadContextEnvelope = z.infer<typeof SlackThreadContextEnvelopeSchema>;
 
