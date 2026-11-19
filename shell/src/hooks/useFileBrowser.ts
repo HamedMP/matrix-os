@@ -126,7 +126,7 @@ async function fetchEntries(
 ): Promise<FileEntry[] | undefined> {
   try {
     const res = await fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, {
-      signal, cache: "no-store",
+      signal: signal, cache: "no-store",
     });
     if (!res.ok) return undefined;
     const data = await res.json();
@@ -388,7 +388,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       const isCurrent = () => seq === searchSeq && get().searchQuery === query && authority.isCurrent();
       set({ searchQuery: query, searching: true });
       void fetch(`${gatewayUrl}/api/files/search?q=${encodeURIComponent(query)}&content=true`, {
-        signal, cache: "no-store",
+        signal: signal, cache: "no-store",
       })
         .then(async (res) => {
           if (!res.ok) throw new Error("Files search unavailable");
