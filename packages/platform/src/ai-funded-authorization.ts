@@ -1,5 +1,5 @@
 import { cleanupOwnerCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
-import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
+import { withAccountDeletionFundingLock } from './account-deletion/admission.js';
 /**
  * Funded AI authorization: the single owner-wide admission point before a
  * reservation. Under an owner advisory lock it checks the credential, runtime
@@ -73,7 +73,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
         throw new AiFundedPolicyError("unauthorized");
       }
-      await withAccountDeletionOwnerLock(trx, credential.owner_id, async (_locked, admission) => {
+      await withAccountDeletionFundingLock(trx, credential.owner_id, async (_locked, admission) => {
         if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
       });
       // Serialize admission across every runtime/replica for this owner. The
