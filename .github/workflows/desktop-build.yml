@@ -237,7 +237,8 @@ jobs:
     if: ${{ inputs.candidate_sha == '' }}
     name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # Bound large offline-support packaging plus Apple's notarization queue.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -341,6 +342,11 @@ jobs:
 
       - name: Package desktop app
         working-directory: desktop
+        env:
+          # Exact coarse progress only: no wildcard, argv/options or raw notary logs.
+          DEBUG: electron-notarize,electron-notarize:staple
+          DEBUG_COLORS: "0"
+          DEBUG_HIDE_DATE: "0"
         run: pnpm exec electron-builder --config "$DESKTOP_BUILDER_CONFIG" --mac --${{ matrix.arch }} --publish never
 
       - name: Resolve mac artifact metadata

@@ -18,6 +18,8 @@ Before using the system tar extractor, the native controller copies each archive
 
 Creating each archive on shared build infrastructure is bounded to 600 seconds; native extraction stays bounded to 180 seconds. A slow build must not weaken the native execution deadline, manifest pin, 8 GiB archive bound or 250,000-entry tree bound.
 
+The Mac release job has a bounded 75-minute budget including offline preparation and Apple notarization. Progress logs may expose coarse stage/timing information only, never credential-bearing arguments, options or raw server diagnostics. Developer ID, notarization and artifact checks remain mandatory.
+
 The release runner must regenerate the pinned Electron distribution with its normal installer before preparing the kit. pnpm side-effects cache import can flatten framework aliases while skipping postinstall; a healthy copy operation cannot repair that input. Preparation must verify the pinned vendor archive checksum and target architecture, and reject flattened or escaped framework aliases before copying. Keep normal Developer ID signing and notarization; signing-tool discovery or an ad-hoc signature alone does not qualify the packaged candidate.
 
 ## 3. Authorization and lifecycle contract
