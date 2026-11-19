@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
-import { renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { ConversationTranscript } from "../../desktop/src/renderer/src/components/conversation/transcript";
 import { useChatArtifactActions } from "../../desktop/src/renderer/src/features/chat/use-chat-artifact-actions";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
-const { refetch } = vi.hoisted(() => ({ refetch: vi.fn(async () => undefined) }));
-vi.mock("../../desktop/src/renderer/src/features/apps/apps.api", () => ({ useAppsQuery: () => ({ data: [{ slug: "chart", name: "Chart", path: "apps/chart/index.html" }], refetch }) }));
+const { apps, refetch } = vi.hoisted(() => ({
+  apps: [{ slug: "chart", name: "Chart", path: "apps/chart/index.html" }],
+  refetch: vi.fn(async () => undefined),
+}));
+vi.mock("../../desktop/src/renderer/src/features/apps/apps.api", () => ({ useAppsQuery: () => ({ data: apps, refetch }) }));
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
 import { useNativeDesktopMode } from "../../desktop/src/renderer/src/stores/native-desktop-mode";
@@ -35,6 +41,51 @@ it("launches relative apps only from home and honors a persisted project run roo
   expect(result.current.resolveApp("apps/chart")?.name).toBe("Chart");
   expect(result.current.resolveApp("apps/chart", { kind: "worktree", projectId: "project_1", worktreeId: "wt_1" })).toBeNull();
   expect(result.current.resolveApp("~/apps/chart", { kind: "project", projectId: "project_1" })?.name).toBe("Chart");
+});
+
+it("reloads a legacy image when its resolved worktree changes and keeps a rooted image mounted", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  const createObjectURL = vi.spyOn(URL, "createObjectURL").mockImplementation(() => "blob:chart");
+  const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const getBlob = vi.fn(async (_url: string) => new Blob(["preview"], { type: "image/png" }));
+  const api = { forRuntime: () => ({ getBlob }) } as unknown as ApiClient;
+  const projects = [{ id: "project_1", slug: "project-one", name: "Project One", kind: "folder" as const }];
+  const worktree = (worktreeId: string) => ({ kind: "worktree" as const, projectId: "project_1", worktreeId });
+  const openFile = vi.fn(() => true);
+  const copyText = vi.fn(async () => {});
+  function Preview({ worktreeId }: { worktreeId: string }) {
+    const detail = makeDetail("running");
+    detail.record.projectId = "project_1";
+    detail.runs = detail.runs.map(run => ({ ...run, executionRoot: worktree(worktreeId) }));
+    const callbacks = useChatArtifactActions(api, detail, projects);
+    return <ConversationTranscript callbacks={{ ...callbacks, copyText, openFile }} turns={["Legacy", "Rooted"].map(label => ({
+      id: label, startedAt: 1, endedAt: 2, active: false, work: [],
+      executionRoot: label === "Rooted" ? worktree("wt_1") : undefined,
+      final: { kind: "message", id: label, role: "assistant", phase: "final", markdown: `![${label}](reports/chart.png)`, copyText: "", timestamp: 2 },
+    }))} />;
+  }
+
+  const view = render(<Preview worktreeId="wt_1" />);
+  try {
+    const legacy = await screen.findByRole("img", { name: "Legacy" });
+    const rooted = await screen.findByRole("img", { name: "Rooted" });
+    expect(getBlob).toHaveBeenCalledTimes(2);
+    view.rerender(<Preview worktreeId="wt_1" />);
+    expect(screen.getByRole("img", { name: "Legacy" })).toBe(legacy);
+    expect(getBlob).toHaveBeenCalledTimes(2);
+
+    view.rerender(<Preview worktreeId="wt_2" />);
+    await waitFor(() => expect(getBlob).toHaveBeenCalledTimes(3));
+    expect(getBlob.mock.calls.at(-1)?.[0]).toContain("worktreeId=wt_2");
+    expect(await screen.findByRole("img", { name: "Legacy" })).not.toBe(legacy);
+    expect(screen.getByRole("img", { name: "Rooted" })).toBe(rooted);
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });
 
 it.each([false, true])("keeps a maximized Chat in the tab workspace when launching an app (already open: %s)", (alreadyOpen) => {

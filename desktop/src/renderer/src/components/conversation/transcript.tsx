@@ -318,11 +318,11 @@ function ConversationTurn({
       : undefined, [rootKind, rootProjectId, rootWorktreeId, rootBotId]);
   const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
   const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
-  const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
-    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
-    : callbacks;
   const scopedCallbacks: ConversationPresentationCallbacks = {
-    ...fileCallbacks,
+    ...callbacks,
+    ...(turn.executionRoot && callbacks.openFile ? { openFile: (path) => callbacks.openFile!(path, turn.executionRoot) } : {}),
+    ...(turn.executionRoot && callbacks.loadFileImage ? { loadFileImage: (path) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}),
+    ...(turn.executionRoot && callbacks.fileImageKey ? { fileImageKey: (path) => callbacks.fileImageKey!(path, turn.executionRoot) } : {}),
     ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };

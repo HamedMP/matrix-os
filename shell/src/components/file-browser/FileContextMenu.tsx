@@ -16,21 +16,15 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 
 interface FileContextMenuProps {
   children: React.ReactNode;
-  targetName?: string;
-  targetType?: "file" | "directory";
   onOpenFile?: (path: string) => void;
 }
 
-export function FileContextMenu({
-  children,
-  targetName,
-  targetType,
-  onOpenFile,
-}: FileContextMenuProps) {
+type FileContextTarget = { path: string; type: "file" | "directory"; paths: string[] };
+
+export function FileContextMenu({ children, onOpenFile }: FileContextMenuProps) {
   const download = useWebFileDownload();
-  const [downloadTarget, setDownloadTarget] = useState<string | null>(null);
+  const [target, setTarget] = useState<FileContextTarget | null>(null);
   const currentPath = useFileBrowser((s) => s.currentPath);
-  const selectedPaths = useFileBrowser((s) => s.selectedPaths);
   const copy = useFileBrowser((s) => s.copy);
   const cut = useFileBrowser((s) => s.cut);
   const paste = useFileBrowser((s) => s.paste);
@@ -44,137 +38,112 @@ export function FileContextMenu({
   const setViewMode = useFileBrowser((s) => s.setViewMode);
   const setSortBy = useFileBrowser((s) => s.setSortBy);
 
-  const captureDownloadTarget = (event: React.MouseEvent) => {
+  const captureTarget = (event: React.MouseEvent) => {
     const entry = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-web-file-path]") : null;
-    setDownloadTarget(entry?.dataset.webFileType === "file" ? entry.dataset.webFilePath ?? null : null);
+    const path = entry?.dataset.webFilePath;
+    const type = entry?.dataset.webFileType;
+    if (!entry || !event.currentTarget.contains(entry) || !path || (type !== "file" && type !== "directory")) {
+      setTarget(null);
+      return;
+    }
+
+    // Capture the visible selection now so it cannot change under an open menu.
+    const paths = [path];
+    if (entry.dataset.webFileSelected === "true") {
+      const selectedRows = event.currentTarget.querySelectorAll<HTMLElement>('[data-web-file-selected="true"]');
+      for (const row of selectedRows) {
+        const selectedPath = row.dataset.webFilePath;
+        if (selectedPath && selectedPath !== path) paths.push(selectedPath);
+      }
+    }
+    setTarget({ path, type, paths });
   };
-  const downloadItem = download && downloadTarget ? <ContextMenuItem disabled={download.pending} onSelect={() => download.download(downloadTarget)}>Download</ContextMenuItem> : null;
 
-  const isMulti = selectedPaths.size > 1;
-  const selected = Array.from(selectedPaths);
-  const fullPaths = selected.map((n) =>
-    currentPath ? `${currentPath}/${n}` : n,
-  );
+  const targetName = target?.path.split("/").at(-1);
+  const inCurrentFolder = target && targetName && target.path === (currentPath ? `${currentPath}/${targetName}` : targetName);
+  const isMulti = target && target.paths.length > 1;
 
-  if (isMulti) {
-    return (
-      <ContextMenu>
-        <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
-        <ContextMenuContent>
-          {downloadItem}
-          <ContextMenuItem onClick={() => copy(fullPaths)}>Copy</ContextMenuItem>
-          <ContextMenuItem onClick={() => cut(fullPaths)}>Cut</ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            className="text-destructive"
-            onClick={() => deleteFiles(fullPaths)}
-          >
-            Move to Trash
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    );
-  }
-
-  if (targetName && targetType) {
-    const fullPath = currentPath
-      ? `${currentPath}/${targetName}`
-      : targetName;
-
-    return (
-      <ContextMenu>
-        <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
-        <ContextMenuContent>
-          {downloadItem}
-          {targetType === "directory" ? (
-            <ContextMenuItem
-              onClick={() => navigate(fullPath)}
-            >
-              Open
-            </ContextMenuItem>
-          ) : (
-            <>
-              <ContextMenuItem onClick={() => onOpenFile?.(fullPath)}>
-                Open
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => setQuickLookPath(targetName)}>
-                Quick Look
-              </ContextMenuItem>
-            </>
-          )}
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => copy([fullPath])}>Copy</ContextMenuItem>
-          <ContextMenuItem onClick={() => cut([fullPath])}>Cut</ContextMenuItem>
-          <ContextMenuItem onClick={() => duplicate([fullPath])}>
-            Duplicate
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={() => navigator.clipboard.writeText(fullPath)}
-          >
-            Copy Path
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            className="text-destructive"
-            onClick={() => deleteFiles([fullPath])}
-          >
-            Move to Trash
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    );
-  }
-
-  // Empty space context menu
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild onContextMenuCapture={captureDownloadTarget}>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger
+        asChild
+        onContextMenuCapture={captureTarget}
+        onPointerDownCapture={event => { if (event.pointerType !== "mouse") captureTarget(event); }}
+      >
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent>
-        {downloadItem}
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>New File</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {[".md", ".txt", ".json", ".html", ".js", ".ts"].map((ext) => (
-              <ContextMenuItem
-                key={ext}
-                onClick={() => createFile(`untitled${ext}`)}
-              >
-                {ext}
-              </ContextMenuItem>
-            ))}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuItem onClick={() => createFolder("New Folder")}>
-          New Folder
-        </ContextMenuItem>
-        {clipboard && (
+        {target ? (
           <>
+            {download && target.type === "file" ? (
+              <ContextMenuItem disabled={download.pending} onSelect={() => download.download(target.path)}>Download</ContextMenuItem>
+            ) : null}
+            {!isMulti ? (
+              <>
+                <ContextMenuItem onSelect={() => {
+                  if (target.type === "directory") navigate(target.path);
+                  else onOpenFile?.(target.path);
+                }}>Open</ContextMenuItem>
+                {target.type === "file" && inCurrentFolder ? (
+                  <ContextMenuItem onSelect={() => setQuickLookPath(targetName)}>Quick Look</ContextMenuItem>
+                ) : null}
+                <ContextMenuSeparator />
+              </>
+            ) : null}
+            <ContextMenuItem onSelect={() => copy(target.paths)}>Copy</ContextMenuItem>
+            <ContextMenuItem onSelect={() => cut(target.paths)}>Cut</ContextMenuItem>
+            {!isMulti ? (
+              <>
+                <ContextMenuItem onSelect={() => duplicate(target.paths)}>Duplicate</ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => navigator.clipboard.writeText(target.path)}>Copy Path</ContextMenuItem>
+              </>
+            ) : null}
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => paste()}>Paste</ContextMenuItem>
+            <ContextMenuItem className="text-destructive" onSelect={() => deleteFiles(target.paths)}>
+              Move to Trash
+            </ContextMenuItem>
+          </>
+        ) : (
+          <>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>New File</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {[".md", ".txt", ".json", ".html", ".js", ".ts"].map((ext) => (
+                  <ContextMenuItem key={ext} onClick={() => createFile(`untitled${ext}`)}>{ext}</ContextMenuItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuItem onClick={() => createFolder("New Folder")}>New Folder</ContextMenuItem>
+            {clipboard && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => paste()}>Paste</ContextMenuItem>
+              </>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>Sort By</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {(["name", "size", "modified", "type"] as const).map((s) => (
+                  <ContextMenuItem key={s} onClick={() => setSortBy(s)}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>View As</ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {(["icon", "list", "column"] as const).map((v) => (
+                  <ContextMenuItem key={v} onClick={() => setViewMode(v)}>
+                    {v.charAt(0).toUpperCase() + v.slice(1)}s
+                  </ContextMenuItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
           </>
         )}
-        <ContextMenuSeparator />
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>Sort By</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {(["name", "size", "modified", "type"] as const).map((s) => (
-              <ContextMenuItem key={s} onClick={() => setSortBy(s)}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-              </ContextMenuItem>
-            ))}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>View As</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {(["icon", "list", "column"] as const).map((v) => (
-              <ContextMenuItem key={v} onClick={() => setViewMode(v)}>
-                {v.charAt(0).toUpperCase() + v.slice(1)}s
-              </ContextMenuItem>
-            ))}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
       </ContextMenuContent>
     </ContextMenu>
   );

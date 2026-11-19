@@ -156,6 +156,7 @@ export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
+  fileImageKey?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => string;
   resolveApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => { name: string } | null;
   openApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
