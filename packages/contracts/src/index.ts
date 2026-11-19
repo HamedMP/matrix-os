@@ -1002,6 +1002,12 @@ export const RuntimeSummarySchema = z.object({
     hasMore: false,
     limit: 20,
   }),
+  /** Recently completed or aborted runs, newest first; empty from older gateways. */
+  recentThreads: boundedListSchema(AgentThreadSummarySchema, 20).default({
+    items: [],
+    hasMore: false,
+    limit: 10,
+  }),
   terminalWorkspaces: boundedListSchema(TerminalWorkspaceSchema, 100).default({
     items: [],
     hasMore: false,
