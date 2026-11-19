@@ -52,7 +52,8 @@ function fieldFor(key: string, value: unknown): ApprovalDetailField | null {
 
 /**
  * The request's details as named lines, or null when they are not a JSON object
- * (cut short by the computer, or plain text) and are shown as they came.
+ * (cut short by the computer, or plain text), or exceed the named-field limit.
+ * The caller shows the complete supplied text in those cases.
  */
 export function approvalDetailFields(details: string): ApprovalDetailField[] | null {
   let parsed: unknown;
@@ -63,10 +64,12 @@ export function approvalDetailFields(details: string): ApprovalDetailField[] | n
     throw error;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const fields = Object.entries(parsed)
+  const entries = Object.entries(parsed);
+  // Fall back to the supplied JSON rather than silently omitting any inputs.
+  if (entries.length > MAX_FIELDS) return null;
+  const fields = entries
     .map(([key, value]) => fieldFor(key, value))
-    .filter((field): field is ApprovalDetailField => field !== null)
-    .slice(0, MAX_FIELDS);
+    .filter((field): field is ApprovalDetailField => field !== null);
   return fields.length > 0 ? fields : null;
 }
 

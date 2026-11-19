@@ -35,6 +35,11 @@ describe("approvalDetailFields", () => {
     ]);
   });
 
+  it("falls back to complete source details beyond the named-field limit", () => {
+    const details = JSON.stringify(Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`field_${i}`, i])));
+    expect(approvalDetailFields(details)).toBeNull();
+  });
+
   it.each([
     ["cut-off JSON", "{\"command\":\"ls -la"],
     ["plain text", "Read the file at ~/notes"],

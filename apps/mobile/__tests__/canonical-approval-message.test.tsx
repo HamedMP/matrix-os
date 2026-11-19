@@ -317,6 +317,23 @@ describe("supervised tool approval (Native Mobile)", () => {
     expect(screen.queryByText("Allow once")).toBeNull();
   });
 
+  it("shows the entire safe command title when credential-bearing details are withheld", () => {
+    const safeCommand = "printf '%s' 'review every part of this command before approving it' && echo SAFE_END";
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash,
+      title: `Run a command · “${safeCommand}”`, description: summary }} />);
+    expect(screen.getByRole("header").props.numberOfLines).toBeUndefined();
+    expect(screen.getByText(safeCommand)).toBeTruthy();
+    expect(screen.queryByText("See details")).toBeNull();
+    expect(screen.getByText("Allow once")).toBeTruthy();
+  });
+
+  it("keeps every input inspectable when there are more than 24 fields", () => {
+    const details = JSON.stringify(Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`field_${i}`, `value_${i}`])));
+    render(<CanonicalApprovalMessage {...props} approval={{ ...bash, description: `${summary}\n\n${details}` }} />);
+    fireEvent.press(screen.getByText("See details"));
+    expect(screen.getByText(details)).toBeTruthy();
+  });
+
   it("offers no details when the computer withheld them", () => {
     render(<CanonicalApprovalMessage {...props} approval={{ ...bash, title: "Run a command", description: summary }} />);
     expect(screen.getByText("Run a command")).toBeTruthy();

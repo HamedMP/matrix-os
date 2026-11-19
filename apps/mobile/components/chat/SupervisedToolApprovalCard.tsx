@@ -115,11 +115,11 @@ function ApprovalActions({ request, submitted, sending, onDecision }: {
   );
 }
 
-/** One line: the action, then what it acts on, cut short at the edge. */
+/** Keep the safe title fully readable, including when details are withheld. */
 function ApprovalTitle({ title }: { title: string }) {
   const { action, subject } = approvalTitleParts(title);
   return (
-    <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
+    <Text accessibilityRole="header" style={styles.title}>
       {action}
       {subject ? " · " : null}
       {subject ? (
