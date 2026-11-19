@@ -56,4 +56,22 @@ describe("ProjectConversationList", () => {
     rerender(<ProjectConversationList projectName="Matrix OS" status="ready" nowMs={NOW} records={[]} />);
     expect(screen.getByText("No chats in Matrix OS yet")).toBeInTheDocument();
   });
+
+  it("gives the empty project and no-match states an icon, an explanation and a way forward", () => {
+    const { rerender } = render(<ProjectConversationList projectName="Matrix OS" status="ready" nowMs={NOW} records={[]} />);
+    const empty = screen.getByTestId("project-conversations-empty");
+    expect(empty.querySelector("svg")).not.toBeNull();
+    expect(empty).toHaveTextContent("No chats in Matrix OS yet");
+    expect(empty).toHaveTextContent("Every conversation in this project shows up here.");
+    expect(empty).toHaveTextContent("Start one from the composer below.");
+
+    rerender(<ProjectConversationList projectName="Matrix OS" status="ready" nowMs={NOW} onSelect={() => undefined}
+      records={[chatRecord("b", { chat: { title: "Release notes" } })]} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats by title" }), { target: { value: "missing" } });
+    const noMatch = screen.getByTestId("project-conversations-empty");
+    expect(noMatch.querySelector("svg")).not.toBeNull();
+    expect(noMatch).toHaveTextContent("No chats match your search.");
+    expect(noMatch).toHaveTextContent("Try another title or clear the filters.");
+    expect(within(noMatch).getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+  });
 });

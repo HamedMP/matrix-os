@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Search01Icon } from "@hugeicons/core-free-icons";
+import { BubbleChatIcon, Search01Icon, SearchRemoveIcon } from "@hugeicons/core-free-icons";
 import { AGENT_INBOX_PILL_STYLE } from "../agent-inbox-pill-style.js";
 import { formatInboxTime, type AgentInboxGroup } from "../agent-inbox-model.js";
 import { AgentLogo } from "../agent-logo.js";
@@ -103,6 +103,29 @@ function ConversationToolbar({ query, effective, agents, counts, onChange }: {
   </>;
 }
 
+/** Compact empty state matching the agent inbox: icon, headline, one-line explanation, then a hint or action. */
+function ConversationListEmpty({ icon, headline, detail, hint, action }: {
+  icon: typeof BubbleChatIcon; headline: string; detail: string; hint?: ReactNode; action?: ReactNode;
+}) {
+  return <div data-testid="project-conversations-empty" className="flex flex-col items-center gap-1 px-4 py-7 text-center">
+    <span aria-hidden="true" className="mb-1 grid size-8 place-items-center rounded-lg" style={{ background: "var(--bg-sunken, var(--muted))", ...muted }}>
+      <HugeiconsIcon icon={icon} size={16} />
+    </span>
+    <p className="text-[13.5px] font-medium" style={{ color: "var(--text-primary, var(--foreground))" }}>{headline}</p>
+    <p className="text-xs" style={muted}>{detail}</p>
+    {hint ? <p className="text-xs" style={muted}>{hint}</p> : null}
+    {action}
+  </div>;
+}
+
+function NoMatchingConversations({ query, onClearFilters }: { query: ProjectConversationQuery; onClearFilters(): void }) {
+  const searching = query.search.trim() !== "";
+  const filtered = searching || query.status !== "all" || query.agent !== "all";
+  return <ConversationListEmpty icon={SearchRemoveIcon} headline={searching ? EMPTY_FILTER_COPY.all : EMPTY_FILTER_COPY[query.status]}
+    detail={searching ? "Try another title or clear the filters." : "Try another filter, or clear the filters to see every chat."}
+    action={filtered ? <button type="button" className={`${chipClass} mx-auto mt-1`} onClick={onClearFilters}>Clear filters</button> : undefined} />;
+}
+
 function ConversationListBody({ projectName, status, rowCount, shown, query, nowMs, activeChatId, onSelect, onRetry, emptyHint, onClearFilters }: {
   projectName: string; status: ProjectConversationListProps["status"]; rowCount: number; shown: readonly ProjectConversationRow[];
   query: ProjectConversationQuery; nowMs: number; activeChatId?: string; onSelect?: (record: ChatNavigationRecord) => void;
@@ -118,19 +141,10 @@ function ConversationListBody({ projectName, status, rowCount, shown, query, now
     </div>;
   }
   if (rowCount === 0) {
-    return <div className="px-2.5 py-8 text-center">
-      <p className="text-[13.5px] font-medium" style={{ color: "var(--text-primary, var(--foreground))" }}>No chats in {projectName} yet</p>
-      <p className="mt-1 text-xs" style={muted}>{emptyHint ?? "Start one below; every conversation in this project shows up here."}</p>
-    </div>;
+    return <ConversationListEmpty icon={BubbleChatIcon} headline={`No chats in ${projectName} yet`}
+      detail="Every conversation in this project shows up here." hint={emptyHint ?? "Start one from the composer below."} />;
   }
-  if (shown.length === 0) {
-    const searching = query.search.trim() !== "";
-    return <div className="px-2.5 py-6 text-center text-xs" style={muted}>
-      <p>{searching ? EMPTY_FILTER_COPY.all : EMPTY_FILTER_COPY[query.status]}</p>
-      {searching || query.status !== "all" || query.agent !== "all"
-        ? <button type="button" className={`${chipClass} mx-auto mt-2`} onClick={onClearFilters}>Clear filters</button> : null}
-    </div>;
-  }
+  if (shown.length === 0) return <NoMatchingConversations query={query} onClearFilters={onClearFilters} />;
   return <ul aria-label={`${projectName} chats`} className="flex flex-col">
     {shown.map((row) => <li key={row.id}>
       <ConversationRow row={row} time={formatInboxTime(row.record.chat.activityAt ?? row.record.chat.updatedAt, nowMs)}
