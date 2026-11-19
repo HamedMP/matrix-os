@@ -3,8 +3,9 @@
 // tools. Runtime preparation neither downloads code nor uses the owner's PATH.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -25,6 +26,57 @@ async function install(node, args, options) {
 async function regular(path) {
   const info = await lstat(path);
   if (!info.isFile()) throw new Error("Mac Verification tool is not a regular file");
+}
+
+export async function validateMacVerificationElectron(app, arch) {
+  const framework = join(app, "Contents/Frameworks/Electron Framework.framework");
+  const aliases = { "Versions/Current": "A", "Electron Framework": "Versions/Current/Electron Framework", Resources: "Versions/Current/Resources",
+    Helpers: "Versions/Current/Helpers", Libraries: "Versions/Current/Libraries" };
+  for (const path of [framework, join(framework, "Versions"), join(framework, "Versions/A")]) {
+    if (!(await lstat(path)).isDirectory()) throw new Error("Mac Verification Electron framework layout is invalid");
+  }
+  if ((await readdir(framework)).sort().join("|") !== ["Electron Framework", "Helpers", "Libraries", "Resources", "Versions"].join("|")) {
+    throw new Error("Mac Verification Electron framework layout is invalid");
+  }
+  for (const [name, target] of Object.entries(aliases)) {
+    const path = join(framework, name);
+    if (!(await lstat(path)).isSymbolicLink() || await readlink(path) !== target) throw new Error("Mac Verification Electron framework alias is invalid");
+    const contained = relative(await realpath(framework), await realpath(path));
+    if (isAbsolute(contained) || contained === ".." || contained.startsWith("../")) throw new Error("Mac Verification Electron framework alias escapes its bundle");
+  }
+  for (const path of [join(app, "Contents/MacOS/Electron"), join(framework, "Versions/A/Electron Framework")]) {
+    await regular(path);
+    if (process.platform === "darwin") {
+      const result = await exec("/usr/bin/lipo", ["-archs", path], { timeout: 30_000, maxBuffer: 8192 });
+      if (result.stdout.trim() !== (arch === "x64" ? "x86_64" : arch)) throw new Error("Mac Verification Electron architecture mismatch");
+    }
+  }
+}
+
+/** pnpm's side-effects cache flattens framework symlinks. Re-extract with the
+ * pinned package's normal checksum-verifying installer, never in shared pnpm. */
+export async function installFreshMacVerificationElectron({ packageRoot, temporaryParent = tmpdir(), cacheRoot, arch = process.arch }) {
+  const source = await realpath(packageRoot);
+  const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+  if (metadata.name !== "electron" || !/^\d+\.\d+\.\d+$/.test(metadata.version) || !["arm64", "x64"].includes(arch)) throw new Error("Unsupported Electron package");
+  const temporary = await mkdtemp(join(temporaryParent, ".mac-verification-electron-"));
+  const cleanup = () => rm(temporary, { recursive: true, force: true });
+  try {
+    for (const name of ["package.json", "install.js", "checksums.json"]) {
+      await regular(join(source, name)); await copyFile(join(source, name), join(temporary, name));
+    }
+    // Only dependency resolution is shared. dist/path.txt are private writes.
+    await symlink(dirname(source), join(temporary, "node_modules"));
+    for (const name of ["home", "tmp", "cache"]) await mkdir(join(temporary, name));
+    await exec(process.execPath, [join(temporary, "install.js")], { cwd: temporary, timeout: 600_000, maxBuffer: 256 * 1024,
+      env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: join(temporary, "home"), TMPDIR: join(temporary, "tmp"),
+        npm_config_platform: "darwin", npm_config_arch: arch, electron_config_cache: cacheRoot ?? join(temporary, "cache") } });
+    if ((await readFile(join(temporary, "dist/version"), "utf8")).replace(/^v/, "").trim() !== metadata.version
+      || await readFile(join(temporary, "path.txt"), "utf8") !== "Electron.app/Contents/MacOS/Electron") throw new Error("Electron installer version mismatch");
+    const app = join(temporary, "dist/Electron.app");
+    await validateMacVerificationElectron(app, arch);
+    return { app, cleanup };
+  } catch (error) { await cleanup(); throw error; }
 }
 
 const ARCHIVE_LIMIT = 8 * 1024 ** 3;
@@ -107,7 +159,7 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
     }
   }
   const preview = await realpath(electronApp);
-  await regular(join(preview, "Contents/MacOS/Electron"));
+  await validateMacVerificationElectron(preview, arch);
   const baseSha = await git(repository, ["rev-parse", "HEAD"]);
   if (!/^[a-f0-9]{40}$/.test(baseSha)) throw new Error("Mac Verification source revision unavailable");
   const destination = resolve(output);
@@ -139,6 +191,7 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
     }
     await mkdir(join(temporary, "runtime"));
     await cp(preview, join(temporary, "runtime/Electron.app"), { recursive: true, dereference: false, verbatimSymlinks: true });
+    await validateMacVerificationElectron(join(temporary, "runtime/Electron.app"), arch);
     const privateHome = join(temporary, "build-home"); await mkdir(privateHome);
     await mkdir(store);
     await installDependencies(join(temporary, paths.node), [join(temporary, paths.pnpm), "install", "--frozen-lockfile", "--ignore-scripts",
@@ -178,11 +231,14 @@ export async function readPnpmEntry({ args = process.argv, env = process.env } =
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  let freshElectron;
   try {
     // pnpm/action-setup may place a self-update wrapper on PATH. A lifecycle
     // supplies the actual package entry; never infer its layout from `which`.
     const pnpmEntry = await readPnpmEntry();
-    const electron = await realpath(join(ROOT, "desktop/node_modules/electron/dist/Electron.app"));
+    const packageRoot = await realpath(join(ROOT, "desktop/node_modules/electron"));
+    if (process.argv.includes("--refresh-electron")) freshElectron = await installFreshMacVerificationElectron({ packageRoot });
+    const electron = freshElectron?.app ?? join(packageRoot, "dist/Electron.app");
     const result = await prepareMacVerificationSupport({ pnpmEntry, electronApp: electron });
     console.log(`Mac Verification offline support prepared for ${result.baseSha}`);
   } catch (error) {
@@ -193,5 +249,5 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
         code: typeof error.code === "string" || typeof error.code === "number" ? error.code : null }));
     }
     process.exitCode = 1;
-  }
+  } finally { await freshElectron?.cleanup(); }
 }
