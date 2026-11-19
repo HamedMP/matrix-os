@@ -1,6 +1,8 @@
 import { ArrowDown } from "@renderer/lib/hugeicons";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -44,6 +46,12 @@ function maximumScrollTop(viewport: Pick<HTMLElement, "scrollHeight" | "clientHe
   return Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 }
 
+const ConversationFocusContext = createContext<(() => void) | null>(null);
+
+export function usePreserveConversationFocus() {
+  return useContext(ConversationFocusContext);
+}
+
 export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref<ConversationHandle> }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -62,6 +70,12 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
     atBottomRef.current = bottom;
     setAtBottom(bottom);
     contentHeightRef.current = el.scrollHeight;
+  }, []);
+
+  const preserveFocusedContent = useCallback(() => {
+    // A focused control inside an expanding message takes precedence over live-edge follow.
+    atBottomRef.current = false;
+    setAtBottom(false);
   }, []);
 
   const scrollToEnd = useCallback((options?: { behavior?: ScrollBehavior }) => {
@@ -187,31 +201,33 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   }, []);
 
   return (
-    <div className="relative min-h-0 flex-1" data-slot="message-scroller">
-      <div
-        ref={viewportRef}
-        onScroll={onScroll}
-        role="region"
-        aria-label="Messages"
-        tabIndex={0}
-        className="scroll-fade h-full overflow-y-auto"
-        style={{ overflowAnchor: atBottom ? "none" : "auto" }}
-        data-slot="message-scroller-viewport"
-      >
-        {children}
-      </div>
-      {!atBottom ? (
-        <button
-          type="button"
-          onClick={() => scrollToEnd({ behavior: "smooth" })}
-          aria-label="Scroll to latest"
-          className="absolute bottom-4 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border"
-          style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)", color: "var(--text-secondary)" }}
+    <ConversationFocusContext.Provider value={preserveFocusedContent}>
+      <div className="relative min-h-0 flex-1" data-slot="message-scroller">
+        <div
+          ref={viewportRef}
+          onScroll={onScroll}
+          role="region"
+          aria-label="Messages"
+          tabIndex={0}
+          className="scroll-fade h-full overflow-y-auto"
+          style={{ overflowAnchor: atBottom ? "none" : "auto" }}
+          data-slot="message-scroller-viewport"
         >
-          <ArrowDown size={15} />
-        </button>
-      ) : null}
-    </div>
+          {children}
+        </div>
+        {!atBottom ? (
+          <button
+            type="button"
+            onClick={() => scrollToEnd({ behavior: "smooth" })}
+            aria-label="Scroll to latest"
+            className="absolute bottom-4 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border"
+            style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)", color: "var(--text-secondary)" }}
+          >
+            <ArrowDown size={15} />
+          </button>
+        ) : null}
+      </div>
+    </ConversationFocusContext.Provider>
   );
 }
 
