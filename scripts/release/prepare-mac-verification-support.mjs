@@ -13,9 +13,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const PNPM_VERSION = "10.33.4";
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const gitEnvironment = { PATH: "/usr/bin:/bin", HOME: "/var/empty", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
-async function git(repository, args) {
+async function git(repository, args, timeout = 60_000) {
   const result = await exec("/usr/bin/git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
-    { cwd: repository, env: gitEnvironment, timeout: 60_000, maxBuffer: 1024 * 1024 });
+    { cwd: repository, env: gitEnvironment, timeout, maxBuffer: 1024 * 1024 });
   return result.stdout.trim();
 }
 async function install(node, args, options) {
@@ -43,7 +43,7 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
   const target = JSON.parse(actualNode.stdout);
   if (target.version !== process.versions.node || target.arch !== arch) throw new Error("Mac Verification Node version/architecture mismatch");
   if (process.platform === "darwin") {
-    const linkage = await exec("/usr/bin/otool", ["-L", node], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    const linkage = await exec("/usr/bin/otool", ["-L", node], { timeout: 30_000, maxBuffer: 64 * 1024 });
     const libraries = linkage.stdout.split("\n").filter(line => /^\s+/.test(line)).map(line => line.trim().split(" ")[0]);
     if (!libraries.length || libraries.some(path => !path.startsWith("/System/Library/") && !path.startsWith("/usr/lib/"))) {
       throw new Error("Mac Verification requires a standalone Node distribution");
@@ -95,7 +95,7 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
     // not ship a build-machine path into the offline runtime store.
     await rm(join(temporary, paths.store, "v10/projects"), { recursive: true, force: true });
     await rm(privateHome, { recursive: true, force: true });
-    await git(source, ["clean", "-ffdx"]);
+    await git(source, ["clean", "-ffdx", "-q"], 180_000);
     const manifest = { version: 1, baseSha, platform, arch, nodeVersion: process.versions.node, pnpmVersion: PNPM_VERSION,
       lockfileSha256: sha256(await readFile(join(source, "pnpm-lock.yaml"))), paths };
     await writeFile(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
@@ -122,6 +122,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const result = await prepareMacVerificationSupport({ pnpmEntry, electronApp: electron });
     console.log(`Mac Verification offline support prepared for ${result.baseSha}`);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : "Mac Verification support build failed"); process.exitCode = 1;
+    console.error(error instanceof Error ? error.message : "Mac Verification support build failed");
+    if (error && typeof error === "object" && ("killed" in error || "signal" in error)) {
+      console.error(JSON.stringify({ stage: "Mac Verification support preparation", killed: error.killed === true,
+        signal: typeof error.signal === "string" ? error.signal : null,
+        code: typeof error.code === "string" || typeof error.code === "number" ? error.code : null }));
+    }
+    process.exitCode = 1;
   }
 }
