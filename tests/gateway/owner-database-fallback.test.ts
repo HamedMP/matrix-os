@@ -9,12 +9,13 @@ describe("owner database fallback teardown (S20 / T099)", () => {
       chatEventStream: { shutdown: vi.fn(() => { order.push("stream"); }) },
       chatRepository: { release: vi.fn(async () => { order.push("repository"); }) },
       canvasRepository: { destroy: vi.fn(async () => { order.push("canvas"); }) },
+      messageBoard: { close: vi.fn(() => { order.push("board"); }) },
       appDb: { destroy: vi.fn(async () => { order.push("pool"); }) },
     };
     await expect(teardownOwnerDatabaseServices(services)).resolves.toEqual([
-      "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb",
+      "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "messageBoard", "appDb",
     ]);
-    expect(order).toEqual(["collaboration", "stream", "repository", "canvas", "pool"]);
+    expect(order).toEqual(["collaboration", "stream", "repository", "canvas", "board", "pool"]);
   });
 
   it("isolates a failing step, keeps tearing down the rest and still destroys the pool", async () => {
@@ -25,7 +26,7 @@ describe("owner database fallback teardown (S20 / T099)", () => {
       chatEventStream: { shutdown: () => { throw new Error("stream already closed"); } },
       chatRepository,
       appDb,
-    }, { warn })).resolves.toEqual(["collaboration", "canvasRepository", "appDb"]);
+    }, { warn })).resolves.toEqual(["collaboration", "canvasRepository", "messageBoard", "appDb"]);
     expect(appDb.destroy).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls.map(([step]) => step)).toEqual(["chatEventStream", "chatRepository"]);
@@ -43,7 +44,7 @@ describe("owner database fallback teardown (S20 / T099)", () => {
     await expect(teardownOwnerDatabaseServices({ collaboration, chatRepository, appDb }, {
       warn,
       collaborationDrainTimeoutMs: 20,
-    })).resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+    })).resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "messageBoard", "appDb"]);
     expect(order).toEqual(["fence", "repository", "pool"]);
     expect(warn).toHaveBeenCalledWith("collaboration", expect.objectContaining({ message: "CollaborationDrainTimeout" }));
     expect(collaboration.fence).toHaveBeenCalledOnce();
@@ -57,7 +58,7 @@ describe("owner database fallback teardown (S20 / T099)", () => {
     };
     const appDb = { destroy: vi.fn(async () => undefined) };
     await expect(teardownOwnerDatabaseServices({ collaboration, appDb }, { warn }))
-      .resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+      .resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "messageBoard", "appDb"]);
     expect(appDb.destroy).toHaveBeenCalledOnce();
     expect(warn.mock.calls.map(([step]) => step)).toEqual(["collaboration", "collaborationFenced"]);
   });
@@ -65,7 +66,7 @@ describe("owner database fallback teardown (S20 / T099)", () => {
   it("does not fence a runtime that drains within the bound", async () => {
     const collaboration = { shutdown: vi.fn(async () => undefined), fence: vi.fn() };
     await expect(teardownOwnerDatabaseServices({ collaboration }, { collaborationDrainTimeoutMs: 50 }))
-      .resolves.toEqual(["collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+      .resolves.toEqual(["collaboration", "chatEventStream", "chatRepository", "canvasRepository", "messageBoard", "appDb"]);
     expect(collaboration.fence).not.toHaveBeenCalled();
   });
 
@@ -92,7 +93,7 @@ describe("owner database fallback teardown (S20 / T099)", () => {
 
   it("tolerates services that were never built", async () => {
     await expect(teardownOwnerDatabaseServices({})).resolves.toEqual([
-      "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb",
+      "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "messageBoard", "appDb",
     ]);
   });
 });

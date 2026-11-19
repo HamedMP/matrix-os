@@ -768,6 +768,20 @@ describe("authMiddleware request principal readiness", () => {
     }
   });
 
+  it("lets the browser message board event socket authenticate with a query token", async () => {
+    process.env.MATRIX_USER_ID = "user_ws";
+    try {
+      const app = new Hono();
+      app.use("*", authMiddleware(TEST_TOKEN));
+      app.get("/ws/board/events", (c) => c.json(requireRequestPrincipal(c)));
+      const res = await app.request(`/ws/board/events?token=${TEST_TOKEN}`, { headers: { upgrade: "websocket" } });
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ userId: "user_ws", source: "configured-container" });
+    } finally {
+      delete process.env.MATRIX_USER_ID;
+    }
+  });
+
   it("rejects a canvas WebSocket query-token path before principal resolution when token is missing", async () => {
     process.env.MATRIX_USER_ID = "user_ws";
     try {
