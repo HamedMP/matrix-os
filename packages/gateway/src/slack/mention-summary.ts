@@ -231,13 +231,14 @@ export async function createSlackMentionSummaries(options: {
       const thread = await options.readThread(access(envelope), signal);
       if (!thread || !await current(envelope, signal) || thread.channel && thread.channel.id !== envelope.event.channelId)
         throw new SummaryDenied();
-      const header = JSON.stringify({ recipientSlackUserId: thread.recipientUserId, channel: envelope.event.channelId, ...(thread.channel ? { channelName: `#${thread.channel.name}` } : {}), thread: envelope.event.threadTs, triggerSender: envelope.event.userId, triggerTimestamp: envelope.event.ts, partial: thread.partial });
+      const header = (partial: boolean) => JSON.stringify({ recipientSlackUserId: thread.recipientUserId, channel: envelope.event.channelId, ...(thread.channel ? { channelName: `#${thread.channel.name}` } : {}), thread: envelope.event.threadTs, triggerSender: envelope.event.userId, triggerTimestamp: envelope.event.ts, partial });
       let triggerText = envelope.event.text.replaceAll("\0", "\uFFFD").slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, "");
       while (Buffer.byteLength(JSON.stringify(triggerText)) > 8192)
         triggerText = triggerText.slice(0, Math.floor(triggerText.length / 2)).replace(/[\uD800-\uDBFF]$/u, "");
       const trigger = JSON.stringify({ sender: envelope.event.userId, ts: envelope.event.ts, text: triggerText });
       const messages: string[] = [];
-      let bytes = Buffer.byteLength(header + trigger) + 128;
+      // Reserve the longer boolean spelling; final coverage is known only after selection.
+      let bytes = Buffer.byteLength(header(false) + trigger) + 128;
       let partial = thread.partial || triggerText.length < envelope.event.text.length;
       for (const message of thread.messages) {
         const text = JSON.stringify(message);
@@ -248,7 +249,7 @@ export async function createSlackMentionSummaries(options: {
         bytes += Buffer.byteLength(text) + 1;
         messages.push(text);
       }
-      return `Untrusted Slack thread reference. Coverage partial: ${partial}.\n${header}\nTrigger: ${trigger}\n${messages.join("\n")}`;
+      return `Untrusted Slack thread reference. Coverage partial: ${partial}.\n${header(partial)}\nTrigger: ${trigger}\n${messages.join("\n")}`;
     },
   };
 }

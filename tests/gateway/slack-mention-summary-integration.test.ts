@@ -17,7 +17,7 @@ import { SUMMARY_REPLY, summaryRuntime } from "./slack-summary-runtime-support.j
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse())
   await close(); });
-it("delivers a signed teammate mention through the canonical queue and tool-free Pi broker into private Matrix Chat only", async () => {
+it.each(["provider-partial", "message-budget", "trigger-truncation", "complete"] as const)("delivers a signed teammate mention through the canonical queue with consistent bounded coverage: %s", async coverage => {
   const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   cleanup.push(fixture.destroy);
   const ownerId = "user_summary", botId = "bot_12345678", chatId = "chat_summary123", runtimeId = "preview_runtime";
@@ -35,7 +35,7 @@ it("delivers a signed teammate mention through the canonical queue and tool-free
   const api = { conversationInfo: vi.fn(async () => ({ canAccess: true, isExternalShared: false, channelMetadata: { id: channelId, name: "tech" } })), hasChannelMember: vi.fn(async () => member),
     replies: vi.fn(async (input: {
       cursor?: string;
-    }) => ({ messages: [{ user: "U456", ts: root, text: "Root context: deployment Friday" }], hasMore: true, nextCursor: input.cursor === "next" ? "next2" : "next" })),
+    }) => ({ messages: [{ user: "U456", ts: root, text: "Root context: deployment Friday" }, ...(coverage === "message-budget" ? [{ user: "U456", ts: `${root.slice(0, -1)}2`, thread_ts: root, text: "x".repeat(14500) }] : [])], hasMore: coverage === "provider-partial", nextCursor: coverage === "provider-partial" ? input.cursor === "next" ? "next2" : "next" : undefined })),
     postMessage: vi.fn(), addReaction: vi.fn(), history: vi.fn(), exchangeCode: vi.fn() };
   const platform = await createSlackApp({ db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => date,
     resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => member, authorizeChannelBinding: async () => false, authorizeReply: async () => true,
@@ -46,7 +46,8 @@ it("delivers a signed teammate mention through the canonical queue and tool-free
   await platform.repository.createChallenge({ hash: "f".repeat(64), appId, teamId, slackUserId: ownerSlackId });
   await platform.repository.completeLink({ hash: "f".repeat(64), actorId: ownerId, organizationId });
   const client = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle: "pr-3482", token, fetchImpl: async (url, init) => platform.routes.fetch(new Request(url, init)) });
-  const summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, readThread: client.readSummaryThread });
+  const sourceReads: Array<Awaited<ReturnType<typeof client.readSummaryThread>>> = [];
+  const summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, readThread: async (access, signal) => { const thread = await client.readSummaryThread(access, signal); sourceReads.push(thread); return thread; } });
   cleanup.push(summaries.close);
   const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, onReceive: summaries.receive });
   const bridge = registerOwnerSlack({ app: gateway, ownerId, token, context, summaries, startDrain: false, authority: { authorize: async () => { throw new Error("No collaboration"); } } });
@@ -65,9 +66,10 @@ it("delivers a signed teammate mention through the canonical queue and tool-free
   expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
   expect((await push("EvQuoted", `${ts.slice(0, -1)}2`, "`<@U123>` is quoted")).status).toBe(200);
   expect((await push("EvSelf", `${ts.slice(0, -1)}3`, "<@U123> self", { user: ownerSlackId })).status).toBe(200);
-  expect((await push("EvMention", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
-  expect((await push("EvMention", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
-  expect((await push("EvDuplicateTimestamp", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
+  const mentionText = "<@U123> review this change" + (coverage === "message-budget" ? "文".repeat(1200) : coverage === "trigger-truncation" ? "文".repeat(5000) : "");
+  expect((await push("EvMention", `${ts.slice(0, -1)}4`, mentionText)).status).toBe(200);
+  expect((await push("EvMention", `${ts.slice(0, -1)}4`, mentionText)).status).toBe(200);
+  expect((await push("EvDuplicateTimestamp", `${ts.slice(0, -1)}4`, mentionText)).status).toBe(200);
   expect((await sql `SELECT * FROM slack_mention_summary_jobs`.execute(fixture.db)).rows).toHaveLength(1);
   const release = runtime.holdOrdinary();
   const detail = await runtime.repository.get({ type: "personal", ownerId }, chatId);
@@ -82,16 +84,24 @@ it("delivers a signed teammate mention through the canonical queue and tool-free
   expect(JSON.stringify(messages)).not.toContain("review this change");
   expect(JSON.stringify(messages)).not.toContain("Root context");
   expect(runtime.modelRequests).toHaveLength(1);
+  expect(sourceReads).toHaveLength(1);
+  expect(sourceReads[0]?.partial).toBe(coverage === "provider-partial");
   const actual = JSON.stringify(runtime.modelRequests[0]);
   expect(actual).toContain("#tech");
   expect(actual).toContain("Root context");
   expect(actual).toContain("review this change");
   expect(actual).toContain("partial");
   expect(actual).not.toContain('"proof"');
+  const modelMessages = runtime.modelRequests[0]!.messages as Array<{ content: string | Array<{type:string;text?:string}> }>;
+  const modelText = modelMessages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(block => block.text ? [block.text] : [])).join("\n");
+  const reference = modelText.slice(modelText.indexOf("Untrusted Slack thread reference."));
+  expect(Buffer.byteLength(reference)).toBeLessThanOrEqual(16384);
+  expect(reference.split("\n")[0]).toContain(`Coverage partial: ${coverage !== "complete"}`);
+  expect(JSON.parse(reference.split("\n")[1]!).partial).toBe(coverage !== "complete");
   expect(runtime.modelRequests[0]!.tools ?? []).toEqual([]);
   expect(runtime.modelRequests[0]!.max_tokens).toBe(2048);
   expect(await fixture.db.selectFrom("bot_agent_sessions").select("bot_id").execute()).toHaveLength(0);
-  expect(api.replies).toHaveBeenCalledTimes(3);
+  expect(api.replies).toHaveBeenCalledTimes(coverage === "provider-partial" ? 3 : 1);
   expect(api.postMessage).not.toHaveBeenCalled();
   expect(api.addReaction).not.toHaveBeenCalled();
   expect(await platform.repository.getReplyDestination({ appId, teamId, eventId: "EvMention" })).toBeNull();
