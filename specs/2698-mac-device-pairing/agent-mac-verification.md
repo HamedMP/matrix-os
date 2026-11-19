@@ -18,6 +18,8 @@ Before using the system tar extractor, the native controller copies each archive
 
 Creating each archive on shared build infrastructure is bounded to 600 seconds; native extraction stays bounded to 180 seconds. A slow build must not weaken the native execution deadline, manifest pin, 8 GiB archive bound or 250,000-entry tree bound.
 
+The release runner must regenerate the pinned Electron distribution with its normal installer before preparing the kit. pnpm side-effects cache import can flatten framework aliases while skipping postinstall; a healthy copy operation cannot repair that input. Preparation must verify the pinned vendor archive checksum and target architecture, and reject flattened or escaped framework aliases before copying. Keep normal Developer ID signing and notarization; signing-tool discovery or an ad-hoc signature alone does not qualify the packaged candidate.
+
 ## 3. Authorization and lifecycle contract
 
 | Boundary | Existing authority / rule |
@@ -46,7 +48,7 @@ A queued Terminal request that cannot be admitted may expose contextual Retry af
 
 ## 6. Required verification
 
-TDD: fresh Skill-alone admission, preserved task text and loaded instructions; visible missing prerequisites; wrong/failed/queued/stale run rejection; native authorization ordering; kit revision/lockfile/path/tool checks; offline absolute-tool execution; automatic recipe selection; Stop/revoke and single receipt. Build tests must prove committed source only, no untracked secrets, pinned package manager and failure cleanup.
+TDD: fresh Skill-alone admission, preserved task text and loaded instructions; visible missing prerequisites; wrong/failed/queued/stale run rejection; native authorization ordering; kit revision/lockfile/path/tool checks; offline absolute-tool execution; automatic recipe selection; Stop/revoke and single receipt. Build tests must prove committed source only, no untracked secrets, pinned package manager and failure cleanup. Cover a cached Electron input with flattened aliases, then verify normal installer recovery through the real copier and signer. A fixture that preserves links cannot substitute for the cache producer/consumer boundary.
 
 Real acceptance uses the existing owner's Main Chat and a separate Mac candidate/profile, without restarting or replacing Main services. Show pairing state, the actual Skill entry, a reversible Files change, tests, automatic source preparation, concrete GUI verification and automatic receipt. Capture the whole Matrix window continuously with English explanation, then restore the trial edit. Record exact candidate commit, cloud worktree version and result provenance privately. Signed builds, fixture integration, live account and clean-Mac acceptance are distinct gates. Existing system Git and tar are explicit prerequisites; an app-only clean Mac remains unqualified until tested.
 

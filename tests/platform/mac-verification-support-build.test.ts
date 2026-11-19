@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { link, lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, link, lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
-import { prepareMacVerificationSupport, sealMacVerificationArchive } from "../../scripts/release/prepare-mac-verification-support.mjs";
+import { afterEach, expect, test, vi } from "vitest";
+import { parse } from "yaml";
+import { installFreshMacVerificationElectron, prepareMacVerificationSupport, sealMacVerificationArchive, validateMacVerificationElectron } from "../../scripts/release/prepare-mac-verification-support.mjs";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "matrix-support-build-test-")); roots.push(root);
   const repo = join(root, "repo"); await mkdir(repo);
@@ -26,12 +27,19 @@ async function fixture() {
   await writeFile(join(pnpm, "package.json"), JSON.stringify({ name: "pnpm", version: "10.33.4" }));
   await writeFile(join(pnpm, "bin/pnpm.cjs"), "// fixture\n");
   const electron = join(root, "Electron.app"); await mkdir(join(electron, "Contents/MacOS"), { recursive: true });
-  await writeFile(join(electron, "Contents/MacOS/Electron"), "fixture");
+  const binary = async (destination: string) => {
+    if (process.platform === "darwin" && execFileSync("/usr/bin/lipo", ["-archs", process.execPath], { encoding: "utf8" }).trim().includes(" ")) {
+      execFileSync("/usr/bin/lipo", [process.execPath, "-thin", process.arch === "x64" ? "x86_64" : process.arch, "-output", destination]);
+    } else await copyFile(process.execPath, destination);
+  };
+  await binary(join(electron, "Contents/MacOS/Electron"));
   const framework = join(electron, "Contents/Frameworks/Electron Framework.framework");
   await mkdir(join(framework, "Versions/A/Resources"), { recursive: true });
   await writeFile(join(framework, "Versions/A/Resources/icudtl.dat"), "fixture ICU");
+  await binary(join(framework, "Versions/A/Electron Framework"));
+  for (const name of ["Helpers", "Libraries"]) await mkdir(join(framework, "Versions/A", name));
   await symlink("A", join(framework, "Versions/Current"));
-  await symlink("Versions/Current/Resources", join(framework, "Resources"));
+  for (const name of ["Electron Framework", "Resources", "Helpers", "Libraries"]) await symlink(`Versions/Current/${name}`, join(framework, name));
   return { root, repo, pnpm, electron, baseSha };
 }
 test("packages exact committed source and pinned private tools, never dirty source or secrets", async () => {
@@ -75,6 +83,39 @@ test("packages exact committed source and pinned private tools, never dirty sour
   expect(calls).toHaveLength(1);
   expect(calls[0]).toEqual(expect.arrayContaining(["--frozen-lockfile", "--ignore-scripts", "--store-dir"]));
   expect(await readFile(join(out, manifest.paths.pnpm), "utf8")).toContain("fixture");
+});
+test.each(["Electron Framework", "Versions/Current", "Resources"])("rejects pnpm's flattened framework alias %s", async name => {
+  const f = await fixture(); const alias = join(f.electron, "Contents/Frameworks/Electron Framework.framework", name);
+  await validateMacVerificationElectron(f.electron, process.arch);
+  await rm(alias); if (name === "Electron Framework") await copyFile(process.execPath, alias); else await mkdir(alias);
+  await expect(prepareMacVerificationSupport({ repository: f.repo, output: join(f.root, "kit"), nodePath: process.execPath,
+    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch,
+    install: async () => { throw new Error("must reject before dependency preparation"); } })).rejects.toThrow(/framework alias/);
+});
+
+test("runs the normal installer in an empty private package, never overwriting the cached dependency", async () => {
+  for (const name of ["ELECTRON_SKIP_BINARY_DOWNLOAD", "ELECTRON_OVERRIDE_DIST_PATH", "electron_use_remote_checksums"]) vi.stubEnv(name, "unsafe-inherited-setting");
+  const f = await fixture(); const pkg = join(f.root, "modules/electron"); await mkdir(pkg, { recursive: true });
+  await writeFile(join(pkg, "package.json"), JSON.stringify({ name: "electron", version: "41.10.7" }));
+  await writeFile(join(pkg, "checksums.json"), "{}");
+  await mkdir(join(pkg, "dist")); await writeFile(join(pkg, "dist/owner-marker"), "retained cached input");
+  await writeFile(join(pkg, "install.js"), `const fs=require('node:fs/promises'),path=require('node:path');(async()=>{
+    if(process.env.ELECTRON_SKIP_BINARY_DOWNLOAD||process.env.ELECTRON_OVERRIDE_DIST_PATH||process.env.electron_use_remote_checksums)throw Error('unsafe environment');
+    await fs.cp(${JSON.stringify(f.electron)},path.join(__dirname,'dist/Electron.app'),{recursive:true,verbatimSymlinks:true});
+    await fs.writeFile(path.join(__dirname,'dist/version'),'41.10.7');await fs.writeFile(path.join(__dirname,'path.txt'),'Electron.app/Contents/MacOS/Electron');
+  })().catch(e=>{console.error(e);process.exitCode=1});`);
+  const installed = await installFreshMacVerificationElectron({ packageRoot: pkg, temporaryParent: f.root, arch: process.arch });
+  try {
+    expect(installed.app).not.toContain(pkg);
+    expect(await readFile(join(pkg, "dist/owner-marker"), "utf8")).toBe("retained cached input");
+    await expect(lstat(join(pkg, "path.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    await validateMacVerificationElectron(installed.app, process.arch);
+  } finally { await installed.cleanup(); }
+  await expect(lstat(installed.app)).rejects.toMatchObject({ code: "ENOENT" });
+  await writeFile(join(pkg, "install.js"), "process.exit(1);");
+  await expect(installFreshMacVerificationElectron({ packageRoot: pkg, temporaryParent: f.root, arch: process.arch })).rejects.toThrow();
+  const { readdir } = await import("node:fs/promises");
+  expect((await readdir(f.root)).filter(name => name.startsWith(".mac-verification-electron-"))).toEqual([]);
 });
 test("refuses an unpinned package manager before installing or publishing a kit", async () => {
   const f = await fixture(); await writeFile(join(f.pnpm, "package.json"), JSON.stringify({ name: "pnpm", version: "11.0.0" }));
@@ -127,4 +168,16 @@ test("seals only bounded package files, rejecting links and preserving an existi
   await writeFile(archive, "existing owner bytes");
   await expect(sealMacVerificationArchive(store, archive)).rejects.toThrow("exists");
   expect(await readFile(archive, "utf8")).toBe("existing owner bytes");
+});
+
+
+test("the Mac release refreshes pinned Electron through the lifecycle before compiling the kit pin", async () => {
+  const { jobs } = parse(await readFile(join(process.cwd(), ".github/workflows/desktop-build.yml"), "utf8"));
+  const steps = jobs.mac.steps as Array<{ name?: string; run?: string }>;
+  const prepare = steps.findIndex(step => step.name === "Prepare offline Mac Verification support");
+  expect(prepare).toBeGreaterThanOrEqual(0);
+  expect(steps[prepare].run).toBe("pnpm run prepare:mac-verification-support --refresh-electron");
+  expect(prepare).toBeLessThan(steps.findIndex(step => step.name === "Build desktop app"));
+  const project = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
+  expect(project.scripts["prepare:mac-verification-support"]).toBe("node scripts/release/prepare-mac-verification-support.mjs");
 });
