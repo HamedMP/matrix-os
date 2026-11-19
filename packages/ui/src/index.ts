@@ -320,8 +320,8 @@ export * from "./get-started/index.js";
 export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
-export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
-export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
+export { BrowserSurface, BrowserTitleBarControls, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
+export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus, BrowserChromeHost } from "./browser/index.js";
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
 export { createBrowserPermissionClient, type BrowserPermissionClient } from "./browser-permission/client.js";
 export { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "./browser-permission/BrowserPermissionReview.js";

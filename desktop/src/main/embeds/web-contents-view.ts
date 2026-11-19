@@ -90,6 +90,8 @@ function encodeBoundedSnapshot(source: NativeImage): string | null {
 
 export function createWebContentsView(options: {
   registerViewerTransport?: (contents: WebContents) => () => void;
+  /** Lets a Browser product view publish its toolbar into the host window title bar. */
+  registerBrowserChrome?: (contents: WebContents) => () => void;
   browserProduct?: { origin: string; renew: () => Promise<unknown> };
   window: BaseWindow;
   partition: string;
@@ -153,6 +155,7 @@ export function createWebContentsView(options: {
     });
   }
   let revokeViewerTransport = options.registerViewerTransport?.(contents);
+  const revokeBrowserChrome = options.registerBrowserChrome?.(contents);
   const product = options.browserProduct ? createBrowserProductLifecycle({
     contents, ...options.browserProduct,
     refreshAdmission: () => {
@@ -352,6 +355,7 @@ export function createWebContentsView(options: {
     destroy() {
       product?.close();
       revokeViewerTransport?.();
+      revokeBrowserChrome?.();
       options.appBridge?.unregister(contents.id);
       if (sharedAppAuth) contents.session.webRequest.onBeforeSendHeaders(null);
       detachFromWindow();

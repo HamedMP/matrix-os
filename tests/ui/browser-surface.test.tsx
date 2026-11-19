@@ -24,6 +24,8 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+// The title bar pill shows connection as a dot; its state is the connection.
+function connection() { return document.querySelector(".matrix-browser-titlebar-status")?.getAttribute("data-connection") ?? null; }
 function mount(extra: Record<string, unknown> = {}) { return render(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" ensureSession={ensureSession} {...extra} />); }
 function message(frame: HTMLIFrameElement, data: unknown = { type: "matrix-browser-viewer", connected: true }, origin = "https://app.matrix-os.com", source: MessageEventSource | null = frame.contentWindow) {
   act(() => { window.dispatchEvent(new MessageEvent("message", { data, origin, source })); });
@@ -116,9 +118,9 @@ describe("shared Chrome-first surface", () => {
   it("does not report connected or permit input from iframe load alone", async () => {
     mount(); const viewer = await frame(); fireEvent.load(viewer);
     expect(viewer.hasAttribute("inert")).toBe(true);
-    expect(screen.queryByText("Connected")).toBeNull();
+    expect(connection()).not.toBe("connected");
     message(viewer);
-    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(connection()).toBe("connected");
     expect(viewer.hasAttribute("inert")).toBe(false);
     expect(screen.queryByText("Run comparison")).toBeNull();
     expect(screen.queryByText("agent-browser")).toBeNull();
@@ -165,7 +167,7 @@ describe("shared Chrome-first surface", () => {
     message(viewer, { type: "matrix-browser-viewer", connected: "true" });
     message(viewer, { type: "other", connected: true });
     expect(viewer.hasAttribute("inert")).toBe(true);
-    expect(screen.queryByText("Connected")).toBeNull();
+    expect(connection()).not.toBe("connected");
   });
   it("keeps input gated when the acknowledged owner status forbids it", async () => {
     status = { ...ready, humanControlAvailable: false };
@@ -297,7 +299,7 @@ describe("long-lived browser viewer renewal", () => {
     expect(ensureSession.mock.calls.filter(call => call[1]?.force === true)).toHaveLength(2);
     message(renewed, retiredSource); expect(renewed.hasAttribute("inert")).toBe(true);
     message(renewed); expect(renewed.hasAttribute("inert")).toBe(false);
-    await advance(3 * 60_000); expect(screen.getByText("Connected")).toBeTruthy();
+    await advance(3 * 60_000); expect(connection()).toBe("connected");
     await advance(5 * 60_000); expect(claims).toBe(3);
     expect(frame(surface).hasAttribute("inert")).toBe(true);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/browser-control") || String(url).endsWith("/browser-automation"))).toBe(false);
@@ -331,7 +333,7 @@ describe("long-lived browser viewer renewal", () => {
     expect(claims).toBe(1);
     expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
     expect(screen.getByText("Browser unavailable")).toBeTruthy();
-    message(retired); expect(screen.queryByText("Connected")).toBeNull();
+    message(retired); expect(connection()).not.toBe("connected");
   });
   it("periodically observes an ongoing Chat without taking over or granting human input", async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;

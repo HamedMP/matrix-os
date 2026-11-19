@@ -1,15 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Globe2, Monitor, RefreshCw, Settings2, Terminal, X, Pause, Play, Hand, Square } from "lucide-react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import type { BrowserChromeAction } from "@matrix-os/contracts";
+import { Globe2, Monitor, RefreshCw, X } from "lucide-react";
 import { useBrowserSurface } from "./use-browser-surface.js";
-import { browserAutomationActionAllowed, browserControlLabel, browserHumanInputAllowed } from "./automation-state.js";
+import { browserHumanInputAllowed } from "./automation-state.js";
+import { browserChromeModel } from "./chrome-model.js";
+import { BrowserTitleBarControls } from "./BrowserTitleBarControls.js";
 import type { BrowserControlAction, BrowserSurfaceProps } from "./types.js";
 import "./browser.css";
 import { BrowserSetupGate } from "./BrowserSetupGate.js";
 
 export function BrowserSurface(props: BrowserSurfaceProps) {
   return props.setup ? <BrowserSetupGate key={props.gatewayUrl} setup={props.setup} active={props.active !== false} scope={props.gatewayUrl}>{recheck => <ReadyBrowserSurface {...props} recheckSetup={recheck}/>}</BrowserSetupGate> : <ReadyBrowserSurface {...props}/>;
+}
+// The settings toggle lives in the inline toolbar or the host title bar. Clicks
+// on host chrome toggle through the action path, so they never count as outside.
+function settingsTriggerIn(root: HTMLElement | null): HTMLButtonElement | null {
+  return root?.querySelector<HTMLButtonElement>(".matrix-browser-titlebar button[aria-expanded]") ?? null;
+}
+function insideChrome(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-matrix-browser-chrome]") !== null;
 }
 function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () => Promise<boolean> }) {
   const { state, iframe, viewerKey, reconnect: reconnectViewer, control, automationControl } = useBrowserSurface(props);
@@ -18,21 +29,23 @@ function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () =>
     if (!props.recheckSetup || await props.recheckSetup()) reconnectViewer();
   };
   const [settings, setSettings] = useState(false);
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const surfaceRef = useRef<HTMLElement>(null);
+  const settingsTrigger = () => settingsTriggerIn(surfaceRef.current);
   const settingsPanel = useRef<HTMLElement>(null);
   const settingsClose = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!settings) return;
     settingsClose.current?.focus();
-    const dismiss = () => { setSettings(false); settingsTrigger.current?.focus(); };
+    const surface = surfaceRef.current;
+    const dismiss = () => { setSettings(false); settingsTriggerIn(surface)?.focus(); };
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
     const onMouseDown = (event: MouseEvent) => {
       if (!settingsPanel.current?.contains(event.target as Node)
-        && !settingsTrigger.current?.contains(event.target as Node)) dismiss();
+        && !insideChrome(event.target)) dismiss();
     };
     const onFocus = (event: FocusEvent) => {
       if (!settingsPanel.current?.contains(event.target as Node)
-        && !settingsTrigger.current?.contains(event.target as Node)) setSettings(false);
+        && !insideChrome(event.target)) setSettings(false);
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("mousedown", onMouseDown);
@@ -47,40 +60,48 @@ function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () =>
   const available = state.status?.available === true;
   const connected = state.connection === "connected";
   const interactive = props.active !== false && available && connected && browserHumanInputAllowed(state.status) && !state.busy;
-  const automation = state.status?.automation;
-  const automationReady = available && connected && !state.busy && props.active !== false;
   const minimized = !desktop && state.status?.chrome.present && state.status.chrome.minimized;
-  const label = state.connection === "connected" ? "Connected" : state.connection === "disconnected" ? "Disconnected"
-    : state.connection === "unavailable" ? "Unavailable" : state.connection === "inactive" ? "Paused" : "Connecting…";
+  const automation = state.status?.automation;
+  const canOpenCloudDesktop = Boolean(props.onOpenCloudDesktop);
+  const chrome = useMemo(() => browserChromeModel(state, {
+    surface: props.surface, active: props.active !== false, settingsOpen: settings, canOpenCloudDesktop,
+  }), [canOpenCloudDesktop, props.active, props.surface, settings, state]);
   const action = async (value: BrowserControlAction) => {
     if (await control(value) && value === "restore-chrome" && desktop) props.onOpenBrowser?.();
   };
-  return <section className="matrix-browser-surface ph-no-capture" data-surface={props.surface} aria-label={desktop ? "Cloud desktop" : "Browser"}>
-    <header className="matrix-browser-toolbar">
-      <div className="matrix-browser-identity">{desktop ? <Monitor size={20} aria-hidden="true"/> : <Globe2 size={20} aria-hidden="true"/>}
+  // Title bar clicks act on the latest model only; anything it does not offer is ignored.
+  const handleChromeAction = (id: BrowserChromeAction) => {
+    const offered = chrome.actions.find((entry) => entry.id === id);
+    if (!offered || offered.disabled) return;
+    if (id === "settings") { setSettings((open) => !open); return; }
+    if (id === "open-cloud-desktop") { props.onOpenCloudDesktop?.(); return; }
+    if (id === "open-browser") { props.onOpenBrowser?.(); return; }
+    if (id === "reconnect") { void reconnect(); return; }
+    if (id === "takeover" || id === "pause" || id === "resume" || id === "stop") { void automationControl(id); return; }
+    void action(id);
+  };
+  const runChromeAction = useEffectEvent(handleChromeAction);
+  const chromeHost = props.chromeHost;
+  // Hosts re-render when chrome is published, so publish only real changes;
+  // otherwise a host re-render that recreates callbacks would loop.
+  const chromeKey = JSON.stringify(chrome);
+  const publishedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!chromeHost || publishedKey.current === chromeKey) return;
+    publishedKey.current = chromeKey;
+    chromeHost.publish(JSON.parse(chromeKey));
+  }, [chromeHost, chromeKey]);
+  useEffect(() => {
+    if (!chromeHost) return;
+    const detach = chromeHost.onAction((id) => runChromeAction(id));
+    return () => { detach(); publishedKey.current = null; chromeHost.publish(null); };
+  }, [chromeHost]);
+  return <section ref={surfaceRef} className="matrix-browser-surface ph-no-capture" data-surface={props.surface} aria-label={desktop ? "Cloud desktop" : "Browser"}>
+    {!chromeHost && <header className="matrix-browser-toolbar">
+      <div className="matrix-browser-identity">{desktop ? <Monitor size={18} aria-hidden="true"/> : <Globe2 size={18} aria-hidden="true"/>}
         <span>{desktop ? "Cloud desktop" : "Browser"}</span></div>
-      <span className="matrix-browser-state" role="status" data-connected={connected}>{state.busy ? "Applying action…" : label}</span>
-      {connected && <span className="matrix-browser-control-state" role="status">{browserControlLabel(state)}</span>}
-      <div className="matrix-browser-actions">
-        {automation && !automation.run && browserAutomationActionAllowed(state.status, "takeover") && <button disabled={!automationReady} onClick={() => { void automationControl("takeover"); }}><Hand size={16} aria-hidden="true"/>Take control</button>}
-        {automation?.run && <>
-          {["agent", "pausing"].includes(automation.phase) && <button disabled={!automationReady || !browserAutomationActionAllowed(state.status, "pause")} onClick={() => { void automationControl("pause"); }}><Pause size={16} aria-hidden="true"/>Pause agent</button>}
-          {["agent", "paused", "pausing"].includes(automation.phase) && <button disabled={!automationReady || !browserAutomationActionAllowed(state.status, "takeover")} onClick={() => { void automationControl("takeover"); }}><Hand size={16} aria-hidden="true"/>Take over</button>}
-          {["paused", "human", "resuming"].includes(automation.phase) && <button disabled={!automationReady || !browserAutomationActionAllowed(state.status, "resume")} onClick={() => { void automationControl("resume"); }}><Play size={16} aria-hidden="true"/>Resume agent</button>}
-          <button disabled={!automationReady || !browserAutomationActionAllowed(state.status, "stop")} onClick={() => { void automationControl("stop"); }}><Square size={16} aria-hidden="true"/>Stop agent</button>
-        </>}
-        {desktop ? <>
-          <button disabled={!interactive} onClick={() => { void action("show-desktop"); }}><Monitor size={16} aria-hidden="true"/>Show desktop</button>
-          <button disabled={!interactive} onClick={() => { void action("open-files"); }}><FolderOpen size={16} aria-hidden="true"/>Files</button>
-          <button disabled={!interactive} onClick={() => { void action("open-terminal"); }}><Terminal size={16} aria-hidden="true"/>Terminal</button>
-          <button disabled={!interactive} onClick={() => { void action("restore-chrome"); }}><Globe2 size={16} aria-hidden="true"/>Open Chrome</button>
-        </> : <>
-          {props.onOpenCloudDesktop && <button onClick={props.onOpenCloudDesktop}><Monitor size={16} aria-hidden="true"/>Cloud desktop</button>}
-        </>}
-        {!settings && (state.connection === "disconnected" || state.connection === "unavailable") && <button disabled={state.busy || props.active === false} onClick={reconnect}><RefreshCw size={16} aria-hidden="true"/>Reconnect</button>}
-        <button ref={settingsTrigger} className="matrix-browser-icon-button" aria-label="Browser settings" aria-expanded={settings} onClick={() => setSettings(value => !value)}><Settings2 size={18} aria-hidden="true"/></button>
-      </div>
-    </header>
+      <BrowserTitleBarControls model={chrome} onAction={handleChromeAction}/>
+    </header>}
     {state.error && <p className="matrix-browser-error" role="alert">{state.error}</p>}
     <div className="matrix-browser-viewport">
       {state.viewerUrl && <iframe key={viewerKey} ref={iframe} title={desktop ? "Your Matrix cloud desktop" : "Chrome on your Matrix computer"}
@@ -98,7 +119,7 @@ function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () =>
         <button disabled={!interactive} onClick={() => { void action("restore-chrome"); }}>Restore Chrome</button></div>}
       {connected && available && !automation && !state.status?.humanControlAvailable && <div className="matrix-browser-recovery"><strong>This view is read only</strong><button onClick={reconnect}>Take control</button></div>}
       {settings && <section ref={settingsPanel} className="matrix-browser-settings" aria-label="Browser settings">
-        <div><strong>Display</strong><button ref={settingsClose} className="matrix-browser-icon-button" aria-label="Close browser settings" onClick={() => { setSettings(false); settingsTrigger.current?.focus(); }}><X size={18} aria-hidden="true"/></button></div>
+        <div><strong>Display</strong><button ref={settingsClose} className="matrix-browser-icon-button" aria-label="Close browser settings" onClick={() => { setSettings(false); settingsTrigger()?.focus(); }}><X size={18} aria-hidden="true"/></button></div>
         <p>The desktop fits this window so Chrome’s tabs, extensions and dialogs remain within reach.</p>
         <p>Closing this view leaves Chrome and your apps open on your Matrix computer.</p>
         <div className="matrix-browser-settings-actions">

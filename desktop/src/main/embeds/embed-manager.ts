@@ -33,6 +33,7 @@ type EmbedOriginOptions =
 
 export type EmbedManagerOptions = {
   createView: (opts: {
+    id: string;
     partition: string;
     kind: EmbedKind;
     slug: string | null;
@@ -154,6 +155,7 @@ export class EmbedManager {
       onState(state);
     };
     const view = this.createView({
+      id,
       partition,
       kind,
       slug,

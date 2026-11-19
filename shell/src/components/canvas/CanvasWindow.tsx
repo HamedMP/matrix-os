@@ -1,7 +1,8 @@
 "use client";
 
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { WindowTitleBarActionsContext } from "../window/WindowTitleBarActions";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
@@ -317,9 +318,13 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   };
 
   const titleBarHeight = 36;
+  const [contentActions, setContentActions] = useState<ReactNode | null>(null);
   const titleBarGap = 8;
   const publishingSlug = publishingAppSlugFromPath(win.path);
-  const publishingControl = publishingSlug && !hidden && (isFullscreen || (isInteractive && showTitles)) ? (
+  const contentTitleBarActions = contentActions && !hidden ? (
+    <div className="pointer-events-auto flex min-w-0 items-center">{contentActions}</div>
+  ) : null;
+  const publishingControl = contentTitleBarActions ?? (publishingSlug && !hidden && (isFullscreen || (isInteractive && showTitles)) ? (
     <div
       className="pointer-events-auto"
       onPointerDown={(event) => event.stopPropagation()}
@@ -327,7 +332,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
     >
       <AppSiteButton appSlug={publishingSlug} appName={win.title} portalContainer={portalContainer} />
     </div>
-  ) : null;
+  ) : null);
 
   // All five title-bar variants share the same handlers; only the visual bar
   // differs. Chrome components live in window/DesignTitleBarChrome.tsx.
@@ -569,8 +574,10 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} sharedAppTarget={win.sharedAppTarget}
-          active={isFocused && !win.minimized && !hidden && !isPreview} />
+        <WindowTitleBarActionsContext value={setContentActions}>
+          <CanvasAppViewer path={win.path} sharedAppTarget={win.sharedAppTarget}
+            active={isFocused && !win.minimized && !hidden && !isPreview} />
+        </WindowTitleBarActionsContext>
       )}
     </>
   );

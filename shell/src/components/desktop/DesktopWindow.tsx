@@ -1,6 +1,7 @@
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
-import { useCallback, useRef, type CSSProperties, type PointerEvent } from "react";
+import { useCallback, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
+import { WindowTitleBarActionsContext } from "../window/WindowTitleBarActions";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
@@ -104,6 +105,7 @@ export function DesktopWindow({
   const desktopParity = topInset > 0;
   const usesTerminalChrome = win.path.startsWith("__terminal__") && !desktopParity;
   const publishingSlug = publishingAppSlugFromPath(win.path);
+  const [contentTitleBarActions, setContentTitleBarActions] = useState<ReactNode | null>(null);
   const windowRef = useRef<HTMLDivElement>(null);
 
   let dockTargetX = 0;
@@ -192,8 +194,8 @@ export function DesktopWindow({
         <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
           {win.title}
         </CardTitle>
-        <div className={publishingSlug ? "flex w-[116px] shrink-0 justify-end" : "w-[78px] shrink-0"}>
-          {publishingSlug && !isHidden && !isMinimizing ? (
+        <div className={contentTitleBarActions ? "flex min-w-[78px] shrink-0 justify-end" : publishingSlug ? "flex w-[116px] shrink-0 justify-end" : "w-[78px] shrink-0"}>
+          {contentTitleBarActions && !isHidden && !isMinimizing ? contentTitleBarActions : publishingSlug && !isHidden && !isMinimizing ? (
             <div onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
               <AppSiteButton appSlug={publishingSlug} appName={win.title} portalContainerRef={windowRef} />
             </div>
@@ -202,6 +204,7 @@ export function DesktopWindow({
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">
+        <WindowTitleBarActionsContext value={setContentTitleBarActions}>
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
             sharedScopeId={win.sharedTerminalScopeId ?? null}
@@ -274,6 +277,7 @@ export function DesktopWindow({
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
             sharedAppTarget={win.sharedAppTarget} onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
         )}
+        </WindowTitleBarActionsContext>
         {interacting && (
           <div className="absolute inset-0 z-10" />
         )}

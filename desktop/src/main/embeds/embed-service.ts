@@ -4,7 +4,7 @@
 // the launch URL against the gateway origin, then loads it. Emits embed:state
 // so the renderer can show an inline re-auth prompt without ever touching the
 // native principal (L1).
-import { net, session, type BaseWindow } from "electron";
+import { net, session, type BaseWindow, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import {
   startPortForward as startMatrixPortForward,
@@ -30,6 +30,8 @@ import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 import type { NativeAppBridge } from "./native-app-bridge";
 import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
+import { createBrowserChromeBridge, type BrowserChromeBridge } from "./browser-chrome-bridge";
+import type { BrowserChromeModel } from "@matrix-os/contracts";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { browserProductLaunchUrl } from "./browser-product-launch";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
@@ -41,6 +43,7 @@ interface EmbedServiceDeps {
   getGatewayOrigin: () => string;
   getToken: () => string | null;
   emitState: (embedId: string, state: EmbedState) => void;
+  emitBrowserChrome?: (embedId: string, model: BrowserChromeModel | null) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
   browserLabViewerAuth?: BrowserLabViewerAuth;
@@ -82,6 +85,7 @@ export class EmbedService {
   private readonly tokenCache = new LaunchTokenCache();
   private readonly deps: EmbedServiceDeps;
   private readonly viewerAdmission?: ReturnType<typeof createBrowserLabViewerAdmission>;
+  private readonly browserChrome: BrowserChromeBridge;
   private readonly pendingHostedShells = new Map<string, Bounds>();
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
   private readonly pendingCodeEditors = new Map<string, Bounds>();
@@ -102,10 +106,13 @@ export class EmbedService {
     this.deps = deps;
     const viewerAdmission = deps.browserLabViewerAuth ? createBrowserLabViewerAdmission(deps.browserLabViewerAuth) : undefined;
     this.viewerAdmission = viewerAdmission;
+    const browserChrome = createBrowserChromeBridge({ emit: (embedId, model) => this.deps.emitBrowserChrome?.(embedId, model) });
+    this.browserChrome = browserChrome;
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
       createView: ({
+        id,
         partition,
         kind,
         slug,
@@ -141,7 +148,8 @@ export class EmbedService {
             ? { registerViewerTransport: viewerAdmission.register } : {}),
           ...(kind === "app" && slug && routeSlug && nativeBrowserProduct(slug, routeSlug)
             ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
-                renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
+                renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) },
+              registerBrowserChrome: (contents: WebContents) => browserChrome.register(contents, id) } : {}),
           denyPermissions: kind === "code-editor" || kind === "browser",
           ...(kind === "shared-app" && sharedAppTarget ? {
             sharedAppAuth: {
@@ -184,6 +192,16 @@ export class EmbedService {
       request.bounds,
       request.active ?? true,
     );
+  }
+
+  /** Main IPC: a Browser embed published its title bar model. */
+  publishBrowserChrome(senderId: number, model: unknown): void {
+    this.browserChrome.publish(senderId, model);
+  }
+
+  /** Renderer IPC: the user clicked a Browser action in the window title bar. */
+  dispatchBrowserChromeAction(embedId: string, action: string): boolean {
+    return this.browserChrome.dispatch(embedId, action);
   }
 
   setBounds(embedId: string, bounds: Bounds): boolean {

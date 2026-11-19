@@ -1,0 +1,47 @@
+/* Compact Browser controls that live in a window title bar. Matrix brand:
+   forest ink, gold focus, teal live state, pill controls (@matrix-os/brand). */
+.matrix-browser-titlebar {
+  --mbt-ink: var(--text-primary, var(--foreground, #242323));
+  --mbt-muted: var(--text-secondary, var(--muted-foreground, #635f5f));
+  --mbt-line: var(--border-subtle, var(--border, #dcd9cc));
+  --mbt-hover: var(--bg-sunken, rgba(67, 78, 63, 0.08));
+  --mbt-forest: #0e3422;
+  --mbt-forest-hover: #174d34;
+  --mbt-live: #288a5b;
+  --mbt-warn: #d06e53;
+  --mbt-focus: #f1c379;
+  display: flex; align-items: center; gap: 4px; min-width: 0; height: 100%;
+  font-family: var(--font-geist-sans, Geist), system-ui, sans-serif; font-size: 12px; line-height: 16px;
+  color: var(--mbt-ink); -webkit-app-region: no-drag;
+}
+.matrix-browser-titlebar *, .matrix-browser-titlebar *::before, .matrix-browser-titlebar *::after { box-sizing: border-box; }
+.matrix-browser-titlebar-status {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 24px; margin-right: 4px; padding: 0 10px;
+  border-radius: 999px; background: rgba(67, 78, 63, 0.08); color: var(--mbt-muted); font-weight: 500; white-space: nowrap;
+}
+.matrix-browser-titlebar-status-text { overflow: hidden; text-overflow: ellipsis; }
+.matrix-browser-titlebar-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 999px; background: var(--mbt-muted); }
+.matrix-browser-titlebar-status[data-connection="connected"] { color: #3b6d11; }
+.matrix-browser-titlebar-status[data-connection="connected"] .matrix-browser-titlebar-dot { background: var(--mbt-live); box-shadow: 0 0 0 3px rgba(40, 138, 91, 0.16); }
+.matrix-browser-titlebar-status[data-connection="disconnected"], .matrix-browser-titlebar-status[data-connection="unavailable"] { color: #993c1d; background: rgba(208, 111, 37, 0.10); }
+.matrix-browser-titlebar-status[data-connection="disconnected"] .matrix-browser-titlebar-dot,
+.matrix-browser-titlebar-status[data-connection="unavailable"] .matrix-browser-titlebar-dot { background: var(--mbt-warn); }
+.matrix-browser-titlebar-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; height: 26px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--mbt-ink);
+  font: inherit; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background 140ms, border-color 140ms;
+}
+.matrix-browser-titlebar-button[data-icon-only] { width: 26px; padding: 0; }
+.matrix-browser-titlebar-button:hover:enabled { background: var(--mbt-hover); border-color: var(--mbt-line); }
+.matrix-browser-titlebar-button[data-tone="primary"] { background: var(--mbt-forest); color: #fafaf5; }
+.matrix-browser-titlebar-button[data-tone="primary"]:hover:enabled { background: var(--mbt-forest-hover); border-color: transparent; }
+.matrix-browser-titlebar-button[aria-expanded="true"] { background: var(--mbt-hover); border-color: var(--mbt-line); }
+.matrix-browser-titlebar-button:disabled { opacity: .4; cursor: default; }
+.matrix-browser-titlebar-button:focus-visible { outline: 2px solid var(--mbt-focus); outline-offset: 1px; }
+@media (max-width: 640px) { .matrix-browser-titlebar-status-text { display: none; } .matrix-browser-titlebar-status { padding: 0 9px; } }
+@media (prefers-reduced-motion: reduce) { .matrix-browser-titlebar-button { transition: none; } }
+@media (prefers-color-scheme: dark) {
+  .matrix-browser-titlebar { --mbt-ink: var(--text-primary, #fafaf5); --mbt-muted: var(--text-secondary, #a8a4a4); --mbt-hover: rgba(250, 250, 245, 0.08); --mbt-line: rgba(250, 250, 245, 0.14); }
+  .matrix-browser-titlebar-status { background: rgba(250, 250, 245, 0.06); }
+  .matrix-browser-titlebar-status[data-connection="connected"] { color: #5ec996; }
+}

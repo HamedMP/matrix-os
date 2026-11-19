@@ -201,7 +201,10 @@ describe("rendered Browser toolbar launch", () => {
       data: { type: "matrix-browser-viewer", connected: true }, origin: "https://app.matrix-os.com", source: frame.contentWindow,
     })));
     acknowledge(browserFrame);
-    expect(within(screen.getByRole("region", { name: "Browser" })).getByText("Connected")).toBeTruthy();
+    // Web Desktop moves Browser status and actions into the window title bar, outside the content region.
+    const titleBarStatus = (id: string) => view.container.querySelector(`[data-window-id="${id}"] .matrix-browser-titlebar-status`);
+    expect(screen.getByRole("region", { name: "Browser" }).querySelector(".matrix-browser-toolbar")).toBeNull();
+    expect(titleBarStatus(browser.id)?.getAttribute("data-connection")).toBe("connected");
     expect(browserFrame.hasAttribute("inert")).toBe(false);
     const changed = vi.fn(); const unsubscribe = useWindowManager.subscribe(changed);
     try {
@@ -213,9 +216,9 @@ describe("rendered Browser toolbar launch", () => {
       expect(view.container.querySelector(`[data-window-id="${browser.id}"]`)?.classList.contains("fixed")).toBe(false);
       const cloudFrame = await screen.findByTitle("Your Matrix cloud desktop") as HTMLIFrameElement;
       acknowledge(cloudFrame);
-      expect(within(screen.getByRole("region", { name: "Cloud desktop" })).getByText("Connected")).toBeTruthy();
+      expect(titleBarStatus(cloud.id)?.getAttribute("data-connection")).toBe("connected");
       const browserRegion = within(screen.getByRole("region", { name: "Browser" }));
-      expect(browserRegion.getByText("Paused")).toBeTruthy();
+      expect(titleBarStatus(browser.id)?.textContent).toContain("Paused");
       expect(browserRegion.getByTitle("Chrome on your Matrix computer")).toBe(browserFrame);
       expect(browserFrame.src).toBe(browserViewerUrl);
       expect(browserFrame.hasAttribute("inert")).toBe(true);
