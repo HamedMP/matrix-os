@@ -2,7 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROJECT_HISTORY_REFRESH_DELAY_MS, useWebProjectHistory } from "../../shell/src/components/chat/useWebProjectHistory";
-import { isChatMembershipEvent } from "../../shell/src/hooks/useCanonicalChatState";
+import { isChatMembershipEvent, isChatRunStatusEvent } from "../../shell/src/hooks/useCanonicalChatState";
 
 const project = { id: "proj_a", slug: "proj_a", name: "Alpha" };
 const record = (id: string) => ({
@@ -80,6 +80,51 @@ describe("web project history refresh", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     // The old Project stopped after its first page; the new one read both of its pages.
     expect(fetches.calls).toEqual(["first", "first", "chatcur_next"]);
+  });
+});
+
+describe("history-only run status", () => {
+  it("turns a history-only Running row Done after its run completes", async () => {
+    let running = true;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      const item = { ...record("chat_old"), ...(running ? { activeRun: { runId: "run_1", turnId: "cturn_1", status: "running" } } : {}) };
+      return new Response(JSON.stringify({ items: [item] }), { status: 200 });
+    }));
+    let runStatusChange = { revision: 0, chatIds: [] as string[] };
+    const view = renderHook(() => useWebProjectHistory({ project, gatewayUrl: "https://example.test", listed, runStatusChange, enabled: true, botClient }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(view.result.current.records.find((item) => item.chat.id === "chat_old")?.activeRun?.status).toBe("running");
+
+    running = false;
+    runStatusChange = { revision: 1, chatIds: ["chat_old"] };
+    view.rerender();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(view.result.current.records.find((item) => item.chat.id === "chat_old")?.activeRun).toBeUndefined();
+  });
+
+  it("ignores run status changes for Chats the shared list already carries", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [record("chat_old")] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    let runStatusChange = { revision: 0, chatIds: [] as string[] };
+    const view = renderHook(() => useWebProjectHistory({ project, gatewayUrl: "https://example.test", listed, runStatusChange, enabled: true, botClient }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    const reads = fetchMock.mock.calls.length;
+    runStatusChange = { revision: 1, chatIds: ["chat_elsewhere"] };
+    view.rerender();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(fetchMock.mock.calls.length).toBe(reads);
+  });
+});
+
+describe("chat run status events", () => {
+  it("counts run starts, ends and interactions but not streamed run text", () => {
+    for (const eventType of ["turn.accepted", "queue.claimed", "run.completed", "run.failed", "run.aborted", "interaction.requested", "interaction.resolved"]) {
+      expect(isChatRunStatusEvent({ type: "chat.changed", eventType } as never)).toBe(true);
+    }
+    for (const eventType of ["run.activity", "run.message", "chat.updated", "queue.enqueued", "run.steered"]) {
+      expect(isChatRunStatusEvent({ type: "chat.changed", eventType } as never)).toBe(false);
+    }
+    expect(isChatRunStatusEvent({ type: "chat.full_refresh" } as never)).toBe(false);
   });
 });
 

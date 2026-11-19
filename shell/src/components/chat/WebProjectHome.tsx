@@ -5,13 +5,13 @@ import { ProjectConversationList, useMinuteClock, type ChatAgentClient } from "@
 import { FolderOpen } from "@/lib/hugeicons";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { WebProjectAgentContext } from "./WebProjectAgentContext";
-import { useWebProjectHistory } from "./useWebProjectHistory";
+import { useWebProjectHistory, type ChatRunStatusChange } from "./useWebProjectHistory";
 import type { WebProject } from "./web-projects";
 
 const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
 
 /** Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat. */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, knownChatIds, botClient, onSelectChat, active = true }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -22,6 +22,8 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   historyIncomplete?: boolean;
   /** Changes on every Chat change, so this project's history is read again. */
   historyRefreshKey?: number;
+  /** Run status changes; only those for history-only rows read the history again. */
+  historyRunStatusChange?: ChatRunStatusChange;
   /** Chats the shared list knows anywhere (or deleted here); their history copies are dropped. */
   knownChatIds?: ReadonlySet<string>;
   /** Classifies history-only Chats so Bot Chats stay out of the project list. */
@@ -31,7 +33,7 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
 }) {
   const nowMs = useMinuteClock(active);
   const listed = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
-  const history = useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds, refreshKey: historyRefreshKey, enabled: historyIncomplete && active, botClient });
+  const history = useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds, refreshKey: historyRefreshKey, runStatusChange: historyRunStatusChange, enabled: historyIncomplete && active, botClient });
   // An error wins so the list keeps its rows but still offers Try again.
   const status = history.error ? "error" : history.records.length > 0 ? "ready" : history.loading ? "loading" : "ready";
   return (

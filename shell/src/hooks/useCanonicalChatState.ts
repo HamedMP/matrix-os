@@ -67,6 +67,20 @@ export function isChatMembershipEvent(event: CanonicalChatInvalidation): boolean
   return event.type === "chat.full_refresh" || CHAT_MEMBERSHIP_EVENTS.has(event.eventType);
 }
 
+// Events that start or end a run or change what it waits on. Streamed run text
+// (run.activity, run.message) leaves the status unchanged.
+const CHAT_RUN_STATUS_EVENTS: ReadonlySet<string> = new Set([
+  "turn.accepted", "queue.claimed", "run.completed", "run.failed", "run.aborted",
+  "interaction.requested", "interaction.resolved",
+]);
+
+export function isChatRunStatusEvent(event: CanonicalChatInvalidation): event is Extract<CanonicalChatInvalidation, { type: "chat.changed" }> {
+  return event.type === "chat.changed" && CHAT_RUN_STATUS_EVENTS.has(event.eventType);
+}
+
+// Chats with a run status change since the last render; bounded, newest kept.
+const MAX_RUN_STATUS_CHAT_IDS = 32;
+
 function conversationMeta(record: ChatNavigationRecord) {
   return {
     canonicalRecord: record,
@@ -203,6 +217,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [botEventRevision, setBotEventRevision] = useState(0);
   // Bumps only when a Chat may have been added, moved, removed or reclassified, so scoped reads can refresh.
   const [chatChangeRevision, setChatChangeRevision] = useState(0);
+  const [chatRunStatusChange, setChatRunStatusChange] = useState<{ revision: number; chatIds: readonly string[] }>({ revision: 0, chatIds: [] });
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -342,6 +357,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
       if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
+      if (isChatRunStatusEvent(event)) {
+        const { chatId } = event;
+        setChatRunStatusChange((previous) => ({
+          revision: (previous.revision + 1) % 1_000_000,
+          chatIds: [...previous.chatIds.filter((id) => id !== chatId), chatId].slice(-MAX_RUN_STATUS_CHAT_IDS),
+        }));
+      }
       admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
@@ -978,6 +1000,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     navigationFresh:navigation.fresh,
     navigationTruncated:navigation.truncated,
     chatChangeRevision,
+    chatRunStatusChange,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,

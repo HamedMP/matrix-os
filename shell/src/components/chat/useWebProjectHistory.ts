@@ -42,6 +42,8 @@ export function createSingleFlightThrottle(task: () => Promise<void>, intervalMs
   };
 }
 
+export type ChatRunStatusChange = { revision: number; chatIds: readonly string[] };
+
 type HistoryState = { key: string; records: CanonicalChatRecord[]; error: boolean };
 
 /**
@@ -51,7 +53,7 @@ type HistoryState = { key: string; records: CanonicalChatRecord[]; error: boolea
  * (in this Project, another one, or deleted) keeps the shared list's answer;
  * history-only rows are kept only once they are known not to be Bot Chats.
  */
-export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds, refreshKey = 0, enabled, botClient }: {
+export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds, refreshKey = 0, runStatusChange, enabled, botClient }: {
   project: WebProject;
   gatewayUrl: string;
   /** This Project's ordinary Chats from the shared navigation projection. */
@@ -60,6 +62,8 @@ export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds
   knownChatIds?: ReadonlySet<string>;
   /** Changes whenever a Chat changes, so cached history is read again. */
   refreshKey?: number;
+  /** Chats whose run started, ended or asked for input since the last change; only history-only rows refresh on it. */
+  runStatusChange?: ChatRunStatusChange;
   enabled: boolean;
   botClient?: ChatAgentClient;
 }) {
@@ -126,6 +130,14 @@ export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds
   const history = useMemo(() => (enabled && state?.key === key ? state.records : []), [enabled, key, state]);
   const listedIds = useMemo(() => new Set([...listed.map((record) => record.chat.id), ...(knownChatIds ?? [])]), [listed, knownChatIds]);
   const historyOnlyIds = useMemo(() => history.flatMap((record) => listedIds.has(record.chat.id) ? [] : [record.chat.id]), [history, listedIds]);
+  // The shared list keeps its own rows current; a history-only row only changes when its Project's history is read again.
+  const lastRunStatus = useRef(runStatusChange?.revision);
+  useEffect(() => {
+    if (!runStatusChange || runStatusChange.revision === lastRunStatus.current) return;
+    lastRunStatus.current = runStatusChange.revision;
+    const historyOnly = new Set(historyOnlyIds);
+    if (runStatusChange.chatIds.some((chatId) => historyOnly.has(chatId))) requestRead.current?.();
+  }, [runStatusChange, historyOnlyIds]);
   const bots = useBotConversationSummaries(botClient, historyOnlyIds, enabled && historyOnlyIds.length > 0);
   const records = useMemo<ChatNavigationRecord[]>(() => {
     if (!enabled) return [...listed];
