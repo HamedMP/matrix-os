@@ -81,7 +81,20 @@ export function createLocalParityPlan(options = {}) {
   };
 }
 
+const localSupportPublicKeyPattern = /^ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [A-Za-z0-9@._+-]{1,128})?$/;
+
+// Production cloud-init installs the matrix-support login from this key; the
+// VM helper re-validates the SSH wire format before installing it.
+function localSupportPublicKey(value) {
+  const key = typeof value === "string" ? value.trim() : "";
+  if (key.length > 1023 || !localSupportPublicKeyPattern.test(key)) {
+    throw new Error("Local support SSH public key is missing or invalid");
+  }
+  return key;
+}
+
 export function renderLocalParityCloudInit(template, input) {
+  const supportPublicKey = localSupportPublicKey(input.supportPublicKey);
   const identity = { handle: input.handle, machineId: input.machineId, runtimeSlot: "primary" };
   const verificationToken = createHmac("sha256", input.platformSecret).update(input.handle).digest("hex");
   const artifactOrigin = new URL(input.hostBundleUrl).origin;
@@ -121,6 +134,7 @@ export function renderLocalParityCloudInit(template, input) {
     fundedAiEnabled: "false",
     fundedAiRelayUrl: "",
     getStartedEnabled: "true",
+    supportPublicKey,
   };
   let rendered = template;
   rendered = rendered.replace(
@@ -295,6 +309,17 @@ function assertPrerequisites() {
     throw new Error("Rosetta 2 is required for the production x86_64 host bundle and OrbStack machine. Install it with: softwareupdate --install-rosetta --agree-to-license");
   }
   assertOrbStackCapacity();
+}
+
+// A dedicated local key keeps the support login separate from the local operator login.
+function prepareLocalSupportKey() {
+  const privateKeyPath = resolve(stateDirectory, "support_ed25519");
+  mkdirSync(stateDirectory, { recursive: true });
+  if (!existsSync(`${privateKeyPath}.pub`)) {
+    rmSync(privateKeyPath, { force: true });
+    run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "matrix-local-support", "-f", privateKeyPath]);
+  }
+  return readFileSync(`${privateKeyPath}.pub`, "utf8").trim();
 }
 
 function prepareStorageTlsCertificate() {
@@ -817,6 +842,7 @@ async function up() {
       ...state,
       hostBundleUrl: `${localArtifactUrl}/matrix-host-bundle.tar.gz`,
       platformUrl: localPlatformUrl,
+      supportPublicKey: prepareLocalSupportKey(),
     });
     mkdirSync(stateDirectory, { recursive: true });
     writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
