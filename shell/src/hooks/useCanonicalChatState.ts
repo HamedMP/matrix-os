@@ -30,6 +30,7 @@ import {
   useCanonicalChatStopRecovery,
   applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
+  type CanonicalChatInvalidation,
 } from "@matrix-os/ui";
 import { useShellChatNavigation } from "./useChatNavigation";
 import { useUnreadChatNavigation } from "./useUnreadChatNavigation";
@@ -53,6 +54,17 @@ const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+// Events that can add, move, remove or reclassify a Chat. Run, queue and
+// interaction events only change a Chat's state, which the shared list carries.
+const CHAT_MEMBERSHIP_EVENTS: ReadonlySet<string> = new Set([
+  "chat.created", "chat.updated", "chat.deleted", "chat.user_state_updated",
+  "migration.completed", "bot.created", "bot.authority.changed",
+]);
+
+export function isChatMembershipEvent(event: CanonicalChatInvalidation): boolean {
+  return event.type === "chat.full_refresh" || CHAT_MEMBERSHIP_EVENTS.has(event.eventType);
 }
 
 function conversationMeta(record: ChatNavigationRecord) {
@@ -189,7 +201,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     eventSource.connectionState(),
   );
   const [botEventRevision, setBotEventRevision] = useState(0);
-  // Bumps on every Chat change except streamed run text, so scoped reads can refresh.
+  // Bumps only when a Chat may have been added, moved, removed or reclassified, so scoped reads can refresh.
   const [chatChangeRevision, setChatChangeRevision] = useState(0);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
@@ -329,9 +341,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ));
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
-      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
-        setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
-      }
+      if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
       admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {

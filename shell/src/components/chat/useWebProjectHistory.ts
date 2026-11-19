@@ -12,6 +12,36 @@ const MAX_PROJECT_HISTORY_PAGES = 10;
 // A burst of Chat changes reads the history once, not once per event.
 export const PROJECT_HISTORY_REFRESH_DELAY_MS = 500;
 
+/**
+ * Runs `task` on request, never two at once and at most once per `intervalMs`.
+ * Requests while it runs queue one trailing run; requests while one is already
+ * scheduled change nothing, so a steady stream cannot postpone it.
+ */
+export function createSingleFlightThrottle(task: () => Promise<void>, intervalMs: number) {
+  let disposed = false;
+  let inFlight = false;
+  let trailing = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastStart = Number.NEGATIVE_INFINITY;
+  const run = async () => {
+    timer = undefined;
+    inFlight = true;
+    lastStart = Date.now();
+    try { await task(); } finally { inFlight = false; }
+    if (!disposed && trailing) { trailing = false; request(); }
+  };
+  const request = () => {
+    if (disposed) return;
+    if (inFlight) { trailing = true; return; }
+    if (timer !== undefined) return;
+    timer = setTimeout(() => { void run(); }, Math.max(0, lastStart + intervalMs - Date.now()));
+  };
+  return {
+    request,
+    dispose: () => { disposed = true; trailing = false; clearTimeout(timer); timer = undefined; },
+  };
+}
+
 type HistoryState = { key: string; records: CanonicalChatRecord[]; error: boolean };
 
 /**
@@ -36,8 +66,13 @@ export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds
   const key = JSON.stringify([gatewayUrl, project.id, project.slug]);
   const [state, setState] = useState<HistoryState | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const loadedKey = useRef<string | null>(null);
+  // The current authority's read scheduler; refresh requests go through it.
+  const requestRead = useRef<(() => void) | null>(null);
 
+  // One scheduler per Project and computer. A read in flight always finishes,
+  // changes during it queue a single trailing read, and reads start at most
+  // once per PROJECT_HISTORY_REFRESH_DELAY_MS however often Chats change.
+  // Only a new Project or computer (this effect's cleanup) cancels a read.
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- the routed owner's computer is only known at runtime.
   useEffect(() => {
     if (!enabled) return;
@@ -65,17 +100,28 @@ export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds
         if (!current) return;
         const unique = new Map<string, CanonicalChatRecord>(); // at most two bounded pages of rows
         for (const record of pages.flat()) unique.set(record.chat.id, record);
-        loadedKey.current = key;
         setState({ key, error: false, records: [...unique.values()].sort(compareCanonicalChatActivity).slice(0, MAX_PROJECT_HISTORY_ROWS) });
       } catch (error: unknown) {
         console.warn("[web-projects] project history unavailable", error instanceof Error ? error.name : "UnknownError");
         if (current) setState((previous) => ({ key, error: true, records: previous?.key === key ? previous.records : [] }));
       }
     };
-    // The first read for a Project starts at once; refreshes after Chat changes coalesce.
-    const timer = window.setTimeout(() => { void load(); }, loadedKey.current === key ? PROJECT_HISTORY_REFRESH_DELAY_MS : 0);
-    return () => { current = false; window.clearTimeout(timer); };
-  }, [enabled, gatewayUrl, key, project.id, project.slug, refreshKey, retryCount]);
+    const reads = createSingleFlightThrottle(load, PROJECT_HISTORY_REFRESH_DELAY_MS);
+    requestRead.current = reads.request;
+    reads.request();
+    return () => {
+      current = false;
+      if (requestRead.current === reads.request) requestRead.current = null;
+      reads.dispose();
+    };
+  }, [enabled, gatewayUrl, key, project.id, project.slug]);
+
+  // Chat changes and Try again ask the scheduler; the first render's request is the initial read.
+  const firstRequest = useRef(true);
+  useEffect(() => {
+    if (firstRequest.current) { firstRequest.current = false; return; }
+    requestRead.current?.();
+  }, [refreshKey, retryCount]);
 
   const history = useMemo(() => (enabled && state?.key === key ? state.records : []), [enabled, key, state]);
   const listedIds = useMemo(() => new Set([...listed.map((record) => record.chat.id), ...(knownChatIds ?? [])]), [listed, knownChatIds]);
