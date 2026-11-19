@@ -106,12 +106,18 @@ export async function prepareMacVerificationSupport({ repository = ROOT, output 
   }
 }
 
+export async function readPnpmEntry({ args = process.argv, env = process.env } = {}) {
+  const index = args.indexOf("--pnpm");
+  const entry = index >= 0 ? args[index + 1] : env.npm_execpath;
+  if (typeof entry !== "string" || !entry) throw new Error("Run pnpm run prepare:mac-verification-support or provide --pnpm with the pinned package entry");
+  return entry;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    // pnpm/action-setup supplies a real package entry; local callers can name
-    // their exact pinned package explicitly without altering global tools.
-    const index = process.argv.indexOf("--pnpm");
-    const pnpmEntry = index >= 0 ? process.argv[index + 1] : (await exec("/usr/bin/which", ["pnpm"], { timeout: 5_000 })).stdout.trim();
+    // pnpm/action-setup may place a self-update wrapper on PATH. A lifecycle
+    // supplies the actual package entry; never infer its layout from `which`.
+    const pnpmEntry = await readPnpmEntry();
     const electron = await realpath(join(ROOT, "desktop/node_modules/electron/dist/Electron.app"));
     const result = await prepareMacVerificationSupport({ pnpmEntry, electronApp: electron });
     console.log(`Mac Verification offline support prepared for ${result.baseSha}`);
