@@ -130,6 +130,23 @@ describe("shared app and task inbox", () => {
   render(<DesktopActivityInbox scope="main" load={async () => summary("Notes app build completed")} now={() => NOW} />);
   fireEvent.click(screen.getByRole("button", { name: "Inbox" }));
   fireEvent.click(await screen.findByRole("button", { name: "Needs you 0" }));
-  expect(screen.getByText("Nothing needs you right now.")).toBeTruthy();
+  const empty = screen.getByTestId("agent-inbox-empty");
+  expect(empty.querySelector("svg")).not.toBeNull();
+  expect(empty).toHaveTextContent("Nothing needs you right now.");
+  expect(empty).toHaveTextContent("Approvals and questions from your agents show up here.");
+  expect(empty).toHaveTextContent("Start an agent from Chat or Terminal.");
+ });
+ it("keeps live terminal agents visible with an inline notice when the summary fails", async () => {
+  // The load runs on mount and again on open; both fail before the retry succeeds.
+  const load = vi.fn().mockRejectedValueOnce(new Error("private-path")).mockRejectedValueOnce(new Error("private-path")).mockResolvedValue(agentSummary());
+  render(<DesktopActivityInbox scope="main" load={load} terminalTabs={herdrTab()} onOpenTerminal={vi.fn()} now={() => NOW} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Inbox/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Agent runs could not load. Showing terminal agents.");
+  expect(screen.getByRole("button", { name: /Herdr parity/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Needs you 1" })).toBeTruthy();
+  expect(screen.queryByText("Notifications are unavailable.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry notifications" }));
+  await screen.findByText("Approve deploy");
+  expect(screen.queryByRole("alert")).toBeNull();
  });
 });

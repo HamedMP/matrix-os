@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Bell, Download } from "lucide-react";
+import { Bell, Bot, Download } from "lucide-react";
 import {
   AGENT_INBOX_GROUPS, deriveAgentInbox, formatInboxTime,
   type AgentInboxAvatar, type AgentInboxGroup, type AgentInboxItem, type AgentInboxPill,
@@ -38,9 +38,13 @@ const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [
   { id: "all", label: "All" }, { id: "needs", label: "Needs you" }, { id: "running", label: "Running" }, { id: "done", label: "Done" },
 ];
 const GROUP_LABEL: Record<AgentInboxGroup, string> = { needs: "Needs you", running: "Running", done: "Done" };
-const EMPTY_COPY: Record<Filter, string> = {
-  all: "No agent activity yet.", needs: "Nothing needs you right now.", running: "No agents are running.", done: "No finished agents yet.",
+const EMPTY_COPY: Record<Filter, { headline: string; detail: string }> = {
+  all: { headline: "No agent activity yet.", detail: "Your coding agents and their status show up here." },
+  needs: { headline: "Nothing needs you right now.", detail: "Approvals and questions from your agents show up here." },
+  running: { headline: "No agents are running.", detail: "Agents at work show up here while they run." },
+  done: { headline: "No finished agents yet.", detail: "Finished and stopped runs stay here for a while." },
 };
+const EMPTY_HINT = "Start an agent from Chat or Terminal.";
 const STATUS_COLOR: Record<AgentInboxGroup, string> = { needs: "#E0A12E", running: "#3BA55D", done: "var(--text-tertiary, #8a8780)" };
 const AVATAR: Record<AgentInboxAvatar, { letter: string; background: string; color?: string }> = {
   claude: { letter: "C", background: "#D97757" }, codex: { letter: "X", background: "#1D1C1B" },
@@ -112,8 +116,6 @@ function ScopedActivityInbox({ load, terminalTabs, onOpenTask, onOpenTerminal, o
         if (active) { setSnapshot(null); setStatus("error"); }
       } finally { inFlight = false; }
     };
-    // A shown snapshot stays while it refreshes; only an unknown state reads as loading.
-    setStatus((current) => (current === "ready" ? current : "loading"));
     void refresh();
     const timer = setInterval(() => { if (open) void refresh(); }, 30_000);
     return () => { active = false; clearInterval(timer); };
@@ -122,6 +124,11 @@ function ScopedActivityInbox({ load, terminalTabs, onOpenTask, onOpenTerminal, o
   const model = useMemo(() => deriveAgentInbox({ summary: snapshot, terminalTabs }), [snapshot, terminalTabs]);
   const visible = filter === "all" ? model.items : model.items.filter((item) => item.group === filter);
   const groups = AGENT_INBOX_GROUPS.filter((group) => visible.some((item) => item.group === group));
+  // Shown rows (a snapshot, or live terminal agents after a failure) stay while a retry runs.
+  const retryLoad = () => {
+    if (model.items.length === 0) setStatus("loading");
+    setRetry((value) => value + 1);
+  };
 
   const openItem = (item: AgentInboxItem): (() => void) | undefined => {
     const target = item.target;
@@ -135,9 +142,14 @@ function ScopedActivityInbox({ load, terminalTabs, onOpenTask, onOpenTerminal, o
   return <DesktopInboxMenu open={open} onOpenChange={setOpen} count={model.counts.needs}>
     <div className="flex items-center px-3.5 pb-2 pt-3"><h2 className="text-sm font-semibold">Agents</h2></div>
     {status === "loading" ? <p role="status" className="px-3.5 pb-3 text-xs">Loading agents…</p> : null}
-    {status === "error" ? <div className="px-3.5 pb-3"><p role="alert" className="text-xs">Notifications are unavailable.</p>
-      <button type="button" className="mt-1 rounded-md px-2 py-1 text-xs hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current" aria-label="Retry notifications" onClick={() => setRetry(value => value + 1)}>Retry</button></div> : null}
-    {status === "ready" ? <>
+    {/* Live terminal agents do not depend on the summary, so a failed load only hides everything when nothing is left to show. */}
+    {status === "error" && model.items.length === 0 ? <div className="px-3.5 pb-3"><p role="alert" className="text-xs">Notifications are unavailable.</p>
+      <button type="button" className="mt-1 rounded-md px-2 py-1 text-xs hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current" aria-label="Retry notifications" onClick={retryLoad}>Retry</button></div> : null}
+    {status === "ready" || (status === "error" && model.items.length > 0) ? <>
+      {status === "error" ? <div role="alert" className="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs" style={{ borderColor: colors.borderColor }}>
+        <span className="min-w-0 flex-1">Agent runs could not load. Showing terminal agents.</span>
+        <button type="button" className="shrink-0 rounded-md px-1.5 py-0.5 font-medium hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current" aria-label="Retry notifications" onClick={retryLoad}>Retry</button>
+      </div> : null}
       <div className="flex gap-1 border-b px-3 pb-2.5" style={{ borderColor: colors.borderColor }}>
         {FILTERS.map(({ id, label }) => <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)}
           className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current aria-pressed:bg-black/5 aria-pressed:font-medium">
@@ -145,7 +157,7 @@ function ScopedActivityInbox({ load, terminalTabs, onOpenTask, onOpenTerminal, o
         </button>)}
       </div>
       <div className="max-h-[min(470px,70vh)] overflow-y-auto p-1.5">
-        {visible.length === 0 ? <p className="px-2 py-6 text-center text-xs" style={muted}>{EMPTY_COPY[filter]}</p> : null}
+        {visible.length === 0 ? <AgentInboxEmpty filter={filter} /> : null}
         {groups.map(group => <section key={group} aria-label={GROUP_LABEL[group]}>
           <h3 className="flex items-center gap-2 px-2.5 pb-1.5 pt-2.5 text-[11px] font-semibold uppercase tracking-wide" style={muted}>
             <span aria-hidden="true" className="size-1.5 rounded-full" style={{ background: STATUS_COLOR[group] }} />{GROUP_LABEL[group]}
@@ -160,6 +172,17 @@ function ScopedActivityInbox({ load, terminalTabs, onOpenTask, onOpenTerminal, o
       {model.truncated ? <p className="border-t px-3.5 py-2 text-[11.5px]" style={{ ...muted, borderColor: colors.borderColor }}>Showing the most recent agents.</p> : null}
     </> : null}
   </DesktopInboxMenu>;
+}
+
+/** Compact popover empty state: icon, headline, one-line explanation and where to start an agent. */
+function AgentInboxEmpty({ filter }: { filter: Filter }) {
+  const copy = EMPTY_COPY[filter];
+  return <div data-testid="agent-inbox-empty" className="flex flex-col items-center gap-1 px-4 py-6 text-center">
+    <span aria-hidden="true" className="mb-1 grid size-8 place-items-center rounded-lg" style={{ background: "var(--bg-sunken, var(--muted))", ...muted }}><Bot size={16} /></span>
+    <p className="text-[13px] font-medium">{copy.headline}</p>
+    <p className="text-xs" style={muted}>{copy.detail}</p>
+    <p className="text-xs" style={muted}>{EMPTY_HINT}</p>
+  </div>;
 }
 
 function AgentInboxRow({ item, time, onOpen }: { item: AgentInboxItem; time: string; onOpen?: () => void }) {
