@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useRef } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -64,6 +64,38 @@ it("adds a Matrix file through the picker and rejects a repeated drop before rea
   fireEvent.drop(screen.getByRole("region", { name: "Composer" }), { dataTransfer: dragFromMatrix() });
   expect((await screen.findByRole("alert")).textContent).toContain("already attached");
   expect(getBlob).toHaveBeenCalledOnce();
+});
+
+it("shows the picker title and lets the owner close it or choose a device file", async () => {
+  render(<Composer chat="chat-a" />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+  const dialog = await screen.findByRole("dialog", { name: "Attach files" });
+  const heading = dialog.querySelector("header");
+  expect(heading?.textContent).toContain("Attach files");
+  expect(within(dialog).getByRole("group", { name: "Matrix files" })).toBeTruthy();
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close attachment picker" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+  const deviceInput = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const choose = vi.spyOn(deviceInput, "click");
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Attach files" })).getByRole("button", { name: "Upload from device" }));
+  expect(choose).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("keeps the file controls disabled while the selected Matrix file is being read", async () => {
+  let complete!: (blob: Blob) => void;
+  getBlob.mockReturnValueOnce(new Promise<Blob>(resolve => { complete = resolve; }));
+  render(<Composer chat="chat-a" />);
+  fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Attach report.txt" }));
+  const dialog = await screen.findByRole("dialog", { name: "Attach files" });
+  expect(within(dialog).getByRole("group", { name: "Matrix files" }).hasAttribute("disabled")).toBe(true);
+  expect((within(dialog).getByRole("button", { name: "Upload from device" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(await screen.findByRole("status")).toBeTruthy();
+  await act(async () => complete(new Blob(["report"], { type: "text/plain" })));
+  expect(await screen.findByText("report.txt", { exact: true })).toBeTruthy();
 });
 
 it("cancels Matrix reads on Chat switch and preserves native file drops", async () => {

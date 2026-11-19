@@ -14,11 +14,14 @@ import type { ChatAgentClient } from "@matrix-os/ui";
 const fixtureParams = new URL(window.location.href).searchParams;
 const empty = fixtureParams.get("empty") === "true";
 const matrixFiles = fixtureParams.get("matrixFiles") === "true";
+const pickerState = fixtureParams.get("pickerState");
 window.fetch = async request => {
   if (matrixFiles) {
     const url = new URL(typeof request === "string" ? request : request instanceof URL ? request.href : request.url, window.location.origin);
     if (url.pathname === "/api/files/list") {
       const path = url.searchParams.get("path");
+      if (pickerState === "error") return Response.json({ error: "fixture_unavailable" }, { status: 503 });
+      if (pickerState === "empty") return Response.json({ path, entries: [] });
       const entries = path === "reports" ? [{ name: "selected.txt", type: "file" }] : [
         { name: "reports", type: "directory" }, { name: "dragged.txt", type: "file" },
       ];

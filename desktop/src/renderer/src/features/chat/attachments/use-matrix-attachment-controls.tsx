@@ -1,8 +1,7 @@
 import { useLayoutEffect, useRef, useState, type DragEvent, type RefObject } from "react";
-import { Button, Dialog } from "../../../design/primitives";
 import type { ApiClient } from "../../../lib/api";
 import { useConnection } from "../../../stores/connection";
-import { InspectorFilesPanel } from "../../panels/InspectorFilesPanel";
+import { MatrixAttachmentPicker } from "./MatrixAttachmentPicker";
 import type { WorkFilesScope } from "../../work/work-files-scope";
 import { MAX_ATTACHMENTS } from "./local-attachment-controller";
 import {
@@ -112,31 +111,19 @@ export function useMatrixAttachmentControls({
   };
   const error = notice?.identity === identity ? notice.message : null;
   const dialog = currentPicker ? (
-    <Dialog open onClose={close} title="Attach files" placement="center" width={560}>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="subtle" disabled={pending} onClick={() => { close(); deviceInput.current?.click(); }}>Choose from this device</Button>
-        {project ? <>
-          <Button variant="subtle" disabled={pending} aria-pressed={currentPicker.source === "project"}
-            onClick={() => setPicker({ identity, source: "project" })}>Project files</Button>
-          <Button variant="subtle" disabled={pending} aria-pressed={currentPicker.source === "home"}
-            onClick={() => setPicker({ identity, source: "home" })}>Matrix home</Button>
-        </> : null}
-      </div>
-      {!project ? <p className="mt-4 text-sm font-medium">Matrix files</p> : null}
-      <div role="group" aria-label="Matrix files" className="mt-2 flex h-[min(45vh,360px)] min-h-0 flex-col overflow-hidden rounded-lg border">
-        <InspectorFilesPanel
-          browserOnly attachmentPicker
-          scope={currentPicker.source === "project" && project ? project : { kind: "home", chatId: "attachment-picker" }}
-          onOpenFile={target => {
-            const { label: _label, ...resource } = target;
-            void attach(resource);
-          }}
-        />
-      </div>
-      {pending ? <p role="status" className="mt-2 text-sm">Reading Matrix file…</p> : null}
-      {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
-      <div className="mt-4 flex justify-end"><Button variant="subtle" onClick={close}>Cancel</Button></div>
-    </Dialog>
+    <MatrixAttachmentPicker
+      project={project}
+      source={currentPicker.source}
+      pending={pending}
+      error={error}
+      close={close}
+      chooseDevice={() => { close(); deviceInput.current?.click(); }}
+      changeSource={source => setPicker({ identity, source })}
+      select={target => {
+        const { label: _label, ...resource } = target;
+        void attach(resource);
+      }}
+    />
   ) : null;
   return { onAttach, paneProps, dialog, pending, error: currentPicker ? null : error };
 }

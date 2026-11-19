@@ -140,3 +140,21 @@ it("keeps device file selection, drop and paste available", async () => {
   fireEvent.paste(text, { clipboardData: transferWith([new File(["paste"], "paste.txt", { type: "text/plain" })]) });
   for (const name of ["chosen.txt", "drop.txt", "paste.txt"]) expect(screen.getByText(name)).toBeTruthy();
 });
+
+it("hands the picker footer back to device selection without clearing the draft", async () => {
+  setupRequests();
+  render(<Composer />);
+  const text = screen.getByRole("textbox", { name: "Message chat" });
+  fireEvent.change(text, { target: { value: "Keep this draft" } });
+  const input = screen.getByLabelText("Attach files", { selector: "input" }) as HTMLInputElement;
+  const openDevice = vi.spyOn(input, "click");
+  fireEvent.click(screen.getByRole("button", { name: "Matrix Files" }));
+  await screen.findByRole("button", { name: "Open reports" });
+  fireEvent.click(screen.getByRole("button", { name: "Upload from device" }));
+  expect(openDevice).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog", { name: "Attach files" })).toBeNull();
+  expect((text as HTMLTextAreaElement).value).toBe("Keep this draft");
+  fireEvent.change(input, { target: { files: [new File(["local bytes"], "chosen.txt", { type: "text/plain" })] } });
+  expect(screen.getByText("chosen.txt")).toBeTruthy();
+  openDevice.mockRestore();
+});

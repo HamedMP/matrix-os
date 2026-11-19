@@ -300,6 +300,7 @@ export function ChatInput({
       {!matrixPickerOpen && matrixAttachment.pending ? <p role="status" className="text-xs">Reading Matrix file…</p> : null}
       {matrixGatewayUrl && matrixPickerOpen ? <MatrixAttachmentPicker gatewayUrl={matrixGatewayUrl}
         pending={matrixAttachment.pending} error={matrixAttachment.error}
+        chooseDevice={() => { matrixAttachment.clear(); setMatrixPickerOpen(false); fileInputRef.current?.click(); }}
         close={() => { matrixAttachment.clear(); setMatrixPickerOpen(false); textareaRef.current?.focus(); }}
         select={path => {
           void matrixAttachment.attach(path).then(attached => {

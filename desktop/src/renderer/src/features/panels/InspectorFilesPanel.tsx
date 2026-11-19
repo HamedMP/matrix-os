@@ -244,7 +244,7 @@ function HomeFilesPanel({
           {allowTrash ? <div className="flex justify-end border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
             <OpenTrashButton trash={trash} />
           </div> : null}
-          <ExpandableFileTree key={refreshRevision} viewKey={attachmentPicker ? undefined : viewKey}
+          <ExpandableFileTree attachmentPicker={attachmentPicker} key={refreshRevision} viewKey={attachmentPicker ? undefined : viewKey}
             selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}
             renderEntry={attachmentPicker ? undefined : actions.renderEntry}
             fileActionLabel={attachmentPicker ? "Attach" : undefined}
@@ -350,6 +350,7 @@ function ProjectFilesTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ExpandableFileTree
+        attachmentPicker={attachmentPicker}
         revealKey={revealKey} viewKey={attachmentPicker ? undefined : inspectorFileViewKey(scope)}
         selectedDirectory={selectedDirectory} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}
         renderEntry={attachmentPicker ? undefined : actions.renderEntry}
