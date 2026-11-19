@@ -12,6 +12,7 @@ import { TERMINAL_RUNTIME_PROTOCOL_ERROR_CODES } from "./errors.js";
 import { TerminalCommandStateRefSchema } from "./terminal-command-state.js";
 import { TerminalCommandResultRefSchema } from './terminal-command-state.js';
 import { TerminalEndedTabArchiveRequestSchema } from "./terminal-ended-tab-archive.js";
+import { TerminalScreenCaptureRequestSchema } from "./screen-capture.js";
 
 const RequestIdSchema = z.string().regex(/^req_[0-9a-f]{32}$/);
 const RequestBase = { version: z.literal(1), requestId: RequestIdSchema };
@@ -31,7 +32,17 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({ ...RequestBase, operation: z.literal("PrepareNativeTab"), input: NativeTabAdmissionSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("CompleteNativeTab"), input: NativeTabCompletionSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ListWorkspaces"), input: z.object({}).strict() }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("ListAgentStatuses"), input: z.object({}).strict() }).strict(),
+  z.object({
+    ...RequestBase,
+    operation: z.literal("ResolvePane"),
+    input: z.object({
+      sessionName: z.string().regex(/^matrix-(?:w-|rt_)[0-9a-f]{32}$/),
+      paneId: z.string().regex(/^[0-9]{1,9}$/),
+    }).strict(),
+  }).strict(),
   z.object({ ...RequestBase, operation: z.literal("GetCommandState"), input: TerminalCommandStateRefSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("CaptureScreen"), input: TerminalScreenCaptureRequestSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal('GetCommandResult'), input: TerminalCommandResultRefSchema }).strict(),
   z.object({ ...RequestBase, operation: z.literal("ArchiveEndedTab"), input: TerminalEndedTabArchiveRequestSchema }).strict(),
   z.object({

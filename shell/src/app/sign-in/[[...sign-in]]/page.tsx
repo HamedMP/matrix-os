@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { SignIn } from "@clerk/nextjs";
 import { shellAuthAppearance } from "@/components/auth/auth-brand";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
+import { clerkSatelliteReturnTarget } from "@/lib/clerk-satellite-return";
 
 export const metadata: Metadata = {
   robots: { index: false, follow: true },
@@ -13,7 +14,9 @@ export const metadata: Metadata = {
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
-  const returnTarget = slackLinkReturnTarget(params.redirect_url) ?? "/";
+  // Only exact allowlisted return addresses survive; everything else lands on "/".
+  const returnTarget =
+    slackLinkReturnTarget(params.redirect_url) ?? clerkSatelliteReturnTarget(params.redirect_url) ?? "/";
   return (
     <ShellAuthLayout
       eyebrow="Matrix OS"

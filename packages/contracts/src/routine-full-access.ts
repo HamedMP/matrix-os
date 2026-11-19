@@ -15,17 +15,25 @@ export const RoutineFullAccessDecisionSubmitSchema = z.strictObject({
 export const RoutineFullAccessDecisionTupleSchema = RoutineFullAccessDecisionSubmitSchema.extend({
   ...routing, kind: z.literal("scope_decision"), challengeId: RoutineFullAccessIdSchema,
 });
+const turnRequest = { clientRequestId: CanonicalChatRequestIdSchema, requestDigest: hex64 };
 export const RoutineFullAccessTurnTupleSchema = z.strictObject({
-  ...routing, kind: z.literal("turn"), scopeId: RoutineFullAccessIdSchema,
-  clientRequestId: CanonicalChatRequestIdSchema, requestDigest: hex64,
+  ...routing, kind: z.literal("turn"), scopeId: RoutineFullAccessIdSchema, ...turnRequest,
 });
-export const RoutineFullAccessTupleSchema = z.discriminatedUnion("kind", [RoutineFullAccessDecisionTupleSchema, RoutineFullAccessTurnTupleSchema]);
+export const RoutineFullAccessDirectTurnTupleSchema = z.strictObject({
+  ...routing, kind: z.literal("direct_turn"), ...turnRequest,
+});
+export const RoutineFullAccessTupleSchema = z.discriminatedUnion("kind", [
+  RoutineFullAccessDecisionTupleSchema, RoutineFullAccessTurnTupleSchema, RoutineFullAccessDirectTurnTupleSchema,
+]);
 const proof = { purpose: z.literal("routine_cli_full_access_origin"), version: z.literal(1),
   expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), nonce: z.string().regex(/^[a-f0-9]{32}$/), bodyDigest: hex64 };
-export const RoutineFullAccessProofSchema = z.discriminatedUnion("kind", [RoutineFullAccessDecisionTupleSchema.extend(proof), RoutineFullAccessTurnTupleSchema.extend(proof)]);
+export const RoutineFullAccessProofSchema = z.discriminatedUnion("kind", [
+  RoutineFullAccessDecisionTupleSchema.extend(proof), RoutineFullAccessTurnTupleSchema.extend(proof), RoutineFullAccessDirectTurnTupleSchema.extend(proof),
+]);
 export type RoutineFullAccessDecisionSubmit = z.infer<typeof RoutineFullAccessDecisionSubmitSchema>;
 export type RoutineFullAccessDecisionTuple = z.infer<typeof RoutineFullAccessDecisionTupleSchema>;
 export type RoutineFullAccessTurnTuple = z.infer<typeof RoutineFullAccessTurnTupleSchema>;
+export type RoutineFullAccessDirectTurnTuple = z.infer<typeof RoutineFullAccessDirectTurnTupleSchema>;
 export type RoutineFullAccessTuple = z.infer<typeof RoutineFullAccessTupleSchema>;
 export type RoutineFullAccessProof = z.infer<typeof RoutineFullAccessProofSchema>;
 /** Exact parsed request preimage, independent of the existing admission duplicate hash. */

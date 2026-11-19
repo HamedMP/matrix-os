@@ -41,10 +41,18 @@ describe("IPC sender policy", () => {
       "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers",
       "terminal:read-clipboard-files", "terminal-window:focus-main",
       "local-terminal:ack", "local-terminal:attach", "local-terminal:create", "local-terminal:detach",
-      "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:resize",
+      "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:put",
+      "local-terminal:rename", "local-terminal:resize",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
+  });
+
+  it("lets only the main window recolour the native title bar overlay", () => {
+    const { main, terminal, authorize, from } = setup();
+    const colors = { color: "#fafafa", symbolColor: "#242323" };
+    expect(authorize(from(main), "window:set-titlebar-overlay", colors)).toBe(true);
+    expect(authorize(from(terminal), "window:set-titlebar-overlay", colors)).toBe(false);
   });
 
   it("lets the Terminal window read its appearance and no other saved state", () => {

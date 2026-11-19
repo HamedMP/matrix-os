@@ -4,9 +4,15 @@ import { randomUUID } from 'node:crypto';
 const client=()=>createSitePlatformClient({url:'https://platform.example',token:'machine-token',handle:'owner',runtimeSlot:'main'});
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();});
 describe('bounded site management transport',()=>{
- it('uses configured destination, machine proof, versioned site responses and rejects redirects',async()=>{const missing=new Response('missing',{status:404});const fetch=vi.fn().mockResolvedValue(missing);vi.stubGlobal('fetch',fetch);expect(await client().request('event','GET')).toBeNull();expect(missing.bodyUsed).toBe(true);const [url,options]=fetch.mock.calls[0];expect(String(url)).toBe('https://platform.example/internal/containers/owner/sites/event?runtimeSlot=main');expect(options.headers.authorization).toBe('Bearer machine-token');expect(options.headers['x-matrix-sites-contract-version']).toBe('2');expect(options.redirect).toBe('error');expect(options.signal).toBeInstanceOf(AbortSignal);});
+ it('uses configured destination, machine proof, versioned site responses and rejects redirects',async()=>{const missing=new Response('missing',{status:404});const fetch=vi.fn().mockResolvedValue(missing);vi.stubGlobal('fetch',fetch);expect(await client().request('event','GET')).toBeNull();expect(missing.bodyUsed).toBe(true);const [url,options]=fetch.mock.calls[0];expect(String(url)).toBe('https://platform.example/internal/containers/owner/sites/event?runtimeSlot=main');expect(options.headers.authorization).toBe('Bearer machine-token');expect(options.headers['x-matrix-sites-contract-version']).toBe('3');expect(options.redirect).toBe('error');expect(options.signal).toBeInstanceOf(AbortSignal);});
  it('returns coarse unavailable on network, oversize and malformed responses',async()=>{for(const response of [new Error('postgres://secret/path'),new Response('x'.repeat(600000)),new Response('{}')]){vi.stubGlobal('fetch',response instanceof Error?vi.fn().mockRejectedValue(response):vi.fn().mockResolvedValue(response));await expect(client().request('event','GET')).rejects.toMatchObject({status:503,message:'Publishing request failed'});}});
  it('validates response and preserves conflict status',async()=>{const record={id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,url:'https://matrix.page/test',revision:1,status:'published',accessMode:'public' as const,activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}};vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(record))));expect(await client().request('event','GET')).toEqual(record);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:409})));await expect(client().request('event','PATCH',{})).rejects.toEqual(new SitePlatformError(409));});
+ it('preserves the retired one-time link status without exposing the platform body',async()=>{
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({error:'internal detail'}),{status:410})));
+  await expect(client().createAccessLink('event',{baseRevision:3})).rejects.toEqual(new SitePlatformError(410));
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:410})));
+  await expect(client().request('event','PATCH',{accessMode:'private_link'})).rejects.toEqual(new SitePlatformError(410));
+ });
  it('validates private-link management responses and never accepts secret fields in listings',async()=>{
   const link={id:randomUUID(),status:'unclaimed',createdAt:'2026-11-05T12:00:00.000Z',claimExpiresAt:'2026-11-12T12:00:00.000Z',claimedAt:null,sessionExpiresAt:null};
   const fetch=vi.fn()
@@ -25,7 +31,7 @@ describe('bounded site management transport',()=>{
   ]);
   const listQuery=new URL(String(fetch.mock.calls[0]![0])).searchParams;
   expect({runtimeSlot:listQuery.get('runtimeSlot'),limit:listQuery.get('limit')}).toEqual({runtimeSlot:'main',limit:'50'});
-  expect(fetch.mock.calls[0]![1].headers['x-matrix-sites-contract-version']).toBe('2');
+  expect(fetch.mock.calls[0]![1].headers['x-matrix-sites-contract-version']).toBe('3');
   expect(fetch.mock.calls.map(([,options])=>options.method)).toEqual(['GET','POST','DELETE']);
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({links:[{...link,token:'secret'}]}))));
   await expect(api.accessLinks('event')).rejects.toMatchObject({status:503});
@@ -78,4 +84,15 @@ it('bounds deployment by the remaining budget while retaining management timeout
  const caller=new AbortController();const cancelled=client().request('event','POST',{},'',caller.signal,Date.now()+120000).catch(error=>error);caller.abort();expect(await cancelled).toMatchObject({status:503});
  fetch.mockResolvedValueOnce(new Response('missing',{status:404}));expect(await client().request('event','GET')).toBeNull();expect(AbortSignal.timeout).toHaveBeenLastCalledWith(10000);
  fetch.mockResolvedValueOnce(new Response('{}',{status:409}));await expect(client().request('event','POST',{},'/rollback')).rejects.toMatchObject({status:409});expect(AbortSignal.timeout).toHaveBeenLastCalledWith(30000);
+});
+
+it('uses the machine-bound readiness endpoint and rejects a malformed capability response',async()=>{
+ const fetch=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({privateEmailInvitations:false})))
+  .mockResolvedValueOnce(new Response(JSON.stringify({privateEmailInvitations:'true'})));
+ vi.stubGlobal('fetch',fetch);
+ const api=client();
+ await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:false});
+ expect(String(fetch.mock.calls[0][0])).toBe('https://platform.example/internal/containers/owner/sites/event/email-invitation-capabilities?runtimeSlot=main');
+ expect(fetch.mock.calls[0][1]).toMatchObject({redirect:'error',headers:{authorization:'Bearer machine-token'}});
+ await expect(api.emailInvitationCapabilities!('event')).rejects.toMatchObject({status:503});
 });

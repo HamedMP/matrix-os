@@ -1,8 +1,10 @@
-import { KeyboardAvoidingView } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { BackIcon, NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
+import type { ReactNode } from "react";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
@@ -10,8 +12,11 @@ import { ChatHome } from "./ChatHome";
 import { ChatMessagesSkeleton, ChatUnavailable } from "./ChatLoadState";
 import type { ChatLoadState } from "./chat-screen-state";
 import { Composer, type ComposerProps } from "./Composer";
+import { chatHomeExit } from "./message-motion";
 import { MessageList, type MessageListProps } from "./MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
+
+type RenderMessageList = (slots?: Pick<MessageListProps, "renderAfterMessage" | "earlier" | "footer">) => ReactNode;
 
 export interface ChatScreenViewProps
   extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "renderComputerPhoto"> {
@@ -37,6 +42,8 @@ export interface ChatScreenViewProps
   onReloadChat?: () => void;
   /** What a message that was not sent offers. Nothing is offered when left out. */
   unsentActions?: UnsentMessageActions | null;
+  /** Optionally composes the ready message list with screen-owned timeline content. */
+  renderThread?: (renderMessageList: RenderMessageList) => ReactNode;
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
@@ -60,16 +67,22 @@ export function ChatScreenView({
   onReloadChat,
   unsentActions = null,
   composer,
+  renderThread,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
+  const renderMessageList: RenderMessageList = (slots = {}) => (
+    <MessageList {...slots} messages={messages} chatId={chatId} renderRequest={renderRequest}
+      renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
+  );
 
   return (
     // The keyboard is drawn over the screen on both platforms (Android does not
     // shrink the window for it, as the app is edge to edge), so the screen
-    // makes room for it. The screen starts at the top of the window and ends
-    // at the tab bar, so the keyboard's overlap with it needs no offset: the
-    // part of the keyboard that covers the tab bar is already outside this view.
+    // makes room for it, and its bottom edge rises with the keyboard frame by
+    // frame. The screen starts at the top of the window and ends at the tab
+    // bar, so the keyboard's overlap with it needs no offset: the part of the
+    // keyboard that covers the tab bar is already outside this view.
     <KeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]} behavior="padding">
       <TopBar
         title={title}
@@ -87,20 +100,16 @@ export function ChatScreenView({
         ) : null}
       />
       {showHome ? (
-        <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        <Animated.View testID="chat-home-frame" style={styles.home} exiting={chatHomeExit}>
+          <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        </Animated.View>
       ) : chatState === "loading" ? (
         <ChatMessagesSkeleton />
       ) : chatState === "failed" ? (
         <ChatUnavailable onRetry={onReloadChat} />
       ) : (
         <UnsentMessageActionsProvider value={unsentActions}>
-          <MessageList
-            messages={messages}
-            chatId={chatId}
-            renderRequest={renderRequest}
-            renderResults={renderResults}
-            renderComputerPhoto={renderComputerPhoto}
-          />
+          {renderThread ? renderThread(renderMessageList) : renderMessageList()}
         </UnsentMessageActionsProvider>
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
@@ -112,5 +121,8 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.colors.background,
+  },
+  home: {
+    flex: 1,
   },
 }));

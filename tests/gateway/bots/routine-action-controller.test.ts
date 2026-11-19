@@ -2,18 +2,23 @@ import { describe, expect, it } from "vitest";
 import { routineActionPolicy, createRoutineActionSourceRegistry } from "../../../packages/gateway/src/bots/routine-action-source-registry.js";
 import { context } from "./routine-cli-source-support.js";
 const policy = { live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full", revision: "policy_1" } as const;
+const terminal = { ...context(), identity: { kind: "terminal_launch", sessionId: "s", incarnationId: "i", launchId: "l" } } as const;
 describe("host routine source registry/current policy", () => {
-  it("maps only actual full-access default personal ceilings; terminal always asks", () => {
-    expect(routineActionPolicy(context(), policy, "propose")).toBe("allow");
-    expect(routineActionPolicy({ ...context(), identity: { kind: "terminal_launch", sessionId: "s", incarnationId: "i", launchId: "l" } }, policy, "propose")).toBe("ask");
-    for (const permissionMode of ["supervised", "auto", "auto_accept_edits"] as const)
-      expect(routineActionPolicy(context(), { ...policy, permissionMode }, "control")).toBe("ask");
-    expect(routineActionPolicy(context(), { ...policy, originCeiling: "exact" }, "control")).toBe("ask");
+  it("applies trusted personal Full Access to exact Chat and Terminal operations", () => {
+    for (const source of [context(), terminal]) {
+      expect(routineActionPolicy(source, policy, "propose")).toBe("allow");
+      expect(routineActionPolicy(source, policy, "control")).toBe("allow");
+      for (const permissionMode of ["supervised", "auto", "auto_accept_edits"] as const)
+        expect(routineActionPolicy(source, { ...policy, permissionMode }, "control")).toBe("ask");
+      expect(routineActionPolicy(source, { ...policy, originCeiling: "exact" }, "control")).toBe("ask");
+    }
   });
-  it("owner cards cannot override plan/review/shared/org/read ceilings or dead sources", () => {
-    for (const patch of [{ interactionMode: "plan" }, { interactionMode: "review" }, { scope: "shared" }, { scope: "org" },
-      { originCeiling: "read" }, { live: false }, { permissionMode: "unsupported" }])
-      expect(routineActionPolicy(context(), { ...policy, ...patch } as typeof policy, "propose")).toBe("deny");
+  it("neither Terminal defaults nor owner cards override plan/review/shared/org/read ceilings or dead sources", () => {
+    for (const source of [context(), terminal]) {
+      for (const patch of [{ interactionMode: "plan" }, { interactionMode: "review" }, { scope: "shared" }, { scope: "org" },
+        { originCeiling: "read" }, { live: false }, { permissionMode: "unsupported" }])
+        expect(routineActionPolicy(source, { ...policy, ...patch } as typeof policy, "propose")).toBe("deny");
+    }
   });
   it("unknown, replaced, aborted and expired producer handles deny; shutdown drains", () => {
     let time = Date.parse(context().issuedAt);

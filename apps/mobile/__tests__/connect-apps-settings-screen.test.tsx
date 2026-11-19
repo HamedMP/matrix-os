@@ -96,6 +96,13 @@ describe("Connect Apps in Settings", () => {
     expect(connectAppsReturnPath(MOBILE_INTEGRATIONS_REDIRECT_URI)).toBe(landing);
   });
 
+  it("opens GitHub Developer from Connect Apps settings alongside GitHub", () => {
+    render(<ConnectAppsSettingsScreen />);
+    fireEvent.press(screen.getByLabelText("Open GitHub Developer"));
+    expect(mockPush).toHaveBeenCalledWith("/settings-detail/developer-access");
+    expect(screen.getByLabelText("Connect GitHub integration")).toBeTruthy();
+  });
+
   it("opens the installed integrations from Settings too", () => {
     render(<ConnectAppsSettingsScreen />);
 

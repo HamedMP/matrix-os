@@ -4,6 +4,7 @@ import type { BotToolRequest, CanonicalOwnerScope } from "@matrix-os/contracts";
 import { createBotRoutineControl } from "./routine-control.js";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotRoutineApprovals } from "./routine-approval.js";
+import { directRoutineOriginLiveSql } from "./routine-direct-chat-lifecycle.js";
 import { routineSelection } from "./routine-authorization.js";
 import { createBotRoutinesRepository } from "./repositories/routines.js";
 import { createBotTasksRepository } from "./repositories/tasks.js";
@@ -123,7 +124,10 @@ export function createBotRoutineExecution(deps: {
       const selected = await createBotRoutinesRepository(tx.db).getFire(input.ownerId, input.fireId);
       if (!selected) return false;
       const routine = await tx.db.selectFrom("bot_routines").select(["status", "chat_id", "bot_id", "revision"])
-        .where("owner_id", "=", input.ownerId).where("routine_id", "=", selected.routineId).forUpdate().executeTakeFirst();
+        .where("owner_id", "=", input.ownerId).where("routine_id", "=", selected.routineId)
+        .where(directRoutineOriginLiveSql({ ownerId: sql.ref("bot_routines.owner_id"), botId: sql.ref("bot_routines.bot_id"), chatId: sql.ref("bot_routines.chat_id"),
+          computerId: sql.ref("bot_routines.origin_computer_id"), requestId: sql.ref("bot_routines.origin_request_id") }))
+        .forUpdate().executeTakeFirst();
       const fire = await tx.db.selectFrom("bot_routine_fires").selectAll()
         .where("owner_id", "=", input.ownerId).where("fire_id", "=", input.fireId).forUpdate().executeTakeFirst();
       if (!routine || routine.status !== "active" || !fire || fire.status !== "dispatched" || !fire.lease_expires_at) return false;
@@ -255,6 +259,11 @@ export function createBotRoutineExecution(deps: {
   }
   const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire,
     cancelUnstarted: (tx, ownerId, fireId, at) => finish({ ownerId, fireId, status: "cancelled", expectedStatus: "claimed", now: at }, undefined, tx) });
+  async function control(ownerId: string, botId: string, routineId: string, raw: unknown) {
+    const routine = await transact(ownerId, tx => controls.controlWithin(tx, ownerId, botId, routineId, raw));
+    await controls.afterControlCommit(routine);
+    return routine;
+  }
   return {
     describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
     approvalReply: (scope: Parameters<typeof routineApprovalReply>[1]) => routineApprovalReply(deps.db, scope, now()),
@@ -386,10 +395,12 @@ export function createBotRoutineExecution(deps: {
       }));
     },
     ...controls,
-    async control(ownerId: string, botId: string, routineId: string, raw: unknown) {
-      const routine = await transact(ownerId, tx => controls.controlWithin(tx, ownerId, botId, routineId, raw));
-      await controls.afterControlCommit(routine);
-      return routine;
+    control,
+    async controlOwner(ownerId: string, routineId: string, raw: unknown) {
+      // The presentation DTO intentionally never carries a direct routine's execution agent.
+      const routine = await repository.get(ownerId, routineId);
+      if (!routine) throw new BotStateError("not_found");
+      return control(ownerId, routine.botId, routineId, raw);
     }
   };
 }

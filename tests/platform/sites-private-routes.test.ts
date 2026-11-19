@@ -31,6 +31,19 @@ const request = (path: string, init: RequestInit = {}) => new Request(`https://p
 });
 
 describe('private Matrix.page routes', () => {
+  it('never exposes email-mode content through a stale one-time-link credential', async () => {
+    const { app, resolve, authorize, privateFrame, asset } = fixture();
+    const emailSite = { ...privateSite, accessMode: 'private_email' as const };
+    resolve.mockResolvedValue(emailSite as typeof privateSite);
+    authorize.mockResolvedValue(emailSite as typeof privateSite);
+    const cookie = `__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
+    const wrapper = await app.request(request(`/${siteId}`, { headers: { cookie } }));
+    expect(await wrapper.text()).not.toContain('<iframe');
+    expect((await app.request(request(`/${siteId}/frame`, { headers: { cookie } }))).status).toBe(404);
+    expect((await app.request(request(`/${siteId}/assets/${versionId}/assets/main.js`, { headers: { cookie } }))).status).toBe(404);
+    expect(privateFrame).not.toHaveBeenCalled();
+    expect(asset).not.toHaveBeenCalled();
+  });
   it('renders a generic explicit claim gate without leaking publication metadata', async () => {
     const { app, captureEvent } = fixture();
     const response = await app.request(request(`/${siteId}`));

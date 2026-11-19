@@ -252,6 +252,7 @@ import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
+import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
@@ -269,6 +270,10 @@ import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
+import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
+import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
+import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
@@ -335,6 +340,11 @@ export async function createGateway(config: GatewayConfig) {
     socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
+  // Assigned once collaboration is known (project fences); a startup failure before
+  // then must still be able to run shutdown.
+  let terminalAgentServices: TerminalAgentServices | null = null;
+  // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
+  let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
@@ -883,6 +893,23 @@ export async function createGateway(config: GatewayConfig) {
   canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
+  // After collaboration, so kernel terminal tools pass the same project fences as HTTP.
+  const terminalAgents = createTerminalAgentServices({
+    runtime: terminalWorkspaceRuntime,
+    homePath,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: createTerminalWorkspaceProjectAdmission({
+      runtime: terminalWorkspaceRuntime,
+      ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
+    }),
+  });
+  terminalAgentServices = terminalAgents;
+  try {
+    localTerminalAgentToken = await createLocalTerminalAgentToken({ homePath });
+  } catch (error) {
+    // In-terminal calls then fail with local_gateway_unavailable; everything else is unaffected.
+    console.warn("[terminal-agent] local terminal token unavailable:", error instanceof Error ? error.name : "unknown_error");
+  }
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
@@ -911,6 +938,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    terminalTools: terminalAgents.kernelTools,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1252,7 +1280,9 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+    localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
+  registerRoutineDirectResourceFence(app);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1603,6 +1633,7 @@ export async function createGateway(config: GatewayConfig) {
     if (botServices?.managedAdapter) canonicalExecutableDriverKinds.push("matrix_pi");
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
+      beforeRoutineCreationAdmission: botServices?.beforeRoutineCreationAdmission,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
@@ -1618,12 +1649,14 @@ export async function createGateway(config: GatewayConfig) {
       } : {}),
       onAiGeneration: recordAiGeneration,
       ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
+      ...(process.env.MATRIX_PREVIEW_RUNTIME !== "true" && botServices?.routineCli
+        ? { beforeRoutineFullAccessDispatch: botServices.routineCli.beforeRoutineFullAccessDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     nativeClaudeChatRuntime?.bind(() => canonicalChatOrchestrator);
-    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }, "approval"));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
@@ -1688,7 +1721,7 @@ export async function createGateway(config: GatewayConfig) {
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
   const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
-    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
+    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission, terminalAgentServices: terminalAgents,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
@@ -1696,9 +1729,15 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalWebSocketRoutes({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, captureTerminalEvent,
+    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent,
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
+  });
+
+  registerTerminalEventWebSocket({
+    app, upgradeWebSocket, hub: terminalAgents.events,
+    getPrincipal: requireRequestPrincipal,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
   });
 
   slackRuntime = await startOwnerSlack({
@@ -1918,6 +1957,9 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
+      // Drain terminal event subscribers and waiters before the runtime client goes.
+      await terminalAgentServices?.close();
+      await localTerminalAgentToken?.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();

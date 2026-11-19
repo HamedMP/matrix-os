@@ -13,6 +13,7 @@ import {
   type MatrixDB,
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
+  type TerminalAgentKernelTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -52,6 +53,7 @@ export interface DispatchOptions {
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  terminalTools?: TerminalAgentKernelTools;
 }
 
 export interface DispatchContext {
@@ -242,6 +244,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         env: credentialLaunch.env,
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
+        terminalTools: opts.terminalTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
       };
       try {
@@ -394,6 +397,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             maxTurns: opts.maxTurns,
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
+            terminalTools: opts.terminalTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
           };
 

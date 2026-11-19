@@ -53,6 +53,20 @@ As an active organization member, I can use the project's current and future Cha
 
 ### User Story 3 - Use the Owner's Current AI Connection (Priority: P1)
 
+**Configured Chat route clarification (ENG-29):** A Chat's persisted agent and model
+select the matching enabled route in the owner's current Provider Settings. Enabling
+both Claude and Codex must not make an existing or configured first-turn Chat
+ambiguous, switch its agent, or replace its model with another agent's default.
+Provider/account readiness and owner route revocation still apply at admission and
+dispatch. An unavailable or disabled selected route never falls back to the other
+enabled agent. Unconfigured legacy scopes retain their existing default-selection
+behavior; standalone compatibility policies remain unchanged.
+
+Regression qualification covers both agents enabled with an empty inventory default,
+each Chat's model retained, disabled selected agents, persisted binding propagation,
+and binding changes between admission and dispatch. Run the provider Settings store,
+owner source, execution adapter, shared coding, and production wiring suites.
+
 As an organization member working in a shared project, I can prompt AI using the project owner's current global AI configuration without asking the owner to configure a second project policy.
 
 **Why this priority**: The reported failure is caused by duplicated provider-readiness and project-policy systems. One global source of truth removes that contradiction.

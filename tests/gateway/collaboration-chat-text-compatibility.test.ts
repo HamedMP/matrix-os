@@ -11,6 +11,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import type { CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/route-support.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
+import { ReleasedChatTextPartSchema } from "../fixtures/desktop-v0.1.19/chat-message-text-part.js";
 import { allowAllOrganizationPrecondition, collaborationActors, collaborationIds, createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
 // Before PR 2901, shared messages used this existing strict, nonblank part
@@ -66,9 +67,9 @@ beforeAll(async () => {
 beforeEach(async () => { await fixture.db.deleteFrom("chat_messages").execute(); });
 afterAll(async () => { await fixture.destroy(); });
 
-async function seed(parts: CanonicalChatMessage["parts"], seq = 1, role: "assistant" | "user" = "assistant") {
+async function seed(parts: CanonicalChatMessage["parts"], seq = 1, role: "assistant" | "user" | "system" = "assistant") {
   await fixture.db.insertInto("chat_messages").values({id: `msg_legacy_shared_${seq}`, chat_id: collaborationIds.chat,
-    seq, role, state: "committed", purpose: role === "assistant" ? "assistant" : "discussion",
+    seq, role, state: "committed", purpose: role === "user" ? "discussion" : role,
     actor_id: role === "user" ? collaborationActors.owner : null, turn_id: null, run_id: null,
     parts: JSON.stringify(parts), byte_count: Buffer.byteLength(JSON.stringify(parts)), search_text: "fixture", created_at: now,
   }).execute();
@@ -126,6 +127,24 @@ it("retains representable shared text when actor metadata exceeds the canonical 
   expect(LegacyMessages.safeParse({messages: [representable]}).success).toBe(true);
   const projected = LegacyMessages.parse(wire).messages[0]!;
   expect(projected.parts.flatMap(part => part.type === "text" ? [part.text] : []).join("")).toBe(expectedText);
+  expect(await fixture.db.selectFrom("chat_messages").selectAll().execute()).toEqual(before);
+});
+
+it("omits private routine provenance from a formerly private Chat's shared history", async () => {
+  await seed([{
+    type: "routine_receipt", engine: "matrix", kind: "output", status: "completed", attempt: 1,
+    routineId: "rt_" + "a".repeat(24), fireId: "fire_" + "b".repeat(24), scheduledFor: now.toISOString(),
+    canonicalChatId: "chat_private_worker", canonicalTaskId: "task_private_worker", model: "test-model",
+  }, text("Scheduled result")], 1, "system");
+  const before = await fixture.db.selectFrom("chat_messages").selectAll().execute();
+  const response = await read("after=0&limit=1");
+  expect(response.status).toBe(200);
+  const wire = LegacyMessages.parse(await response.json());
+  expect(ReleasedChatTextPartSchema.array().parse(wire.messages[0]?.parts)).toEqual([text("Scheduled result")]);
+  expect(wire.messages).toMatchObject([{
+    id: "msg_legacy_shared_1", sequence: "1", role: "system", state: "committed", purpose: "system",
+    parts: [text("Scheduled result")],
+  }]);
   expect(await fixture.db.selectFrom("chat_messages").selectAll().execute()).toEqual(before);
 });
 

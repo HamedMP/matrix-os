@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { randomUUID } from "node:crypto";
 import { RoutineCliOperationSchema, RoutineCliEnvelopeSchema, type RoutineCliOperation, type RoutineCliEnvelope } from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
@@ -30,7 +31,7 @@ function unavailable(operation: RoutineCliOperation): RoutineCliEnvelope {
     : { v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } };
 }
 /** Shared Terminal source. Actual native writer is attested by the held host before
- * this entry; this repeats root/start/ancestry checks around owner waits and consume.
+ * this entry; this repeats root/start/ancestry checks around authorization and consume.
  * Never creates a Chat/run/Bot binding or infers policy from CLI --yolo flags. */
 export function createTerminalRoutineSource(options: {
   runtime: Pick<RoutineCliRuntime, "register">; computerId: string; binPath: string; endpoint: string; homePath: string;
@@ -90,7 +91,7 @@ export function createTerminalRoutineSource(options: {
       if (activeCalls >= 8) return unavailable(operation);
       activeCalls++;
       try {
-      const actionSignal = AbortSignal.any([signal, callSignal, AbortSignal.timeout(120000)]);
+      const actionSignal = AbortSignal.any([signal, callSignal, AbortSignal.timeout(ROUTINE_CLI_NATIVE_TIMEOUT_MS)]);
       if (!live() || actionSignal.aborted || invokers.size >= 8 || invocations.size >= 256
         || options.preflightCurrent && !await options.preflightCurrent() || !await actualRoot()) return unavailable(operation);
       const observed = await verifyTerminalDescendant(admission.root, writer, read);
@@ -103,13 +104,13 @@ export function createTerminalRoutineSource(options: {
           validateWithin: async (_source, trx, _action, invocation) => current(invocation, trx) });
         const port = await boundedOperation(() => registration!, 10000, actionSignal); sourceId = port.reference.sourceId;
         if (!live() || actionSignal.aborted) return unavailable(operation);
-        invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: 120000,
+        invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS,
           async authorize(input) {
             // Recheck synchronously at insertion: concurrent process/registration awaits must not overbook.
             if (!live() || actionSignal.aborted || invocations.size >= 256) return false;
             invocationId = input.invocationId; invocations.set(invocationId, { digest: routineActionHash(input.operation), writer: observed, signal: actionSignal });
             const allowed = await port.authorize(input);
-            // The controller owner wait/transactions have settled before manager preflight.
+            // The controller authorization transactions have settled before manager preflight.
             return allowed && (!options.preflightCurrent || await options.preflightCurrent()) && await actualRoot() && !actionSignal.aborted;
           }, issue: port.issue, cancel: port.cancel });
         invokers.add(invoker);

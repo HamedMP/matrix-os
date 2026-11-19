@@ -267,6 +267,7 @@ export default function FilesWorkspace() {
                   </section>
                   {!tab.project.directory ? <InspectorFilePreview target={tab.project.target} /> : <p className="p-4 text-sm">Choose a file to preview.</p>}
                 </div> : <ComputerFileBrowser
+                  allowTrash
                   // Keep the creation seed stable; current tab path is navigation output.
                   initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
@@ -307,7 +308,7 @@ export default function FilesWorkspace() {
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>New {itemKind}</h2>
           <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Create inside {newItemRequest?.parentPath || "Matrix home"}.</p>
           <input ref={newItemInputRef} aria-label={`${itemLabel} name`} maxLength={128} disabled={creatingItem} value={newItemName} onChange={(event) => setNewItemName(event.target.value)} className="mt-4 h-10 w-full rounded-lg border px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]" style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)", color: "var(--text-primary)" }} />
-          {newItemError ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{newItemError}</p> : null}
+          {newItemError ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{newItemError}</p> : null}
           <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="ghost" onClick={closeCreationDialog} disabled={creatingItem}>Cancel</Button><Button type="submit" variant="primary" disabled={creatingItem}>{creatingItem ? "Creating…" : `Create ${itemKind}`}</Button></div>
         </form>
       </Dialog>

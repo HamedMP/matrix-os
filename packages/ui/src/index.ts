@@ -343,10 +343,21 @@ export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedT
 export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
 export { createRoutineActionClient, createRoutineActionBrowserClient, type RoutineActionClient, type RoutineActionRequest } from "./routine-action/client.js";
-export { RoutineActionConfirmation, RoutineActionInbox } from "./routine-action/RoutineActionConfirmation.js";
+export { RoutineActionConfirmation } from "./routine-action/RoutineActionConfirmation.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 
 export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
 
 export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";
+
+export { isRoutineOriginPath, createRoutineOriginClient, type RoutineOriginClient } from "./chat/routine-origin-client.js";
+export { useRoutineOrigin } from "./chat/use-routine-origin.js";
+export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
+export { routineApprovalPlacement, routineOriginHistoryStatus } from "./chat/routine-approval-placement.js";
+export { RoutineReceipt } from "./chat/RoutineReceipt.js";
+export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
+
+export { ScheduledInputText } from "./chat/ScheduledInputText.js";
+
+export { routineOriginChatEligible } from "./chat/routine-origin.js";

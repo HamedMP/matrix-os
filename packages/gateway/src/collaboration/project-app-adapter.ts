@@ -56,6 +56,27 @@ export class ProjectAppAdapterError extends Error {
   }
 }
 
+/**
+ * Parses an app's bridge action for the one app a collaboration scope authorizes.
+ * Documented app code omits `app`, so an absent field binds to `expectedApp`; a
+ * present field must name it exactly. `listApps` and actions outside `allowed` fail.
+ */
+export function parseScopedAppAction(
+  raw: unknown,
+  expectedApp: string,
+  allowed: readonly BridgeQueryBody["action"][],
+): BridgeQueryBody {
+  const bound = typeof raw === "object" && raw !== null && !Array.isArray(raw) && !Object.hasOwn(raw, "app")
+    ? { ...raw, app: expectedApp }
+    : raw;
+  const parsed = BridgeQueryBodySchema.safeParse(bound);
+  if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
+    || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
+    throw new ProjectAppAdapterError("invalid_action");
+  }
+  return parsed.data;
+}
+
 /** A failed comparison completes the request without changing the app resource. */
 export function appMutationChanged(action: BridgeQueryBody["action"], result: unknown): boolean {
   if (action !== "compareAndSwap") return true;
@@ -134,15 +155,6 @@ export function createProjectAppAdapter(options: {
     return { app: app.data, bridgeAppId, namespace: projectNamespace(context.scopeId, appId) };
   }
 
-  function parseAction(raw: unknown, expectedApp: string, allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
-    const parsed = BridgeQueryBodySchema.safeParse(raw);
-    if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
-      || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
-      throw new ProjectAppAdapterError("invalid_action");
-    }
-    return parsed.data;
-  }
-
   async function requireCurrentProject(
     trx: Transaction<OwnerCollaborationDatabase>,
     context: AuthorizedCollaborationContext,
@@ -205,7 +217,7 @@ export function createProjectAppAdapter(options: {
         throw new ProjectAppAdapterError("not_found");
       }
       const app = await resolveApp(current, appId.data);
-      const action = parseAction(raw.action, app.bridgeAppId, READ_ACTIONS);
+      const action = parseScopedAppAction(raw.action, app.bridgeAppId, READ_ACTIONS);
       return await options.db.transaction().execute(async (trx) => {
         await requireCurrentProject(trx, current, false);
         const binding = await requireBinding(trx, current, appId.data, "share", app.app.incarnation);
@@ -249,7 +261,7 @@ export function createProjectAppAdapter(options: {
         throw new ProjectAppAdapterError("not_found");
       }
       const app = await resolveApp(current, envelope.data.appId);
-      const action = parseAction(envelope.data.action, app.bridgeAppId, MUTATION_ACTIONS);
+      const action = parseScopedAppAction(envelope.data.action, app.bridgeAppId, MUTATION_ACTIONS);
       const payloadHash = createHash("sha256").update(JSON.stringify(envelope.data)).digest("hex");
       const committed = await options.db.transaction().execute(async (trx) => {
         await requireCurrentProject(trx, current, true);

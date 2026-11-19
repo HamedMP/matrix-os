@@ -1,19 +1,25 @@
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import { chatGptPlanPeerProof } from "@matrix-os/contracts";
+import { chatGptPlanPeerProof, ROUTINE_ORIGIN_PROOF_HEADER } from "@matrix-os/contracts";
 import { createChatGptPlanPeers } from "../../../packages/gateway/src/bots/chatgpt-plan-peers.js";
 import { createBotRoutineExecution } from "../../../packages/gateway/src/bots/routine-execution.js";
 import { createBotRoutineScheduler } from "../../../packages/gateway/src/bots/routine-scheduler.js";
-import { createBotRoutineCanonicalRunner } from "../../../packages/gateway/src/bots/continuations.js";
+import { createBotRoutineCanonicalRunner, createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
+import { createRoutineChatOriginService } from "../../../packages/gateway/src/bots/routine-chat-origin.js";
+import { createRoutineOriginRoutes } from "../../../packages/gateway/src/bots/routine-origin-routes.js";
+import { routineOriginBrowserFixture } from "./routine-origin-browser-support.js";
 import { createBotRoutinesRepository } from "../../../packages/gateway/src/bots/repositories/routines.js";
 import { forwardBotInference } from "../../../packages/gateway/src/bots/broker-inference.js";
 import { withChatGptPlanProviderInstance } from "../../../packages/gateway/src/bots/chatgpt-plan-provider-instance.js";
-import { claudeFixture, nativeProtocol, proposal, scope, TARGET_A } from "./routine-cli-claude-support.js";
+import { managedPiFixture } from "./routine-cli-managed-pi-support.js";
+import { proposal, scope, TARGET_A } from "./routine-cli-request-support.js";
 import { BOT, OWNER } from "./bot-state-support.js";
 
-let x: Awaited<ReturnType<typeof claudeFixture>>;
+let x: Awaited<ReturnType<typeof managedPiFixture>>;
 let peers: ReturnType<typeof createChatGptPlanPeers>;
 let scheduler: ReturnType<typeof createBotRoutineScheduler>;
+let origin: ReturnType<typeof createRoutineChatOriginService>;
 const bounded = async <T>(promise: Promise<T>) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try { return await Promise.race([promise, new Promise<never>((_done, reject) => { timer = setTimeout(() => reject(new Error("Combined-path boundary not reached")), 5000); })]); }
@@ -26,15 +32,18 @@ async function until(predicate: () => boolean | Promise<boolean>) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
-afterEach(async () => { await scheduler?.stop(); peers?.close(); await x?.close(); vi.unstubAllGlobals(); });
+afterEach(async () => { await origin?.close(); await scheduler?.stop(); peers?.close(); await x?.close(); vi.unstubAllGlobals(); });
 
 // Named faults: proposal reinference, broad-background routing, omitted native occurrence proof,
 // fabricated source/target lineage, or skipping canonical fire settlement must fail this one path.
-// Source native protocol, runtime host/root and final native/model reply are bounded fixtures.
+// Source model, runtime host/root and final native/model reply are bounded fixtures.
 // CLI process/private IPC, source controller/HTTP/auth, owner PG, approvals, scheduler, canonical
 // admission/adapter/orchestrator/registry and inference broker/peer authority are production code.
-it("runs one actual source CLI proposal through owner approval and a background-off canonical occurrence to the native inference boundary", async () => {
-  x = await claudeFixture(); const f = x.f;
+it("runs a no-flag managed Chat proposal through same-Chat approval and canonical scheduled delivery", async () => {
+  const requestId = "de000000-0000-4000-8000-000000000811", sourceChat = "chat_eng93_combined_source";
+  x = await managedPiFixture({ operation: "propose", requestId, proposal }, { hold: true });
+  const f = x.f;
+  await bootstrapCollaborationDatabase(f.db as never);
   const execution = createBotRoutineExecution({ db: f.db, transact: f.transact, approvals: f.approvals, now: () => new Date(f.state.clock) });
   f.adapterOptions.routines = execution; f.taskDependencies.routineExecution = execution;
   const canonical = { repository: f.chats, orchestrator: f.canonical }; execution.connect(canonical);
@@ -65,27 +74,44 @@ it("runs one actual source CLI proposal through owner approval and a background-
   await expect(peers.resolve(selected, OWNER, "background")).rejects.toThrow();
   expect((await peers.observe(OWNER)).authorization).toMatchObject({ background: false });
 
-  const requestId = "de000000-0000-4000-8000-000000000811", sourceChat = "chat_eng93_combined_source";
-  const native = nativeProtocol(`matrix routines propose --input - --request-id ${requestId} <<'MATRIX_ROUTINE_JSON'\n${JSON.stringify(proposal)}\nMATRIX_ROUTINE_JSON`);
-  x.adapter(native.spawn); const sourceTurn = await x.start(sourceChat);
+  const sourceTurn = await x.start(sourceChat, { permission: "supervised", interaction: "default" }, "Schedule a report every minute and post the result here.");
+  expect(sourceTurn.run.context?.routineCreation).toBeUndefined();
   await until(() => x.sourceEvents.some(event => event.type === "approval.requested"));
   const sourceAction = x.sourceEvents.find(event => event.type === "approval.requested");
   if (sourceAction?.type !== "approval.requested") throw new Error("Exact source action approval required");
   await x.approve(sourceAction, sourceChat, sourceTurn.run.id);
-  await until(() => Boolean(native.display()));
-  expect(native.display()).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
-  expect(native.promptCount()).toBe(1); expect(x.httpCalls()).toBe(1);
+  await until(() => Boolean(x.result()));
+  const result = x.result();
+  expect(result).toMatchObject({ ok: true, content: [{ text: expect.any(String) }] });
+  if (!result?.ok) throw new Error("Managed routine tool did not report a receipt");
+  expect(JSON.parse(result.content.map(item => item.text).join(""))).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  expect(x.bindings).toHaveLength(1); expect(x.httpCalls()).toBe(1);
   await until(async () => Boolean(await f.db.selectFrom("bot_interactions").select("interaction_id").executeTakeFirst()));
-  native.end(); await bounded(f.canonical.drain());
+  x.finish(); await bounded(f.canonical.drain());
   expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);
   const receipt = await f.db.selectFrom("routine_cli_requests").selectAll().executeTakeFirstOrThrow();
-  expect(receipt.source_context).toMatchObject({ harness: "claude", identity: { kind: "chat_run", chatId: sourceChat, runId: sourceTurn.run.id } });
+  expect(receipt.source_context).toMatchObject({ harness: "pi", identity: { kind: "chat_run", route: "managed", chatId: sourceChat, runId: sourceTurn.run.id } });
   const dispatch = await f.db.selectFrom("routine_cli_proposals").selectAll().executeTakeFirstOrThrow();
   const interaction = await f.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
   expect(interaction).toMatchObject({ interaction_id: dispatch.interaction_id, source_run_id: dispatch.run_id, task_id: dispatch.task_id, chat_id: TARGET_A.chatId });
   expect(dispatch.run_id).not.toBe(sourceTurn.run.id);
-  await f.interactions.resolve(OWNER, interaction.chat_id, interaction.interaction_id,
-    { kind: "approval", decision: "approve", baseRevision: Number(interaction.revision) });
+  const browser = routineOriginBrowserFixture(OWNER);
+  origin = createRoutineChatOriginService({ db: f.db, transact: f.transact, chats: f.chats, interactions: f.interactions,
+    computerId: scope.computerId, expectedMachine: browser.machine });
+  const sourceRoutes = createRoutineOriginRoutes({ service: origin, ...browser.machine,
+    verifyApproval: browser.client.verifyApproval, getPrincipal: () => f.principal,
+    admitContinuation: createBotContinuationAdmitter({ repository: f.chats, orchestrator: f.canonical }) });
+  const sourceView = await sourceRoutes.request(`/api/chats/${sourceChat}/routine-origin`);
+  expect(sourceView.status).toBe(200);
+  expect(await sourceView.json()).toMatchObject({ sourceChatId: sourceChat,
+    pending: [{ sourceChatId: sourceChat, interaction: { interactionId: interaction.interaction_id, chatId: TARGET_A.chatId } }] });
+  const decision = { kind: "approval" as const, decision: "approve" as const, baseRevision: Number(interaction.revision) };
+  const proof = await browser.proof(sourceChat, interaction.interaction_id, decision);
+  const answer = await sourceRoutes.request(`/api/chats/${sourceChat}/routine-origin/${interaction.interaction_id}/resolve`, {
+    method: "POST", headers: { "content-type": "application/json", [ROUTINE_ORIGIN_PROOF_HEADER]: proof }, body: JSON.stringify(decision) });
+  expect(answer.status).toBe(200);
+  expect(await answer.json()).toMatchObject({ interaction: { interactionId: interaction.interaction_id, status: "resolved" } });
+  await bounded(f.canonical.drain());
   const repo = createBotRoutinesRepository(f.db), routine = (await repo.list(OWNER, BOT))[0]!;
   expect(routine).toMatchObject({ approvalId: interaction.interaction_id, status: "active", authorization: { accountId: snapshot.accountId, computerId: scope.computerId, grantRevision: 1 } });
 
@@ -135,9 +161,21 @@ it("runs one actual source CLI proposal through owner approval and a background-
   expect(await f.db.selectFrom("bot_interactions").selectAll().execute()).toHaveLength(1);
   expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
   expect(await f.db.selectFrom("bot_tasks").selectAll().execute()).toHaveLength(2);
-  expect(await f.db.selectFrom("chat_runs").selectAll().where("chat_id", "=", TARGET_A.chatId).execute()).toHaveLength(2);
+  expect(await f.db.selectFrom("chat_runs").selectAll().where("chat_id", "=", TARGET_A.chatId).execute()).toHaveLength(3);
   expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([receipt]);
   expect(await f.db.selectFrom("bot_grants").selectAll().execute()).toHaveLength(0);
   const transcript = await f.chats.getMessages(owner, TARGET_A.chatId, { afterSeq: 0, limit: 20 });
   expect(JSON.stringify(transcript)).toContain("composed fixture result");
+  const sourceRunCount = await f.db.selectFrom("chat_runs").selectAll().where("chat_id", "=", sourceChat).execute();
+  await origin.reconcile(OWNER, sourceChat); await origin.reconcile(OWNER, sourceChat);
+  const sourceTranscript = await f.chats.getMessages(owner, sourceChat, { afterSeq: 0, limit: 20 });
+  const returned = sourceTranscript.filter(message => message.parts.some(part => part.type === "routine_receipt"));
+  expect(returned).toHaveLength(1);
+  expect(returned[0]).toMatchObject({ role: "system", state: "committed" });
+  expect(returned[0]!.parts).toEqual(expect.arrayContaining([{ type: "text", text: "composed fixture result" },
+    expect.objectContaining({ type: "routine_receipt", engine: "matrix", routineId: routine.routineId, fireId: fire.fireId,
+      status: "completed", canonicalChatId: TARGET_A.chatId, canonicalRunId: occurrenceTask.run_id })]));
+  expect(returned[0]!.runId).toBeUndefined(); expect(returned[0]!.turnId).toBeUndefined();
+  expect(await f.db.selectFrom("chat_runs").selectAll().where("chat_id", "=", sourceChat).execute()).toEqual(sourceRunCount);
+  expect(workerRuns).toBe(1);
 });

@@ -30,6 +30,8 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   zellijTabName: z.string().regex(/^matrix-tab-[0-9a-f]{32}$/),
   zellijTabId: z.number().int().min(0).nullable(),
   zellijPaneId: z.string().regex(/^terminal_[0-9]+$/).nullable(),
+  // When the tab got its current pane. Optional so older state stays readable.
+  zellijPaneAssignedAt: z.string().datetime({ offset: true }).optional(),
   migrationKey: z.string().min(1).max(256).optional(),
   // Present, including an empty array for a plain shell, until activation.
   // Optional only so state written before startup-intent persistence remains readable.
@@ -244,22 +246,48 @@ export class TerminalWorkspaceStore {
       .map((workspace) => this.toPublicWorkspace(workspace));
   }
 
+  /** Every workspace's runtime state from one read of the state file. */
+  async listRuntimeWorkspaces(): Promise<InternalWorkspace[]> {
+    const state = await this.load();
+    return Object.values(state.workspaces)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((workspace) => structuredClone(workspace));
+  }
+
   async getRuntimeWorkspace(workspaceIdInput: string): Promise<InternalWorkspace | undefined> {
     const targetWorkspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = (await this.load()).workspaces[targetWorkspaceId];
     return workspace ? structuredClone(workspace) : undefined;
   }
 
-  async activateTab(refInput: TerminalRef, runtimeIds: { tabId: number; paneId: string }): Promise<TerminalTab> {
+  /** The store's clock, for callers that mark a boundary before a later write. */
+  currentTime(): Date {
+    return this.now();
+  }
+
+  /**
+   * `launchedAt` is when the runtime started the pane's command, read from
+   * `currentTime()` before the adapter call; without it the activation time is used.
+   */
+  async activateTab(
+    refInput: TerminalRef,
+    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date },
+  ): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const zellijTabId = z.number().int().min(0).parse(runtimeIds.tabId);
     const zellijPaneId = z.string().regex(/^terminal_[0-9]+$/).parse(runtimeIds.paneId);
     const now = this.now().toISOString();
+    const paneAssignedAt = runtimeIds.launchedAt ? z.date().parse(runtimeIds.launchedAt).toISOString() : now;
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = zellijTabId;
+      // Re-activating the same pane (startup reconcile, ensure) keeps its time, so
+      // its earlier status reports stay valid; a different pane is a new program,
+      // timed from its launch so reports made while the adapter names it count.
+      // A tab from older state keeps no time until its pane changes.
+      if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
@@ -284,6 +312,7 @@ export class TerminalWorkspaceStore {
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       tab.zellijTabId = null;
       tab.zellijPaneId = null;
+      delete tab.zellijPaneAssignedAt;
       tab.startupCommand = startupCommand;
       tab.status = "starting";
       delete tab.exitCode;
@@ -663,6 +692,7 @@ export class TerminalWorkspaceStore {
       zellijTabName: _tabName,
       zellijTabId: _tabId,
       zellijPaneId: _paneId,
+      zellijPaneAssignedAt: _paneAssignedAt,
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
       ...publicTab

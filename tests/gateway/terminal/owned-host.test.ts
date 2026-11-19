@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { terminalLoginEnvironment } from "../../../packages/gateway/src/terminal/login-environment.js";
 import { startOwnedTerminalHost } from "../../../packages/gateway/src/terminal/owned-host.js";
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -43,4 +44,33 @@ it("missing native proof keeps actual PTY I/O, reattach and size intact until ex
   await vi.waitFor(() => { expect(output).toContain("37 109"); expect(output).toContain("OWNED-alive"); });
   expect(host.pid).toBe(pid); expect(host.running).toBe(true); expect(ipc.send).not.toHaveBeenCalled();
   await host.stop(); await host.exited; expect(host.running).toBe(false);
+});
+
+it("keeps manager profile values private while the actual native PTY receives them", async () => {
+  const base = await mkdtemp("/tmp/t7profile-");
+  cleanup.push(() => rm(base, { recursive: true, force: true }));
+  const launchId = randomUUID().replaceAll("-", "");
+  const directory = join(base, "matrix-terminal-" + launchId);
+  await mkdir(directory, { mode: 0o700 });
+  const descriptor = { version: 1 as const, kind: "terminal-native" as const, launchId, generation: "gen_" + "a".repeat(64), directory,
+    createdAt: new Date().toISOString(), cols: 80, rows: 24,
+    launch: { command: "/usr/bin/env", args: ["sh", "-lc", 'test "$OWNER_PROFILE_MARKER" = expected && printf "owner-profile-retained\\n"'],
+      cwd: base, env: { HOME: base, PATH: "/usr/bin:/bin" }, inheritEnv: false as const, profile: "login-shell" as const } };
+  const start = { descriptor, digest: "b".repeat(64), pty: createRequire(import.meta.url)("node-pty") };
+  await expect(startOwnedTerminalHost(start)).rejects.toThrow("Terminal login environment unavailable");
+  const login = terminalLoginEnvironment(descriptor.launch, { OWNER_PROFILE_MARKER: "expected", INVOCATION_ID: "irrelevant-supervisor-value",
+    MATRIX_TERMINAL_ROUTINE_SOCKET: "/irrelevant/hint" }, 1000).env;
+  expect(login).toMatchObject({ OWNER_PROFILE_MARKER: "expected", XDG_RUNTIME_DIR: "/run/user/1000", HOME: base });
+  expect(login).not.toHaveProperty("MATRIX_TERMINAL_ROUTINE_SOCKET");
+  expect(login).not.toHaveProperty("INVOCATION_ID");
+  expect(JSON.stringify(descriptor)).not.toContain("irrelevant-supervisor-value");
+  const host = await startOwnedTerminalHost({ ...start, login });
+  cleanup.push(async () => { await host.stop(); await host.closed; });
+  const socket = connect(host.path);
+  let output = "";
+  socket.setEncoding("utf8");
+  socket.on("data", bytes => { output += bytes; });
+  await new Promise<void>((resolve, reject) => { socket.once("close", resolve); socket.once("error", reject); });
+  expect(output).toContain("owner-profile-retained");
+  expect(host.proofAvailable).toBe(false);
 });

@@ -5,6 +5,7 @@ import type { TextInputInstance } from "react-native";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { chatDraftKey } from "@/lib/chat-drafts";
+import { useMarkChatRead } from "@/lib/queries/use-mark-chat-read";
 import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { useOpenSidePanel } from "@/lib/use-shell-navigation";
@@ -15,6 +16,7 @@ import { chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-scre
 import { CHAT_SUGGESTIONS } from "./chat-suggestions";
 import { composerAddProps } from "./composer-add";
 import { ModelTrigger } from "./ModelTrigger";
+import { NativeSourceChatRoutines } from "./NativeSourceChatRoutines";
 import { useChatThread } from "./use-chat-thread";
 
 export interface ActiveChatScreenProps {
@@ -36,14 +38,18 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const openSidePanel = useOpenSidePanel();
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
+    routineOriginEligible,
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+    catalog, directBot, providerCatalogChecking, selection, chooseSelection, permissionMode, choosePermissionMode,
+    attachmentKinds, composer,
   } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
+  // A chat read here stops showing as Completed in the chat lists, as on Desktop.
+  useMarkChatRead(detail);
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,
@@ -117,6 +123,16 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
+      renderThread={gatewayUrl && activeChatId ? (renderMessageList) => (
+        <NativeSourceChatRoutines
+          gatewayUrl={gatewayUrl}
+          chatId={activeChatId}
+          eligible={Boolean(routineOriginEligible)}
+          messages={messages}
+        >
+          {renderMessageList}
+        </NativeSourceChatRoutines>
+      ) : undefined}
       chatState={chatState}
       onReloadChat={reloadChat}
       unsentActions={unsentActions}
@@ -151,7 +167,9 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
             catalog={catalog}
             catalogLoading={providerCatalogChecking}
             selection={selection}
-            onSelectionChange={setSelectionOverride}
+            onSelectionChange={chooseSelection}
+            permissionMode={permissionMode}
+            onPermissionModeChange={choosePermissionMode}
           />
         ),
       }}

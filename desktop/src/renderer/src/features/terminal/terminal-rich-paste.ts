@@ -72,9 +72,10 @@ export async function readTerminalClipboardFiles(
   }));
 }
 
-export function bracketTerminalPaths(paths: readonly string[]): string {
+export function bracketTerminalPaths(paths: readonly string[], machine: "cloud" | "local" = "cloud"): string {
   const safe = paths
-    .filter((path) => /^\/home\/matrix\/home\/[^\u0000\r\n]*$/.test(path))
+    .filter((path) => machine === "local" ? /^\/[^\u0000-\u001f\u007f]+$/.test(path) : /^\/home\/matrix\/home\/[^\u0000\r\n]*$/.test(path))
+    .map((path) => machine === "local" && !/^[A-Za-z0-9_./-]+$/.test(path) ? "\'" + path.replace(/\'/g, "\'\\\'\'") + "\'" : path)
     .join(" ")
     .replace(/\x1b\[20[01]~/g, "");
   const maxPayload = MAX_TERMINAL_INPUT - BRACKETED_PASTE_OPEN.length - BRACKETED_PASTE_CLOSE.length;

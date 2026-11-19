@@ -215,10 +215,28 @@ export function useCollaborativeAppSharing(input: {
     ? phase
     : currentReadiness?.status ?? (safeMessage ? "failed" : "idle");
 
+  /** Deletes one known share by its own revisions; null when that failed. */
+  const revokeShare = useCallback(async (target: CollaborativeAppShare): Promise<CollaborativeAppShare | null> => {
+    if (!path || !input.api.delete) return null;
+    try {
+      return CollaborativeAppShareSchema.parse(await input.api.delete(path.replace(/\/readiness$/, "/share"), {
+        clientRequestId: crypto.randomUUID(),
+        expectedShareRevision: target.shareRevision,
+        expectedBindingRevision: target.bindingRevision,
+      }));
+    } catch (error: unknown) {
+      console.warn("[collaborative-app-share] revoke after cancel failed", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }, [input.api, path]);
+
   const createShare = useCallback(async (rawInput: {
     organizationId: string;
     clientRequestId?: string;
-  }): Promise<CollaborativeAppShare | null> => {
+  }, options: {
+    /** Re-checked after preflight; returning false stops before the share mutation. */
+    shouldContinue?: () => boolean;
+  } = {}): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
     setActionState("sharing");
     setActionMessage(null);
@@ -232,6 +250,10 @@ export function useCollaborativeAppSharing(input: {
         expectedBuildId: currentReadiness.build.buildId,
       }));
       if (!preflight.eligible) throw new Error(`SharePreflight:${preflight.reason}`);
+      if (options.shouldContinue && !options.shouldContinue()) {
+        if (shareGeneration.current === generation) setActionState("idle");
+        return null;
+      }
       const next = preflight.existingShare ?? CollaborativeAppShareSchema.parse(await input.api.post(sharePath, {
         organizationId: parsed.organizationId,
         clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),
@@ -241,6 +263,18 @@ export function useCollaborativeAppSharing(input: {
         buildId: preflight.buildId,
         confirmationToken: preflight.confirmationToken,
       }));
+      // Cancelled while the share request was in flight: revoke exactly the share
+      // just created (its own revisions; the hook's snapshot is still stale here).
+      if (options.shouldContinue && !options.shouldContinue() && !preflight.existingShare) {
+        const revoked = await revokeShare(next);
+        if (shareGeneration.current === generation) {
+          setShare(revoked ?? next);
+          setShareKnown(revoked !== null);
+          setActionState(revoked ? "idle" : "failed");
+          if (!revoked) setActionMessage("Sharing could not be stopped. Refresh and try again.");
+        }
+        return null;
+      }
       if (shareGeneration.current !== generation) return null;
       setShare(next);
       setShareKnown(true);
@@ -254,7 +288,7 @@ export function useCollaborativeAppSharing(input: {
       }
       return null;
     }
-  }, [currentReadiness, input.api, path]);
+  }, [currentReadiness, input.api, path, revokeShare]);
 
   const stopShare = useCallback(async (clientRequestId?: string): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;

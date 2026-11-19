@@ -83,6 +83,8 @@
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
     "#collaborative-app-sharing": "./src/collaborative-app-sharing.ts",
+    "#collaborative-app-handoff": "./src/collaborative-app-handoff.ts",
+    "#shared-app-link": "./src/shared-app-link.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
@@ -148,6 +150,8 @@
     "#preview-pair": "./src/preview-pair.ts",
     "#routine-full-access": "./src/routine-full-access.ts",
     "#routine-full-access-view": "./src/routine-full-access-view.ts",
+    "#routine-chat-origin": "./src/routine-chat-origin.ts",
+    "#routine-chat-receipt": "./src/routine-chat-receipt.ts",
     "#routine-origin-proof": "./src/routine-origin-proof.ts"
   },
   "main": "src/index.ts",

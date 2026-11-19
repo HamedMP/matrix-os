@@ -56,7 +56,7 @@ function Attachment({
 }
 
 const attachmentMediaVariants = cva(
-  "relative flex aspect-square w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--bg-sunken)] text-[var(--text-primary)] group-data-[orientation=vertical]/attachment:w-full group-data-[size=sm]/attachment:w-8 group-data-[size=xs]/attachment:w-7 group-data-[size=xs]/attachment:rounded-md group-data-[state=error]/attachment:bg-[var(--danger-muted)] group-data-[state=error]/attachment:text-[var(--danger)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 group-data-[orientation=vertical]/attachment:[&_svg:not([class*='size-'])]:size-6 group-data-[size=xs]/attachment:[&_svg:not([class*='size-'])]:size-3.5",
+  "relative flex aspect-square w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--bg-sunken)] text-[var(--text-primary)] group-data-[orientation=vertical]/attachment:w-full group-data-[size=sm]/attachment:w-8 group-data-[size=xs]/attachment:w-7 group-data-[size=xs]/attachment:rounded-md group-data-[state=error]/attachment:bg-[var(--danger-muted)] group-data-[state=error]/attachment:text-[var(--danger-text)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 group-data-[orientation=vertical]/attachment:[&_svg:not([class*='size-'])]:size-6 group-data-[size=xs]/attachment:[&_svg:not([class*='size-'])]:size-3.5",
   {
     variants: {
       variant: {
@@ -117,7 +117,7 @@ function AttachmentDescription({ className, ...props }: React.ComponentProps<"sp
     <span
       data-slot="attachment-description"
       className={cn(
-        "mt-0.5 block min-w-0 max-w-full truncate text-xs text-[var(--text-tertiary)] group-data-[state=error]/attachment:text-[var(--danger)]",
+        "mt-0.5 block min-w-0 max-w-full truncate text-xs text-[var(--text-tertiary)] group-data-[state=error]/attachment:text-[var(--danger-text)]",
         className,
       )}
       {...props}

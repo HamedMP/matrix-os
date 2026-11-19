@@ -1,6 +1,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import { StyleSheet as NativeStyleSheet } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
@@ -54,6 +55,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
   }),
 }));
 
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   useCanonicalChatDetail: () => ({ detail: mockDetail, computer: mockComputer }),
 }));

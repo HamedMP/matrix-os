@@ -123,7 +123,7 @@ it("drops queued routine and ordinary Bash replies for cancelled native callback
   expect(frames.slice(1).map(frame => frame.response)).toEqual(["ordinary", "after-cancel"].map(request_id => ({ subtype: "success", request_id, response: {} })));
   expect(fail).not.toHaveBeenCalled();
 });
-it.each(["2.1.240", "2.1.280", "2.1.317"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317", "2.1.325"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
   const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false, nativeMode: string | undefined;
   let complete!: (command: string) => void;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); },
@@ -139,7 +139,7 @@ it.each(["2.1.240", "2.1.280", "2.1.317"])("%s ACK before input; matching partia
   complete("/bin/cat -- '/tmp/safe-result'"); await new Promise(resolve => setTimeout(resolve, 0));
   expect(frames.filter(frame => frame.response?.response?.hookSpecificOutput?.permissionDecision === "allow")).toEqual([]);
 });
-it.each(["2.1.279", "2.1.281", "2.1.316", "2.1.318", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
+it.each(["2.1.279", "2.1.281", "2.1.316", "2.1.318", "2.1.324", "2.1.326", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "unsafe"; } });
   closers.push(hook.close); await hook.start(); const request = frames[0]; const cb = request.request.hooks.PreToolUse[0].hookCallbackIds[0];
@@ -192,7 +192,7 @@ it("allows overlapping cleaners to create and use separate result stores", async
   }
   await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 });
-it.each(["2.1.240", "2.1.280", "2.1.317"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317", "2.1.325"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });
   closers.push(hook.close); await hook.start(); const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
@@ -248,4 +248,24 @@ it("initialization timeout sends one original prompt and ignores a late successf
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, initTimeoutMs: 1, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => { prompts++; }, fail: () => {}, execute: async () => "unused" });
   closers.push(hook.close); await hook.start(); await new Promise(resolve => setTimeout(resolve, 5)); expect(prompts).toBe(1);
   hook.handle(init(frames[0].request_id)); await Promise.resolve(); expect(prompts).toBe(1);
+});
+
+it("keeps the original native callback pending beyond two minutes and cleans up on source abort", async () => {
+  vi.useFakeTimers();
+  // Native AbortSignal.timeout uses an internal real clock. Bridge it to this
+  // isolated clock while retaining the production hook's actual timeout value.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => { const abort = new AbortController(); setTimeout(() => abort.abort(), ms); return abort.signal; });
+  const source = new AbortController(), frames: WrittenFrame[] = []; let release!: (value: string) => void, activeSignal!: AbortSignal;
+  const hook = createClaudeRoutineHook({ signal: source.signal, write: async text => { frames.push(JSON.parse(text)); }, startInput: async () => {}, fail: () => {},
+    execute: async (_command, signal) => { activeSignal = signal; return new Promise(resolve => { release = resolve; }); } });
+  try {
+    await hook.start(); const initialize = frames[0]!, cb = initialize.request.hooks.PreToolUse[0]!.hookCallbackIds[0]!;
+    expect(initialize.request.hooks.PreToolUse[0]).toMatchObject({ timeout: 1830 });
+    hook.handle(init(initialize.request_id)); hook.handle({ ...system, claude_code_version: "2.1.317" }); hook.handle(partial());
+    hook.handle(callback(cb, "long-owner-wait", "tool-one", "matrix routines pause rt_aaaaaaaaaaaaaaaaaaaaaaaa --revision 1 --request-id de000000-0000-4000-8000-000000000100"));
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    expect(activeSignal.aborted).toBe(false); expect(frames).toHaveLength(1);
+    source.abort(); expect(activeSignal.aborted).toBe(true); await hook.close();
+    release("/bin/cat -- '/tmp/display'"); await vi.advanceTimersByTimeAsync(0); expect(frames).toHaveLength(1);
+  } finally { source.abort(); release?.("/bin/cat -- '/tmp/display'"); await hook.close(); vi.restoreAllMocks(); vi.useRealTimers(); }
 });

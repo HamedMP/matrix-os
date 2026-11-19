@@ -287,7 +287,7 @@ function WorkTabContent({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")))), {
+        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events", true)))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,
@@ -851,7 +851,7 @@ function WorkTabContent({
         />
       ) : null}
       {renameChatError ? (
-        <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
           {renameChatError}
         </div>
       ) : null}

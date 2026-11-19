@@ -11,6 +11,7 @@ export const CODEX_ROUTINE_TOOL: { readonly type: "function"; readonly name: "ma
 export function createCodexRoutineChannel(options: {
   enabled?: boolean; parent?: PrivateParent; initialTurn(): RoutineTurn; enqueue(turn: RoutineTurn, clientRequestId?: string): boolean;
   current(binding: Readonly<ManagedTuple>): boolean; sendNative(response: DynamicToolResult): void;
+  ownerWaitChanged?(callId: string, turnId: string, waiting: boolean): void;
 }): { initial(signal: AbortSignal): Promise<RoutineTurn | undefined>; canRegister(): boolean;
   bind(turn: RoutineTurn, nativeGeneration: string, threadId: string, turnId: string, featureThread: boolean): void;
-  handle(raw: unknown): boolean; end(): void; close(): void };
+  handle(raw: unknown): boolean; isWaitingForOwner(callId: string, turnId: string): boolean; end(): void; close(): void };

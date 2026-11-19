@@ -14,6 +14,8 @@ import QuickOpen from "../files/QuickOpen";
 import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
+import { wireTerminalAgentEvents } from "../../stores/terminal-agent-events";
+import { RemoteTerminalAttention } from "../terminal/RemoteTerminalAttention";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useAppsQuery } from "../apps/apps.api";
@@ -126,6 +128,12 @@ export default function MissionControl() {
     return dispose;
   }, [api, platformHost, runtimeSlot]);
 
+  // Agent status for this computer's terminal tabs (sidebar dots, attention toasts).
+  useEffect(() => {
+    if (!api) return;
+    return wireTerminalAgentEvents({ baseUrl: platformHost, runtimeSlot });
+  }, [api, platformHost, runtimeSlot]);
+
   // Eagerly load the coding-agent runtime summary: the Agents page used to own
   // this fetch; project headers and the command palette now read it.
   // Runtime switches clear the store centrally
@@ -154,6 +162,7 @@ export default function MissionControl() {
       <Composer />
       <CommandPalette />
       <QuickOpen />
+      <RemoteTerminalAttention />
       <CreateProjectDialog onProjectReady={moveChatToCreatedProject} open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
     </div>
   );

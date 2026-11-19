@@ -10,7 +10,7 @@ import type { DesktopSurfaceMode } from "../../desktop/src/renderer/src/stores/d
 import type { Tab } from "../../desktop/src/renderer/src/stores/tabs";
 import { invoke } from "../../desktop/src/renderer/src/lib/operator";
 
-const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(async (channel: string) => channel === "embed:open" ? { embedId: "notes-embed", state: "ready" } : { ok: true }),
@@ -64,8 +64,7 @@ describe("app publishing through the owning desktop surface", () => {
     ] as const)(`does not offer publishing for ${title} in %s %s`, async (presentation, mode) => {
       render(<ParentSurface presentation={presentation} mode={mode} tab={{ id: appIdentity, kind: "app", title, slug: "browser-lab", appIdentity, closable: true }} />);
       await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", expect.objectContaining({ kind: "app", slug: "browser-lab", appIdentity })));
-      expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
-      expect(publishing.client.get).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
       expect(publishing.client.getConfig).not.toHaveBeenCalled();
     });
   }
@@ -76,7 +75,7 @@ describe("app publishing through the owning desktop surface", () => {
     ["canvas", "window"],
   ] as const)("keeps the %s %s publishing dialog mounted across its own overlay and closes it when hidden", async (presentation, mode) => {
     const view = render(<ParentSurface presentation={presentation} mode={mode} />);
-    const trigger = screen.getByRole("button", { name: "Publish app" });
+    const trigger = screen.getByRole("button", { name: "Share" });
     expect(trigger.closest("[data-os-window-top-bar-overlay]")).not.toBeNull();
     expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
     fireEvent.click(trigger);
@@ -92,7 +91,7 @@ describe("app publishing through the owning desktop surface", () => {
     act(() => useUi.getState().releaseRendererOverlay());
     view.rerender(<ParentSurface presentation={presentation} mode={mode} />);
     expect(screen.queryByRole("dialog", { name: "Share app" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Share app" })).not.toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
     view.unmount();

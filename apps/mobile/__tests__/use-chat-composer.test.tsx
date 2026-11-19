@@ -6,6 +6,7 @@ import type { CanonicalChatDetailResponse, CanonicalChatModelSelection } from "@
 const mockFetchActiveComputer = jest.fn();
 const mockCreateChat = jest.fn();
 const mockAdmitChatTurn = jest.fn();
+const mockFetchChatDetail = jest.fn();
 const mockBindDraftChatId = jest.fn();
 let mockRequestIdCount = 0;
 
@@ -27,6 +28,7 @@ jest.mock("@/lib/requests", () => ({
   fetchActiveComputer: (...args: unknown[]) => mockFetchActiveComputer(...args),
   createChat: (...args: unknown[]) => mockCreateChat(...args),
   admitChatTurn: (...args: unknown[]) => mockAdmitChatTurn(...args),
+  fetchChatDetail: (...args: unknown[]) => mockFetchChatDetail(...args),
   canonicalChatTitle: (text: string) => text,
   canonicalChatRequestId: () => `req_${++mockRequestIdCount}`,
   mobileQueryKeys: {
@@ -39,7 +41,7 @@ jest.mock("@/lib/requests", () => ({
 
 import React from "react";
 import * as Haptics from "expo-haptics";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, configure, renderHook, waitFor } from "@testing-library/react-native";
 import { disposeTestQueryClient } from "./query-test-cleanup";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -92,17 +94,22 @@ describe("chat composer send lifecycle", () => {
   }
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    configure({ asyncUtilTimeout: 8_000 });
     mockRequestIdCount = 0;
     queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false, gcTime: Infinity } } });
     invalidateQueries = jest.spyOn(queryClient, "invalidateQueries");
     mockFetchActiveComputer.mockResolvedValue({ handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" });
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
+    mockFetchChatDetail.mockResolvedValue(detailFor("chat_new", []));
   });
 
   afterEach(async () => {
     cleanup();
     await disposeTestQueryClient(queryClient);
     jest.clearAllMocks();
+    jest.useRealTimers();
+    configure({ asyncUtilTimeout: 1_000 });
   });
 
   it("plays a light tap as a message leaves, and none for an empty draft", async () => {
@@ -257,6 +264,38 @@ describe("chat composer send lifecycle", () => {
     sendText(composer, "Ship it");
     await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(2));
     expect(mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId)).toEqual(["req_2", "req_2"]);
+  });
+
+  it.each([
+    ["sent again with Retry", "retry"],
+    ["taken back into the composer and sent unchanged", "edit"],
+  ])("sends a message that was not sent, %s, with the model and mode it was first sent with, and the next message with those chosen meanwhile", async (_case, how) => {
+    mockAdmitChatTurn.mockRejectedValueOnce(new Error("Turn rejected"));
+    const inChat = { activeChatId: "chat_existing", detail: detailFor("chat_existing", []) };
+    const composer = renderComposer(inChat);
+    sendText(composer, "Ship it");
+    await waitFor(() => expect(composer.result.current.optimisticMessages).toMatchObject([{ failed: true }]));
+
+    // The server may have the first attempt: a send under its keys must be the same request.
+    const other = { instanceId: "instance_other", model: "other" } as CanonicalChatModelSelection;
+    composer.rerender({
+      ...newChat, ...inChat, selection: other, turnModes: { interactionMode: "default", permissionMode: "full_access" },
+    });
+    mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_existing", "msg_mine"));
+    if (how === "retry") {
+      act(() => { composer.result.current.retrySend("optimistic-req_2"); });
+    } else {
+      act(() => { composer.result.current.editUnsent("optimistic-req_2"); });
+      act(() => { composer.result.current.send(); });
+    }
+    await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(2));
+    expect(mockAdmitChatTurn.mock.calls[1][3]).toMatchObject({ clientRequestId: "req_2", selection, permissionMode: "supervised" });
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+    sendText(composer, "Tag it");
+    await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(3));
+    expect(mockAdmitChatTurn.mock.calls[2][3]).toMatchObject({ selection: other, permissionMode: "full_access" });
+    expect(mockAdmitChatTurn.mock.calls[2][3].clientRequestId).not.toBe("req_2");
   });
 
   it("does not send a message that was not sent again while another send is on its way, or while sending is held back", async () => {

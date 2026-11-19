@@ -50,6 +50,9 @@ OPTIONAL_WORKERS_REVIEWS = {
 REVIEW_FIELDS = ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")
 OPTIONAL_WORKERS_ENV = {f"MATRIX_FUNDED_{model}_PRICING_{field}"
                         for model in OPTIONAL_WORKERS_REVIEWS for field in REVIEW_FIELDS}
+JEV_PRICING_ENV = tuple(f"MATRIX_JEV_PRICING_{field}" for field in REVIEW_FIELDS)
+MANAGED_PRICING_ENV = tuple(f"MATRIX_FUNDED_{model}_PRICING_{field}"
+                            for model in ("SONNET", "GLM") for field in REVIEW_FIELDS)
 FIXED_ENV = {
     "MATRIX_FUNDED_AI_ENABLED": "true", "MATRIX_FUNDED_AI_RESERVATION_MODE": "usage",
     "MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY": "16", "MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY": "2",
@@ -128,10 +131,21 @@ def optional_workers_bindings(pricing):
     return bindings
 
 
-def emit_workers_bindings():
-    bindings = optional_workers_bindings({name: os.environ[name] for name in OPTIONAL_WORKERS_ENV
-                                          if os.environ.get(name)})
-    emit_env({"WORKERS_PRICING_BINDINGS": "".join(f"|{key}={value}" for key, value in bindings.items())})
+def pricing_bindings(pricing, registry):
+    variables = {**pricing, **({REGISTRY_ENV: "true"} if registry else {})}
+    return "".join(f"|{key}={value}" for key, value in variables.items())
+
+
+def emit_staging_pricing_bindings():
+    require(os.environ["DEPLOY_ENVIRONMENT"] == "staging", "Staging pricing only")
+    registry = os.environ.get(REGISTRY_ENV) == "true"
+    pricing = {name: os.environ[name] for name in JEV_PRICING_ENV}
+    if not registry:
+        pricing.update({name: os.environ[name] for name in MANAGED_PRICING_ENV})
+        pricing.update(optional_workers_bindings({name: os.environ[name] for name in OPTIONAL_WORKERS_ENV
+                                                  if os.environ.get(name)}))
+    require(all("|" not in value for value in pricing.values()), "Invalid pricing binding delimiter")
+    emit_env({"RELAY_PRICING_BINDINGS": pricing_bindings(pricing, registry)})
 
 
 def verify_configuration(config):
@@ -167,13 +181,10 @@ def verify_configuration(config):
     require(set(pricing) == expected, "Invalid pricing fields")
 
 
-def pricing_environment_matches(config):
+def registry_mode_matches(config):
     registry = config.get(REGISTRY_CONFIG, False)
     mode = os.environ.get(REGISTRY_ENV, "")
-    pricing = config["pricing"]
-    return (mode in {"", "false", "true"} and (mode == "true") == registry and
-            all(os.environ.get(key) == value for key, value in pricing.items()) and
-            (registry or all(not os.environ.get(key) for key in OPTIONAL_WORKERS_ENV - set(pricing))))
+    return mode in {"", "false", "true"} and (mode == "true") == registry
 
 
 def verify_evidence(body, receipt_hash, source, run, repository, stage):
@@ -301,8 +312,9 @@ def configuration():
     receipt = load_evidence(stage)
     config = receipt["configuration"]
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
-            pricing_environment_matches(config), "Reviewed deployment configuration mismatch")
-    values = {"CANDIDATE_TAG": tag}
+            registry_mode_matches(config), "Reviewed deployment configuration mismatch")
+    values = {"CANDIDATE_TAG": tag,
+              "RELAY_PRICING_BINDINGS": pricing_bindings(config["pricing"], config.get(REGISTRY_CONFIG, False))}
     for key, (prefix, secret) in SECRETS.items():
         values[prefix + "_SECRET"] = secret
         values[prefix + "_VERSION"] = config["secretVersions"][key]
@@ -390,7 +402,7 @@ def promotion():
     receipt = load_evidence("production")
     config = receipt["configuration"]
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
-            pricing_environment_matches(config), "Reviewed deployment configuration mismatch")
+            registry_mode_matches(config), "Reviewed deployment configuration mismatch")
     service = cloud_json("services", config["relayService"])
     target = candidate_target(service)
     revision = cloud_json("revisions", target["revisionName"])
@@ -451,10 +463,10 @@ def import_evidence():
 if __name__ == "__main__":
     try:
         {"configuration": configuration, "promotion": promotion, "import": import_evidence,
-         "workers-pricing-bindings": emit_workers_bindings,
+         "staging-pricing-bindings": emit_staging_pricing_bindings,
          "deployment-preflight": deployment_preflight, "candidate-isolation": candidate_isolation}[sys.argv[1]]()
     except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-        if sys.argv[1] == "workers-pricing-bindings":
+        if sys.argv[1] == "staging-pricing-bindings":
             print("Workers AI review must match the supported version and a current UTC window of at most 31 days.",
                   file=sys.stderr)
         else:

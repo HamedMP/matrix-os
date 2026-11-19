@@ -15,6 +15,9 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
 import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import { openSharedLauncherApp, useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
+import { useLauncherShareContext } from "@/hooks/useLauncherShareContext";
+import { useLauncherFilter } from "@/hooks/useLauncherFilter";
+import { LauncherFilterChips } from "@matrix-os/ui/share";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import {
   XIcon,
@@ -59,6 +62,7 @@ export function MissionControl({
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
   const shared = useSharedLauncherApps(open);
+  const shareContext = useLauncherShareContext(shared, open);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
@@ -117,7 +121,7 @@ export function MissionControl({
     : [CREATE_APP, ...allApps];
   const openLauncherApp = (name: string, path: string) => {
     const sharedApp = shared.apps.find((app) => app.path === path);
-    if (sharedApp && openSharedLauncherApp(sharedApp)) return;
+    if (sharedApp && openSharedLauncherApp(sharedApp)) { shareContext.markOpened(sharedApp); return; }
     if (path === CREATE_APP.path) onCreateApp();
     else onOpenApp(name, path);
   };
@@ -127,7 +131,8 @@ export function MissionControl({
   // renderers; pinning and ordering belong to Settings, not the OS launcher.
   if (nativePresentation || themeStyle === "macos-glass") {
     return (
-      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} sharedDirectory={shared} />
+      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} sharedDirectory={shared}
+        organizations={shareContext.organizations} isNewShared={shareContext.isNewShared} />
     );
   }
 
@@ -173,10 +178,6 @@ export function MissionControl({
           </button>
         </div>
 
-        <p className="px-6 pb-4 text-sm text-white/80">
-          Open an installed app, or choose Create app to start in Chat.
-        </p>
-
         {provision.active && (
           <div className="flex items-center gap-2 mx-6 mb-3 px-3 py-1.5 rounded-lg bg-muted/50 text-xs text-muted-foreground">
             <Loader2Icon className="size-3 animate-spin" />
@@ -207,6 +208,7 @@ export function MissionControl({
           onAddToDesktop={onAddToDesktop}
           visible={visible}
           closingRef={closingRef}
+          shareContext={shareContext}
         />
       </div>
     </div>
@@ -233,6 +235,7 @@ function LauncherGrid({
   onAddToDesktop,
   visible,
   closingRef,
+  shareContext,
 }: {
   apps: AppEntry[];
   openWindows: Set<string>;
@@ -246,8 +249,11 @@ function LauncherGrid({
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
   visible: boolean;
   closingRef: React.RefObject<boolean>;
+  shareContext: Pick<ReturnType<typeof useLauncherShareContext>, "organizationFor" | "isNewShared" | "organizations">;
 }) {
-  const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps);
+  const launcherFilter = useLauncherFilter(apps, shareContext.organizations);
+  const shownApps = apps.filter(launcherFilter.matches);
+  const { mainApps, generatedApps, gameApps } = groupLauncherApps(shownApps);
   const [placementError, setPlacementError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -295,6 +301,8 @@ function LauncherGrid({
         <AppTile
           name={app.name}
           shared={!!app.sharedAppTarget}
+          sharedOrganization={shareContext.organizationFor(app)}
+          isNew={!!app.sharedAppTarget && shareContext.isNewShared(app.sharedAppTarget.scopeId)}
           createApp={app.path === CREATE_APP.path}
           onAddToDesktop={!app.sharedAppTarget && !isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
             ? () => void addToDesktop(app)
@@ -328,6 +336,8 @@ function LauncherGrid({
           {placementError}
         </p>
       ) : null}
+      <LauncherFilterChips chips={launcherFilter.chips} value={launcherFilter.filter} onChange={launcherFilter.setFilter} className="mb-2" />
+      <p className="mb-4 text-sm text-white/80">{launcherFilter.hint(shownApps.length)}</p>
       {mainApps.length > 0 && (
         <>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">

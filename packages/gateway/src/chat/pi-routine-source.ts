@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Duplex } from "node:stream";
 import { z } from "zod/v4";
@@ -93,7 +94,7 @@ function createPiRoutineSource(options: NativeRoutineCliPort & { input: Canonica
     if (actions.size >= 8) { send(frame.id, frame.context, unknown(frame.operation)); return; }
     const action = { controller: new AbortController(), key, wake: undefined as (() => void) | undefined };
     const actionSignal = AbortSignal.any([signal, action.controller.signal]); actions.set(frame.id, action);
-    const deadline = setTimeout(() => action.controller.abort(), 120_000); deadline.unref();
+    const deadline = setTimeout(() => action.controller.abort(), ROUTINE_CLI_NATIVE_TIMEOUT_MS); deadline.unref();
     let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
     try {
       const matched = await new Promise<boolean>(resolve => {
@@ -118,7 +119,7 @@ function createPiRoutineSource(options: NativeRoutineCliPort & { input: Canonica
           if (invocations.size >= 512) { end(); return Promise.resolve(false); }
           invocations.set(input.invocationId, { key, signal: actionSignal, digest: routineActionHash(input.operation) });
           return current({ sourceId: sourceId!, invocationId: input.invocationId, operationDigest: routineActionHash(input.operation) }) ? registered.authorize(input) : Promise.resolve(false);
-        }, issue: registered.issue, cancel: registered.cancel, timeoutMs: 120_000 });
+        }, issue: registered.issue, cancel: registered.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
       invokers.add(invoker);
       const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...argv(frame.operation), expectedOperation: frame.operation, signal: actionSignal }));
       send(frame.id, frame.context, actionSignal.aborted ? unknown(frame.operation) : JSON.stringify(result));

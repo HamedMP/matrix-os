@@ -126,6 +126,10 @@ OTA payloads.
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 
+For an unpublished numbered verification bundle, dispatch `host-bundle-release.yml`
+on the reviewed branch with `channel=none` and `deploy_after_publish=false`.
+The same-SHA CI gate still applies; registration promotes no channel pointer.
+
 Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
 for review, pushing and reopening run core CI and Docker classification; retargeting the base
 reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being

@@ -161,6 +161,23 @@ describe("project collaboration app adapter", () => {
     expect(bridgeCalls.every((call) => call.transactional === true)).toBe(true);
   });
 
+  it("binds documented bridge payloads that omit app to the project app", async () => {
+    const projectApps = adapter();
+    const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "mutate_project" });
+    await expect(projectApps.mutate(editor, {
+      appId: APP_ID,
+      clientRequestId: "50000000-0000-4000-8000-000000000094",
+      expectedRevision: 2,
+      action: { action: "insert", table: "cards", data: { title: "No app field" } },
+    })).resolves.toEqual({ result: { id: "row_1" }, revision: 3, replayed: false });
+    await expect(projectApps.query(editor, { appId: APP_ID, action: { action: "find", table: "cards", limit: 100 } }))
+      .resolves.toEqual([{ id: "row_1", title: "No app field" }]);
+    await expect(projectApps.query(editor, { appId: APP_ID, action: { action: "listApps" } }))
+      .rejects.toMatchObject({ code: "invalid_action" });
+    expect(bridgeCalls).toHaveLength(2);
+    expect(bridgeCalls.every((call) => (call.action as { app?: string }).app === call.namespace)).toBe(true);
+  });
+
   it("allows conditional writes only through the mutation envelope for any active organization member", async () => {
     bridge.execute = vi.fn(async () => ({ ok: false }));
     const apps = adapter();

@@ -20,6 +20,7 @@ import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "../chat/attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "../chat/attachments/use-conversation-attachments";
+import { useMatrixAttachmentControls } from "../chat/attachments/use-matrix-attachment-controls";
 import {
   SharedChatComposer,
   type ComposerReferenceToken,
@@ -133,7 +134,7 @@ export function ProjectChatDraft({
     return seed ? mergeComposerSeed(initialDraft, seed.draft) : initialDraft;
   });
   const providerSelectionTouchedRef = useRef(restoredEntry?.pickerTouched ?? false);
-  const attachments = useConversationAttachments();
+  const attachments = useConversationAttachments(projectId);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -288,6 +289,16 @@ export function ProjectChatDraft({
   const canonicalBlocked = canonicalClient
     ? !canonicalSelectionExecutable
     : !legacyProjectSelectionExecutable(projectCatalog, summary, canonicalSelection);
+  const matrixAttachments = useMatrixAttachmentControls({
+    api,
+    scopeKey: `project-draft:${projectId}`,
+    project: { kind: "project", projectId, chatId: "attachment-picker", label: projectLabel },
+    enabled: active && canCreate && Boolean(selectedInstance?.supports.attachments.some(kind => kind === "file" || kind === "image")),
+    locked: busy,
+    queue: attachments,
+    deviceInput: fileInputRef,
+    validate: files => chatAttachmentSubmissionError(selectedInstance, canonicalSelection?.model, files, canonicalSelection?.options),
+  });
   const handleProviderSetup = useProviderSetup(summary.providers, refreshSummary);
 
   useEffect(() => {
@@ -312,7 +323,7 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit(submission: SharedChatComposerSubmission) {
-    if (liveCatalog.initialLoading || canonicalBlocked || submitting || submitInFlightRef.current) return;
+    if (liveCatalog.initialLoading || canonicalBlocked || submitting || submitInFlightRef.current || matrixAttachments.pending) return;
     const selectedInstance = projectCatalog.instances.find((instance) => (
       instance.id === canonicalSelection?.instanceId
     ));
@@ -424,8 +435,9 @@ export function ProjectChatDraft({
       className={`ph-no-capture flex min-w-0 flex-col overflow-visible ${presentation === "landing" ? "shrink-0" : "min-h-[460px] flex-1"}`}
       style={{ background: "var(--bg-app)" }}
       data-slot="project-chat-draft"
-      {...attachments.paneProps}
+      {...matrixAttachments.paneProps}
     >
+      {matrixAttachments.dialog}
       {presentation === "hero" ? (
         <ChatProviderOnboarding><ProjectChatHero
           projectLabel={projectLabel}
@@ -441,7 +453,7 @@ export function ProjectChatDraft({
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
           {submissionError || createError ? (
-            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger)" }}>{submissionError ?? createError}</p>
+            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger-text)" }}>{submissionError ?? createError}</p>
           ) : null}
           {canCreate ? (
             <>
@@ -465,7 +477,7 @@ export function ProjectChatDraft({
                   onSubmit={(submission) => void submit(submission)}
                   busy={busy}
                   disabled={busy}
-                  canSubmit={!busy && !canonicalBlocked && (
+                  canSubmit={!busy && !canonicalBlocked && !matrixAttachments.pending && (
                     effectiveDraft.prompt.trim().length > 0
                     || attachments.items.length > 0
                     || referenceTokens.length > 0
@@ -493,11 +505,11 @@ export function ProjectChatDraft({
                   resourceSearch={(query) => api
                     ? searchProjectChatResources(api, projectId, query)
                     : Promise.resolve([])}
-                  onAttach={() => fileInputRef.current?.click()}
+                  onAttach={matrixAttachments.onAttach}
                   attachments={(
                     <AttachmentPreviewRow
                       items={attachments.items}
-                      selectionError={attachments.selectionError}
+                      selectionError={matrixAttachments.error ?? attachments.selectionError}
                       disabled={busy}
                       onRemove={attachments.remove}
                       onRetry={(localId) => void attachments.retry(localId)}

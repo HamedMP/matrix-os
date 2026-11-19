@@ -1,5 +1,3 @@
-import { NativeRoutineActionInbox } from "@/components/RoutineActionConfirmation";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -70,7 +68,7 @@ function TerminalScreen() {
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const sessionNavigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const {
-    computer, sessions,
+    sessions,
     isPending,
     isError,
     createSession,
@@ -188,7 +186,6 @@ function TerminalScreen() {
         refreshing={pullToRefresh.refreshing}
         onRefresh={pullToRefresh.onRefresh}
       >
-        {computer ? <NativeRoutineActionInbox gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}/> : null}
         <SearchField
           placeholder="Search sessions"
           value={searchQuery}

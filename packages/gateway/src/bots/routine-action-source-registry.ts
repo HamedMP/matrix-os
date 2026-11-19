@@ -22,7 +22,7 @@ export function routineActionPolicy(source: RoutineCliSourceContext, policyValue
   const policy = parsed.data;
   if (action === "read") return "allow";
   if (policy.scope !== "personal" || policy.interactionMode !== "default" || policy.permissionMode === "unsupported" || policy.originCeiling === "read") return "deny";
-  return source.identity.kind !== "terminal_launch" && policy.permissionMode === "full_access" && policy.originCeiling === "full" ? "allow" : "ask";
+  return policy.permissionMode === "full_access" && policy.originCeiling === "full" ? "allow" : "ask";
 }
 export interface RoutineSourceProducer {
   source: RoutineCliSourceContext;

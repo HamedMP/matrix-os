@@ -122,6 +122,41 @@ describe("gateway server route registrars", () => {
     await expect(stat(join(projectRoot, "blocked.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps a stored project restore subject to its admission check", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "gateway-trash-restore-fence-"));
+    cleanupPaths.push(homePath);
+    const projectRoot = join(homePath, "projects", "repo");
+    const trashRoot = join(homePath, ".trash");
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(trashRoot);
+    const originalPath = "projects/repo/fixture.txt";
+    const trashPath = ".trash/fixture.txt";
+    await writeFile(join(homePath, trashPath), "fixture bytes");
+    await writeFile(join(trashRoot, ".manifest.json"), JSON.stringify([{
+      name: "fixture.txt", originalPath, deletedAt: "2026-01-01T00:00:00.000Z", trashPath,
+    }]));
+    const withLegacyAdmission = vi.fn(async () => { throw new ProjectFenceError("scope_required"); });
+    const app = new Hono();
+    registerFileRoutes(app, {
+      homePath, getOwnerId: () => "user_owner",
+      projectPathAdmission: createLegacyProjectPathAdmission({
+        homePath, listOwnerProjects: async () => [{ id: "proj_repo", localPath: projectRoot }],
+        projectOperationAdmission: { withLegacyAdmission },
+      }),
+    });
+
+    const response = await app.request("/api/files/trash/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trashPath }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(withLegacyAdmission).toHaveBeenCalledOnce();
+    await expect(stat(join(homePath, originalPath))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await stat(join(homePath, trashPath))).size).toBe(13);
+  });
+
   it("empties a large stored trash manifest under one deduplicated project admission", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "gateway-trash-fence-"));
     cleanupPaths.push(homePath);

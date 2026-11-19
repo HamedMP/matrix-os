@@ -128,6 +128,8 @@ export type ConversationTurnTimelinePresentation =
 export interface ConversationTurnPresentation {
   /** Persisted request identity; paired with a durable occurrence for display only. */
   routineRequestId?: string;
+  /** A real persisted source message, grouped for layout only; never a canonical Turn/Run. */
+  routineReceipt?: {receipt:import("@matrix-os/contracts").RoutineChatReceiptPart;text:string};
   /** All attempts belong to this persisted turn; Bot tasks bind by run ID. */
   runIds?: string[];
   agentLabel?: string;
@@ -146,6 +148,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  openChat?: (chatId:string)=>void;
   browserChatId?: string;
   browserPermissions?: BrowserPermissionClient;
   openPermissionMode?: () => void;
@@ -153,6 +156,7 @@ export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
+  fileImageKey?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => string;
   resolveApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => { name: string } | null;
   openApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;

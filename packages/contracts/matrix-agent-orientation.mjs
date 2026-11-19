@@ -9,6 +9,9 @@ export function buildMatrixAgentOrientation({ surface, customMcpScope = "none" }
     "Build real Vite + React + TypeScript projects with a matrix.json manifest. Follow matrix-app-builder's current runtime, permissions, and database contract; an owner-built first-party app may use the shell-injected window.MatrixOS.db bridge. Do not apply that trust mode to third-party installs, call provider APIs directly, or embed database credentials. Implement one useful flow through Postgres before expanding polish; verify create/edit/delete, reload persistence, loading/empty/error states, and appropriate atomic writes.",
     "Use deliberate hierarchy, typography, spacing, imagery, and responsive behavior instead of generic decorative defaults. Motion should explain state or guide attention, respect prefers-reduced-motion, keep keyboard/focus behavior usable, and favor compositor-friendly properties. Inspect the running app at varied desktop window and mobile widths, exercise the main flow, and refine from rendered evidence. Report exactly what was verified and any unavailable preview or persistence checks.",
   ];
+  if (surface === "claude") {
+    sections.push("For new scheduled work, use the native scheduling tools available in this run. If they are unavailable, tell the person. When the Matrix routine CLI is available, use it to inspect or control existing Matrix routines.");
+  }
   if (surface === "kernel") {
     sections.push("Kernel capabilities may include mcp__matrix-os-ipc__manage_cron for scheduling, remember/recall for memory, integration inventory/describe/call tools, app lifecycle tools, and image/audio tools. Use their actual registered schemas and scoped permissions; availability can depend on configuration. Use the installed Matrix skills to discover the appropriate workflow.");
   } else if (surface === "claude" && customMcpScope !== "none") {

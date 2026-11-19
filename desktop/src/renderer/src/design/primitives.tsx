@@ -189,7 +189,7 @@ export function ContextMenu({
               disabled={item.disabled}
               onSelect={item.onSelect}
               className="flex cursor-default items-center px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)] data-[disabled]:opacity-40"
-              style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}
+              style={{ color: item.danger ? "var(--danger-text)" : "var(--text-primary)" }}
             >
               {item.label}
             </RadixContextMenu.Item>

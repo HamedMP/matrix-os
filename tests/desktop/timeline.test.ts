@@ -7,7 +7,7 @@ describe("describeEvent", () => {
   it("labels session start, including the agent when present", () => {
     expect(describeEvent({ id: "1", type: "session.started", payload: { agent: "claude" }, createdAt: at })).toEqual({
       label: "Agent launched (claude)",
-      color: "var(--success)",
+      dotColor: "var(--success)",
     });
     expect(describeEvent({ id: "2", type: "session.started", createdAt: at }).label).toBe("Session started");
   });

@@ -9,12 +9,12 @@ function approved(request: ConversationRequestPresentation): boolean {
 export function RequestStatusIcon({ request }: { request: ConversationRequestPresentation }) {
   const success = request.state === "resolved" && (request.requestKind !== "approval" || approved(request));
   const Icon = success ? CheckCircle2 : request.requestKind === "approval" ? ShieldAlert : MessageCircle;
-  return <Icon aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: success ? "var(--success)" : "var(--text-secondary)" }} />;
+  return <Icon aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: success ? "var(--success-text)" : "var(--text-secondary)" }} />;
 }
 
 export function RequestApprovalOutcome({ request }: { request: ConversationRequestPresentation }) {
   if (request.requestKind !== "approval" || request.state !== "resolved") return null;
-  return <p className="mt-1 text-sm" style={{ color: approved(request) ? "var(--success)" : "var(--text-secondary)" }}>
+  return <p className="mt-1 text-sm" style={{ color: approved(request) ? "var(--success-text)" : "var(--text-secondary)" }}>
     {canonicalChatApprovalOutcome(request.decision)}
   </p>;
 }

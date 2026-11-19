@@ -1,6 +1,6 @@
 /** Dedicated native harness boundary: one run bearer, one trusted loopback route, no owner auth fallback. */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SharedBrowserActionSchema, SharedBrowserMcpActionInputSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES } from "@matrix-os/contracts";
+import { SharedBrowserActionSchema, SharedBrowserMcpActionInputSchema, SHARED_BROWSER_TOOL_DESCRIPTION, SharedBrowserActionResultSchema, SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE } from "@matrix-os/contracts";
 const MAX_BYTES = 192 * 1024;
 export const SHARED_BROWSER_DESCRIPTION = SHARED_BROWSER_TOOL_DESCRIPTION;
 export function createSharedBrowserMcpServer(options: { gatewayPort: number; token: string; fetcher?: typeof fetch }) {
@@ -26,7 +26,13 @@ export function createSharedBrowserMcpServer(options: { gatewayPort: number; tok
       return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
     } catch (error: unknown) {
       console.warn("[shared-browser-mcp] Action unavailable", error instanceof Error ? error.name : "UnknownError");
-      return { isError: true, content: [{ type: "text" as const, text: "Browser action unavailable. If the owner paused or took over, stop until they resume; then obtain a fresh snapshot before continuing. Never replay an uncertain action." }] };
+      return {
+        isError: true,
+        content: [{
+          type: "text" as const,
+          text: SHARED_BROWSER_UNCERTAIN_ACTION_MESSAGE,
+        }],
+      };
     }
   });
   return server;

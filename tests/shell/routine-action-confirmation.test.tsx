@@ -2,7 +2,7 @@
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { RoutineActionConfirmation, RoutineActionInbox } from "../../packages/ui/src/routine-action/RoutineActionConfirmation";
+import { RoutineActionConfirmation } from "../../packages/ui/src/routine-action/RoutineActionConfirmation";
 import { useRoutineAction } from "../../packages/ui/src/routine-action/use-routine-action";
 import { createRoutineActionBrowserClient } from "../../packages/ui/src/routine-action/client";
 import { RoutineActionViewSchema, routineActionConfirmationUrl } from "@matrix-os/contracts";
@@ -56,18 +56,6 @@ it("a failed current challenge read disables decisions without falsely recording
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     expect(screen.getByText("This request is unavailable")).toBeTruthy(); expect(screen.queryByText("This request expired")).toBeNull();
   } finally { vi.useRealTimers(); }
-});
-
-it("the shared Terminal inbox waits for a real current read before claiming it is empty", async () => {
-  let release!: () => void; const pending = new Promise<never[]>(resolve => { release = () => resolve([]); });
-  const client = { read: async () => view, list: async () => pending, submit: vi.fn() };
-  render(<RoutineActionInbox client={client as never} identity="owner-a"/>);
-  const details = screen.getByText("Routine confirmations").closest("details")!; details.open = true;
-  fireEvent(details, new Event("toggle"));
-  expect(screen.queryByText("No pending routine confirmations on this Computer.")).toBeNull();
-  expect(screen.getByText("Loading confirmations…")).toBeTruthy();
-  await act(async () => { release(); await pending; });
-  expect(screen.getByText("No pending routine confirmations on this Computer.")).toBeTruthy();
 });
 
 it.each(["owner-b:session-a:computer-a", "owner-a:session-b:computer-a", "owner-a:session-a:computer-b"])("rejects a retained decision callback after scope changes to %s", async identity => {

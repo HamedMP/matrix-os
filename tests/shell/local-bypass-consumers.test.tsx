@@ -32,3 +32,15 @@ it.each([
   vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
   expect(() => renderToStaticMarkup(createElement(RootLayout, { children: content() }))).not.toThrow();
 });
+
+it("mounts ClerkProvider inside <body>, as Clerk Core 3 requires", async () => {
+  vi.stubEnv("MATRIX_SELF_HOSTED", undefined);
+  vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+  const { ClerkProvider } = await import("@clerk/nextjs");
+  const tree = RootLayout({ children: createElement("main") });
+  expect(tree.type).toBe("html");
+  const body = (tree.props as { children: React.ReactElement<{ children: React.ReactNode }> }).children;
+  expect(body.type).toBe("body");
+  const bodyChildren = [body.props.children].flat() as React.ReactElement[];
+  expect(bodyChildren.some((child) => child?.type === ClerkProvider)).toBe(true);
+});

@@ -74,6 +74,8 @@ export * from "#canonical-chat-surface";
 export * from "#collaboration";
 export * from "#collaboration-capabilities";
 export * from "#collaborative-app-sharing";
+export * from "#collaborative-app-handoff";
+export * from "#shared-app-link";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
@@ -1444,6 +1446,7 @@ export {
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
+  isOsViewFixedAppPath,
   osViewBundledIconUrlForPath,
   osViewUsesBundledArtworkForLegacyIcon,
   osViewIconUrlForApp,
@@ -1514,4 +1517,5 @@ export * from "#routine-action";
 export * from "#routine-full-access";
 export * from "#routine-full-access-view";
 
+export * from "#routine-chat-origin";
 export * from "#routine-origin-proof";

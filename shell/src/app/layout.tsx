@@ -17,6 +17,11 @@ import { DefaultOrganization } from "@/components/DefaultOrganization";
 import { OrganizationStateProvider } from "@/lib/collaboration-organization-state";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
+import { clerkAllowedRedirectOrigins } from "@/lib/clerk-satellite-return";
+
+// Lets sign-ins on this primary domain return to the Clerk satellite
+// (ai-insights.app) while keeping Clerk's default redirect origins.
+const clerkRedirectOrigins = clerkAllowedRedirectOrigins(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 export async function generateMetadata(): Promise<Metadata> {
   const metadata = await buildShellMetadata(process.env.GATEWAY_URL);
@@ -63,25 +68,38 @@ export default function RootLayout({
 }>) {
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const app = <AppProviders>{children}</AppProviders>;
-  const renderDocument = (includePostHogIdentify: boolean, content: React.ReactNode) => (
-    <html
-      lang="en"
-      data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
-      // Runtime replay kill switch: read on the server per request, so
-      // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
-      // replay without rebuilding the bundle.
-      data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
-    >
-      <body className="matrix-shell-fonts">
+  const renderDocument = (withClerk: boolean, content: React.ReactNode) => {
+    const bodyContent = (
+      <>
         {!selfHostedMode ? <Script {...{ src: "/billing/tracking.js" }} strategy="beforeInteractive" /> : null}
         {content}
-        {includePostHogIdentify ? <PostHogIdentify /> : null}
+        {withClerk ? <PostHogIdentify /> : null}
         <PwaRegister />
         <InstallPrompt />
         <Toaster />
-      </body>
-    </html>
-  );
+      </>
+    );
+    return (
+      <html
+        lang="en"
+        data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
+        // Runtime replay kill switch: read on the server per request, so
+        // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
+        // replay without rebuilding the bundle.
+        data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
+      >
+        <body className="matrix-shell-fonts">
+          {/* Clerk Core 3 requires ClerkProvider inside <body>, not around <html>.
+              ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
+              sign-in/up cross-links on the in-app routes. Those vars are baked at
+              build time (default /sign-in and /sign-up); without them Clerk falls
+              back to the hosted Account Portal (accounts.matrix-os.com).
+              allowedRedirectOrigins adds the exact Clerk satellite origins. */}
+          {withClerk ? <ClerkProvider allowedRedirectOrigins={clerkRedirectOrigins}>{bodyContent}</ClerkProvider> : bodyContent}
+        </body>
+      </html>
+    );
+  };
 
   if (selfHostedMode) {
     return renderDocument(false, (
@@ -95,14 +113,6 @@ export default function RootLayout({
     ? <OrganizationStateProvider value={{ status: "loading", organizationId: null }}>{app}</OrganizationStateProvider>
     : <DefaultOrganization>{app}</DefaultOrganization>;
 
-  return (
-    // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
-    // sign-in/up cross-links on the in-app routes. Those vars are baked at
-    // build time (default /sign-in and /sign-up); without them Clerk falls
-    // back to the hosted Account Portal (accounts.matrix-os.com).
-    <ClerkProvider>
-      {/* react-doctor-disable-next-line react-doctor/no-render-in-render -- pre-existing document helper selects whether PostHog identity is included while preserving one shared html/body definition; it returns only this request's static document tree and owns no component state. */}
-      {renderDocument(true, content)}
-    </ClerkProvider>
-  );
+  // react-doctor-disable-next-line react-doctor/no-render-in-render -- pre-existing document helper selects whether Clerk and PostHog identity are included while preserving one shared html/body definition; it returns only this request's static document tree and owns no component state.
+  return renderDocument(true, content);
 }

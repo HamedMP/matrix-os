@@ -1,7 +1,7 @@
 import { connect } from "node:net";
 import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
-import { RoutineCliEnvelopeSchema, RoutineCliOperationSchema, ROUTINE_CLI_OUTPUT_BYTES, routineCliResultMatchesOperation,
+import { RoutineCliEnvelopeSchema, RoutineCliOperationSchema, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS, routineCliResultMatchesOperation,
   type RoutineCliOperation, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
 import { RoutineClientError } from "./routine-client-error.js";
 /** Location only: no source/harness/owner/capability is accepted from env or CLI arguments. */
@@ -28,7 +28,7 @@ export async function executeTerminalRoutineOperation(input: RoutineCliOperation
       else if (sent && mutation && (!error || error.code === "unavailable")) resolve({ kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true });
       else reject(error ?? new RoutineClientError("unavailable"));
     };
-    const abort = () => finish(), timer = setTimeout(abort, 120000); timer.unref();
+    const abort = () => finish(), timer = setTimeout(abort, mutation ? ROUTINE_CLI_NATIVE_TIMEOUT_MS : ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS); timer.unref();
     signal.addEventListener("abort", abort, { once: true });
     socket.once("connect", () => {
       if (completed || signal.aborted) { finish(); return; }

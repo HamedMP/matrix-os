@@ -35,6 +35,19 @@ describe('authenticated owner-local ChatGPT peer', () => {
         await expect(peer.resolve({ instanceId: 'matrix_chatgpt_plan', model: 'gpt-server' }, 'owner', 'interactive')).rejects.toThrow();
         await expect(peer.resolve({ instanceId: 'matrix_chatgpt_plan', model: 'gpt-server', options: [{ id: 'accountId', value: 'account_own' }, { id: 'grantRevision', value: '3' }] }, 'owner', 'background')).rejects.toThrow();
     });
+    it('resolves a schedule proposal through the connected owner peer without saving a Bot coordinator', async () => {
+        const { peer, input, expire } = await fixture();
+        await peer.connect('owner', input);
+        await expect(peer.resolveRoutineProposal('owner', 'gpt-server')).resolves.toMatchObject({
+            accessSourceId: 'matrix_chatgpt_plan', route: { modelId: 'gpt-server' },
+            subscription: { accountId: 'account_own', computerId: 'computer', grantRevision: 3 },
+        });
+        await expect(peer.resolveRoutineProposal('owner', 'unavailable-model')).rejects.toThrow();
+        await expect(peer.resolveRoutineProposal('other', 'gpt-server')).rejects.toThrow();
+        expect((await peer.observe('owner')).authorization.background).toBe(false);
+        expire();
+        await expect(peer.resolveRoutineProposal('owner', 'gpt-server')).rejects.toThrow();
+    });
     it('rejects a superseded signed challenge and duplicate selection options', async () => {
         const { peer, input } = await fixture();
         const challenge = peer.challenge('owner');

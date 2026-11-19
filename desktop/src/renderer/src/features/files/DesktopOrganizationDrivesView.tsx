@@ -147,7 +147,7 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
       </div>
     </div>
     {!loading && navigation.unavailable ? <p role="alert" className="mb-3 text-xs">This drive is unavailable. Choose another drive or refresh.</p> : null}
-    {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
+    {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p>}
     {loading ? <p style={{ color: "var(--text-tertiary)" }}>Loading drives…</p> : options.length === 0
       ? <p style={{ color: "var(--text-tertiary)" }}>Share a folder with your organization to make a drive available here.</p>
       : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">

@@ -1,7 +1,7 @@
 import "@/lib/hermes-polyfills";
 import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
-import { Stack, useRouter, usePathname } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
 import { Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -30,6 +30,7 @@ import {
   Geist_800ExtraBold,
 } from "@expo-google-fonts/geist";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient } from "@/lib/gateway-client";
@@ -40,7 +41,8 @@ import { ROOT_SCREEN_OPTIONS } from "@/lib/root-screens";
 import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
-import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { NotificationRouter } from "@/components/NotificationRouter";
+import { PushRegistrationSync } from "@/components/PushRegistrationSync";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
@@ -368,62 +370,50 @@ function GatewayShell() {
 
   return (
     <GestureHandlerRootView style={styles.flex}>
-      <GatewayContext.Provider value={contextValue}>
-        <CanonicalChatSessionProvider>
-          <Stack
-            screenOptions={{
-              headerStyle: { backgroundColor: theme.colors.background },
-              headerTintColor: theme.colors.foreground,
-              headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
-              contentStyle: { backgroundColor: theme.colors.background },
-            }}
-          >
-            {/* How each one comes and goes is in lib/root-screens. */}
-            <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
-            <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
-            <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
-            <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
-            <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
-            <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
-            <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
-            <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
-            <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
-            <Stack.Screen
-              name="sign-in-computer"
-              options={{
-                title: "Sign in with computer URL",
-                presentation: "modal",
-                headerStyle: { backgroundColor: theme.v2.appColors.canvas },
-                headerTintColor: theme.v2.appColors.ink,
+      {/* Lets screens follow the keyboard frame by frame on both platforms.
+          The app is edge to edge, so the provider keeps the status and
+          navigation bars translucent by itself. */}
+      <KeyboardProvider>
+        <GatewayContext.Provider value={contextValue}>
+          <CanonicalChatSessionProvider>
+            <Stack
+              screenOptions={{
+                headerStyle: { backgroundColor: theme.colors.background },
+                headerTintColor: theme.colors.foreground,
+                headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+                contentStyle: { backgroundColor: theme.colors.background },
               }}
-            />
-          </Stack>
-          <ToastHost />
-          <NotificationRouter />
-          <OtaUpdatePrompt />
-          <AnalyticsScreenTracker />
-        </CanonicalChatSessionProvider>
-      </GatewayContext.Provider>
+            >
+              {/* How each one comes and goes is in lib/root-screens. */}
+              <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
+              <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
+              <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
+              <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
+              <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
+              <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
+              <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
+              <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
+              <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
+              <Stack.Screen
+                name="sign-in-computer"
+                options={{
+                  title: "Sign in with computer URL",
+                  presentation: "modal",
+                  headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+                  headerTintColor: theme.v2.appColors.ink,
+                }}
+              />
+            </Stack>
+            <ToastHost />
+            <NotificationRouter connected={gateway !== null} setGateway={setGateway} />
+            <PushRegistrationSync />
+            <OtaUpdatePrompt />
+            <AnalyticsScreenTracker />
+          </CanonicalChatSessionProvider>
+        </GatewayContext.Provider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
-}
-
-function NotificationRouter() {
-  const router = useRouter();
-  const routerRef = useRef(router);
-
-  useEffect(() => {
-    routerRef.current = router;
-  }, [router]);
-
-  useEffect(() => {
-    const sub = addNotificationResponseListener((response) => {
-      handleNotificationTap(response, routerRef.current);
-    });
-    return () => sub.remove();
-  }, []);
-
-  return null;
 }
 
 const styles = StyleSheet.create((theme) => ({

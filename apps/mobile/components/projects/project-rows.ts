@@ -1,5 +1,6 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
+import { chatStatus, type ChatStatus } from "@/lib/chat-status";
 import { formatRelativeTime, formatUpdated } from "@/lib/relative-time";
 import { chatActivityAt } from "@/lib/requests/canonical-chat";
 import type { ProjectSummary } from "@/lib/requests/projects";
@@ -20,6 +21,8 @@ export interface ProjectChatRow {
   preview?: string;
   /** When the chat was last active, already worded ("2h"). */
   time?: string;
+  /** What the chat is doing or waiting for; left out while it is idle and read. */
+  status?: ChatStatus;
 }
 
 export function projectRow(project: ProjectSummary, now?: Date): ProjectRow {
@@ -41,11 +44,13 @@ export function projectChatRows(records: readonly CanonicalChatRecord[], now?: D
   return records.map((record) => {
     const preview = record.chat.lastMessagePreview?.replace(/\s+/g, " ").trim();
     const time = formatRelativeTime(chatActivityAt(record), now);
+    const status = chatStatus(record);
     return {
       id: record.chat.id,
       title: record.chat.title.trim() || "New chat",
       ...(preview ? { preview } : {}),
       ...(time ? { time } : {}),
+      ...(status ? { status } : {}),
     };
   });
 }

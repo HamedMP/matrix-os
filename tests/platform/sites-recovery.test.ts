@@ -7,6 +7,7 @@ import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './cus
 import { getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
@@ -38,7 +39,7 @@ beforeEach(async () => {
   hetzner = createMockHetznerClient({ getServer: vi.fn(async id => id === 50 ? { id: 50, status: 'running' } : null) });
   systemStore = createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn(async () => true) });
   customer = createCustomerVpsService({ db, hetzner, systemStore,
-    config: loadCustomerVpsConfig({ PLATFORM_SECRET: secret, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test',
+    config: loadCustomerVpsConfig({ PLATFORM_SECRET: secret, MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test',
       S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test', CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS: '1000' }),
     machineIdFactory: () => nextMachineId, now: () => now,
     postgresPasswordFactory: () => 'test-postgres-password',

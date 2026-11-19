@@ -8,7 +8,8 @@ const principal = { userId: "clerk_actual", source: "jwt" as const }, generation
 const supervisor = { pid: 10, ppid: 1, uid: 501, gid: 20, start: "10" }, hostIdentity = { ...supervisor, pid: 20, ppid: 10, start: "20" }, root = { ...supervisor, pid: 30, ppid: 20, start: "30" };
 const closes: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
-async function fixture(limits: { maxTabsPerWorkspace?: number; maxTabsTotal?: number; maxObservers?: number } = {}) {
+async function fixture(limits: { maxTabsPerWorkspace?: number; maxTabsTotal?: number; maxObservers?: number } = {},
+  unavailable?: "computer" | "native-tab-support") {
   const isShared = vi.fn(async (_ref: import("@matrix-os/contracts").TerminalRef, _incarnation: string) => false);
   const home = await mkdtemp("/tmp/t7join-"); closes.push(() => rm(home, { recursive: true, force: true }));
   const store = new TerminalWorkspaceStore({ homePath: home }); const channel = new AbortController(); let boundCurrent = true;
@@ -22,8 +23,11 @@ async function fixture(limits: { maxTabsPerWorkspace?: number; maxTabsTotal?: nu
   const workspace = await runtime.ensureWorkspace(), path = home + "/matrix-terminal-" + "a".repeat(32) + "/io.sock";
   const host = { start: vi.fn(async (input: { onPrepared?: (reference: { path: string }) => Promise<void>; onDispatchSettled?: () => void; onBound?: (value: RetainedTerminalStartup) => Promise<TerminalSourcePort | undefined> }) => { await input.onPrepared?.({ path }); port = await input.onBound?.(startup); input.onDispatchSettled?.(); return { reference: { path }, status: "running" as const }; }) };
   const register = vi.fn(async (_producer: import("../../../packages/gateway/src/bots/routine-action-source-registry.js").RoutineSourceProducer) => { void _producer; throw new Error("No synthetic positive source registration"); });
-  const coordinator = createCanonicalTerminalLaunch({ interactiveHostEquivalent: true, runtime, host, launcher: { build: vi.fn(async () => ({ command: "/fixed/claude", args: [], cwd: home, env: { HOME: home, PATH: "/bin" }, inheritEnv: false as const })) },
-    generation, homePath: home, computerId: "computer-current", ownerIds: [principal.userId, "configured_platform_owner"],
+  const launchRuntime = unavailable === "native-tab-support"
+    ? { listWorkspaces: runtime.listWorkspaces.bind(runtime), createTab: runtime.createTab.bind(runtime) }
+    : runtime;
+  const coordinator = createCanonicalTerminalLaunch({ runtime: launchRuntime, host, launcher: { build: vi.fn(async () => ({ command: "/fixed/claude", args: [], cwd: home, env: { HOME: home, PATH: "/bin" }, inheritEnv: false as const })) },
+    generation, homePath: home, computerId: unavailable === "computer" ? "" : "computer-current", ownerIds: [principal.userId, "configured_platform_owner"],
     routines: { runtime: { register }, isShared, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" }, readProcess: async pid => [supervisor, hostIdentity, root].find(value => value.pid === pid)! }); closes.push(coordinator.close);
   const launch = () => coordinator.launch(principal, workspace.id, { name: "Claude", cwd: "", managedLaunch: { harness: "claude" } });
   return { coordinator, register, isShared, store, runtime, zellij, host, launch, workspace, channel, startup, home, path, port: () => port, beforeJoin: () => beforeJoin, loseProof: () => { boundCurrent = false; channel.abort(); } };
@@ -35,6 +39,9 @@ it("call-before-join is denied without registration; source identity comes only 
   expect(f.register).toHaveBeenCalledOnce();
   const producer = f.register.mock.calls[0]![0] as import("../../../packages/gateway/src/bots/routine-action-source-registry.js").RoutineSourceProducer;
   expect(producer.source).toMatchObject({ ownerId: principal.userId, computerId: "computer-current", harness: "claude", identity: { kind: "terminal_launch", sessionId: `${f.workspace.id}:${tab.id}`, incarnationId: tab.incarnation } });
+  expect(producer.readPolicy()).toMatchObject({
+    live: true, scope: "personal", interactionMode: "default", permissionMode: "full_access", originCeiling: "full",
+  });
   expect(producer.publish).toBeUndefined();
 });
 it("failed canonical creation closes proof but retains native I/O recovery and does not invent source", async () => {
@@ -66,6 +73,17 @@ it("configured owner metadata cannot create a human source or alias the Clerk na
   const f = await fixture();
   await f.coordinator.launch({ userId: "configured_platform_owner", source: "configured-container" }, f.workspace.id, { name: "Claude", cwd: "", managedLaunch: { harness: "claude" } });
   expect(f.port()).toBeUndefined(); expect(f.register).not.toHaveBeenCalled();
+  expect(f.host.start).not.toHaveBeenCalled();
+  expect(f.zellij.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ command: ["sh", "-lc", "claude"] }));
+});
+
+it.each(["computer", "native-tab-support"] as const)("uses an ordinary launch when %s is unavailable", async prerequisite => {
+  const f = await fixture({}, prerequisite);
+  const tab = await f.launch();
+  expect(tab).not.toHaveProperty("nativeHost");
+  expect(f.host.start).not.toHaveBeenCalled();
+  expect(f.register).not.toHaveBeenCalled();
+  expect(f.zellij.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ command: ["sh", "-lc", "claude"] }));
 });
 
 it("canonical expiry retires held proof with the native workload still alive", async () => {

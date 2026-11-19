@@ -34,6 +34,25 @@ For a new app, read [building](references/building.md) and adapt the
 [conversion](references/conversion.md); do not replace its design or reset its data.
 Read [troubleshooting](references/troubleshooting.md) when a concrete check fails.
 
+## Share popover handoff
+
+When the request came from **Share app → Organization → Start in Chats**, the
+first message ends with `Share handoff: app <slug>, organization <orgId>, request <requestId>.`
+Do the normal workflow below, then report the outcome by rewriting
+`~/system/share/collaborative/<slug>.json` as a single JSON object:
+
+```json
+{ "version": 1, "event": "collaborative_app.preparation", "requestId": "<requestId>",
+  "appSlug": "<slug>", "organizationId": "<orgId>", "state": "completed",
+  "updatedAt": "<ISO-8601 now>" }
+```
+
+- Use `"completed"` only after **Build passed** and the owner's save/reopen preflight
+  pass; use `"failed"` when you stop without a working collaborative build.
+- Copy the three ids exactly from the handoff line. Write nothing else in that file.
+- Do not create the organization share yourself. The Share control rechecks Matrix
+  readiness for that organization and turns sharing on only if it passes.
+
 ## Finish the customer journey
 
 1. Build and run the normal app preflight. Verify the owner's save/reopen behavior.

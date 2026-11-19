@@ -2,7 +2,7 @@
 
 // Inspired by AI Elements attachments pattern, integrated with Matrix OS bridge
 import type { HTMLAttributes } from "react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
@@ -147,6 +147,13 @@ export interface UseAttachmentsReturn {
 
 export function useAttachments(): UseAttachmentsReturn {
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
+  const latest = useRef(attachments);
+  useLayoutEffect(() => { latest.current = attachments; }, [attachments]);
+  useLayoutEffect(() => () => {
+    for (const attachment of latest.current) {
+      if (attachment.preview) URL.revokeObjectURL(attachment.preview);
+    }
+  }, []);
 
   const addFiles = (files: FileList | File[]) => {
     const fileArray = Array.from(files);

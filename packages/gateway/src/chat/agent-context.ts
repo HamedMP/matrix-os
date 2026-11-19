@@ -1,3 +1,4 @@
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { isManagedCustomBot } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "../bots/custom-procedure.js";
 import { recipeCoordinatorSelection } from "../bots/coordinator-selection.js";
@@ -38,7 +39,7 @@ export function hasChatMentions(parts: CanonicalCreateChatTurnRequest["parts"]):
   return parts.some((part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind));
 }
 
-export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnRequest, "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot">>(input: T): string {
+export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnRequest, "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot" | "routineCreation">>(input: T): string {
   return createHash("sha256").update(canonicalChatTurnRequestIdentity(input)).digest("hex");
 }
 
@@ -74,7 +75,7 @@ export class ChatAgentContext {
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
     const parsedId = CanonicalChatIdSchema.safeParse(chatId);
-    if (!parsedId.success) throw new ChatAgentContextError("context_unavailable");
+    if (!parsedId.success || isRoutineDirectChatId(parsedId.data)) throw new ChatAgentContextError("context_unavailable");
     const detail = await this.options.repository.getDetailPage(owner, parsedId.data, { limit: 40 });
     if (!detail || detail.record.chat.lifecycle !== "active" || detail.record.chat.collaboration) {
       throw new ChatAgentContextError("context_unavailable");
@@ -251,7 +252,7 @@ export class ChatAgentContext {
     if (context.drives?.length) await this.authorizeDrives(owner, chatId, context.drives);
     for (const source of context.chats) {
       await this.options.assertChatReferenceAllowed?.(owner, source.chatId);
-      if (source.chatId === chatId) throw new ChatAgentContextError("context_unavailable");
+      if (source.chatId === chatId || isRoutineDirectChatId(source.chatId)) throw new ChatAgentContextError("context_unavailable");
       const current = await this.options.repository.get(owner, source.chatId);
       if (!current || current.chat.lifecycle !== "active" || current.chat.collaboration) {
         throw new ChatAgentContextError("context_unavailable");

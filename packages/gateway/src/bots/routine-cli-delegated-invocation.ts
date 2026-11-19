@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { RoutineCliOperationSchema, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import type { NativeRoutineCliPort } from "../chat/claude-routine-execution.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
@@ -9,7 +10,7 @@ export async function openDelegatedRoutineCli(options: Omit<NativeRoutineCliPort
   const source = await options.runtime.registerBotChild(options);
   if (options.signal.aborted || !options.current()) { await source.revoke(); throw new Error("Routine source unavailable"); }
   let cli: ReturnType<typeof createFixedNativeRoutineCliInvoker>;
-  try { cli = createFixedNativeRoutineCliInvoker({ ...source, binPath: options.binPath, endpoint: options.endpoint, homePath: options.homePath, cwd: options.cwd, timeoutMs: 120_000 }); }
+  try { cli = createFixedNativeRoutineCliInvoker({ ...source, binPath: options.binPath, endpoint: options.endpoint, homePath: options.homePath, cwd: options.cwd, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS }); }
   catch (error: unknown) { await source.revoke(); throw error; }
   return { async call(request: BotToolRequest, signal: AbortSignal): Promise<BotToolResult> {
     if (request.capability !== "routine.propose" && request.capability !== "routine.control") throw new Error("Routine intent unavailable");

@@ -8,6 +8,7 @@ import {
   requestChatDraft,
   useChatDraftRequest,
 } from "../components/agents/chat-draft-request";
+import { composerChoices } from "../lib/remembered-composer-choice";
 
 // The Chats stack's layout holds the open chat's state above its screens.
 const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
@@ -37,6 +38,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
     selectedProjectId: null,
   }),
 }));
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   useCanonicalChatDetail: () => ({
     detail: mockDetail,
@@ -102,6 +104,8 @@ type ChatView = ReturnType<typeof render>;
 const composerOf = (view: ChatView) => view.getByLabelText("Message Matrix");
 
 describe("chat screen: a draft asked for by another screen", () => {
+  // A new chat's model waits for the choice remembered on the phone; read it once up front.
+  beforeAll(() => composerChoices.load());
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     act(() => jest.runOnlyPendingTimers());
