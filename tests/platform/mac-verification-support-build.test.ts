@@ -89,3 +89,11 @@ test("manifest pin distinguishes missing development support from changed or sym
   await rm(path); await writeFile(join(root, "other"), "{}"); await symlink(join(root, "other"), path);
   expect(() => readMacVerificationSupportPin(root)).toThrow();
 });
+
+test("uses pnpm lifecycle's actual package entry instead of a self-update PATH wrapper", async () => {
+  const { readPnpmEntry } = await import("../../scripts/release/prepare-mac-verification-support.mjs");
+  const entry = "/build/node_modules/.tools/pnpm/10.33.4/bin/pnpm.cjs";
+  expect(await readPnpmEntry({ args: ["node", "prepare.mjs"], env: { npm_execpath: entry } })).toBe(entry);
+  expect(await readPnpmEntry({ args: ["node", "prepare.mjs", "--pnpm", "/explicit/pnpm.cjs"], env: { npm_execpath: entry } })).toBe("/explicit/pnpm.cjs");
+  await expect(readPnpmEntry({ args: ["node", "prepare.mjs"], env: {} })).rejects.toThrow(/pnpm run/);
+});
