@@ -16,6 +16,8 @@ The executable support manifest has version 2, exact Git `baseSha`, `platform: d
 
 Before using the system tar extractor, the native controller copies each archive to an exclusively created private file and verifies its full size/digest against the compiled manifest identity. It validates extracted paths, types, links and resource bounds before publishing the private cache atomically. Unknown versions, path escapes, invalid ownership or changed identities fail closed. The managed runtime projection is private and disposable; it never rewrites the installed application's source, original checkout or Main service tree. Tests and builds use a temporary HOME rather than the owner's settings or caches. The offline package kit omits pnpm build-checkout registration links; only package content/index data is reused.
 
+Creating each archive on shared build infrastructure is bounded to 600 seconds; native extraction stays bounded to 180 seconds. A slow build must not weaken the native execution deadline, manifest pin, 8 GiB archive bound or 250,000-entry tree bound.
+
 ## 3. Authorization and lifecycle contract
 
 | Boundary | Existing authority / rule |

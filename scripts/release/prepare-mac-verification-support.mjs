@@ -60,7 +60,9 @@ export async function sealMacVerificationArchive(root, destination, { allowSymli
   // Regular CAS blobs stay inside one data resource: signing must not rewrite
   // their bytes or recursively classify hundreds of thousands of package files.
   await exec("/usr/bin/tar", ["-cf", destination, "--format=pax", "--no-acls", "--no-xattrs", "-C", root, "."], {
-    env: { ...gitEnvironment, COPYFILE_DISABLE: "1" }, timeout: 180_000, maxBuffer: 64 * 1024,
+    // Shared Mac builders need more time to archive the multi-GiB offline store.
+    // This build-only deadline does not change native extraction limits.
+    env: { ...gitEnvironment, COPYFILE_DISABLE: "1" }, timeout: 600_000, maxBuffer: 64 * 1024,
   });
   await chmod(destination, 0o644);
   const file = await open(destination, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
