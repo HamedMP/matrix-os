@@ -36,7 +36,10 @@ export const BoardCursorSchema = z.string().regex(/^(0|[1-9][0-9]{0,17})$/);
 export const BoardLimitSchema = z.coerce.number().int().min(1).max(BOARD_PAGE_MAX);
 
 export const LabelKeySchema = z.string().regex(LABEL_KEY);
-export const LabelValueSchema = z.string().min(1).refine((value) => new TextEncoder().encode(value).length <= 256, "Label value too long");
+/** No `|` and no surrounding whitespace, so every stored value can be matched by a label filter. */
+export const LabelValueSchema = z.string().min(1)
+  .refine((value) => new TextEncoder().encode(value).length <= 256, "Label value too long")
+  .refine((value) => !value.includes("|") && value.trim() === value, "Label values cannot contain | or surrounding spaces");
 export const LabelsSchema = z.record(LabelKeySchema, LabelValueSchema)
   .refine((labels) => Object.keys(labels).length <= BOARD_LABELS_PER_MESSAGE_MAX, "Too many labels");
 

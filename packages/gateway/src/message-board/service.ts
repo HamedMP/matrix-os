@@ -294,6 +294,7 @@ export class MessageBoardService {
       }
       let rootId: string | null = null;
       let replyTo: string | null = input.replyTo ?? null;
+      if (replyTo && !input.re) boardFail("invalid_input");
       if (input.re) {
         const target = await trx.selectFrom("board_messages").selectAll().where("id", "=", input.re)
           .where("board_id", "=", board.id).executeTakeFirst();
@@ -306,6 +307,12 @@ export class MessageBoardService {
         if (root.channel !== input.channel) boardFail("invalid_input");
         if (root.deleted_at) boardFail("message_deleted");
         if (root.reply_count >= this.limits.repliesPerThread) boardFail("thread_full");
+        if (input.replyTo && input.replyTo !== target.id) {
+          const replied = await trx.selectFrom("board_messages").select(["id", "root_id"]).where("id", "=", input.replyTo)
+            .where("board_id", "=", board.id).executeTakeFirst();
+          // The replied-to message must be in this thread: the root itself or one of its replies.
+          if (!replied || (replied.id !== rootId && replied.root_id !== rootId)) boardFail("invalid_input");
+        }
       }
       await ensureChannel(ctx, input.channel, this.limits.channelsPerBoard);
       const id = newBoardId("msg");
