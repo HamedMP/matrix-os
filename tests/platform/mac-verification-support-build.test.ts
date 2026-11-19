@@ -173,7 +173,11 @@ test("seals only bounded package files, rejecting links and preserving an existi
 
 test("the Mac release refreshes pinned Electron through the lifecycle before compiling the kit pin", async () => {
   const { jobs } = parse(await readFile(join(process.cwd(), ".github/workflows/desktop-build.yml"), "utf8"));
-  const steps = jobs.mac.steps as Array<{ name?: string; run?: string }>;
+  const steps = jobs.mac.steps as Array<{ name?: string; run?: string; env?: Record<string, string> }>;
+  expect(jobs.mac["timeout-minutes"]).toBe(75);
+  expect(steps.find(step => step.name === "Package desktop app")?.env).toEqual({
+    DEBUG: "electron-notarize,electron-notarize:staple", DEBUG_COLORS: "0", DEBUG_HIDE_DATE: "0",
+  });
   const prepare = steps.findIndex(step => step.name === "Prepare offline Mac Verification support");
   expect(prepare).toBeGreaterThanOrEqual(0);
   expect(steps[prepare].run).toBe("pnpm run prepare:mac-verification-support --refresh-electron");
