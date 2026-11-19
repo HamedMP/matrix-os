@@ -127,10 +127,28 @@ export async function fundingSourceAvailability(
   options: Partial<AllowedFundingSources> = {},
 ): Promise<{ ceilingMicrousd: number; availableMicrousd: number }> {
   const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true, ...options });
+  return fundingSourceTotals(sources);
+}
+
+type FundingSources = Awaited<ReturnType<typeof readFundingSources>>;
+
+function fundingSourceTotals(sources: FundingSources) {
   return {
     ceilingMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.total, sources.addonTotal)),
     availableMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.available, sources.addonAvailable)),
   };
+}
+
+/** Reuse the checked grants and existing holds until the new reservation is inserted.
+ * The caller retains the owner, balance and grant locks for the entire operation. */
+export async function loadLockedFundingSources(
+  executor: PlatformDB["executor"],
+  identity: FundedAiRuntimeIdentity,
+  balance: FundedAiReservationBalance,
+  checkedAt: string,
+) {
+  const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true });
+  return { ...fundingSourceTotals(sources), allocate: (amountMicrousd: number) => allocateFundingSources(sources, amountMicrousd) };
 }
 
 export async function reserveFundingSources(
@@ -140,12 +158,16 @@ export async function reserveFundingSources(
   balance: FundedAiReservationBalance,
   checkedAt: string,
   allowedSources: AllowedFundingSources = { promotional: true, addon: true },
-): Promise<{
+) {
+  const sources = await readFundingSources(executor, identity, balance, checkedAt, allowedSources);
+  return allocateFundingSources(sources, amountMicrousd);
+}
+
+function allocateFundingSources(sources: FundingSources, amountMicrousd: number): {
   promotionalReservedMicrousd: number;
   addonReservedMicrousd: number;
   grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }>;
-}> {
-  const sources = await readFundingSources(executor, identity, balance, checkedAt, allowedSources);
+} {
   let remaining = amountMicrousd;
   const grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }> = [];
   for (const grant of sources.eligibleGrants) {
@@ -158,9 +180,6 @@ export async function reserveFundingSources(
   }
   const promotionalReservedMicrousd = amountMicrousd - remaining;
   const addonReservedMicrousd = remaining;
-  if (!allowedSources.addon && addonReservedMicrousd > 0) {
-    throw new AiFundedPolicyError("insufficient_credit");
-  }
   if (addonReservedMicrousd > sources.addonAvailable) {
     throw new AiFundedPolicyError("insufficient_credit");
   }
@@ -193,6 +212,7 @@ export async function reconcileExpiredPromotionalCredit(
   if (expiredGrants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new AiFundedPolicyError("access_disabled");
   }
+  if (expiredGrants.length === 0) return balance;
 
   const protection = await activePromotionalProtection(executor, identity);
   let totalRetired = 0;
@@ -275,12 +295,9 @@ export async function reconcileExpiredPromotionalCredit(
       .where(sql<boolean>`promotional_balance_microusd >= ${totalRetired}`)
       .returningAll().executeTakeFirst();
     if (!updatedBalance) throw new Error("Funded AI promotional balance invariant violated");
+    return updatedBalance;
   }
-  return executor.selectFrom("ai_funded_runtime_balances").selectAll()
-    .where("machine_id", "=", identity.machineId)
-    .where("owner_id", "=", identity.ownerId)
-    .where("runtime_slot", "=", identity.runtimeSlot)
-    .executeTakeFirstOrThrow();
+  return balance;
 }
 
 export async function debitPromotionalGrants(

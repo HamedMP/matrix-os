@@ -32,7 +32,7 @@ import {
   utcMonthStart,
 } from "./ai-funded-metering-helpers.js";
 import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
-import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
+import { loadLockedFundingSources, reconcileExpiredPromotionalCredit } from "./ai-funded-reservation-sources.js";
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
@@ -120,14 +120,14 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
+      const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: periodStart,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
         month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_reserved_microusd ELSE 0 END`,
         updated_at: checkedAt,
       }).where("machine_id", "=", identity.machineId).where("owner_id", "=", identity.ownerId)
-        .where("runtime_slot", "=", identity.runtimeSlot).returning("machine_id").executeTakeFirst();
-      if (!reset) throw new AiFundedPolicyError("access_disabled");
+        .where("runtime_slot", "=", identity.runtimeSlot).returningAll().executeTakeFirst();
+      if (!balance) throw new AiFundedPolicyError("access_disabled");
 
       const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .select(["payload_hash", "authorization_response", "terminal_outcome", "execution_admission_release", "charge_waiver", "customer_charge_release"])
@@ -145,11 +145,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
-      const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
-        .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
       // Upper bounds ignore active holds, which may still be released. A request that
       // cannot fit even then fails now and never takes a priority place.
-      const sourceAvailability = await fundingSourceAvailability(trx.executor, identity, balance, checkedAt);
+      const sourceAvailability = await loadLockedFundingSources(trx.executor, identity, balance, checkedAt);
       const creditCeiling = Math.min(sourceAvailability.ceilingMicrousd,
         exactInteger(balance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd));
       const budgetCeiling = monthlyBudget - exactInteger(balance.month_spent_microusd);
@@ -178,7 +176,10 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       });
       // A priority rejection may have written a claim; return it so the claim commits.
       if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
-      if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode, checked)) {
+      // Interactive priority already checked this same slot under the owner
+      // lock. Background priority checks only whether another turn is waiting.
+      if (credential.request_class === "background"
+        && await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode, checked)) {
         // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
         throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
@@ -242,13 +243,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         - exactInteger(reserved.funding_shortfall_microusd);
       const remainingBudget = monthlyBudget - exactInteger(reserved.month_spent_microusd)
         - exactInteger(reserved.month_reserved_microusd);
-      const fundingSources = await reserveFundingSources(
-        trx.executor,
-        identity,
-        holdMicrousd,
-        reserved,
-        checkedAt,
-      );
+      // The balance update changes aggregate holds. The underlying grants and
+      // existing source allocations remain locked until the new hold is inserted.
+      const fundingSources = sourceAvailability.allocate(holdMicrousd);
 
       const reservationId = FundedReferenceSchema.parse(deps.reservationIdFactory());
       const expiresAt = new Date(checked.getTime() + deps.reservationTtlMs).toISOString();
