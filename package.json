@@ -69,7 +69,7 @@
     "typecheck:run": "node scripts/typecheck.mjs",
     "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
-    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
+    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff origin/main --pr",
     "lint": "bun run --filter './shell' lint",
     "preview:pair:create": "bun scripts/preview-pair/control.ts create",
     "preview:pair:update": "bun scripts/preview-pair/control.ts update",
