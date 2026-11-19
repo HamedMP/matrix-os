@@ -60,6 +60,8 @@ describe("/api/board routes", () => {
     expect((await send("GET", "/threads/not-an-id")).status).toBe(400);
     expect((await send("GET", "/threads?limit=501")).status).toBe(400);
     expect((await send("GET", "/threads?channel=a//b")).status).toBe(400);
+    expect((await send("POST", "/messages", { channel: "dev", text: "x", labels: { status: "a|b" } })).status).toBe(400);
+    expect((await send("POST", "/messages", { channel: "dev", text: "x", labels: { status: "done " } })).status).toBe(400);
     const reserved = await send("POST", "/messages", { channel: "dev", text: "x", labels: { "board.task": "ready" } });
     expect(await reserved.json()).toMatchObject({ reason: "reserved_label" });
     const missing = await send("GET", "/threads/msg_doesnotexist01");

@@ -94,6 +94,10 @@ describe("MessageBoardService", () => {
     const [summary] = await service.listThreads(as(owner), undefined, { channel: "dev", limit: 50 });
     expect(summary).toMatchObject({ replyCount: 3, latestReply: expect.objectContaining({ text: "Third" }) });
     expect(await reason(service.post(as(owner), undefined, { channel: "ops", text: "x", re: root.id }))).toBe("invalid_input");
+    const other = await service.post(as(owner), undefined, { channel: "dev", text: "Other thread" });
+    expect(await reason(service.post(as(owner), undefined, { channel: "dev", text: "x", replyTo: reply.id }))).toBe("invalid_input");
+    expect(await reason(service.post(as(owner), undefined, { channel: "dev", text: "x", re: other.id, replyTo: reply.id }))).toBe("invalid_input");
+    expect(await reason(service.post(as(owner), undefined, { channel: "dev", text: "x", re: other.id, replyTo: "msg_missing00001" }))).toBe("invalid_input");
   });
 
   it("lets only the author edit or delete, enforces revisions, and keeps a tombstone", async () => {
