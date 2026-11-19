@@ -8,6 +8,14 @@ Run `matrix mac verify --chat <chat-id> --worktree <worktree-id> --recipe files-
 
 The paired Mac must have the original Chat open and Mac Verification enabled for a trusted matching checkout. Under Supervised, the owner approves the specific recipe on the Mac. With Full Access selected in that Chat and the paired Mac authorized, the same action begins directly. Results return through the existing receipt in the original Chat. The terminal command reports admission only.
 
+## Continuing a worktree Chat
+
+The native Chat admission controller binds ordinary Send and Queue requests before creating the admission snapshot or computing its request hash. For an existing private Chat without an explicit execution root, use the active run referenced by the current canonical detail, or the latest run when idle. Carry that run's worktree root only when its Chat and project match the selected canonical Chat. Read the current detail reference at submission so a reopened Chat and a completed run retain their execution directory.
+
+An explicit project or skill root retains its existing admission semantics. A latest project-root run establishes the current context. New Chats use their existing default. Shared and Bot execution retain their existing authorization rules. Loading a different Chat blocks dispatch from the old view and retains the draft. An inconsistent active-run identity or a stale project binding produces a recoverable submission error. The Gateway validates the current owner, registered worktree and its availability. A deleted or unauthorized worktree fails admission at that root.
+
+The request keeps the owner's selected permission mode. Under Full Access, a normal continuation is admitted with both `executionRoot.kind = "worktree"` and `permissionMode = "full_access"`. The paired Mac grant then authorizes the typed Files recipe. Its receipt and supervised acknowledgement return to the same Chat while the owner's live composer choice remains in force.
+
 ## Transport and authorization
 
 | Boundary | Contract |
@@ -28,5 +36,9 @@ The trusted Git base contains the complete implementation. The only source delta
 ## Qualification
 
 Run the exact terminal command in an ordinary terminal and a Herdr terminal. Check wrong Chat/worktree, stale run, tampered intent, unauthorized operation, repeated submissions, and refusal of executable source edits. Observe the actual Electron context menu, removal, Trash and restored file. Confirm the screenshot and tests reach the originating Chat through the receipt. Record matching client and original Chat environment with continuous footage of the actual interaction.
+
+For continuation regression checks, exercise the real native composer after unmounting and reopening it, normal Send in Full Access, Queue in an active worktree, a newer explicit project root, changed project or Chat, a new Chat reset, and a rejected deleted worktree with the draft retained. Check the admitted and queued request payloads through the real client boundary.
+
+For live Full Access qualification, reopen the original private Chat, choose Full Access and send a reversible Files label change through the normal composer. Confirm the admitted run's exact worktree and permission mode, submit `matrix mac verify --recipe files-trash` for that run, and observe automatic execution and receipt delivery under the existing paired-Mac grant. Restore the trial source and compare the existing Main service process identities with their recorded baseline.
 
 Public documentation follows review in the site repository.
