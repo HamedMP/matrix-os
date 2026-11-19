@@ -117,4 +117,3 @@ export async function sealMacVerificationArchive(root, destination, { allowSymli
     return { sha256: hash.digest("hex"), sizeBytes: readBytes, ...stats };
   } finally { await file.close(); }
 }
-
