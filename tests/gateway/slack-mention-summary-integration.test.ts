@@ -1,0 +1,105 @@
+import { createHash, createHmac } from "node:crypto";
+import { Hono } from "hono";
+import { afterEach, expect, it, vi } from "vitest";
+import type { Kysely } from "kysely";
+import { sql } from "kysely";
+import type { SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
+import { createSlackApp } from "../../packages/platform/src/slack/wiring.js";
+import type { SlackDatabase } from "../../packages/platform/src/slack/database.js";
+import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
+import { createSlackHomeTransport } from "../../packages/platform/src/slack-home-transport.js";
+import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack-owner-client.js";
+import { registerOwnerSlack } from "../../packages/gateway/src/startup/slack-owner.js";
+import { createPrivateSlackThreadContext } from "../../packages/gateway/src/slack/private-thread-context.js";
+import { createSlackMentionSummaries } from "../../packages/gateway/src/slack/mention-summary.js";
+import { createRealBotStateDatabase, createBotStateDatabase, insertChat } from "./bots/bot-state-support.js";
+import { SUMMARY_REPLY, summaryRuntime } from "./slack-summary-runtime-support.js";
+const cleanup: Array<() => Promise<unknown>> = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse())
+  await close(); });
+it("delivers a signed teammate mention through the canonical queue and tool-free Pi broker into private Matrix Chat only", async () => {
+  const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
+  cleanup.push(fixture.destroy);
+  const ownerId = "user_summary", botId = "bot_12345678", chatId = "chat_summary123", runtimeId = "preview_runtime";
+  const appId = "A123", teamId = "T123", ownerSlackId = "U123", channelId = "C123", organizationId = "org_summary", token = "a".repeat(64);
+  const date = new Date();
+  const root = `${Math.floor(date.getTime() / 1000) - 5}.000001`;
+  const config = { appId, clientId: "123.456", clientSecret: "c".repeat(32), signingSecret: "s".repeat(32), tokenEncryptionKey: Buffer.alloc(32, 42).toString("base64"), publicBaseUrl: "https://platform.example" };
+  await insertChat(fixture.db, chatId, ownerId);
+  await fixture.db.insertInto("bot_chat_bindings").values({ owner_id: ownerId, bot_id: botId, chat_id: chatId, kind: "direct", created_at: date, removed_at: null }).execute();
+  const grant = { ownerId, botId, chatId, runtimeId, appId, teamId, channelId, organizationId, ownerSlackId, installationGeneration: 1, linkCreatedAt: date.toISOString(), scope: "channel" as const };
+  const rule = { ruleId: "owner-mentions", version: 1, grantId: createHash("sha256").update(JSON.stringify(grant)).digest("hex"), enabledAfter: new Date(date.getTime() - 60000).toISOString() };
+  const gateway = new Hono();
+  const home = createSlackHomeTransport({ fetchImpl: async (url, init) => gateway.fetch(new Request(url, init)) });
+  let member = true;
+  const api = { conversationInfo: vi.fn(async () => ({ canAccess: true, isExternalShared: false, channelMetadata: { id: channelId, name: "tech" } })), hasChannelMember: vi.fn(async () => member),
+    replies: vi.fn(async (input: {
+      cursor?: string;
+    }) => ({ messages: [{ user: "U456", ts: root, text: "Root context: deployment Friday" }], hasMore: true, nextCursor: input.cursor === "next" ? "next2" : "next" })),
+    postMessage: vi.fn(), addReaction: vi.fn(), history: vi.fn(), exchangeCode: vi.fn() };
+  const platform = await createSlackApp({ db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => date,
+    resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => member, authorizeChannelBinding: async () => false, authorizeReply: async () => true,
+    resolveDestination: async () => ({ ownerId, runtimeId }), authenticateRuntime: async () => ({ ownerId, runtimeId }), contextGrant: grant, mentionSummaryRule: rule,
+    dispatch: vi.fn(), dispatchContext: async (envelope: SlackThreadContextEnvelope) => { await home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope); } });
+  cleanup.push(platform.close);
+  await platform.repository.saveInstallation({ appId, teamId, organizationId, installedBy: ownerId, botUserId: "UBOT", encryptedBotToken: encryptSlackToken("xoxb-synthetic", config.tokenEncryptionKey, `${appId}:${teamId}`) });
+  await platform.repository.createChallenge({ hash: "f".repeat(64), appId, teamId, slackUserId: ownerSlackId });
+  await platform.repository.completeLink({ hash: "f".repeat(64), actorId: ownerId, organizationId });
+  const client = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle: "pr-3482", token, fetchImpl: async (url, init) => platform.routes.fetch(new Request(url, init)) });
+  const summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, readThread: client.readSummaryThread });
+  cleanup.push(summaries.close);
+  const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, onReceive: summaries.receive });
+  const bridge = registerOwnerSlack({ app: gateway, ownerId, token, context, summaries, startDrain: false, authority: { authorize: async () => { throw new Error("No collaboration"); } } });
+  cleanup.push(bridge.close);
+  const runtime = await summaryRuntime(fixture.db, summaries, ownerId, botId);
+  cleanup.push(runtime.close);
+  const push = async (id: string, ts: string, text: string, overrides: Record<string, unknown> = {}) => {
+    const body = JSON.stringify({ type: "event_callback", api_app_id: appId, team_id: teamId, event_id: id, event: { type: "message", channel_type: "channel", channel: channelId, user: "U456", thread_ts: root, ts, text, ...overrides } });
+    const timestamp = String(Math.floor(date.getTime() / 1000));
+    const signature = createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex");
+    return platform.routes.request("/webhooks/slack/events", { method: "POST", body, headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } });
+  };
+  const ts = `${Math.floor(date.getTime() / 1000)}.000001`;
+  expect((await push("EvOrdinary", ts, "Ordinary message without mention")).status).toBe(200);
+  await summaries.drain();
+  expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
+  expect((await push("EvQuoted", `${ts.slice(0, -1)}2`, "`<@U123>` is quoted")).status).toBe(200);
+  expect((await push("EvSelf", `${ts.slice(0, -1)}3`, "<@U123> self", { user: ownerSlackId })).status).toBe(200);
+  expect((await push("EvMention", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
+  expect((await push("EvMention", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
+  expect((await push("EvDuplicateTimestamp", `${ts.slice(0, -1)}4`, "<@U123> review this change")).status).toBe(200);
+  expect((await sql `SELECT * FROM slack_mention_summary_jobs`.execute(fixture.db)).rows).toHaveLength(1);
+  const release = runtime.holdOrdinary();
+  const detail = await runtime.repository.get({ type: "personal", ownerId }, chatId);
+  await runtime.canonical.admitTurn({ userId: ownerId, source: "jwt" }, { type: "personal", ownerId }, chatId, { clientRequestId: "req_manual_block", baseRevision: detail!.chat.revision, parts: [{ type: "text", text: "Manual active" }], selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "supervised" });
+  await summaries.drain();
+  expect(await fixture.db.selectFrom("chat_queued_turns").select("id").where("status", "=", "queued").execute()).toHaveLength(1);
+  release();
+  await vi.waitFor(async () => { const runs = await fixture.db.selectFrom("chat_runs").select(["status", "id"]).execute(); expect(runs).toHaveLength(2); expect(runs.every(run => run.status === "completed")).toBe(true); }, { timeout: 15000 });
+  await summaries.drain();
+  const messages = await fixture.db.selectFrom("chat_messages").select(["role", "parts"]).where("chat_id", "=", chatId).execute();
+  expect(JSON.stringify(messages)).toContain(SUMMARY_REPLY.split("\n")[0]);
+  expect(JSON.stringify(messages)).not.toContain("review this change");
+  expect(JSON.stringify(messages)).not.toContain("Root context");
+  expect(runtime.modelRequests).toHaveLength(1);
+  const actual = JSON.stringify(runtime.modelRequests[0]);
+  expect(actual).toContain("#tech");
+  expect(actual).toContain("Root context");
+  expect(actual).toContain("review this change");
+  expect(actual).toContain("partial");
+  expect(actual).not.toContain('"proof"');
+  expect(runtime.modelRequests[0]!.tools ?? []).toEqual([]);
+  expect(runtime.modelRequests[0]!.max_tokens).toBe(2048);
+  expect(await fixture.db.selectFrom("bot_agent_sessions").select("bot_id").execute()).toHaveLength(0);
+  expect(api.replies).toHaveBeenCalledTimes(3);
+  expect(api.postMessage).not.toHaveBeenCalled();
+  expect(api.addReaction).not.toHaveBeenCalled();
+  expect(await platform.repository.getReplyDestination({ appId, teamId, eventId: "EvMention" })).toBeNull();
+  const rows = await fixture.db.selectFrom("chat_turns").select(["id"]).where("client_request_id", "like", "req_slack_summary_%").execute();
+  await expect(runtime.canonical.retryTurn({ userId: ownerId, source: "jwt" }, { type: "personal", ownerId }, chatId, rows[0]!.id, { clientRequestId: "req_public_retry" })).rejects.toBeDefined();
+  member = false;
+  const jobs = await sql<{
+    envelope: SlackThreadContextEnvelope;
+  }> `SELECT envelope FROM slack_mention_summary_jobs`.execute(fixture.db);
+  expect(await client.readSummaryThread({ ownerId, botId, chatId, runtimeId, grantId: rule.grantId, summary: { ...jobs.rows[0]!.envelope.summary!, eventId: "EvMention", threadTs: root, ts: `${ts.slice(0, -1)}4`, userId: "U456" } } as never, AbortSignal.timeout(5000))).toBeNull();
+}, 30000);
