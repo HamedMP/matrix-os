@@ -288,7 +288,10 @@ export function SharedChatComposer({
     if (action.consumeTrigger && trigger) {
       editorRef.current?.removeTrigger(trigger, end);
       const remaining = editorRef.current?.readValue().value;
-      if (remaining !== undefined && remaining !== current.value) action.select(current.value, remaining);
+      if (remaining !== undefined && remaining !== current.value) {
+        if (!remaining.trim() && action.defaultDraft) onChange(action.defaultDraft);
+        action.select(current.value, remaining);
+      }
     } else {
       action.select(current.value);
     }

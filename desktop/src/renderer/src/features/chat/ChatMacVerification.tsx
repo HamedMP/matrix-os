@@ -4,6 +4,7 @@ import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, isCurrentChatElectronPreviewRun } from "../../../../shared/chat-electron-preview";
 import { invoke } from "../../lib/operator";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
+import { MAC_VERIFICATION_DEFAULT_TASK } from "./mac-verification-workflow";
 
 type Status = InvokeResponse<"chat:electron-preview-run">["status"];
 type Worktree = Extract<NonNullable<CanonicalChatRun["executionRoot"]>, { kind: "worktree" }>;
@@ -31,7 +32,9 @@ const STATUS: Record<Attempt["status"], string> = {
   "already-handled": "This Mac verification was already handled.",
 };
 
-export function useMacVerification({ candidate, busy, permissionMode, terminalRequests = false }: {
+export function useMacVerification({ candidate, discoverable = false, available = true, busy, permissionMode, terminalRequests = false }: {
+  discoverable?: boolean;
+  available?: boolean;
   candidate: Candidate | null;
   busy: boolean;
   permissionMode?: string;
@@ -48,6 +51,7 @@ export function useMacVerification({ candidate, busy, permissionMode, terminalRe
   const inFlight = useRef<Attempt | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
+  const [setupMessage, setSetupMessage] = useState<string | null>(null);
   const pendingIntent = useRef<Intent | null>(null);
   const latestRun = useRef<string | null>(null);
   const lastTerminal = useRef<{ scope: Selection; runId: string; digest: string } | null>(null);
@@ -55,6 +59,7 @@ export function useMacVerification({ candidate, busy, permissionMode, terminalRe
     selection.current = key ? { key } : null;
     setIntent(null);
     setAttempt(null);
+    setSetupMessage(null);
     return () => {
       selection.current = null;
       pendingIntent.current = null;
@@ -205,29 +210,34 @@ export function useMacVerification({ candidate, busy, permissionMode, terminalRe
         stage({ scope: currentIntent.scope, runId: run.id, previousRunId: currentIntent.runId, state: "waiting" });
       },
     } : undefined;
-  const action: ComposerMentionAction | undefined = candidate && canStart && !currentIntent ? {
+  const action: ComposerMentionAction | undefined = discoverable && !busy && status !== "pending" && !currentIntent ? {
     label: "Mac Verification",
     kind: "preview",
     keywords: "mac verification verify worktree test screenshot",
     consumeTrigger: true,
+    defaultDraft: MAC_VERIFICATION_DEFAULT_TASK,
     slashCommand: "mac-verification",
-    select: (_query, remaining) => {
-      const current = selection.current;
-      if (!current || current.key !== key || latestRun.current !== candidate.run.id || pendingIntent.current) return;
-      if (remaining?.trim()) {
-        stage({ scope: current, runId: candidate.run.id, state: "draft" });
+    select: () => {
+      if (!available) {
+        setSetupMessage("Mac Verification is unavailable on this Computer. Sign in to your paired Mac in Matrix Electron Desktop and check Mac Pairing.");
         return;
       }
-      void request();
+      const current = selection.current;
+      if (!candidate || !current || current.key !== key || latestRun.current !== candidate.run.id || pendingIntent.current) {
+        setSetupMessage("Ask the agent to prepare an isolated worktree for this Chat first. Mac Verification will use that task's worktree automatically.");
+        return;
+      }
+      setSetupMessage(null);
+      stage({ scope: current, runId: candidate.run.id, state: "draft" });
     },
   } : undefined;
-  const feedback = currentIntent || status ? (
+  const feedback = currentIntent || status || setupMessage ? (
     <div className="mb-2 flex items-center gap-2 px-1 text-xs text-[var(--text-secondary)]">
       <p role="status">{currentIntent
         ? currentIntent.state === "draft" ? "Mac verification will run after this message." : "Waiting for the worktree run…"
         : status === "unavailable" && permissionMode === "full_access"
           ? "Mac verification is unavailable. Check Mac Pairing, or switch to Supervised to approve once."
-          : status ? STATUS[status] : null}</p>
+          : status ? STATUS[status] : setupMessage}</p>
       {currentIntent ? <button type="button" className="underline" onClick={() => stage(null)}>Cancel verification</button> : null}
     </div>
   ) : null;

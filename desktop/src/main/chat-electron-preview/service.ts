@@ -5,6 +5,7 @@ import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../m
 import { ChatElectronPreviewTransportInterruptedError, type ChatElectronPreviewBackgroundBinding,
   type ChatElectronPreviewRequest } from "./transport";
 import { previewRequestKey } from "./claims";
+import { MacVerificationPreparationError } from "./source-provider";
 
 type BackgroundPreview = ChatElectronPreviewBackgroundBinding & { pairing?: MacActionPairingLease };
 const DELIVERY_RETRY_MS = 500;
@@ -29,7 +30,7 @@ interface Dependencies {
   claim(key: string): Promise<boolean>;
   approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
-  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal?: AbortSignal): Promise<void>;
+  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" | MacVerificationPreparationError["code"] }, signal?: AbortSignal): Promise<void>;
   beginActivity?: BeginMacActivity;
   reportError?(error: unknown): void;
 }
@@ -71,7 +72,7 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       return !boundarySignal.aborted;
     }
 
-    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) {
+    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" | MacVerificationPreparationError["code"] }) {
       for (let attempt = 0; ; attempt++) {
         if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) return false;
         if (attempt === 0) activity?.update("returning");
@@ -145,7 +146,7 @@ export function createChatElectronPreviewService(deps: Dependencies) {
           return { status: "unavailable" };
         }
         deps.reportError?.(error);
-        if (!await deliver(current, { error: "build-failed" })) {
+        if (!await deliver(current, { error: error instanceof MacVerificationPreparationError ? error.code : "build-failed" })) {
           completion = "revoked";
           return { status: "unavailable" };
         }

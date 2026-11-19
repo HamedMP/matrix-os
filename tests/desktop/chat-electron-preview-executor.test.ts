@@ -1,7 +1,7 @@
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { capturePreviewScript } from "../../desktop/src/main/chat-electron-preview/executor-capture";
@@ -57,6 +57,64 @@ describe("one-shot Electron preview source", () => {
 });
 
 describe("one-shot Electron preview execution", () => {
+  it("keeps failed capture diagnostics bounded and native while returning a generic error", async () => {
+    const { options, checkout } = await fixture();
+    const tools = join(checkout, "failing-toolchain");
+    const node = join(tools, "node"); const pnpm = join(tools, "pnpm.cjs"); const store = join(tools, "store");
+    await mkdir(store, { recursive: true }); await writeFile(pnpm, "// fixture");
+    const filler = "x".repeat(12000);
+    await writeFile(node, `#!/bin/sh
+case "$1" in
+  *vitest.mjs) printf ' Tests 5 passed (5)\\n' ;;
+  --input-type=module)
+    printf '${filler}\\nError: missing native verifier module\\nAuthorization: Bearer private-test-token\\napi_key=private-test-key\\n' >&2
+    exit 3 ;;
+esac
+`);
+    await chmod(node, 0o755);
+    const result = await runChatElectronPreview({ ...options, requestKind: "verification", toolchain: { node, pnpm, store } })
+      .then(() => null, (error: Error) => error);
+    expect(result?.message).toBe("Electron preview capture failed");
+    expect(result?.message).not.toContain("native verifier");
+    const diagnostic = result?.cause as { stage: string; exitCode: number; stderrTail: string };
+    expect(diagnostic).toMatchObject({ stage: "capture", exitCode: 3 });
+    expect(diagnostic.stderrTail).toContain("missing native verifier module");
+    expect(Buffer.byteLength(diagnostic.stderrTail)).toBeLessThanOrEqual(8192);
+    expect(diagnostic.stderrTail).not.toContain("private-test-token");
+    expect(diagnostic.stderrTail).not.toContain("private-test-key");
+  });
+
+  it("uses only the packaged absolute Node/pnpm and offline store for candidate tests/build/capture", async () => {
+    const { options, checkout } = await fixture();
+    const tools = join(checkout, "toolchain");
+    const node = join(tools, "node"); const pnpm = join(tools, "pnpm.cjs"); const store = join(tools, "store");
+    const audit = join(tools, "audit.log");
+    const environments = join(tools, "homes.log");
+    await mkdir(store, { recursive: true });
+    await writeFile(pnpm, "// pinned fixture");
+    await writeFile(node, `#!/bin/sh
+printf '%s\\n' "$*" >> '${audit}'
+printf '%s\\n' "$HOME" >> '${environments}'
+test -d "$HOME" || exit 7
+case "$1" in
+  *vitest.mjs) printf ' Tests 5 passed (5)\\n' ;;
+  --input-type=module) printf '\\211PNG\\r\\n\\032\\nfixture' > "$6" ;;
+esac
+`);
+    await chmod(node, 0o755);
+    const result = await runChatElectronPreview({ ...options, requestKind: "verification", toolchain: { node, pnpm, store } });
+    expect(result.testSummary).toContain("5 tests passed");
+    const commands = await readFile(audit, "utf8");
+    expect(commands).toContain(`${pnpm} install --offline --ignore-scripts --frozen-lockfile`);
+    expect(commands).toContain(`--store-dir ${store}`);
+    expect(commands).toContain("node_modules/vitest/vitest.mjs run");
+    expect(commands).not.toContain("corepack");
+    const homes = (await readFile(environments, "utf8")).trim().split("\n");
+    expect(homes).toHaveLength(5);
+    expect(homes.every(home => home !== homedir() && home.includes("matrix-chat-preview-"))).toBe(true);
+    expect(homes.slice(0, 4).every(home => home === homes[0])).toBe(true);
+  });
+
   it("rejects an unsupported interaction before opening the checkout", async () => {
     const { options } = await fixture();
     await expect(runChatElectronPreview({

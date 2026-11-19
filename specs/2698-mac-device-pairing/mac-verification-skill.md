@@ -1,6 +1,6 @@
 # Mac Verification Skill
 
-Tracking ENG-495. This document defines the user flow and the initial supported verification operation.
+Tracking ENG-495. This document defines the original verification contract. The [agent-driven continuation](./agent-mac-verification.md) supersedes the manual checkout setup and historical-run-only entry for the automated candidate; approval and source integrity boundaries remain required.
 
 ## User flow
 

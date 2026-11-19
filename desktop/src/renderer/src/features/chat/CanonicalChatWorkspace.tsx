@@ -94,6 +94,7 @@ import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTer
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
 import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
 import type { MacVerificationDraft } from "./ChatMacVerification";
+import { macVerificationWorkflowParts } from "./mac-verification-workflow";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -634,7 +635,8 @@ function CanonicalChatWorkspaceContent({
         }
       }
       const input = {
-        parts: directBotId ? botSubmissionParts(parts, botExecution.consentResources) : parts,
+        parts: directBotId ? botSubmissionParts(parts, botExecution.consentResources)
+          : verification ? macVerificationWorkflowParts(parts) : parts,
         selection: {
           instanceId: selection.instanceId,
           model: selection.model,

@@ -8,8 +8,9 @@ import { MacVerificationRecipeSchema } from "@matrix-os/contracts/mac-verificati
 const verifyCommand = defineCommand({
   meta: { name: "verify", description: "Queue Mac Verification for the current Git worktree and its Matrix Chat" },
   args: {
-    chat: { type: "string", required: true, description: "Private Matrix worktree Chat ID" },
-    worktree: { type: "string", required: true, description: "Registered Matrix worktree ID" },
+    current: { type: "boolean", default: false, description: "Bind the unique active private Chat registered to this Computer worktree" },
+    chat: { type: "string", required: false, description: "Private Matrix worktree Chat ID" },
+    worktree: { type: "string", required: false, description: "Registered Matrix worktree ID" },
     recipe: { type: "string", required: true, description: "Verification recipe: sign-in or files-trash" },
     profile: { type: "string", required: false },
     dev: { type: "boolean", default: false },
@@ -21,8 +22,8 @@ const verifyCommand = defineCommand({
   async run({ args }) {
     try {
       const recipe = MacVerificationRecipeSchema.safeParse(args.recipe);
-      if (!recipe.success) {
-        throw Object.assign(new Error("Unknown verification recipe"), { code: "mac_verification_invalid_input" });
+      if (!recipe.success || (args.current ? Boolean(args.chat || args.worktree) : !args.chat || !args.worktree)) {
+        throw Object.assign(new Error("Invalid verification selection"), { code: "mac_verification_invalid_input" });
       }
       const profile = await resolveCliProfile(args);
       const status = await resolveCliAuthStatus(profile);
@@ -30,7 +31,8 @@ const verifyCommand = defineCommand({
       if (status.status !== "authenticated") throw createNotAuthenticatedError(profile.name);
       const result = await queueMacVerification({
         gatewayUrl: profile.gatewayUrl, token: status.token, ownerId: status.auth?.userId,
-        chatId: args.chat, worktreeId: args.worktree, recipe: recipe.data,
+        recipe: recipe.data,
+        ...(args.current ? { current: true as const } : { chatId: args.chat!, worktreeId: args.worktree! }),
       });
       console.log(args.json
         ? formatCliSuccess(result)

@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -23,7 +23,7 @@ let checkout: string;
 let baseSha: string;
 
 beforeAll(async () => {
-  checkout = await mkdtemp(join(tmpdir(), "matrix-mac-verify-test-"));
+  checkout = await realpath(await mkdtemp(join(tmpdir(), "matrix-mac-verify-test-")));
   for (const path of Object.values(MAC_VERIFICATION_SOURCE_BY_RECIPE)) {
     const full = join(checkout, path);
     await mkdir(dirname(full), { recursive: true });
@@ -204,5 +204,158 @@ describe("matrix mac verify terminal request", () => {
       chatId, worktreeId, recipe: "sign-in", cwd: checkout, fetchFn }))
       .rejects.toMatchObject({ code: "mac_verification_response_invalid" });
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+function activeDetail(id = chatId, options: { age?: number; owner?: string; worktree?: string; status?: "running" | "completed" } = {}) {
+  const completed = resultRun({ id: runId, chat: id, age: options.age, worktree: options.worktree });
+  const { completedAt: _completed, outcome: _outcome, ...run } = completed;
+  return {
+    ...detail(),
+    record: { ...detail().record, chat: { ...detail().record.chat, id, ownerScope: { type: "personal", ownerId: options.owner ?? ownerId } },
+      ...(options.status === "completed" ? {} : { activeRun: { runId, turnId: run.turnId, status: "running" } }) },
+    runs: options.status === "completed" ? [{ ...completed }] : [{ ...run, status: "running" }],
+  };
+}
+function currentFixture(options: {
+  path?: string; chats?: ReturnType<typeof activeDetail>[]; nextCursor?: string;
+  afterRead?: ReturnType<typeof activeDetail>; afterInventoryPath?: string; onFirstDetail?: () => Promise<void>; conflict?: string;
+} = {}) {
+  const chats = options.chats ?? [activeDetail()];
+  let detailReads = 0;
+  let inventoryReads = 0;
+  const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/api/projects/matrix-os")) return Response.json({ project: { id: projectId, slug: "matrix-os" } });
+    if (url.pathname.endsWith("/api/projects/matrix-os/worktrees")) {
+      inventoryReads++;
+      return Response.json({ worktrees: [{ id: worktreeId, projectSlug: "matrix-os",
+        path: inventoryReads > 1 && options.afterInventoryPath ? options.afterInventoryPath : options.path ?? checkout }] });
+    }
+    if (url.pathname.endsWith("/api/chats")) return Response.json({ items: chats.map(item => item.record),
+      ...(options.nextCursor ? { nextCursor: options.nextCursor } : {}) });
+    if (url.pathname.includes("/api/chats/")) {
+      detailReads++;
+      if (detailReads === 1) await options.onFirstDetail?.();
+      const value = chats.find(item => url.pathname.endsWith(`/api/chats/${item.record.chat.id}`));
+      return Response.json(detailReads > chats.length && options.afterRead ? options.afterRead : value);
+    }
+    if (url.pathname.endsWith("/api/files/blob") && init?.method === "PUT") return options.conflict === undefined
+      ? Response.json({ ok: true, path: url.searchParams.get("path"), size: Buffer.byteLength(String(init.body)) })
+      : new Response(null, { status: 409 });
+    if (url.pathname.endsWith("/api/files/blob") && init?.method === "GET") return new Response(options.conflict);
+    throw new Error("unexpected fixture URL");
+  });
+  const queue = (userId: string | undefined = ownerId) => queueMacVerification({ gatewayUrl, token: "test-bearer",
+    ownerId: userId, current: true, recipe: "files-trash", cwd: join(checkout, "desktop"), fetchFn });
+  return { fetchFn, queue };
+}
+describe("matrix mac verify --current active agent request", () => {
+  it("binds an active owner Chat using the registered real cwd and rechecks before upload", async () => {
+    const { fetchFn, queue } = currentFixture();
+    await expect(queue()).resolves.toMatchObject({ status: "queued", chatId, runId, worktreeId });
+    const list = fetchFn.mock.calls.find(call => new URL(String(call[0])).pathname.endsWith("/api/chats"));
+    expect(new URL(String(list?.[0])).searchParams.get("projectId")).toBe(projectId);
+    const upload = fetchFn.mock.calls.find(call => call[1]?.method === "PUT");
+    expect(upload?.[1]?.body).toBe(await expectedBody());
+    const details = fetchFn.mock.calls.filter(call => new URL(String(call[0])).pathname.endsWith(`/api/chats/${chatId}`));
+    expect(details).toHaveLength(2);
+  });
+  it("does not infer a worktree ID from a directory name or upload from an unregistered cwd", async () => {
+    const { fetchFn, queue } = currentFixture({ path: `${checkout}-different` });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_worktree_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("refuses ambiguous active Chats instead of choosing the newest", async () => {
+    const { fetchFn, queue } = currentFixture({ chats: [activeDetail(), activeDetail("chat_another")] });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("queues a current long-running task without treating run duration as Mac permission expiry", async () => {
+    const { queue } = currentFixture({ chats: [activeDetail(chatId, { age: 60 * 60_000 })] });
+    await expect(queue()).resolves.toMatchObject({ status: "queued", chatId, runId, worktreeId });
+  });
+  it.each([
+    { age: -60_000 }, { owner: "user_foreign" }, { worktree: "wt_ffffffffffff" }, { status: "completed" as const },
+  ])("refuses future, foreign, wrong-root or historical completed contexts", async options => {
+    const { fetchFn, queue } = currentFixture({ chats: [activeDetail(chatId, options)] });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("requires an authenticated owner identity before discovering private Chats", async () => {
+    const { fetchFn } = currentFixture();
+    await expect(queueMacVerification({ gatewayUrl, token: "test-bearer", current: true,
+      recipe: "files-trash", cwd: checkout, fetchFn })).rejects.toMatchObject({ code: "mac_verification_invalid_input" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+  it("does not upload if the admitted run completes during preparation", async () => {
+    const { fetchFn, queue } = currentFixture({ afterRead: activeDetail(chatId, { status: "completed" }) });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("does not upload a source revision changed during Chat discovery", async () => {
+    const path = join(checkout, MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"]);
+    const { fetchFn, queue } = currentFixture({ onFirstDetail: () => writeFile(path, "changed during discovery\n") });
+    try {
+      await expect(queue()).rejects.toMatchObject({ code: "mac_verification_worktree_unavailable" });
+      expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+    } finally { await writeFile(path, source); }
+  });
+  it("rechecks registry target identity before uploading the active-run intent", async () => {
+    const { fetchFn, queue } = currentFixture({ afterInventoryPath: `${checkout}-replaced` });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("does not follow a replacement active run after discovery", async () => {
+    const replaced = activeDetail();
+    replaced.record.activeRun!.runId = "run_replacement";
+    replaced.runs[0]!.id = "run_replacement";
+    const { fetchFn, queue } = currentFixture({ afterRead: replaced });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("does not claim unique context from a truncated Chat inventory", async () => {
+    const { fetchFn, queue } = currentFixture({ nextCursor: "chatcur_repeat" });
+    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
+    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
+  });
+  it("keeps exact duplicate active-run requests idempotent", async () => {
+    const { queue } = currentFixture({ conflict: await expectedBody() });
+    await expect(queue()).resolves.toMatchObject({ status: "queued", runId });
+  });
+});
+
+describe("matrix mac verify --current published entry", () => {
+  it("uses an authenticated owner profile and queues without Chat or worktree arguments", async () => {
+    const f = currentFixture();
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const result = await f.fetchFn(new URL(request.url ?? "/", "http://127.0.0.1"), {
+        method: request.method, ...(request.method === "PUT" ? { body: Buffer.concat(chunks).toString() } : {}),
+      });
+      response.statusCode = result.status;
+      response.setHeader("content-type", "application/json");
+      response.end(Buffer.from(await result.arrayBuffer()));
+    });
+    await new Promise<void>(ready => server.listen(0, "127.0.0.1", ready));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test Gateway address missing");
+    const home = await mkdtemp(join(tmpdir(), "matrix-current-mac-profile-"));
+    try {
+      const auth = join(home, ".matrixos/profiles/cloud"); await mkdir(auth, { recursive: true });
+      await writeFile(join(auth, "auth.json"), JSON.stringify({ accessToken: "test-bearer", userId: ownerId,
+        handle: "test-computer", expiresAt: Date.now() + 60_000 }));
+      const { stdout } = await promisify(execFile)(process.execPath, [resolve(import.meta.dirname, "../../packages/sync-client/bin/matrix.mjs"),
+        "--json", "--gateway", `http://127.0.0.1:${address.port}/vm/test-computer`,
+        "mac", "verify", "--current", "--recipe", "files-trash"], {
+        cwd: checkout, timeout: 10_000, env: { ...process.env, HOME: home, MATRIX_NO_TELEMETRY: "1" },
+      });
+      expect(JSON.parse(stdout)).toMatchObject({ ok: true, data: { status: "queued", chatId, runId, worktreeId } });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(closed => server.close(() => closed()));
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
