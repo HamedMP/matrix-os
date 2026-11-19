@@ -2,7 +2,8 @@ import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { NativeRoutineActionConfirmation } from "./RoutineActionConfirmation";
 import { z } from "zod/v4";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text } from "react-native";
+import { Button } from "@/components/ui";
 import { StyleSheet } from "react-native-unistyles";
 import { useAuth } from "@clerk/clerk-expo";
 import {
@@ -17,7 +18,7 @@ import {
 } from "@matrix-os/contracts";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
-import { SUBMITTED_NOTE, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard";
+import { ApprovalRequestCard, type ApprovalAction } from "./chat/ApprovalRequestCard";
 
 export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettled, grantRefreshKey }: {
   approval: CanonicalChatApprovalView;
@@ -93,23 +94,33 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
     }
   }
   if (approval.pending && RoutineActionIdSchema.safeParse(approval.approvalId).success) return <NativeRoutineActionConfirmation challengeId={approval.approvalId} gatewayUrl={gatewayUrl}/>;
-  // A Supervised-mode tool request draws Desktop's card; other approvals keep the generic one.
   const tool = approval.browserApproval ? null : supervisedToolApproval(approval);
-  if (tool) return <SupervisedToolApprovalCard approval={tool} sending={submitting ? sending : null} submitted={submitted}
-    error={error} onDecision={decision => void submit(decision)}/>;
-  return <View style={styles.card}>
-    <Text style={styles.text}>{approval.title}</Text>
-    <Text style={styles.text}>{approval.description}</Text>
-    {pending && !submitted ? <View style={styles.actions}>
-      {(approval.browserApproval ? browserPermissionChoices.map(choice => ({ ...choice, canonical: browserCanonicalDecision(choice.decision) })) : approval.allowedDecisions.map(decision => ({ decision, canonical: decision, label: decision === "approve_for_session" ? "Approve for session" : decision.charAt(0).toUpperCase() + decision.slice(1) }))).map(choice => <Pressable
-        key={choice.decision} accessibilityRole="button" disabled={submitting}
-        accessibilityState={{ disabled: submitting }} style={styles.button}
-        onPress={() => void submit(choice.canonical, approval.browserApproval ? choice.decision as BrowserPermissionChoice : undefined)}>
-        <Text style={styles.text}>{choice.label}</Text>
-      </Pressable>)}
-    </View> : <Text style={styles.text}>{approval.browserApproval ? browserPermissionOutcome(approval, clock, submitted) : approval.pending ? SUBMITTED_NOTE : canonicalChatApprovalOutcome(approval.decision)}</Text>}
+  const labels = { approve: "Allow once", approve_for_session: "Allow for this session", decline: "Not now", cancel: "Cancel request" };
+  const choices = approval.browserApproval
+    ? browserPermissionChoices.map(choice => ({ key: choice.decision, label: choice.label,
+      canonical: browserCanonicalDecision(choice.decision), browserChoice: choice.decision }))
+    : approval.allowedDecisions.map(decision => ({ key: decision, label: labels[decision], canonical: decision, browserChoice: undefined }));
+  const actions: ApprovalAction[] = choices.filter(choice => approval.allowedDecisions.includes(choice.canonical)).map(choice => ({
+    key: choice.key, label: choice.label, primary: choice.canonical === "approve",
+    loading: submitting && sending === choice.canonical, disabled: submitting,
+    onPress: () => void submit(choice.canonical, choice.browserChoice),
+  }));
+  const expired = approval.reason === "expired" || tool?.kind === "expired" || (approval.pending && !pending);
+  const structured = /^(?:\{|\[)/.test(approval.description.trim());
+  const summary = tool?.kind === "waiting" || tool?.kind === "expired" ? tool.summary
+    : pending && !structured ? approval.description : undefined;
+  const details = tool?.kind === "waiting" ? tool.details : structured ? approval.description : undefined;
+  const outcome = !pending && !expired ? {
+    line: approval.browserApproval ? browserPermissionOutcome(approval, clock, submitted)
+      : tool && tool.kind !== "waiting" ? tool.line : canonicalChatApprovalOutcome(approval.decision),
+    allowed: approval.decision === "approve" || approval.decision === "approve_for_session",
+  } : undefined;
+  return <ApprovalRequestCard title={tool?.kind === "waiting" || tool?.kind === "expired" ? tool.title : approval.title}
+    summary={summary} details={details} waiting={pending} label={expired ? "Request expired" : undefined}
+    outcome={outcome} actions={actions} submitted={pending && submitted} error={error}>
+    {approval.browserApproval ? <>
     {grant?.state === "active" && !approval.browserGrant ? <Text style={styles.text}>Browser access is saved for this Chat</Text> : null}
-    {grant?.state === "active" ? <Pressable accessibilityRole="button" disabled={submitting} style={styles.button} onPress={() => void (async () => {
+    {grant?.state === "active" ? <Button label="Undo" variant="outline" fullWidth disabled={submitting} onPress={() => void (async () => {
       if (inFlight.current) return; const current = scope.current; inFlight.current = true; setSubmitting(true); setError(null);
       try {
         const token = await getToken(); if (!token) throw new Error("Not signed in");
@@ -125,15 +136,12 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
         }
       } catch (error: unknown) { console.warn("[browser-permission] Undo failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not undo browser access. Try again."); }
       finally { if (scope.current === current) { inFlight.current = false; setSubmitting(false); } }
-    })()}><Text style={styles.text}>Undo</Text></Pressable> : null}
+    })()} /> : null}
     {grant?.state === "revoked" ? <Text style={styles.text}>Remembered browser access removed</Text> : null}
-    {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
-  </View>;
+    </> : null}
+  </ApprovalRequestCard>;
 }
 
 const styles = StyleSheet.create(theme => ({
-  card: { padding: 12, gap: 8, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12 },
   text: { color: theme.colors.foreground },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  button: { padding: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8 },
 }));
