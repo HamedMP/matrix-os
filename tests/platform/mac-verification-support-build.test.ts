@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, link, lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, link, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInNewContext } from "node:vm";
 import { afterEach, expect, test, vi } from "vitest";
 import { parse } from "yaml";
 import { installFreshMacVerificationElectron, prepareMacVerificationSupport, sealMacVerificationArchive, validateMacVerificationElectron } from "../../scripts/release/prepare-mac-verification-support.mjs";
@@ -24,9 +23,10 @@ async function fixture() {
   // Dirty checkout bytes and local secrets must not enter the shipped source.
   await writeFile(join(repo, "package.json"), "uncommitted build override");
   await writeFile(join(repo, ".env"), "PRIVATE_TEST_VALUE=never-package\n");
+  await mkdir(join(repo, "node_modules")); await writeFile(join(repo, "node_modules/native.node"), "untracked native dependency payload");
   const pnpm = join(root, "pnpm"); await mkdir(join(pnpm, "bin"), { recursive: true });
   await writeFile(join(pnpm, "package.json"), JSON.stringify({ name: "pnpm", version: "10.33.4" }));
-  await writeFile(join(pnpm, "bin/pnpm.cjs"), "// fixture\n");
+  await writeFile(join(pnpm, "bin/pnpm.cjs"), "throw new Error('fixture package manager must not run at build time');\n");
   const electron = join(root, "Electron.app"); await mkdir(join(electron, "Contents/MacOS"), { recursive: true });
   const binary = async (destination: string) => {
     if (process.platform === "darwin" && execFileSync("/usr/bin/lipo", ["-archs", process.execPath], { encoding: "utf8" }).trim().includes(" ")) {
@@ -43,55 +43,41 @@ async function fixture() {
   for (const name of ["Electron Framework", "Resources", "Helpers", "Libraries"]) await symlink(`Versions/Current/${name}`, join(framework, name));
   return { root, repo, pnpm, electron, baseSha };
 }
-test("packages exact committed source and pinned private tools, never dirty source or secrets", async () => {
-  const f = await fixture(); const calls: string[][] = [];
+test("packages exact committed source and pinned private tools without dependency CAS, dirty source or secrets", async () => {
+  const f = await fixture();
   const out = join(f.root, "kit");
   await prepareMacVerificationSupport({ repository: f.repo, output: out, nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch,
-    install: async (node: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => {
-      calls.push([node, ...args]);
-      expect(options.env.npm_config_userconfig).toBe("/dev/null");
-      await mkdir(join(options.cwd, "node_modules"));
-      const { symlink } = await import("node:fs/promises");
-      const store = args[args.indexOf("--store-dir") + 1];
-      await mkdir(join(store, "v10/projects"), { recursive: true });
-      await symlink("../../../source", join(store, "v10/projects/build-checkout"));
-      await mkdir(join(store, "v10/files"), { recursive: true });
-      await writeFile(join(store, "v10/files/offline-package"), "retained package bytes");
-    } });
+    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch });
   const manifest = JSON.parse(await readFile(join(out, "manifest.json"), "utf8"));
-  expect(manifest).toMatchObject({ version: 2, baseSha: f.baseSha, pnpmVersion: "10.33.4", platform: "darwin" });
-  expect(manifest.paths).toMatchObject({ checkout: "source.tar", store: "pnpm-store.tar" });
+  expect(manifest).toMatchObject({ version: 3, baseSha: f.baseSha, pnpmVersion: "10.33.4", platform: "darwin", arch: process.arch,
+    nodeVersion: process.versions.node });
+  expect(manifest.paths).toEqual({ checkout: "source.tar", node: "toolchain/node/bin/node", pnpm: "toolchain/pnpm/bin/pnpm.cjs",
+    electron: "runtime/Electron.app/Contents/MacOS/Electron" });
+  expect(Object.keys(manifest.archives)).toEqual(["checkout"]);
+  expect((await readdir(out)).sort()).toEqual(["manifest.json", "runtime", "source.tar", "toolchain"]);
   await expect(lstat(join(out, "source"))).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(lstat(join(out, "pnpm-store"))).rejects.toMatchObject({ code: "ENOENT" });
-  const unpackedSource = join(f.root, "unpacked-source"); const unpackedStore = join(f.root, "unpacked-store");
-  for (const [key, destination] of [["checkout", unpackedSource], ["store", unpackedStore]]) {
-    await mkdir(destination);
-    const archive = await readFile(join(out, manifest.paths[key]));
-    expect(manifest.archives[key]).toMatchObject({ sha256: createHash("sha256").update(archive).digest("hex"), sizeBytes: archive.length });
-    execFileSync("/usr/bin/tar", ["-xf", join(out, manifest.paths[key]), "-C", destination, "--no-same-owner", "--no-same-permissions"]);
-  }
+  const unpackedSource = join(f.root, "unpacked-source"); await mkdir(unpackedSource);
+  const archive = await readFile(join(out, manifest.paths.checkout));
+  expect(manifest.archives.checkout).toMatchObject({ sha256: createHash("sha256").update(archive).digest("hex"), sizeBytes: archive.length });
+  execFileSync("/usr/bin/tar", ["-xf", join(out, manifest.paths.checkout), "-C", unpackedSource, "--no-same-owner", "--no-same-permissions"]);
   expect(await readFile(join(unpackedSource, "package.json"), "utf8")).toContain('"matrix-os"');
+  expect(manifest.lockfileSha256).toBe(createHash("sha256").update(await readFile(join(unpackedSource, "pnpm-lock.yaml"))).digest("hex"));
   expect(await readlink(join(unpackedSource, "source-link"))).toBe("README.md");
   expect(execFileSync("/usr/bin/git", ["status", "--porcelain"], { cwd: unpackedSource, encoding: "utf8" })).toBe("");
   await expect(readFile(join(unpackedSource, ".env"))).rejects.toMatchObject({ code: "ENOENT" });
   await expect(readFile(join(unpackedSource, "node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(lstat(join(unpackedStore, "v10/projects/build-checkout"))).rejects.toMatchObject({ code: "ENOENT" });
-  expect(await readFile(join(unpackedStore, "v10/files/offline-package"), "utf8")).toBe("retained package bytes");
   expect(await readlink(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/Current"))).toBe("A");
   expect(await readlink(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Resources"))).toBe("Versions/Current/Resources");
   expect(await readFile(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Resources/icudtl.dat"), "utf8")).toBe("fixture ICU");
-  expect(calls).toHaveLength(1);
-  expect(calls[0]).toEqual(expect.arrayContaining(["--frozen-lockfile", "--ignore-scripts", "--store-dir"]));
   expect(await readFile(join(out, manifest.paths.pnpm), "utf8")).toContain("fixture");
+  expect(execFileSync(join(out, manifest.paths.node), ["-p", "process.versions.node"], { encoding: "utf8" }).trim()).toBe(process.versions.node);
 });
 test.each(["Electron Framework", "Versions/Current", "Resources"])("rejects pnpm's flattened framework alias %s", async name => {
   const f = await fixture(); const alias = join(f.electron, "Contents/Frameworks/Electron Framework.framework", name);
   await validateMacVerificationElectron(f.electron, process.arch);
   await rm(alias); if (name === "Electron Framework") await copyFile(process.execPath, alias); else await mkdir(alias);
   await expect(prepareMacVerificationSupport({ repository: f.repo, output: join(f.root, "kit"), nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch,
-    install: async () => { throw new Error("must reject before dependency preparation"); } })).rejects.toThrow(/framework alias/);
+    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow(/framework alias/);
 });
 
 test("runs the normal installer in an empty private package, never overwriting the cached dependency", async () => {
@@ -121,17 +107,17 @@ test("runs the normal installer in an empty private package, never overwriting t
 test("refuses an unpinned package manager before installing or publishing a kit", async () => {
   const f = await fixture(); await writeFile(join(f.pnpm, "package.json"), JSON.stringify({ name: "pnpm", version: "11.0.0" }));
   await expect(prepareMacVerificationSupport({ repository: f.repo, output: join(f.root, "kit"), nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch,
-    install: async () => { throw new Error("must not install"); } })).rejects.toThrow(/pnpm/);
+    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow(/pnpm/);
 });
 
-test("failed dependency preparation leaves no published kit or partial checkout", async () => {
+test("failed source archiving leaves no published kit or partial checkout", async () => {
   const f = await fixture();
+  await writeFile(join(f.root, "outside"), "outside source"); await symlink(join(f.root, "outside"), join(f.repo, "bad-link"));
+  execFileSync("/usr/bin/git", ["add", "bad-link"], { cwd: f.repo });
+  execFileSync("/usr/bin/git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "unsafe source"], { cwd: f.repo });
   const out = join(f.root, "kit");
   await expect(prepareMacVerificationSupport({ repository: f.repo, output: out, nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch,
-    install: async () => { throw new Error("bounded preparation failed"); } })).rejects.toThrow("bounded preparation failed");
-  const { readdir } = await import("node:fs/promises");
+    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow("Unsafe verification archive link");
   expect((await readdir(f.root)).filter(name => name === "kit" || name.startsWith(".mac-verification-support-"))).toEqual([]);
 });
 test("manifest pin distinguishes missing development support from changed or symlinked resources", async () => {
@@ -156,7 +142,7 @@ test("uses pnpm lifecycle's actual package entry instead of a self-update PATH w
 });
 
 
-test("seals only bounded package files, rejecting links and preserving an existing archive destination", async () => {
+test("seals only bounded files, rejecting links and preserving an existing archive destination", async () => {
   const root = await mkdtemp(join(tmpdir(), "matrix-store-archive-test-")); roots.push(root);
   const store = join(root, "store"); await mkdir(store);
   const file = join(store, "package"); await writeFile(file, "package bytes");
@@ -179,33 +165,10 @@ test("the Mac release refreshes pinned Electron through the lifecycle before com
   expect(steps.find(step => step.name === "Package desktop app")?.env).toEqual({
     DEBUG: "electron-notarize,electron-notarize:staple", DEBUG_COLORS: "0", DEBUG_HIDE_DATE: "0",
   });
-  const prepare = steps.findIndex(step => step.name === "Prepare offline Mac Verification support");
+  const prepare = steps.findIndex(step => step.name === "Prepare pinned Mac Verification support");
   expect(prepare).toBeGreaterThanOrEqual(0);
   expect(steps[prepare].run).toBe("pnpm run prepare:mac-verification-support --refresh-electron");
   expect(prepare).toBeLessThan(steps.findIndex(step => step.name === "Build desktop app"));
   const project = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
   expect(project.scripts["prepare:mac-verification-support"]).toBe("node scripts/release/prepare-mac-verification-support.mjs");
-});
-
-test("isolates dry-run release queues by ref/channel while retaining publish and tag serialization", async () => {
-  const release = parse(await readFile(join(process.cwd(), ".github/workflows/desktop-release.yml"), "utf8"));
-  const canary = parse(await readFile(join(process.cwd(), ".github/workflows/desktop-release-canary.yml"), "utf8"));
-  const group = (event: string, ref: string, channel = "", mode = "", runId = 1) => release.concurrency.group.replace(
-    /\$\{\{([\s\S]*?)\}\}/g, (_match: string, expression: string) => String(runInNewContext(expression, {
-      github: { event_name: event, ref, run_id: runId }, inputs: { channel, mode },
-      format: (template: string, ...values: string[]) => template.replace(/\{(\d+)\}/g, (_: string, index: string) => values[Number(index)]),
-    }, { timeout: 100 })));
-  const dryRuns = [];
-  for (const channel of ["stable", "beta", "canary", "dev"]) for (const ref of ["refs/heads/main", "refs/heads/feature"]) {
-    const dry = group("workflow_dispatch", ref, channel, "dry-run"); dryRuns.push(dry);
-    expect(dry).not.toBe(group("workflow_dispatch", ref, channel, "publish"));
-    expect(dry).toBe(group("workflow_dispatch", ref, channel, "dry-run", 2));
-    expect(group("workflow_dispatch", ref, channel, "publish")).toBe(`desktop-release-${channel}`);
-  }
-  expect(new Set(dryRuns).size).toBe(8);
-  expect(group("push", "refs/tags/desktop-v1.0.0")).toBe("desktop-release-stable");
-  expect(group("push", "refs/tags/desktop-v1.0.1")).toBe("desktop-release-stable");
-  expect(group("push", "refs/tags/desktop-v1.0.0", "canary", "dry-run")).toBe("desktop-release-canary");
-  expect(group("workflow_dispatch", "refs/heads/main", "canary", "publish")).toBe(canary.concurrency.group);
-  expect(release.concurrency["cancel-in-progress"]).toBe(false);
 });

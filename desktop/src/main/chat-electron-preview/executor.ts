@@ -5,7 +5,7 @@ import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import { homedir, tmpdir } from "node:os";
 import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationRecipe } from "@matrix-os/contracts/mac-verification-terminal";
 import { dirname, isAbsolute, join } from "node:path";
-import type { VerificationToolchain } from "./source-provider";
+import { checkVerificationStore, clearVerificationStoreProjects, type VerificationToolchain } from "./source-provider";
 import {
   CHAT_ELECTRON_PREVIEW_SOURCE,
   ChatElectronPreviewLabelSchema,
@@ -49,6 +49,7 @@ function localEnvironment(home: string, temp: string, toolchain?: VerificationTo
     GIT_CONFIG_NOSYSTEM: "1",
     MATRIX_NO_TELEMETRY: "1",
     npm_config_userconfig: "/dev/null",
+    npm_config_globalconfig: "/dev/null",
   };
 }
 
@@ -199,14 +200,44 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal, r
   if (toolchain) await mkdir(home, { mode: 0o700 });
   const env = localEnvironment(home, temp, toolchain);
   const options = { env, signal, cwd: source, timeout: 180_000 };
-  // Resolve the installed dependencies at this exact revision from the local
-  // content-addressed cache. Offline installs skip all install lifecycle code.
   const node = toolchain?.node ?? "node";
   const pnpm = toolchain ? { program: node, prefix: [toolchain.pnpm] } : { program: "corepack", prefix: ["pnpm"] };
-  await runLocal(pnpm.program, [
-    ...pnpm.prefix, "install", "--offline", "--ignore-scripts", "--frozen-lockfile",
-    "--config.enable-global-virtual-store=false", ...(toolchain ? ["--store-dir", toolchain.store] : []),
-  ], { ...options, stage: "offline dependency preparation" });
+  // The signed source lockfile fixes the dependency graph. Install into an
+  // owned cache after consent, excluding unrelated mobile importers and hooks.
+  const budget = new AbortController();
+  const installSignal = AbortSignal.any([signal, budget.signal]);
+  let monitor: ReturnType<typeof setTimeout> | undefined;
+  let checking: Promise<void> | undefined;
+  function watchStore() {
+    monitor = setTimeout(() => {
+      checking = checkVerificationStore(toolchain!.store, installSignal, true)
+        .catch((error: unknown) => { budget.abort(error); })
+        .finally(() => { if (!installSignal.aborted) watchStore(); });
+    }, 5_000);
+    monitor.unref();
+  }
+  try {
+    if (toolchain) {
+      await clearVerificationStoreProjects(toolchain.store);
+      await checkVerificationStore(toolchain.store, installSignal);
+      watchStore();
+    }
+    await runLocal(pnpm.program, [
+      ...pnpm.prefix, "--filter", ".", "--filter", "desktop...", "--filter", "@matrix-os/gateway...", "--filter", "shell...",
+      "install", "--ignore-scripts", "--ignore-pnpmfile", "--frozen-lockfile",
+      "--config.enable-global-virtual-store=false", "--config.registry=https://registry.npmjs.org/",
+      "--config.strict-ssl=true", "--config.verify-store-integrity=true", "--config.package-import-method=copy",
+      ...(toolchain ? ["--store-dir", toolchain.store] : []),
+    ], { ...options, signal: installSignal, timeout: 600_000, stage: "dependency preparation" });
+  } finally {
+    clearTimeout(monitor); budget.abort(); await checking;
+    if (toolchain) {
+      // pnpm records the active checkout here. It is administrative metadata,
+      // not dependency bytes, and must not retain a deleted request path.
+      await clearVerificationStoreProjects(toolchain.store);
+    }
+  }
+  if (toolchain) await checkVerificationStore(toolchain.store, signal);
   const filesTrash = recipe === "files-trash";
   const tests = await runLocal(node, [
     "node_modules/vitest/vitest.mjs", "run", "--reporter=dot",

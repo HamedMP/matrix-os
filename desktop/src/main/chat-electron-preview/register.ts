@@ -81,7 +81,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
           `Chat ${request.chatId}`,
           `Run ${request.runId}`,
           `Worktree ${request.worktreeId}`,
-          source ? `Mac checkout ${source.checkout}` : "Prepare matching source and offline dependencies automatically on this Mac.",
+          source ? `Mac checkout ${source.checkout}` : "Prepare matching source and install pinned dependencies in a private cache on this Mac.",
           `Commit ${request.baseSha}`,
           `Source SHA-256 ${request.sourceSha256}`,
           request.recipe === "files-trash" ? "Verify right-click Move to Trash and Undo with disposable files."
@@ -237,7 +237,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     openVerification: sourceProvider ? async () => {
       await showMacActivityDialog(options.window(), {
         title: "Matrix", type: "info", message: "Mac Verification is prepared automatically.",
-        detail: "Pair this Mac once, then use /mac-verification in your private worktree Chat. Matrix selects the task version, prepares temporary source and offline dependencies, runs supported checks and returns the result to that Chat. Manage Chat Full Access or disconnect in Mac Pairing.",
+        detail: "Pair this Mac once, then use /mac-verification in your private worktree Chat. Matrix selects the task version, prepares temporary source, installs pinned dependencies in a private cache, runs supported checks and returns the result to that Chat. Manage Chat Full Access or disconnect in Mac Pairing.",
         buttons: ["Done"],
       });
     } : undefined,

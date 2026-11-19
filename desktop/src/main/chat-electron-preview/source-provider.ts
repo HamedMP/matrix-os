@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, open, readdir, readlink, realpath, rename, rm, statfs } from "node:fs/promises";
+import { access, lstat, mkdir, open, readdir, readlink, realpath, rm, statfs } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -13,14 +13,13 @@ const Archive = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/),
   sizeBytes: z.number().int().positive().max(LIMIT), unpackedBytes: z.number().int().nonnegative().max(LIMIT),
   fileCount: z.number().int().nonnegative().max(MAX_FILES) });
 const Manifest = z.strictObject({
-  version: z.literal(2), baseSha: z.string().regex(/^[a-f0-9]{40}$/),
+  version: z.literal(3), baseSha: z.string().regex(/^[a-f0-9]{40}$/),
   platform: z.literal("darwin"), arch: z.enum(["arm64", "x64"]),
   nodeVersion: z.string().regex(/^24\.\d+\.\d+$/), pnpmVersion: z.literal("10.33.4"),
   lockfileSha256: z.string().regex(/^[a-f0-9]{64}$/),
   paths: z.strictObject({ checkout: z.literal("source.tar"), node: z.literal("toolchain/node/bin/node"),
-    pnpm: z.literal("toolchain/pnpm/bin/pnpm.cjs"), electron: z.literal("runtime/Electron.app/Contents/MacOS/Electron"),
-    store: z.literal("pnpm-store.tar") }),
-  archives: z.strictObject({ checkout: Archive, store: Archive }),
+    pnpm: z.literal("toolchain/pnpm/bin/pnpm.cjs"), electron: z.literal("runtime/Electron.app/Contents/MacOS/Electron") }),
+  archives: z.strictObject({ checkout: Archive }),
 });
 export interface VerificationToolchain { node: string; pnpm: string; store: string }
 export interface PreparedVerificationSource {
@@ -76,27 +75,71 @@ async function member(root: string, path: string, directory = false) {
   if ((directory ? !info.isDirectory() : !info.isFile()) || info.mode & 0o022) throw supportError();
   return resolved;
 }
-async function treeStats(root: string, signal: AbortSignal, allowSymlinks = true) {
+async function treeStats(root: string, signal: AbortSignal, allowSymlinks = true, maxBytes = LIMIT, skipDirectory?: string, mutable = false) {
   const directories = [root]; let unpackedBytes = 0; let entries = 0; let fileCount = 0;
   while (directories.length) {
     const directory = directories.pop()!;
     signal.throwIfAborted();
-    for (const name of await readdir(directory)) {
+    const names = await readdir(directory).catch((error: unknown) => {
+      if (mutable && directory !== root && error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const name of names) {
       signal.throwIfAborted();
       if (name.includes("\\") || /[\x00-\x1f\x7f]/.test(name)) throw supportError();
-      const path = join(directory, name); const info = await lstat(path);
+      const path = join(directory, name);
+      const info = await lstat(path).catch((error: unknown) => {
+        if (mutable && error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!info) continue;
       if (++entries > MAX_FILES || (!info.isSymbolicLink() && info.mode & 0o022)) throw supportError();
-      if (info.isDirectory()) directories.push(path);
+      if (info.isDirectory()) { if (path !== skipDirectory) directories.push(path); }
       else if (info.isFile() && info.nlink === 1) { unpackedBytes += info.size; fileCount++; }
       else if (allowSymlinks && info.isSymbolicLink()) {
         const target = await realpath(path); const rel = relative(root, target);
         if (isAbsolute(await readlink(path)) || rel === ".." || rel.startsWith("../")) throw supportError();
         unpackedBytes += info.size; fileCount++;
       } else throw supportError();
-      if (unpackedBytes > LIMIT) throw supportError();
+      if (unpackedBytes > maxBytes) throw supportError();
     }
   }
   return { unpackedBytes, fileCount };
+}
+
+export async function checkVerificationStore(store: string, signal: AbortSignal, mutable = false) {
+  const info = await lstat(store);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.()
+    || info.mode & 0o077 || await realpath(store) !== store) throw supportError();
+  await treeStats(store, signal, false, 4 * 1024 ** 3, join(store, "v10", "projects"), mutable);
+  const free = await statfs(store);
+  if (Number(free.bavail) * Number(free.bsize) < 1024 ** 3) throw new MacVerificationPreparationError("insufficient-disk");
+}
+
+export async function clearVerificationStoreProjects(store: string) {
+  await ownedDirectory(store);
+  const version = join(store, "v10");
+  const info = await lstat(version).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!info) return;
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || info.mode & 0o022) throw supportError();
+  const projects = join(version, "projects");
+  const projectInfo = await lstat(projects).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!projectInfo) return;
+  if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink() || projectInfo.uid !== process.getuid?.() || projectInfo.mode & 0o022) throw supportError();
+  // Remove only pnpm's direct checkout-registration links; never walk a link
+  // or recursively delete an unexpected directory in a retained cache.
+  const entries = await readdir(projects, { withFileTypes: true }).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  });
+  if (entries.length > 64 || entries.some(entry => !entry.isSymbolicLink() || !/^[a-f0-9]{32}$/.test(entry.name))) throw supportError();
+  await Promise.all(entries.map(entry => rm(join(projects, entry.name))));
 }
 
 // Copy into an exclusive owner-private file while hashing. Only the verified
@@ -218,9 +261,9 @@ export function createMacVerificationSourceProvider(options: Options) {
     const profile = await lstat(options.userData);
     if (!profile.isDirectory() || profile.isSymbolicLink() || profile.uid !== process.getuid?.()) throw supportError();
     const workspace = join(await realpath(options.userData), "mac-verification-support");
-    const [sourceArchive, node, pnpm, electron, storeArchive] = await Promise.all([
+    const [sourceArchive, node, pnpm, electron] = await Promise.all([
       member(root, manifest.paths.checkout), member(root, manifest.paths.node), member(root, manifest.paths.pnpm),
-      member(root, manifest.paths.electron), member(root, manifest.paths.store),
+      member(root, manifest.paths.electron),
     ]);
     const [runtimeRoot, pnpmRoot] = await Promise.all([
       member(root, "runtime/Electron.app", true), member(root, "toolchain/pnpm", true),
@@ -229,7 +272,7 @@ export function createMacVerificationSourceProvider(options: Options) {
     await Promise.all([access(node, constants.X_OK), access(electron, constants.X_OK)]);
     if (await command(node, ["--version"], root, signal) !== `v${manifest.nodeVersion}`
       || await command(node, [pnpm, "--version"], root, signal) !== manifest.pnpmVersion) throw supportError();
-    const pinnedPaths = [join(root, "manifest.json"), sourceArchive, storeArchive, node, pnpm, electron];
+    const pinnedPaths = [join(root, "manifest.json"), sourceArchive, node, pnpm, electron];
     const sourceIdentity = await identity(pinnedPaths);
     await ownedDirectory(workspace);
     const lockPath = join(workspace, "preparation.lock");
@@ -244,8 +287,7 @@ export function createMacVerificationSourceProvider(options: Options) {
     try {
       signal.throwIfAborted();
       const free = await statfs(workspace);
-      const requiredBytes = Math.max(2 * 1024 ** 3, manifest.archives.checkout.sizeBytes + manifest.archives.store.sizeBytes
-        + 2 * (manifest.archives.checkout.unpackedBytes + manifest.archives.store.unpackedBytes) + 1024 ** 3);
+      const requiredBytes = manifest.archives.checkout.sizeBytes + 2 * manifest.archives.checkout.unpackedBytes + 6 * 1024 ** 3;
       if (Number(free.bavail) * Number(free.bsize) < requiredBytes) throw new MacVerificationPreparationError("insufficient-disk");
       const cacheName = `store-${sha256(bytes)}`;
       const entries = await readdir(workspace);
@@ -271,16 +313,9 @@ export function createMacVerificationSourceProvider(options: Options) {
       if (alternatives || sha256(await boundedFile(join(checkout, "pnpm-lock.yaml"), 4 * 1024 * 1024)) !== manifest.lockfileSha256
         || await command("/usr/bin/git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"], checkout, signal) !== baseSha) throw supportError();
       const cachedStore = join(workspace, cacheName);
-      const existing = await lstat(cachedStore).catch(error => {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-        throw error;
-      });
-      if (!existing) {
-        const storeCopy = join(requestPath, "pnpm-store.tar"); const staging = join(requestPath, "store");
-        await copyVerifiedArchive(storeArchive, storeCopy, manifest.archives.store, signal);
-        await extractArchive(storeCopy, staging, manifest.archives.store, signal, false);
-        await rename(staging, cachedStore);
-      } else if (!existing.isDirectory() || existing.isSymbolicLink() || existing.uid !== process.getuid?.()) throw supportError();
+      // Dependencies are fetched only by the consented executor into this
+      // owner-private mutable cache, never carried in the signed app.
+      await ownedDirectory(cachedStore);
       signal.throwIfAborted();
       if (await identity(pinnedPaths) !== sourceIdentity) throw supportError();
       return { checkout, electronPath: electron, identity: sourceIdentity,
