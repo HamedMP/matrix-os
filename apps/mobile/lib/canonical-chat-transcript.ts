@@ -175,8 +175,12 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   // tend to surface.
   const lastAssistantSeqByRun = new Map<string, number>();
   const runIdsWithAssistantMessage = new Set<string>();
+  const lastAssistantSeqByTurn = new Map<string, number>();
   for (const message of ordered) {
-    if (message.role !== "assistant" || !message.runId) continue;
+    if (message.role !== "assistant") continue;
+    const turnId = message.turnId ?? (message.runId ? runsById.get(message.runId)?.turnId : undefined);
+    if (turnId) lastAssistantSeqByTurn.set(turnId, message.seq);
+    if (!message.runId) continue;
     runIdsWithAssistantMessage.add(message.runId);
     const current = lastAssistantSeqByRun.get(message.runId) ?? -1;
     if (message.seq > current) lastAssistantSeqByRun.set(message.runId, message.seq);
@@ -189,9 +193,16 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     const latest = latestRunByTurn.get(run.turnId);
     if (!latest || run.attempt > latest.attempt) latestRunByTurn.set(run.turnId, run);
   }
-  const isLatestAttempt = (run: CanonicalChatRun | undefined) => (
-    !run || latestRunByTurn.get(run.turnId)?.id === run.id
-  );
+  // Run history is capped independently of messages. An omitted run is not
+  // evidence that its attempt is latest; use the message's durable turn ID
+  // to keep only that turn's last visible reply when run metadata is absent.
+  const isLatestAttempt = (message: CanonicalChatMessage, run: CanonicalChatRun | undefined) => {
+    const turnId = message.turnId ?? run?.turnId;
+    if (!turnId) return false;
+    const latest = latestRunByTurn.get(turnId);
+    return (!latest || latest.id === message.runId)
+      && lastAssistantSeqByTurn.get(turnId) === message.seq;
+  };
 
   const transcript = ordered.map((message): TranscriptMessage => {
     const scheduledMessage = nativeScheduledMessage(message, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
@@ -209,7 +220,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
       isRunning: run ? !TERMINAL_RUN_STATUSES.has(run.status) : false,
-      ...(message.role === "assistant" && (!message.runId || (isRunsLastAssistantMessage && isLatestAttempt(run)))
+      ...(message.role === "assistant" && (!message.runId || (isRunsLastAssistantMessage && isLatestAttempt(message, run)))
         ? { endsTurn: true as const }
         : {}),
       createdAt: Date.parse(message.createdAt),
