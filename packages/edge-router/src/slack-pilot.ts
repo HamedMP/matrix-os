@@ -80,7 +80,7 @@ async function body(request: Request): Promise<Uint8Array<ArrayBuffer> | null> {
   }
 }
 
-function redirectLocation(location: string, upstream: string, publicOrigin: string): string {
+export function redirectPreviewLocation(location: string, upstream: string, publicOrigin: string): string {
   let url: URL;
   try { url = new URL(location, upstream); }
   catch (error: unknown) { if (error instanceof TypeError) return location; throw error; }
@@ -144,7 +144,7 @@ export async function handleSlackPilotRequest(request: Request, env: SlackPilotE
   for (const key of [...output.keys()]) if (key.startsWith('access-control-allow-')) output.delete(key);
   for (const key of ['cache-control', 'cdn-cache-control', 'cloudflare-cdn-cache-control']) output.set(key, 'no-store');
   const location = output.get('location');
-  if (location) output.set('location', redirectLocation(location, config.upstream, config.publicOrigin));
+  if (location) output.set('location', redirectPreviewLocation(location, config.upstream, config.publicOrigin));
   const cookieHeaders = response.headers as Headers & { getAll?: (name: string) => string[]; getSetCookie?: () => string[] };
   const cookies = cookieHeaders.getSetCookie?.() ?? cookieHeaders.getAll?.('set-cookie') ?? [];
   output.delete('set-cookie');
