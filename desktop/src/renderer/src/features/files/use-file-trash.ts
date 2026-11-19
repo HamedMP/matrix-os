@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod/v4";
 import type { ApiClient } from "../../lib/api";
+import { AppError, classifyTransportError } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 
@@ -78,10 +79,13 @@ export function useFileTrash(
           },
         } : undefined,
       });
-    } catch {
-      if (authority.isCurrent()) {
-        toast.error(change.kind === "move" ? "Could not move to Trash." : "Could not restore from Trash.");
-      }
+    } catch (error: unknown) {
+      const cause = error instanceof AppError ? error.cause : error;
+      if (!authority.isCurrent() || authority.signal.aborted
+        || ((cause instanceof DOMException || cause instanceof Error) && cause.name === "AbortError")) return;
+      const category = error instanceof AppError ? error.category : classifyTransportError(error);
+      console.warn("[files-trash] Request failed", { operation: change.kind, category });
+      toast.error(change.kind === "move" ? "Could not move to Trash." : "Could not restore from Trash.");
     } finally {
       if (busy.current === authority) {
         busy.current = null;
