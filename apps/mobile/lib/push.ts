@@ -106,6 +106,22 @@ function within<T>(ms: number, promise: Promise<T>, fallback: T): Promise<T> {
 }
 
 /**
+ * Fetching the push token has no time limit of its own and can hang when the
+ * phone cannot reach Apple or Google. Push changes run one at a time, so one
+ * that never ends would hold the switch and every later re-registration.
+ */
+const PUSH_TOKEN_TIMEOUT_MS = 15_000;
+
+/** Expo's push token for this install, or an error once the time limit passes. */
+async function expoPushToken(
+  options: Notifications.ExpoPushTokenOptions | undefined,
+): Promise<Notifications.ExpoPushToken> {
+  const token = await within(PUSH_TOKEN_TIMEOUT_MS, Notifications.getExpoPushTokenAsync(options), null);
+  if (!token) throw new Error("Push token unavailable.");
+  return token;
+}
+
+/**
  * Shows a notification that arrives while the app is open, unless it is about
  * the chat or thread already on screen. `threadTerminal` finds the terminal a
  * coding-agent thread runs in; a notification it cannot place in time shows.
@@ -161,7 +177,7 @@ export async function enablePushNotifications(input: {
 
   const projectId = Constants.easConfig?.projectId
     ?? (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
-  const token = (await Notifications.getExpoPushTokenAsync(
+  const token = (await expoPushToken(
     projectId ? { projectId } : undefined,
   )).data;
 

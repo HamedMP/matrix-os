@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Pressable, Switch, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
@@ -9,7 +9,12 @@ import FingerPrintIcon from "@hugeicons/core-free-icons/FingerPrintIcon";
 import Notification02Icon from "@hugeicons/core-free-icons/Notification02Icon";
 import PaintBrush01Icon from "@hugeicons/core-free-icons/PaintBrush01Icon";
 
-import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
+import {
+  SettingsCardStack,
+  SettingsPage,
+  SettingsRow,
+  SettingsSwitchRow,
+} from "@/components/settings/SettingsSurface";
 import { Divider, Icon, IconButton, Sheet, Spacer } from "@/components/ui";
 import {
   authenticateBiometricNow,
@@ -22,7 +27,7 @@ import {
   enablePushNotifications,
   isPushNotificationsEnabled,
 } from "@/lib/push";
-import { selectHaptic } from "@/lib/haptics";
+import { queuePushChange, subscribePushTurnedOff } from "@/lib/push-registration-sync";
 import { fetchActiveComputer, mobileQueryKeys } from "@/lib/requests";
 import { getSettings, HOSTED_GATEWAY_URL, saveSettings, type AppSettings } from "@/lib/storage";
 import { applyMobileThemePreference, type MobileThemePreference } from "@/lib/theme-preference";
@@ -50,8 +55,9 @@ export default function AppSettingsScreen() {
   const [biometricLabel, setBiometricLabel] = useState("Biometric lock");
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [themeSheetVisible, setThemeSheetVisible] = useState(false);
-  const [changingBiometric, setChangingBiometric] = useState(false);
-  const [changingPush, setChangingPush] = useState(false);
+  // The value a switch was just turned to, shown until the change settles.
+  const [biometricTarget, setBiometricTarget] = useState<boolean | null>(null);
+  const [pushTarget, setPushTarget] = useState<boolean | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -76,6 +82,11 @@ export default function AppSettingsScreen() {
     };
   }, []);
 
+  // Re-registration turns push off when the phone refuses permission; follow it.
+  useEffect(() => subscribePushTurnedOff(() => {
+    setSettings((current) => current ? { ...current, notificationsEnabled: false } : current);
+  }), []);
+
   if (!settings) {
     return (
       <SettingsPage>
@@ -95,43 +106,23 @@ export default function AppSettingsScreen() {
             icon={PaintBrush01Icon}
             onPress={() => setThemeSheetVisible(true)}
           />
-          <SettingsRow
+          <SettingsSwitchRow
             card
             title={biometricLabel}
             detail={biometricAvailable ? "Require authentication when Matrix OS opens" : "Not available on this device"}
             icon={FingerPrintIcon}
-            trailing={(
-              <Switch
-                accessibilityLabel={biometricLabel}
-                disabled={!biometricAvailable || changingBiometric}
-                value={settings.biometricEnabled}
-                onValueChange={(enabled) => {
-                  selectHaptic();
-                  void changeBiometric(enabled);
-                }}
-                trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
-                thumbColor={uiTheme.v2.appColors.surface}
-              />
-            )}
+            disabled={!biometricAvailable || biometricTarget !== null}
+            value={biometricTarget ?? settings.biometricEnabled}
+            onValueChange={(enabled) => void changeBiometric(enabled)}
           />
-          <SettingsRow
+          <SettingsSwitchRow
             card
             title="Push notifications"
             detail={activeComputer.data ? "Notifications from this computer" : "Connect a computer to enable"}
             icon={Notification02Icon}
-            trailing={(
-              <Switch
-                accessibilityLabel="Push notifications"
-                disabled={!activeComputer.data || changingPush}
-                value={settings.notificationsEnabled}
-                onValueChange={(enabled) => {
-                  selectHaptic();
-                  void changePush(enabled);
-                }}
-                trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
-                thumbColor={uiTheme.v2.appColors.surface}
-              />
-            )}
+            disabled={!activeComputer.data || pushTarget !== null}
+            value={pushTarget ?? settings.notificationsEnabled}
+            onValueChange={(enabled) => void changePush(enabled)}
           />
         </SettingsCardStack>
       </SettingsPage>
@@ -193,8 +184,8 @@ export default function AppSettingsScreen() {
   }
 
   async function changeBiometric(enabled: boolean) {
-    if (changingBiometric) return;
-    setChangingBiometric(true);
+    if (biometricTarget !== null) return;
+    setBiometricTarget(enabled);
     try {
       if (enabled && !(await authenticateBiometricNow())) return;
       await saveSettings({ biometricEnabled: enabled });
@@ -203,22 +194,25 @@ export default function AppSettingsScreen() {
       console.warn("[mobile] biometric setting failed", error instanceof Error ? error.name : "unknown");
       Alert.alert("Couldn’t update biometric lock", "Try again in a moment.");
     } finally {
-      setChangingBiometric(false);
+      setBiometricTarget(null);
     }
   }
 
   async function changePush(enabled: boolean) {
-    if (changingPush || !activeComputer.data) return;
-    setChangingPush(true);
+    if (pushTarget !== null || !activeComputer.data) return;
+    setPushTarget(enabled);
     try {
       const token = await getToken();
       if (!token) throw new Error("Authentication unavailable.");
       const gatewayUrl = `${HOSTED_GATEWAY_URL}${activeComputer.data.gatewayPath}`;
-      if (enabled) {
-        await enablePushNotifications({ clerkToken: token, gatewayUrl });
-      } else {
-        await disablePushNotifications({ clerkToken: token, gatewayUrl });
-      }
+      // After any re-registration still running, so it cannot undo this change.
+      await queuePushChange(async () => {
+        if (enabled) {
+          await enablePushNotifications({ clerkToken: token, gatewayUrl });
+        } else {
+          await disablePushNotifications({ clerkToken: token, gatewayUrl });
+        }
+      });
       await saveSettings({ notificationsEnabled: enabled });
       setSettings((current) => current ? { ...current, notificationsEnabled: enabled } : current);
     } catch (error: unknown) {
@@ -228,7 +222,7 @@ export default function AppSettingsScreen() {
         "Check notification permissions and try again.",
       );
     } finally {
-      setChangingPush(false);
+      setPushTarget(null);
     }
   }
 }

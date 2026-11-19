@@ -42,6 +42,7 @@ import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { NotificationRouter } from "@/components/NotificationRouter";
+import { PushRegistrationSync } from "@/components/PushRegistrationSync";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
@@ -405,6 +406,7 @@ function GatewayShell() {
             </Stack>
             <ToastHost />
             <NotificationRouter connected={gateway !== null} setGateway={setGateway} />
+            <PushRegistrationSync />
             <OtaUpdatePrompt />
             <AnalyticsScreenTracker />
           </CanonicalChatSessionProvider>
