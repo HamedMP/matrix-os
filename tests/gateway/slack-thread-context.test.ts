@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Kysely } from "kysely";
+import type { SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 
 import { createSlackApp } from "../../packages/platform/src/slack/wiring.js";
 import type { SlackDatabase } from "../../packages/platform/src/slack/database.js";
@@ -49,21 +50,24 @@ it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary m
     await result.body?.cancel();
     return new Response(null, { status: 503 });
   } });
+  const conversationInfo = vi.fn().mockResolvedValue({ isExternalShared: false, canAccess: true });
   const api = {
-    conversationInfo: vi.fn(async () => ({ isExternalShared: false, canAccess: true })),
+    conversationInfo,
     hasChannelMember: vi.fn(async () => true),
     exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(),
   };
   let requesterRuntimeId = runtimeId;
   let currentMember = true;
   const dispatch = vi.fn();
+  const dispatchContext = vi.fn((envelope: SlackThreadContextEnvelope) =>
+    home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope).then(() => {}));
   const platform = await createSlackApp({
     db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => linkCreatedAt,
     resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => currentMember,
     authorizeChannelBinding: async () => false, authorizeReply: async () => true,
     resolveDestination: async () => ({ ownerId, runtimeId }), dispatch,
     authenticateRuntime: async () => ({ ownerId, runtimeId: requesterRuntimeId }),
-    contextGrant, dispatchContext: envelope => home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope).then(() => {}),
+    contextGrant, dispatchContext,
   });
   cleanup.push(platform.close);
   await platform.repository.saveInstallation({ appId, teamId, organizationId, installedBy: ownerId, botUserId: "UBOT",
@@ -73,7 +77,7 @@ it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary m
   const ownerClient = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle: "pr-3482", token,
     fetchImpl: (url, init) => Promise.resolve(platform.routes.fetch(new Request(url, init))) });
   const context = await createPrivateSlackThreadContext({
-    db: fixture.db, ownerId, runtimeId, authorize: ownerClient.canReadThreadContext,
+    db: fixture.db, ownerId, runtimeId, authorize: ownerClient.readThreadContextAccess,
   });
   const ownerSlack = registerOwnerSlack({ app: gateway, ownerId, token, startDrain: false, context,
     authority: { async authorize() { throw new Error("Unexpected collaboration request"); } } });
@@ -106,6 +110,20 @@ it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary m
   expect((await push("EvPlainReply")).status).toBe(200);
   expect((await push("EvSameMessage")).status).toBe(200);
   const read = () => context.prompt({ ownerId, botId, chatId, signal: AbortSignal.timeout(5_000) });
+  const infoBeforeRead = conversationInfo.mock.calls.length;
+  conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true, channelMetadata: { id: channelId, name: "tech" } });
+  const namedSource = await read();
+  expect(namedSource).toContain('"channelName":"#tech"');
+  expect(namedSource).toContain("A plain Slack reply");
+  expect(conversationInfo.mock.calls.length).toBe(infoBeforeRead + 1);
+  conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true, channelMetadata: { id: "C456", name: "wrong-label" } });
+  expect(await read()).toBeUndefined();
+  conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true });
+  const idOnly = await read();
+  expect(idOnly).toContain(channelId);
+  expect(idOnly).not.toContain("channelName");
+  conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true, channelMetadata: { id: channelId, name: "tech" } });
+
   expect(await platform.repository.getReplyDestination({ appId, teamId, eventId: "EvPlainReply" })).toBeNull();
   await expect(context.prompt({ ownerId, botId, chatId: "chat_other", signal: AbortSignal.timeout(5_000) })).resolves.toBeUndefined();
   api.hasChannelMember.mockResolvedValueOnce(false);
@@ -119,8 +137,18 @@ it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary m
   expect((await push("EvLostAck", recovered)).status).toBe(200);
   expect((await read())?.match(/Recovered reply/g)).toHaveLength(1);
 
+  const access = { ownerId, botId, chatId, runtimeId,
+    grantId: dispatchContext.mock.calls[0]![0].grantId };
+  expect(await ownerClient.canReadThreadContext(access, AbortSignal.timeout(5_000))).toBe(true);
+  const legacy = await platform.routes.request("/internal/slack/thread-context/access", {
+    method: "POST", body: JSON.stringify(access),
+  });
+  expect(await legacy.json()).toEqual({ allowed: true });
+
   const source = await read();
   expect(source).toContain("untrusted reference");
+  expect(source).toContain('"channelName":"#tech"');
+  expect(Buffer.byteLength(source!)).toBeLessThanOrEqual(4096);
   expect(source).toContain("U456");
   expect(source).not.toMatch(/Wrong channel post|External reply|Filtered source/);
   if (scope === "channel") {
@@ -131,6 +159,15 @@ it.each(["legacy-thread", "thread", "channel"] as const)("adds signed ordinary m
     expect(source).not.toMatch(/Other thread reply|Ordinary top-level post/);
   }
   expect(source?.match(/A plain Slack reply/g)).toHaveLength(1);
+  const name = "频".repeat(80);
+  conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true, channelMetadata: { id: channelId, name } });
+  for (let index = 0; index < 3; index += 1) {
+    expect((await push(`EvBudget${index}`, { ts: `1700000002.00000${index}`, text: "文".repeat(1000) })).status).toBe(200);
+  }
+  const budgeted = await read();
+  expect(budgeted).toContain(`#${name}`);
+  expect(Buffer.byteLength(budgeted!)).toBeLessThanOrEqual(4096);
+  expect(budgeted?.match(/channelName/g)).toHaveLength(1);
   expect(await context.prompt({ ownerId, botId: "bot_98765432", chatId, signal: AbortSignal.timeout(5_000) })).toBeUndefined();
   currentMember = false;
   expect(await read()).toBeUndefined();

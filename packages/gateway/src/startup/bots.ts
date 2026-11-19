@@ -416,7 +416,7 @@ export async function startBots(options: {
     try {
       const slackClient = createSlackOwnerClient(platform);
       slackThreadContext = await createPrivateSlackThreadContext({
-        db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.canReadThreadContext,
+        db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
         botAvailable: async target => {
           const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
           return Boolean(bot?.recipeRef && !bot.archived);

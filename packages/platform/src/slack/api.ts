@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { SlackChannelMetadataSchema } from "@matrix-os/contracts/slack-bridge";
 import { escapeSlackText } from "./security.js";
 import { SlackAppIdSchema, SlackTeamIdSchema, SlackUserIdSchema, SlackTimestampSchema, SlackChannelIdSchema, type SlackApi, type SlackMessagePage } from "./types.js";
 
@@ -86,8 +87,11 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
       const result = z.object({ channel: z.object({ is_ext_shared: z.boolean().optional(), is_pending_ext_shared: z.boolean().optional(),
         is_member: z.boolean().optional(), pending_connected_team_ids: z.array(z.string().max(64)).max(100).optional() }).passthrough() }).passthrough()
         .parse(await call("conversations.info", { channel: channelId }, input.token, input.signal));
+      const sameChannel = result.channel.id === undefined || result.channel.id === channelId;
+      const metadata = SlackChannelMetadataSchema.safeParse({ id: result.channel.id, name: result.channel.name });
       return { isExternalShared: result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true || (result.channel.pending_connected_team_ids?.length ?? 0) > 0,
-        canAccess: channelId.startsWith("D") || (result.channel.is_member === true && result.channel.is_ext_shared === false) };
+        canAccess: sameChannel && (channelId.startsWith("D") || (result.channel.is_member === true && result.channel.is_ext_shared === false)),
+        ...(sameChannel && metadata.success ? { channelMetadata: metadata.data } : {}) };
     },
 
     async hasChannelMember(input) {

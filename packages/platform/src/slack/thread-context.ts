@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import {
-  SlackThreadContextAccessSchema, SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope,
+  SlackThreadContextAccessSchema, SlackThreadContextAccessRequestSchema, SlackChannelMetadataSchema, SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope,
 } from "@matrix-os/contracts/slack-bridge";
 import { decryptSlackToken } from "./security.js";
 import type { SlackAppRouteOptions } from "./routes.js";
@@ -51,12 +51,14 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
       && validInstallation(await options.repository.getInstallation(grant.appId, grant.teamId));
   }
 
-  async function hasSlackAccess(installation: SlackInstallation, signal: AbortSignal) {
-    if (!options.api.hasChannelMember) return false;
+  async function readSlackAccess(installation: SlackInstallation, signal: AbortSignal) {
+    if (!options.api.hasChannelMember) return null;
     const token = decryptSlackToken(installation.encryptedBotToken, options.config.tokenEncryptionKey, `${grant.appId}:${grant.teamId}`);
     const channel = await options.api.conversationInfo({ token, channelId: grant.channelId, signal });
-    if (!channel.canAccess || channel.isExternalShared) return false;
-    return options.api.hasChannelMember({ token, channelId: grant.channelId, userId: grant.ownerSlackId, signal });
+    if (!channel.canAccess || channel.isExternalShared || (channel.channelMetadata && channel.channelMetadata.id !== grant.channelId)) return null;
+    if (!await options.api.hasChannelMember({ token, channelId: grant.channelId, userId: grant.ownerSlackId, signal })) return null;
+    const metadata = SlackChannelMetadataSchema.safeParse(channel.channelMetadata);
+    return { channel: metadata.success ? metadata.data : undefined };
   }
 
   routes.post("/internal/slack/thread-context/access", bodyLimit({ maxSize: 4096, onError: c => c.json({ error: "Request too large" }, 413) }), async c => {
@@ -70,12 +72,14 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
       if (!(error instanceof SyntaxError)) throw error;
       return c.json({ error: "Invalid request" }, 400);
     }
-    const request = SlackThreadContextAccessSchema.safeParse(value);
+    const request = SlackThreadContextAccessRequestSchema.safeParse(value);
     if (!request.success) return c.json({ error: "Invalid request" }, 400);
     if (Object.entries(access).some(([key, expected]) => request.data[key as keyof typeof access] !== expected)) return c.json({ allowed: false });
     const installation = await options.repository.getInstallation(grant.appId, grant.teamId);
     if (!installation || !validInstallation(installation) || !await hasOwnerAuthority()) return c.json({ allowed: false });
-    return c.json({ allowed: await hasSlackAccess(installation, AbortSignal.timeout(1500)) && await hasOwnerAuthority() });
+    const slack = await readSlackAccess(installation, AbortSignal.timeout(1500));
+    const allowed = Boolean(slack) && await hasOwnerAuthority();
+    return c.json({ allowed, ...(allowed && request.data.includeChannelMetadata && slack?.channel ? { channel: slack.channel } : {}) });
   });
 
   return {
@@ -98,7 +102,7 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
       if (claim.outcome === "conflict") return 409;
       if (claim.outcome !== "claimed") return 503;
       try {
-        if (await hasOwnerAuthority() && await hasSlackAccess(installation, signal) && await hasOwnerAuthority()) {
+        if (await hasOwnerAuthority() && await readSlackAccess(installation, signal) && await hasOwnerAuthority()) {
           signal.throwIfAborted();
           await options.dispatchContext(envelope, signal);
         }

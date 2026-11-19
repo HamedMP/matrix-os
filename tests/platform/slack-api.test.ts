@@ -4,6 +4,36 @@ import { loadSlackThreadContextGrant } from "../../packages/platform/src/slack/t
 import { loadSlackAppConfig } from "../../packages/platform/src/slack/wiring.js";
 
 describe("Slack API boundary", () => {
+  it("returns a validated channel name from the existing conversation info read", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      ok: true, channel: { id: "C123", name: "tech", is_ext_shared: false, is_member: true },
+    }));
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl });
+    await expect(api.conversationInfo({ token: "fixture", channelId: "C123" })).resolves.toMatchObject({
+      canAccess: true, channelMetadata: { id: "C123", name: "tech" },
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it.each(["", "x".repeat(81), "tech\nadmin", "tech\u0000", "tech\u202E", "#tech", "<tech>", { text: "tech" }, null, undefined])
+  ("omits invalid optional provider channel names without inventing a label: %j", async name => {
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl: async () => Response.json({
+      ok: true, channel: { id: "C123", name, is_ext_shared: false, is_member: true },
+    }) });
+    await expect(api.conversationInfo({ token: "fixture", channelId: "C123" })).resolves.toEqual({
+      canAccess: true, isExternalShared: false,
+    });
+  });
+
+  it("denies a provider response for a different channel before exposing its label", async () => {
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl: async () => Response.json({
+      ok: true, channel: { id: "C456", name: "wrong-channel", is_ext_shared: false, is_member: true },
+    }) });
+    await expect(api.conversationInfo({ token: "fixture", channelId: "C123" })).resolves.toEqual({
+      canAccess: false, isExternalShared: false,
+    });
+  });
+
   it("checks exact public-channel membership and caps cursor traversal", async () => {
     const page = (members: string[], nextCursor: string) =>
       Response.json({ ok: true, members, response_metadata: { next_cursor: nextCursor } });

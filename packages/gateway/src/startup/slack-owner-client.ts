@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import type { SlackBridgeEnvelope, SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
+import { SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
 
 const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true),partial:z.boolean(),messages:z.array(z.object({
   user:z.string().max(80).optional(),ts:z.string().max(32),thread_ts:z.string().max(32).optional(),text:z.string().max(16_384).optional(),
@@ -29,6 +29,16 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
     return{status:response.status,body,retryAfterMs:undefined};
   }
   return{
+    async readThreadContextAccess(access: SlackThreadContextAccess, signal: AbortSignal) {
+      try {
+        const response = await rpc("/internal/slack/thread-context/access", { ...access, includeChannelMetadata: true }, signal);
+        const parsed = SlackThreadContextAccessResponseSchema.safeParse(response.body);
+        return response.status === 200 && parsed.success ? parsed.data : { allowed: false as const };
+      } catch (error) {
+        if (!signal.aborted) console.warn("[slack-owner] context access unavailable", error instanceof Error ? error.name : "UnknownError");
+        return { allowed: false as const };
+      }
+    },
     async canReadThreadContext(access: SlackThreadContextAccess, signal: AbortSignal) {
       try {
         const response = await rpc("/internal/slack/thread-context/access", access, signal);

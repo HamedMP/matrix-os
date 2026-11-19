@@ -30,6 +30,20 @@ const PrivateThread = z.object({
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 export const SlackThreadContextAccessSchema = PrivateThread.extend({ grantId: Digest }).strict();
 export type SlackThreadContextAccess = z.infer<typeof SlackThreadContextAccessSchema>;
+export const SlackChannelMetadataSchema = z.object({
+  id: z.string().regex(/^C[A-Z0-9]{2,63}$/),
+  name: z.string().min(1).max(80).regex(/^[^\s\p{C}#<>&]+$/u),
+}).strict();
+export type SlackChannelMetadata = z.infer<typeof SlackChannelMetadataSchema>;
+export const SlackThreadContextAccessRequestSchema = SlackThreadContextAccessSchema.extend({
+  includeChannelMetadata: z.literal(true).optional(),
+}).strict();
+export const SlackThreadContextAccessResponseSchema = z.discriminatedUnion("allowed", [
+  z.object({ allowed: z.literal(false) }).strict(),
+  z.object({ allowed: z.literal(true), channel: SlackChannelMetadataSchema.optional() }).strict(),
+]);
+export type SlackThreadContextAccessResponse = z.infer<typeof SlackThreadContextAccessResponseSchema>;
+
 export const SlackThreadContextEnvelopeSchema = SlackThreadContextAccessSchema.extend({
   event: Provenance.extend({
     channelId: z.string().regex(/^C[A-Z0-9]{2,63}$/), threadTs: Timestamp, text: z.string().min(1).max(40_000),
