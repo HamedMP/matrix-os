@@ -185,6 +185,9 @@ interface ChatAppProps {
   botEventRevision?: number;
   routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   navigationFresh?:boolean;
+  navigationTruncated?:boolean;
+  chatChangeRevision?:number;
+  chatRunStatusChange?:import("@/hooks/useChatState").ChatState["chatRunStatusChange"];
   navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
@@ -238,7 +241,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject, navigationTruncated, chatChangeRevision, chatRunStatusChange,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -757,7 +760,9 @@ function ChatAppContent({
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
-              gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority} /> : undefined}
+              gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
+              conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
+              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">

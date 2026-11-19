@@ -1,6 +1,6 @@
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { AgentThreadChatSchema, AgentThreadIdSchema, CanonicalChatNavigationResponseSchema, type AgentThreadChat, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
@@ -133,6 +133,8 @@ export interface CanonicalChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
   navigation?(): Promise<CanonicalChatNavigationResponse>;
+  /** The canonical Chat that owns a coding-agent thread; null when none does (or the runtime predates the lookup). */
+  chatForAgentThread?(threadId: string): Promise<AgentThreadChat | null>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
     query: string,
@@ -242,6 +244,15 @@ export function createCanonicalChatClient(
     async navigation() {
       markChatNavigation("request");
       return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));
+    },
+    async chatForAgentThread(threadId) {
+      const id = AgentThreadIdSchema.parse(threadId);
+      try {
+        return AgentThreadChatSchema.parse(await transport.get(`/api/chats/by-agent-thread/${encodeURIComponent(id)}`, { cache: "no-store" }));
+      } catch (error: unknown) {
+        if (error instanceof AppError && error.category === "notFound") return null;
+        throw error;
+      }
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");

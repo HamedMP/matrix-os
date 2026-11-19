@@ -273,6 +273,8 @@ export { useBotMentionNavigation, BOT_ATTACHMENT_HANDOFF_REASON } from './chat-a
 export { AgentAvatar } from './chat-agents/AgentAvatar.js';
 
 export { resolveCanonicalChatAttention, resolveCanonicalChatLifecycleGroup, type CanonicalChatAttentionState } from './chat/attention-state.js';
+export { ProjectConversationList, type ProjectConversationListProps } from './chat/ProjectConversationList.js';
+export { projectConversationPlacement, queryProjectConversations, toProjectConversationRow, type ProjectConversationRow, type ProjectConversationQuery } from './chat/project-conversations.js';
 
 export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
 export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';

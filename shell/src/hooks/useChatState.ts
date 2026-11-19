@@ -28,6 +28,12 @@ const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
   navigationFresh?:boolean;
+  /** The global navigation window was cut off, so older Chats may be missing from it. */
+  navigationTruncated?:boolean;
+  /** Changes on every Chat change except streamed run text. */
+  chatChangeRevision?:number;
+  /** The newest run start/end/wait changes, each tagged with its revision. */
+  chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;

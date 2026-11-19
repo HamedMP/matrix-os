@@ -30,6 +30,7 @@ import {
   useCanonicalChatStopRecovery,
   applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
+  type CanonicalChatInvalidation,
 } from "@matrix-os/ui";
 import { useShellChatNavigation } from "./useChatNavigation";
 import { useUnreadChatNavigation } from "./useUnreadChatNavigation";
@@ -53,6 +54,44 @@ const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+// Events that can add, move, remove or reclassify a Chat. Run, queue and
+// interaction events only change a Chat's state, which the shared list carries.
+const CHAT_MEMBERSHIP_EVENTS: ReadonlySet<string> = new Set([
+  "chat.created", "chat.updated", "chat.deleted", "chat.user_state_updated",
+  "migration.completed", "bot.created", "bot.authority.changed",
+]);
+
+export function isChatMembershipEvent(event: CanonicalChatInvalidation): boolean {
+  return event.type === "chat.full_refresh" || CHAT_MEMBERSHIP_EVENTS.has(event.eventType);
+}
+
+// Events that start or end a run or change what it waits on. Streamed run text
+// (run.activity, run.message) leaves the status unchanged.
+const CHAT_RUN_STATUS_EVENTS: ReadonlySet<string> = new Set([
+  "turn.accepted", "queue.claimed", "run.completed", "run.failed", "run.aborted",
+  "interaction.requested", "interaction.resolved",
+]);
+
+export function isChatRunStatusEvent(event: CanonicalChatInvalidation): event is Extract<CanonicalChatInvalidation, { type: "chat.changed" }> {
+  return event.type === "chat.changed" && CHAT_RUN_STATUS_EVENTS.has(event.eventType);
+}
+
+// The newest run status changes, each tagged with its own revision so a consumer
+// can act only on changes after the last revision it handled.
+const MAX_RUN_STATUS_CHANGES = 32;
+
+export type ChatRunStatusChanges = {
+  revision: number;
+  changes: readonly { revision: number; chatId: string }[];
+};
+
+export function appendChatRunStatusChange(previous: ChatRunStatusChanges | undefined, chatId: string | null): ChatRunStatusChanges {
+  const base = previous ?? { revision: 0, changes: [] };
+  if (chatId === null) return base;
+  const revision = base.revision + 1;
+  return { revision, changes: [...base.changes, { revision, chatId }].slice(-MAX_RUN_STATUS_CHANGES) };
 }
 
 function conversationMeta(record: ChatNavigationRecord) {
@@ -189,6 +228,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     eventSource.connectionState(),
   );
   const [botEventRevision, setBotEventRevision] = useState(0);
+  // Bumps only when a Chat may have been added, moved, removed or reclassified, so scoped reads can refresh.
+  const [chatChangeRevision, setChatChangeRevision] = useState(0);
+  const [chatRunStatusChange, setChatRunStatusChange] = useState<ChatRunStatusChanges>(() => appendChatRunStatusChange(undefined, null));
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -327,6 +369,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ));
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
+      if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
+      if (isChatRunStatusEvent(event)) {
+        const { chatId } = event;
+        setChatRunStatusChange((previous) => appendChatRunStatusChange(previous, chatId));
+      }
       admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
@@ -961,6 +1008,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     boundProviderInstanceId: selectedDetail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
+    navigationTruncated:navigation.truncated,
+    chatChangeRevision,
+    chatRunStatusChange,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,
