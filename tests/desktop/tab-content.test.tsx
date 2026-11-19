@@ -34,6 +34,65 @@ afterEach(() => {
   workTabMock.mockImplementation(() => <div>Work</div>);
 });
 
+describe("desktop file drag focus", () => {
+  const base = {
+    tab: { id: "chat", kind: "chat" as const, title: "Chat", closable: false },
+    surface: { tabId: "chat", mode: "window" as const, bounds: { x: 100, y: 80, width: 800, height: 600 }, zIndex: 1 },
+    active: false, tabWorkspaceActive: false, presentation: "desktop" as const, overlayOpen: false,
+    onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange: vi.fn(),
+  };
+
+  it.each(["chat", "work", "project", "projects"] as const)("focuses a visible inactive %s for file drags without reading or consuming payloads", kind => {
+    const onFocus = vi.fn();
+    const props = { ...base, tab: { ...base.tab, kind }, onFocus };
+    const view = render(<DesktopSurfaceFrame {...props} />);
+    const frame = view.container.querySelector("[data-os-window]")!;
+    const pane = view.getByTestId(`desktop-surface-content-${kind}`);
+    expect(pane.hasAttribute("inert")).toBe(true);
+    for (const types of [["application/x-matrix-file-attachment"], ["Files"]]) {
+      const getData = vi.fn();
+      const event = new Event("dragenter", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { types, getData } });
+      fireEvent(frame, event);
+      expect(onFocus).toHaveBeenCalledTimes(1);
+      expect(getData).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(false);
+      onFocus.mockClear();
+    }
+    view.rerender(<DesktopSurfaceFrame {...props} active />);
+    expect(pane.hasAttribute("inert")).toBe(false);
+  });
+
+  it("also focuses a visible Chat in Electron Canvas", () => {
+    const onFocus = vi.fn();
+    const view = render(<DesktopSurfaceFrame {...base} presentation="canvas" onFocus={onFocus} />);
+    fireEvent.dragEnter(view.container.querySelector("[data-os-window]")!, {
+      dataTransfer: { types: ["application/x-matrix-file-attachment"] },
+    });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["ordinary text", { types: ["text/plain"] }, {}],
+    ["URL", { types: ["text/uri-list"] }, {}],
+    ["missing transfer", undefined, {}],
+    ["active Chat", { types: ["Files"] }, { active: true }],
+    ["non-Chat app", { types: ["Files"] }, { tab: { ...base.tab, kind: "notes" as const } }],
+    ["overlay", { types: ["Files"] }, { overlayOpen: true }],
+    ["Show Desktop", { types: ["Files"] }, { desktopHiddenSurfaceIds: ["chat"] }],
+    ["hiding", { types: ["Files"] }, { desktopTransition: { phase: "hiding" as const, surfaceIds: ["chat"] } }],
+    ["restoring", { types: ["Files"] }, { desktopTransition: { phase: "restoring" as const, surfaceIds: ["chat"] } }],
+    ["minimized", { types: ["Files"] }, { surface: { ...base.surface, mode: "minimized" as const } }],
+    ["behind tab workspace", { types: ["Files"] }, { tabWorkspaceActive: true }],
+    ["inactive tab", { types: ["Files"] }, { surface: { ...base.surface, mode: "tab" as const }, tabWorkspaceActive: true }],
+  ] as const)("keeps normal focus isolation for %s", (_name, dataTransfer, overrides) => {
+    const onFocus = vi.fn();
+    const view = render(<DesktopSurfaceFrame {...base} {...overrides} onFocus={onFocus} />);
+    fireEvent.dragEnter(view.container.querySelector("[data-os-window]")!, { dataTransfer });
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+});
+
 describe("current desktop tab panes", () => {
   it.each(["desktop", "canvas"] as const)("resizes an inactive Terminal from its full-frame left edge in %s", (presentation) => {
     vi.stubGlobal("PointerEvent", MouseEvent);

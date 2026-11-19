@@ -194,4 +194,55 @@ suite("Chat attach and recoverable Files Trash in Electron Desktop", () => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await setAppearance("Light");
   }, 60_000);
+
+  it("activates an inactive Chat when a real Files pointer drag enters its composer", async () => {
+    await page.setViewportSize({ width: 1700, height: 1000 });
+    await page.getByRole("button", { name: "Focus Chat", exact: true }).click();
+    const chat = page.getByRole("dialog", { name: "Chat window", exact: true });
+    const chip = chat.getByRole("button", { name: `Remove ${MATRIX_ATTACH_FILE}`, exact: true });
+    if (await chip.count()) await chip.click();
+    const resizeAndMove = async (window: ReturnType<Page["getByRole"]>, width: number, height: number, x: number, y: number) => {
+      const initial = (await window.boundingBox())!;
+      const resize = (await window.getByRole("separator", { name: "Resize bottom right", exact: true }).boundingBox())!;
+      await page.mouse.move(resize.x + resize.width / 2, resize.y + resize.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(resize.x + resize.width / 2 + width - initial.width,
+        resize.y + resize.height / 2 + height - initial.height, { steps: 12 });
+      await page.mouse.up();
+      const resized = (await window.boundingBox())!;
+      const handle = (await window.getByTestId("desktop-window-drag-handle").boundingBox())!;
+      await page.mouse.move(handle.x + handle.width - 100, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x + handle.width - 100 + x - resized.x,
+        handle.y + handle.height / 2 + y - resized.y, { steps: 12 });
+      await page.mouse.up();
+    };
+    await resizeAndMove(chat, 760, 750, 890, 100);
+    if (await chat.getAttribute("data-sidebar-shown") === "true") {
+      await chat.getByRole("button", { name: "Toggle Chat sidebar", exact: true }).click();
+    }
+    await page.getByTestId("desktop-taskbar-files").click();
+    const files = page.getByRole("dialog", { name: "Files window", exact: true });
+    await resizeAndMove(files, 720, 650, 70, 140);
+    const row = files.getByRole("button", { name: `Open ${MATRIX_ATTACH_FILE}`, exact: true });
+    const composer = chat.getByRole("textbox", { name: "Reply to chat", exact: true });
+    await row.waitFor();
+    expect(await row.getAttribute("draggable")).toBe("true");
+    expect(await chat.getAttribute("data-active")).toBeNull();
+    expect(await composer.evaluate(element => Boolean(element.closest("[inert]")))).toBe(true);
+    const source = (await row.boundingBox())!;
+    const target = (await composer.boundingBox())!;
+    expect(source.x + source.width).toBeLessThan(target.x);
+    expect(target.y + target.height).toBeLessThanOrEqual(1000);
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(source.x + source.width / 2 + 12, source.y + source.height / 2 + 5, { steps: 5 });
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 35 });
+    await page.mouse.move(target.x + target.width / 2 + 1, target.y + target.height / 2 + 1, { steps: 2 });
+    await page.mouse.up();
+    await chip.waitFor({ timeout: 5_000 });
+    expect(await chip.count()).toBe(1);
+    expect(await chat.getAttribute("data-active")).toBe("true");
+    await capture(page, "electron-files-cross-window-pointer-drag.png");
+  });
 });
