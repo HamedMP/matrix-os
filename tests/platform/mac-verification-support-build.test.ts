@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { link, lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { prepareMacVerificationSupport } from "../../scripts/release/prepare-mac-verification-support.mjs";
+import { prepareMacVerificationSupport, sealMacVerificationArchive } from "../../scripts/release/prepare-mac-verification-support.mjs";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -14,6 +15,8 @@ async function fixture() {
   git("init", "-q");
   await writeFile(join(repo, "package.json"), JSON.stringify({ name: "matrix-os", packageManager: "pnpm@10.33.4" }));
   await writeFile(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(join(repo, "README.md"), "committed source\n");
+  await symlink("README.md", join(repo, "source-link"));
   git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture");
   const baseSha = git("rev-parse", "HEAD");
   // Dirty checkout bytes and local secrets must not enter the shipped source.
@@ -48,12 +51,24 @@ test("packages exact committed source and pinned private tools, never dirty sour
       await writeFile(join(store, "v10/files/offline-package"), "retained package bytes");
     } });
   const manifest = JSON.parse(await readFile(join(out, "manifest.json"), "utf8"));
-  expect(manifest).toMatchObject({ version: 1, baseSha: f.baseSha, pnpmVersion: "10.33.4", platform: "darwin" });
-  expect(await readFile(join(out, "source/package.json"), "utf8")).toContain('"matrix-os"');
-  await expect(readFile(join(out, "source/.env"))).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(readFile(join(out, "source/node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(lstat(join(out, "pnpm-store/v10/projects/build-checkout"))).rejects.toMatchObject({ code: "ENOENT" });
-  expect(await readFile(join(out, "pnpm-store/v10/files/offline-package"), "utf8")).toBe("retained package bytes");
+  expect(manifest).toMatchObject({ version: 2, baseSha: f.baseSha, pnpmVersion: "10.33.4", platform: "darwin" });
+  expect(manifest.paths).toMatchObject({ checkout: "source.tar", store: "pnpm-store.tar" });
+  await expect(lstat(join(out, "source"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(lstat(join(out, "pnpm-store"))).rejects.toMatchObject({ code: "ENOENT" });
+  const unpackedSource = join(f.root, "unpacked-source"); const unpackedStore = join(f.root, "unpacked-store");
+  for (const [key, destination] of [["checkout", unpackedSource], ["store", unpackedStore]]) {
+    await mkdir(destination);
+    const archive = await readFile(join(out, manifest.paths[key]));
+    expect(manifest.archives[key]).toMatchObject({ sha256: createHash("sha256").update(archive).digest("hex"), sizeBytes: archive.length });
+    execFileSync("/usr/bin/tar", ["-xf", join(out, manifest.paths[key]), "-C", destination, "--no-same-owner", "--no-same-permissions"]);
+  }
+  expect(await readFile(join(unpackedSource, "package.json"), "utf8")).toContain('"matrix-os"');
+  expect(await readlink(join(unpackedSource, "source-link"))).toBe("README.md");
+  expect(execFileSync("/usr/bin/git", ["status", "--porcelain"], { cwd: unpackedSource, encoding: "utf8" })).toBe("");
+  await expect(readFile(join(unpackedSource, ".env"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(readFile(join(unpackedSource, "node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(lstat(join(unpackedStore, "v10/projects/build-checkout"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(join(unpackedStore, "v10/files/offline-package"), "utf8")).toBe("retained package bytes");
   expect(await readlink(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/Current"))).toBe("A");
   expect(await readlink(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Resources"))).toBe("Versions/Current/Resources");
   expect(await readFile(join(out, "runtime/Electron.app/Contents/Frameworks/Electron Framework.framework/Resources/icudtl.dat"), "utf8")).toBe("fixture ICU");
@@ -96,4 +111,20 @@ test("uses pnpm lifecycle's actual package entry instead of a self-update PATH w
   expect(await readPnpmEntry({ args: ["node", "prepare.mjs"], env: { npm_execpath: entry } })).toBe(entry);
   expect(await readPnpmEntry({ args: ["node", "prepare.mjs", "--pnpm", "/explicit/pnpm.cjs"], env: { npm_execpath: entry } })).toBe("/explicit/pnpm.cjs");
   await expect(readPnpmEntry({ args: ["node", "prepare.mjs"], env: {} })).rejects.toThrow(/pnpm run/);
+});
+
+
+test("seals only bounded package files, rejecting links and preserving an existing archive destination", async () => {
+  const root = await mkdtemp(join(tmpdir(), "matrix-store-archive-test-")); roots.push(root);
+  const store = join(root, "store"); await mkdir(store);
+  const file = join(store, "package"); await writeFile(file, "package bytes");
+  const archive = join(root, "store.tar");
+  await symlink("package", join(store, "link"));
+  await expect(sealMacVerificationArchive(store, archive)).rejects.toThrow("regular files");
+  await rm(join(store, "link")); await link(file, join(store, "hardlink"));
+  await expect(sealMacVerificationArchive(store, archive)).rejects.toThrow("regular files");
+  await rm(join(store, "hardlink"));
+  await writeFile(archive, "existing owner bytes");
+  await expect(sealMacVerificationArchive(store, archive)).rejects.toThrow("exists");
+  expect(await readFile(archive, "utf8")).toBe("existing owner bytes");
 });
