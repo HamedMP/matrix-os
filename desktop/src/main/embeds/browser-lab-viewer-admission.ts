@@ -8,6 +8,8 @@ export interface BrowserLabViewerAuth {
 type ViewerContents = Pick<WebContents, "id" | "session" | "getURL" | "isDestroyed" | "once" | "removeListener">;
 interface ViewerRegistration { contents: ViewerContents; origin: string; generation: number; dispose?: () => void }
 const ROOT = "/apps/browser-lab";
+const CLIPBOARD_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write"]);
+const VIEWER_DOCUMENTS = new Set([`${ROOT}/viewer/`, `${ROOT}/viewer/index.html`]);
 const FILTER = { urls: ["wss://*/apps/browser-lab/viewer/websockify*", "ws://*/apps/browser-lab/viewer/websockify*"] };
 
 function parseUrl(raw: string): URL | null {
@@ -94,6 +96,21 @@ export function createBrowserLabViewerAdmission(auth: BrowserLabViewerAuth) {
         });
       }
       return unregister;
+    },
+    /**
+     * Kasm seamless clipboard reads the local clipboard from its iframe, so
+     * paste reaches the remote Chrome. Only the viewer document inside a
+     * current, registered lab view may use it; every other frame stays denied.
+     */
+    allowsClipboard(contents: Pick<ViewerContents, "id"> | null, permission: string,
+      details: { isMainFrame: boolean; requestingUrl?: string }): boolean {
+      if (!contents || !CLIPBOARD_PERMISSIONS.has(permission) || details.isMainFrame) return false;
+      const registered = viewers.get(contents.id);
+      if (!registered || registered.contents !== contents || !current(registered)) return false;
+      if (!atPath(registered.contents.getURL(), registered.origin, ROOT, true)) return false;
+      const frame = typeof details.requestingUrl === "string" ? parseUrl(details.requestingUrl) : null;
+      return !!frame && frame.origin === registered.origin && !frame.username && !frame.password
+        && VIEWER_DOCUMENTS.has(frame.pathname);
     },
     close() { for (const viewer of viewers.values()) viewer.dispose?.(); viewers.clear(); detachIfEmpty(); },
   };

@@ -101,6 +101,42 @@ describe("native Browser Lab viewer admission", () => {
     expect(f.send()).toBe("Bearer synthetic-native-bearer");
     unregister();
   });
+  describe("clipboard permission for the Kasm viewer frame", () => {
+    const viewerFrame = { isMainFrame: false, requestingUrl: `${base}/apps/browser-lab/viewer/?path=x&autoconnect=true` };
+    it.each(["clipboard-read", "clipboard-sanitized-write"])("grants %s to the registered viewer frame so local paste reaches remote Chrome", permission => {
+      const f = setup();
+      expect(f.admission.allowsClipboard(f.contents, permission, viewerFrame)).toBe(true);
+      expect(f.admission.allowsClipboard(f.contents, permission, { isMainFrame: false, requestingUrl: `${base}/apps/browser-lab/viewer/index.html` })).toBe(true);
+      f.unregister();
+    });
+    it.each([
+      ["another permission", "media", viewerFrame],
+      ["notifications", "notifications", viewerFrame],
+      ["the lab main frame", "clipboard-read", { isMainFrame: true, requestingUrl: `${base}/apps/browser-lab/` }],
+      ["a main-frame viewer navigation", "clipboard-read", { isMainFrame: true, requestingUrl: `${base}/apps/browser-lab/viewer/` }],
+      ["a foreign frame", "clipboard-read", { isMainFrame: false, requestingUrl: "https://attacker.test/apps/browser-lab/viewer/" }],
+      ["another lab path", "clipboard-read", { isMainFrame: false, requestingUrl: `${base}/apps/browser-lab/api/` }],
+      ["a viewer subpath", "clipboard-read", { isMainFrame: false, requestingUrl: `${base}/apps/browser-lab/viewer/evil/` }],
+      ["credentials in the frame URL", "clipboard-read", { isMainFrame: false, requestingUrl: "https://u:p@app.matrix-os.com/apps/browser-lab/viewer/" }],
+      ["a missing frame URL", "clipboard-read", { isMainFrame: false }],
+    ])("denies %s", (_name, permission, details) => {
+      const f = setup();
+      expect(f.admission.allowsClipboard(f.contents, permission as string, details as never)).toBe(false);
+      f.unregister();
+    });
+    it.each(["unregistered", "other-contents", "navigation", "generation", "destroyed", "null"])("denies clipboard for %s views", reason => {
+      const f = setup();
+      let contents: any = f.contents;
+      if (reason === "unregistered") f.unregister();
+      if (reason === "other-contents") contents = { ...f.contents, id: 99 };
+      if (reason === "navigation") f.topUrl(`${base}/apps/notes/`);
+      if (reason === "generation") f.generation();
+      if (reason === "destroyed") f.destroy();
+      if (reason === "null") contents = null;
+      expect(f.admission.allowsClipboard(contents, "clipboard-read", viewerFrame)).toBe(false);
+      f.unregister();
+    });
+  });
   it("fails closed when the configured origin becomes invalid", () => {
     const f = setup(); f.origin("invalid gateway");
     expect(f.send()).toBeUndefined(); f.unregister();

@@ -336,6 +336,31 @@ describe("createWebContentsView", () => {
     );
   });
 
+  it("lets a scoped permission policy admit only what it approves while keeping app views deny-by-default", () => {
+    const permissionPolicy = vi.fn((_contents: unknown, permission: string, details: { isMainFrame: boolean }) =>
+      permission === "clipboard-read" && !details.isMainFrame);
+    createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:app-browser-lab",
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+      permissionPolicy,
+      appBridge: { appIdentity: "matrix-browser", routeSlug: "browser-lab", preloadPath: "/p.cjs", register: vi.fn(), unregister: vi.fn() },
+    });
+    const check = electronMock.webContents.session.setPermissionCheckHandler.mock.calls[0]?.[0];
+    const request = electronMock.webContents.session.setPermissionRequestHandler.mock.calls[0]?.[0];
+    const frame = { isMainFrame: false, requestingUrl: "https://gateway.test/apps/browser-lab/viewer/" };
+    expect(check?.(electronMock.webContents, "clipboard-read", "https://gateway.test", frame)).toBe(true);
+    expect(check?.(electronMock.webContents, "media", "https://gateway.test", frame)).toBe(false);
+    expect(check?.(electronMock.webContents, "clipboard-read", "https://gateway.test", { ...frame, isMainFrame: true })).toBe(false);
+    const granted = vi.fn(); const denied = vi.fn();
+    request?.(electronMock.webContents, "clipboard-read", granted, frame);
+    request?.(electronMock.webContents, "geolocation", denied, frame);
+    expect(granted).toHaveBeenCalledWith(true);
+    expect(denied).toHaveBeenCalledWith(false);
+    expect(permissionPolicy).toHaveBeenCalledWith(electronMock.webContents, "clipboard-read", frame);
+  });
+
   it("installs the restricted bridge preload only for app views and unregisters it on close", () => {
     const register = vi.fn();
     const unregister = vi.fn();
