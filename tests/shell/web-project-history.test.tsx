@@ -2,7 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROJECT_HISTORY_REFRESH_DELAY_MS, useWebProjectHistory } from "../../shell/src/components/chat/useWebProjectHistory";
-import { isChatMembershipEvent, isChatRunStatusEvent } from "../../shell/src/hooks/useCanonicalChatState";
+import { appendChatRunStatusChange, isChatMembershipEvent, isChatRunStatusEvent } from "../../shell/src/hooks/useCanonicalChatState";
 
 const project = { id: "proj_a", slug: "proj_a", name: "Alpha" };
 const record = (id: string) => ({
@@ -90,13 +90,13 @@ describe("history-only run status", () => {
       const item = { ...record("chat_old"), ...(running ? { activeRun: { runId: "run_1", turnId: "cturn_1", status: "running" } } : {}) };
       return new Response(JSON.stringify({ items: [item] }), { status: 200 });
     }));
-    let runStatusChange = { revision: 0, chatIds: [] as string[] };
+    let runStatusChange = appendChatRunStatusChange(undefined, null);
     const view = renderHook(() => useWebProjectHistory({ project, gatewayUrl: "https://example.test", listed, runStatusChange, enabled: true, botClient }));
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(view.result.current.records.find((item) => item.chat.id === "chat_old")?.activeRun?.status).toBe("running");
 
     running = false;
-    runStatusChange = { revision: 1, chatIds: ["chat_old"] };
+    runStatusChange = appendChatRunStatusChange(runStatusChange, "chat_old");
     view.rerender();
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(view.result.current.records.find((item) => item.chat.id === "chat_old")?.activeRun).toBeUndefined();
@@ -105,14 +105,46 @@ describe("history-only run status", () => {
   it("ignores run status changes for Chats the shared list already carries", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [record("chat_old")] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    let runStatusChange = { revision: 0, chatIds: [] as string[] };
+    let runStatusChange = appendChatRunStatusChange(undefined, null);
     const view = renderHook(() => useWebProjectHistory({ project, gatewayUrl: "https://example.test", listed, runStatusChange, enabled: true, botClient }));
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     const reads = fetchMock.mock.calls.length;
-    runStatusChange = { revision: 1, chatIds: ["chat_elsewhere"] };
+    runStatusChange = appendChatRunStatusChange(runStatusChange, "chat_elsewhere");
     view.rerender();
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(fetchMock.mock.calls.length).toBe(reads);
+  });
+});
+
+describe("history-only run status window", () => {
+  it("reads once for a history-only Chat, then ignores later run events for other Chats", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [record("chat_old")] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    let runStatusChange = appendChatRunStatusChange(undefined, null);
+    const view = renderHook(() => useWebProjectHistory({ project, gatewayUrl: "https://example.test", listed, runStatusChange, enabled: true, botClient }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    const initial = fetchMock.mock.calls.length;
+
+    runStatusChange = appendChatRunStatusChange(runStatusChange, "chat_old");
+    view.rerender();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(fetchMock.mock.calls.length).toBe(initial + 1);
+
+    // chat_old is still in the bounded window, but only new changes may trigger a read.
+    for (let index = 0; index < 5; index += 1) {
+      runStatusChange = appendChatRunStatusChange(runStatusChange, "chat_busy_elsewhere");
+      view.rerender();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    }
+    expect(fetchMock.mock.calls.length).toBe(initial + 1);
+  });
+
+  it("keeps the change window bounded", () => {
+    let change = appendChatRunStatusChange(undefined, null);
+    for (let index = 0; index < 100; index += 1) change = appendChatRunStatusChange(change, `chat_${index}`);
+    expect(change.revision).toBe(100);
+    expect(change.changes.length).toBeLessThanOrEqual(32);
+    expect(change.changes.at(-1)).toEqual({ revision: 100, chatId: "chat_99" });
   });
 });
 

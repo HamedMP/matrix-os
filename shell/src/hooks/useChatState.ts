@@ -32,8 +32,8 @@ export interface ChatState {
   navigationTruncated?:boolean;
   /** Changes on every Chat change except streamed run text. */
   chatChangeRevision?:number;
-  /** Chats whose run started, ended or changed what it waits on, newest last. */
-  chatRunStatusChange?:{ revision:number; chatIds:readonly string[] };
+  /** The newest run start/end/wait changes, each tagged with its revision. */
+  chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;

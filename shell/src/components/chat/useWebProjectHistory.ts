@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { compareCanonicalChatActivity, useBotConversationSummaries, type ChatAgentClient, type ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { createCanonicalShellChatClient } from "@/lib/canonical-chat-client";
+import type { ChatRunStatusChanges } from "@/hooks/useCanonicalChatState";
 import type { WebProject } from "./web-projects";
 
 // Matches the global navigation window; each reference pages at most this far.
@@ -42,7 +43,7 @@ export function createSingleFlightThrottle(task: () => Promise<void>, intervalMs
   };
 }
 
-export type ChatRunStatusChange = { revision: number; chatIds: readonly string[] };
+export type ChatRunStatusChange = ChatRunStatusChanges;
 
 type HistoryState = { key: string; records: CanonicalChatRecord[]; error: boolean };
 
@@ -131,12 +132,17 @@ export function useWebProjectHistory({ project, gatewayUrl, listed, knownChatIds
   const listedIds = useMemo(() => new Set([...listed.map((record) => record.chat.id), ...(knownChatIds ?? [])]), [listed, knownChatIds]);
   const historyOnlyIds = useMemo(() => history.flatMap((record) => listedIds.has(record.chat.id) ? [] : [record.chat.id]), [history, listedIds]);
   // The shared list keeps its own rows current; a history-only row only changes when its Project's history is read again.
-  const lastRunStatus = useRef(runStatusChange?.revision);
+  // Only changes after the last handled revision count; older ones stay in the window but were already acted on.
+  const lastRunStatus = useRef(runStatusChange?.revision ?? 0);
   useEffect(() => {
-    if (!runStatusChange || runStatusChange.revision === lastRunStatus.current) return;
+    if (!runStatusChange) return;
+    // A restarted source (new chat state) counts from zero again.
+    if (runStatusChange.revision < lastRunStatus.current) lastRunStatus.current = 0;
+    if (runStatusChange.revision === lastRunStatus.current) return;
+    const handled = lastRunStatus.current;
     lastRunStatus.current = runStatusChange.revision;
     const historyOnly = new Set(historyOnlyIds);
-    if (runStatusChange.chatIds.some((chatId) => historyOnly.has(chatId))) requestRead.current?.();
+    if (runStatusChange.changes.some((change) => change.revision > handled && historyOnly.has(change.chatId))) requestRead.current?.();
   }, [runStatusChange, historyOnlyIds]);
   const bots = useBotConversationSummaries(botClient, historyOnlyIds, enabled && historyOnlyIds.length > 0);
   const records = useMemo<ChatNavigationRecord[]>(() => {
