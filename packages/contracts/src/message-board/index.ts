@@ -1,1 +1,1 @@
-export * from "./schemas.js";
+export * from "#message-board-schemas";

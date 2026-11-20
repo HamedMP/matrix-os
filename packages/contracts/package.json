@@ -35,6 +35,7 @@
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",
+    "#message-board-schemas": "./src/message-board/schemas.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
