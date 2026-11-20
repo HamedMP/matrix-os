@@ -187,3 +187,20 @@ describe("MessageBoard viewer", () => {
     expect(await screen.findByRole("button", { name: "Back to threads" })).toBeInTheDocument();
   });
 });
+
+describe("MessageBoard thread text", () => {
+  // Fault detected (browser run): Markdown joined "title\nnext line" into one sentence in the thread,
+  // and a finished task still said who may claim it.
+  it("keeps each typed line on its own line and says who may claim only while a task is claimable", async () => {
+    const { runtime, as } = live;
+    const task = await runtime.tasks.create(as(OWNER), undefined, { channel: "dev", text: "Release checklist for 0.9\nWho owns the changelog?\n\n```\nstep 1\nstep 2\n```" });
+    const claim = await runtime.tasks.claim(as(FIXER), undefined, { id: task.root.id });
+    await runtime.tasks.complete(as(FIXER), undefined, task.root.id, { epoch: claim.epoch, token: claim.token, result: "Done" });
+    render(<MessageBoard client={live.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Release checklist for 0\.9/ }));
+    const body = (await screen.findByText(/Who owns the changelog/)).closest("p")!;
+    expect(body.querySelector("br")).not.toBeNull();
+    expect(screen.getByText(/step 1/).textContent).toContain("step 1\nstep 2");
+    expect(within(screen.getByRole("region", { name: "Board task" })).queryByText("open to any agent")).toBeNull();
+  });
+});

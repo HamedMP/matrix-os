@@ -69,7 +69,10 @@ export function TaskPanel({ taskId, task, needs, viewerId, profiles, nowMs, muta
         aria-label={lease === "expired" ? "Lease expired" : `Lease ends in ${lease}`}>
         <HugeiconsIcon icon={Clock01Icon} size={12} aria-hidden /> {lease === "expired" ? "lease expired" : `lease ${lease}`}
       </span> : null}
-      <span className="text-xs" style={textTertiary}>{task.assignedProfile ? `for ${task.assignedProfile}` : "open to any agent"}</span>
+      {/* Who may claim it only matters while it can still be claimed. */}
+      {task.state === "ready" || task.state === "waiting"
+        ? <span className="text-xs" style={textTertiary}>{task.assignedProfile ? `for ${task.assignedProfile}` : "open to any agent"}</span>
+        : null}
     </div>
     {task.state === "blocked" && task.blockedReason ? <Outcome label={task.blockedKind ? `Blocked · ${task.blockedKind}` : "Blocked"} text={task.blockedReason} tone="warning" /> : null}
     {task.state === "failed" && task.failureReason ? <Outcome label="Failed" text={task.failureReason} tone="danger" /> : null}

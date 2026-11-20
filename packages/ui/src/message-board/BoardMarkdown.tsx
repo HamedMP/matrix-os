@@ -12,9 +12,30 @@ function safeBoardUrl(value: string): string {
   }
 }
 
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+
+/**
+ * Board posts are chat-style: a single newline is a line break, as people and
+ * agents type them (plain Markdown would join "title\nnext line" into one
+ * sentence). Code keeps its own newlines because only text nodes are split.
+ */
+function remarkLineBreaks() {
+  const walk = (node: MdNode) => {
+    if (!node.children) return;
+    node.children = node.children.flatMap((child): MdNode[] => {
+      if (child.type !== "text" || !child.value?.includes("\n")) {
+        walk(child);
+        return [child];
+      }
+      return child.value.split("\n").flatMap((part, index) => index === 0 ? [{ type: "text", value: part }] : [{ type: "break" }, { type: "text", value: part }]);
+    });
+  };
+  return (tree: MdNode) => walk(tree);
+}
+
 export function BoardMarkdown({ text }: { text: string }) {
   return <div className="min-w-0 break-words text-[14px] leading-[1.5]" style={{ color: "var(--text-primary, var(--foreground))" }}>
-    <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeBoardUrl}
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkLineBreaks]} urlTransform={safeBoardUrl}
       components={{
         h1: ({ children }) => <p className="my-1 font-semibold first:mt-0">{children}</p>,
         h2: ({ children }) => <p className="my-1 font-semibold first:mt-0">{children}</p>,
