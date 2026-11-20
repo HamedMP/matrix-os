@@ -5,7 +5,12 @@ import {
   ReleaseTaskRequestSchema, RenewTaskRequestSchema, ReopenTaskRequestSchema, SetTaskNeedsRequestSchema, TasksQuerySchema,
   UnblockTaskRequestSchema,
 } from "@matrix-os/contracts/message-board";
+import { bodyLimit } from "hono/body-limit";
+import { boardErrorBody } from "./errors.js";
 import type { BoardCaller } from "./service.js";
+
+/** 15 tasks × 10,000 characters, JSON-escaped, plus labels and keys. */
+export const TASK_PLAN_BODY_LIMIT = 15 * 10_000 * 2 + 64 * 1024;
 import type { BoardTaskService } from "./tasks.js";
 
 type Handle = (fn: (c: Context, caller: BoardCaller) => Promise<Response>) => (c: Context) => Promise<Response>;
@@ -19,6 +24,8 @@ export function mountTaskRoutes(app: Hono, deps: {
   withProfile(caller: BoardCaller, profile: string | undefined): BoardCaller;
 }): void {
   const { tasks, handle, limit, readBody, withProfile } = deps;
+  // A plan carries up to 15 tasks of up to 10,000 characters each.
+  const planLimit = bodyLimit({ maxSize: TASK_PLAN_BODY_LIMIT, onError: (c) => c.json(boardErrorBody("invalid_input"), 413) });
   const board = (c: Context) => BoardQuerySchema.parse({ board: c.req.query("board") }).board;
   const taskId = (c: Context) => BoardMessageIdSchema.parse(c.req.param("id"));
 
@@ -28,7 +35,7 @@ export function mountTaskRoutes(app: Hono, deps: {
     return c.json({ tasks: threads });
   }));
 
-  app.post("/tasks", limit, handle(async (c, caller) => {
+  app.post("/tasks", planLimit, handle(async (c, caller) => {
     const raw = await readBody(c);
     if (typeof raw === "object" && raw !== null && "tasks" in raw) {
       const plan = CreateTaskPlanRequestSchema.parse(raw);
