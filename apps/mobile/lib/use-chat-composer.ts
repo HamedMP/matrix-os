@@ -26,6 +26,8 @@ import { chatDraftKey, moveChatDraft, writeChatDraft, type ChatDrafts } from "@/
 import { tapHaptic, warningHaptic } from "@/lib/haptics";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests";
+import { isMatrixAttachmentCacheUri } from "@/lib/matrix-attachment-retention";
+import { useMatrixAttachmentRetention } from "@/lib/use-matrix-attachment-retention";
 
 // A failed send's idempotency keys are kept until a send in its chat
 // succeeds; beyond this many the oldest is dropped.
@@ -60,6 +62,7 @@ interface SentWith {
 interface PendingMessage extends OptimisticUserMessage {
   /** `ComposerState.navigation` when it was sent. */
   navigation: number;
+  matrixGeneration: number;
   sentWith: SentWith;
   /** The project a new chat was to be created in. */
   projectId: string | null;
@@ -68,6 +71,7 @@ interface PendingMessage extends OptimisticUserMessage {
 }
 
 interface FailedSend {
+  matrixGeneration: number;
   /** The chat it was sent in, or null for a new chat that was never bound. */
   chatId: string | null;
   /** The project a new chat was to be created in. */
@@ -136,7 +140,7 @@ function emptyComposerState(scope: string | null, shownChatId: string | null, ep
 function reservedAttachments(state: ComposerState, draftKey: string): number {
   const sending = state.sending?.draftKey === draftKey ? state.sending.attachments.length : 0;
   return state.pending.reduce((held, message) => (
-    message.failed && chatDraftKey(message.chatId) === draftKey ? held + (message.attachments?.length ?? 0) : held
+    message.failed && chatDraftKey(message.chatId) === draftKey ? held + restorableAttachments(state, message).length : held
   ), sending);
 }
 
@@ -148,10 +152,17 @@ function newChatComposerIsFree(state: ComposerState): boolean {
 
 function failedSend(message: PendingMessage, held: boolean): FailedSend {
   return {
+    matrixGeneration: message.matrixGeneration,
     chatId: message.chatId, projectId: message.projectId, text: message.text,
     attachments: message.attachments ?? NO_ATTACHMENTS, chatRequestId: message.chatRequestId,
     turnRequestId: message.turnRequestId, sentWith: message.sentWith, held,
   };
+}
+
+/** Recovery keeps words and device files, but never revives an expired Matrix selection. */
+function restorableAttachments(state: ComposerState, message: Pick<PendingMessage, "matrixGeneration" | "attachments">): readonly ComposerAttachment[] {
+  const parts = message.attachments ?? NO_ATTACHMENTS;
+  return message.matrixGeneration === state.matrixGeneration ? parts : parts.filter((part) => !part.matrixSource);
 }
 
 function rememberFailed(failed: readonly FailedSend[], message: PendingMessage, held: boolean): FailedSend[] {
@@ -176,7 +187,7 @@ function returnToComposer(state: ComposerState, message: PendingMessage): Compos
     pending: state.pending.filter((pending) => pending.id !== message.id),
     drafts: writeChatDraft(state.drafts, draftKey, text),
     // Room was held for these while they waited in the chat, so they fit.
-    attachments: writeAttachmentDraft(state.attachments, draftKey, appendAttachments(message.attachments ?? NO_ATTACHMENTS, added)),
+    attachments: writeAttachmentDraft(state.attachments, draftKey, appendAttachments(restorableAttachments(state, message), added)),
     failed: rememberFailed(state.failed, message, false),
   };
 }
@@ -247,12 +258,12 @@ function reconcile(
   // there that were not sent, which "Edit" puts back.
   if (on.activeChatId === null && !on.isSending && newChatComposerIsFree(next)) {
     const room = MAX_MESSAGE_ATTACHMENTS - reservedAttachments(next, NEW_CHAT_DRAFT_KEY);
-    const held = next.failed.find((failed) => failed.held && failed.attachments.length <= room);
+    const held = next.failed.find((failed) => failed.held && restorableAttachments(next, failed).length <= room);
     if (held) {
       next = {
         ...next,
         drafts: writeChatDraft(next.drafts, NEW_CHAT_DRAFT_KEY, held.text),
-        attachments: writeAttachmentDraft(next.attachments, NEW_CHAT_DRAFT_KEY, held.attachments),
+        attachments: writeAttachmentDraft(next.attachments, NEW_CHAT_DRAFT_KEY, restorableAttachments(next, held)),
         failed: next.failed.map((failed) => (failed === held ? { ...failed, held: false } : failed)),
       };
     }
@@ -320,6 +331,15 @@ export function useChatComposer({
   const [stored, setState] = useState(() => emptyComposerState(scope, activeChatId, 0, projectId));
   const state = reconcile(stored, { scope, activeChatId, detail, isSending, projectId });
   if (state !== stored) setState(state);
+  const retainedMatrixUris = useMemo(() => [
+    ...Object.values(state.attachments).flat(),
+    ...state.pending.flatMap((message) => message.attachments ?? NO_ATTACHMENTS),
+    ...state.failed.filter((failed) => failed.held).flatMap((failed) => failed.attachments),
+    ...(state.sending?.attachments ?? NO_ATTACHMENTS),
+  ].filter((item) => item.matrixSource).map((item) => item.uri).concat(
+    Object.values(state.sentAttachments).filter(isMatrixAttachmentCacheUri),
+  ), [state.attachments, state.pending, state.failed, state.sending, state.sentAttachments]);
+  useMatrixAttachmentRetention(retainedMatrixUris);
 
   const { epoch, navigation, matrixGeneration } = state;
   const draftKey = chatDraftKey(activeChatId);
@@ -395,7 +415,7 @@ export function useChatComposer({
       ...current,
       pending: withPending(current.pending, {
         id: optimisticId, chatId: activeChatId, text, attachments: sent, turnRequestId, chatRequestId,
-        projectId: outgoing.projectId, createdAt: Date.now(), navigation, sentWith,
+        projectId: outgoing.projectId, createdAt: Date.now(), navigation, matrixGeneration, sentWith,
       }),
       ...(fromComposer ? {
         drafts: writeChatDraft(current.drafts, draftKey, ""),
@@ -468,7 +488,7 @@ export function useChatComposer({
         });
       },
     });
-  }, [activeChatId, detail, draftKey, epoch, navigation, selection, turnModes, sendMessage, attachmentErrorIn]);
+  }, [activeChatId, detail, draftKey, epoch, navigation, matrixGeneration, selection, turnModes, sendMessage, attachmentErrorIn]);
 
   // The computer would refuse a turn whose attachments the model does not
   // read, after the phone had uploaded the files.
@@ -502,8 +522,10 @@ export function useChatComposer({
 
   /** Re-evaluate failures against the current selection, including its funding options. */
   const retryErrorIn = useCallback((message: PendingMessage) => (
-    attachmentErrorIn(message.attachments ?? NO_ATTACHMENTS)
-  ), [attachmentErrorIn]);
+    message.matrixGeneration !== matrixGeneration && message.attachments?.some((part) => part.matrixSource)
+      ? "Choose the Matrix files again before resending this message."
+      : attachmentErrorIn(message.attachments ?? NO_ATTACHMENTS)
+  ), [attachmentErrorIn, matrixGeneration]);
 
   /** Sends a message that was not sent again, as the same send: same keys, text, attachments, model and modes. */
   const retrySend = useCallback((id: string) => {

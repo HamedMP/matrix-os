@@ -14,9 +14,9 @@ import {
 } from "@/lib/chat-attachments";
 import { assertSecureTokenTransport } from "@/lib/gateway-client";
 import { buildGatewayRequestUrl } from "@/lib/requests/http";
+import { forgetStagedMatrixAttachment, isMatrixAttachmentRetained, MAX_MATRIX_CACHE_FILES, protectStagedMatrixAttachment } from "@/lib/matrix-attachment-retention";
 
 const CACHE_NAME = "chat-matrix-attachments";
-const CACHE_LIMIT = 64;
 const CACHE_MAX_AGE = 24 * 60 * 60 * 1000;
 const SAFE_MIME_TYPE = /^[A-Za-z0-9][A-Za-z0-9.+/-]{1,119}$/;
 
@@ -25,8 +25,11 @@ function collectCache(directory: Directory) {
   const current = directory.list()
     .filter((entry): entry is File => entry instanceof File)
     .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
-  for (const [index, file] of current.entries()) {
-    if (index >= CACHE_LIMIT - 1 || (file.lastModified ?? 0) < threshold) file.delete();
+  const active = current.filter((file) => isMatrixAttachmentRetained(file.uri));
+  if (active.length >= MAX_MATRIX_CACHE_FILES) throw new Error("MatrixAttachmentCacheFull");
+  const available = MAX_MATRIX_CACHE_FILES - active.length - 1;
+  for (const [index, file] of current.filter((file) => !isMatrixAttachmentRetained(file.uri)).entries()) {
+    if (index >= available || (file.lastModified ?? 0) < threshold) file.delete();
   }
 }
 
@@ -34,6 +37,7 @@ export function discardMatrixAttachment(attachment: ComposerAttachment): void {
   if (!attachment.matrixSource) return;
   try {
     const file = new File(Paths.cache, CACHE_NAME, attachment.id);
+    forgetStagedMatrixAttachment(file.uri);
     if (file.exists) file.delete();
   } catch (error: unknown) {
     console.warn("[chat] staged attachment cleanup failed", error instanceof Error ? error.name : "UnknownError");
@@ -54,6 +58,7 @@ export async function stageMatrixAttachment(
   if (signal.aborted) abort();
   const timeout = setTimeout(abort, 30_000);
   let staged: ComposerAttachment | undefined;
+  let protectedUri: string | undefined;
   try {
     if (resource.kind !== "home") throw new Error("MatrixAttachmentUnavailable");
     const url = buildGatewayRequestUrl(source.gatewayUrl, "/api/file-previews/content", {
@@ -105,15 +110,18 @@ export async function stageMatrixAttachment(
     }
     const directory = new Directory(Paths.cache, CACHE_NAME);
     directory.create({ idempotent: true });
-    collectCache(directory);
     const id = attachmentIdFrom(getRandomValues(new Uint8Array(16)));
     const file = new File(directory, id);
+    protectStagedMatrixAttachment(file.uri);
+    protectedUri = file.uri;
+    collectCache(directory);
     const name = attachmentName(source.path.split("/").at(-1)!, mimeType);
     file.create({ overwrite: false });
     staged = { id, uri: file.uri, name, mimeType, kind, sizeBytes, matrixSource: source };
     file.write(bytes);
     return staged;
   } catch (error: unknown) {
+    if (protectedUri) forgetStagedMatrixAttachment(protectedUri);
     if (staged) discardMatrixAttachment(staged);
     throw error;
   } finally {

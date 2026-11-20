@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react-native";
 
 import { useProjectComposer } from "../components/projects/use-project-composer";
+import { isMatrixAttachmentRetained } from "../lib/matrix-attachment-retention";
 import { catalogOf, engineInstance } from "./model-test-catalog";
 
 interface SentMessage {
@@ -261,6 +262,7 @@ describe("useProjectComposer", () => {
         matrixSource: { gatewayUrl: "https://matrix.test/vm/computer", userId: "account", path: "a.jpg" },
       };
       act(() => result.current.addAttachments([fromMatrix, photo("b")]));
+      expect(isMatrixAttachmentRetained(fromMatrix.uri)).toBe(true);
       expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["a.jpg", "b.jpg"]);
       const staleAdd = result.current.addAttachments;
       rerender({ ...initialProps, matrixAttachmentScope: "account:another-computer:project" });
@@ -268,6 +270,7 @@ describe("useProjectComposer", () => {
       rerender(initialProps);
       act(() => staleAdd([fromMatrix]));
       expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["b.jpg"]);
+      expect(isMatrixAttachmentRetained(fromMatrix.uri)).toBe(false);
     });
 
     it.each(["add", "remove"])("clears the old send error on attachment %s", (action) => {

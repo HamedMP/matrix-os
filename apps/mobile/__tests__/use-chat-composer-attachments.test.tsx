@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { MAX_MESSAGE_ATTACHMENTS, type ComposerAttachment } from "../lib/chat-attachments";
 import { useChatComposer } from "../lib/use-chat-composer";
+import { isMatrixAttachmentRetained } from "../lib/matrix-attachment-retention";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
 import { catalogOf, engineInstance } from "./model-test-catalog";
@@ -213,12 +214,14 @@ describe("chat composer attachments", () => {
       composer.result.current.setDraft("Keep my text");
       composer.result.current.addAttachments([photo("device"), matrix]);
     });
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
 
     composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
     expect(waiting(composer)).toEqual([]);
     composer.rerender(original);
 
     expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(false);
     expect(composer.result.current.draft).toBe("Keep my text");
   });
 
@@ -254,6 +257,55 @@ describe("chat composer attachments", () => {
     act(() => { finishOldRead([matrix]); });
 
     expect(waiting(composer)).toEqual([]);
+  });
+
+  it.each([
+    { activeChatId: "chat_b", detail: detailFor("chat_b") },
+    { projectId: "project_b" },
+  ])("restores failed-send text and device files without expired Matrix files after %j", async (transition) => {
+    mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
+    const composer = renderComposer();
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Keep this failed message");
+      composer.result.current.addAttachments([matrix, photo("device")]);
+    });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["matrix.jpg", "device.jpg"]]));
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
+
+    composer.rerender({ ...newChat, ...transition });
+    if (!transition.activeChatId) expect(waiting(composer)).toEqual(["device.jpg"]);
+    composer.rerender({ ...newChat });
+
+    expect(composer.result.current.draft).toBe("Keep this failed message");
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(mockCreateChat).toHaveBeenCalledTimes(2));
+    // Removing expired files changes the payload, so this is a new request.
+    expect(mockCreateChat.mock.calls[1][2].clientRequestId).not.toBe(mockCreateChat.mock.calls[0][2].clientRequestId);
+  });
+
+  it.each([{ activeChatId: null, detail: null }, { scope: null }])("blocks an expired Matrix retry after %j and lets Edit recover text and device files", async (transition) => {
+    mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
+    const original = { ...newChat, activeChatId: "chat_a", detail: detailFor("chat_a") };
+    const composer = renderComposer(original);
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Recover this");
+      composer.result.current.addAttachments([matrix, photo("device")]);
+    });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["matrix.jpg", "device.jpg"]]));
+
+    composer.rerender({ ...original, ...transition });
+    composer.rerender(original);
+    expect(composer.result.current.optimisticMessages[0].retryBlocked).toBe(true);
+    act(() => { composer.result.current.retrySend(FIRST_SEND); });
+    expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1);
+    act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(composer.result.current.draft).toBe("Recover this");
   });
 
   it("uploads the attachments, then sends a message that names them after its text", async () => {

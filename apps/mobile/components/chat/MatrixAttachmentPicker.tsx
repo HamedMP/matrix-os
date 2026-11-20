@@ -62,6 +62,7 @@ export function MatrixAttachmentPicker({ binding, kinds, room, attachments, onBa
         const code = cause instanceof Error ? cause.message : "";
         setError(code === "MatrixAttachmentTooLarge" ? "This Matrix file exceeds the attachment size limit."
           : code === "MatrixAttachmentUnsupported" ? "The selected model cannot read this file."
+            : code === "MatrixAttachmentCacheFull" ? "Too many Matrix files are in use. Remove an attachment and try again."
             : "Could not read this Matrix file. Try again.");
       }
     } finally {

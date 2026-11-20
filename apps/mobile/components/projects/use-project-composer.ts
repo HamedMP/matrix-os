@@ -1,5 +1,5 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   MAX_MESSAGE_ATTACHMENTS,
@@ -14,6 +14,7 @@ import { chatAttachmentSubmissionError } from "@/lib/chat-attachment-policy";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { NewChatDeliveryUnconfirmedError } from "@/lib/queries/new-chat-admission-recovery";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
+import { useMatrixAttachmentRetention } from "@/lib/use-matrix-attachment-retention";
 
 // A failed send's request ids are kept until a send goes through; beyond this
 // many the oldest is dropped.
@@ -84,6 +85,8 @@ export function useProjectComposer({
   };
   if (currentDraft !== attachmentDraft) setAttachmentDraft(currentDraft);
   const { items: attachments, generation: matrixGeneration } = currentDraft;
+  const retainedMatrixUris = useMemo(() => attachments.filter((item) => item.matrixSource).map((item) => item.uri), [attachments]);
+  useMatrixAttachmentRetention(retainedMatrixUris);
   const failedSends = useRef<FailedSend[]>([]);
 
   const text = draft.trim();
