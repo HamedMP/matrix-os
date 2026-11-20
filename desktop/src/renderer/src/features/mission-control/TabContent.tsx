@@ -2,7 +2,6 @@ import { Sparkles } from "@renderer/lib/hugeicons";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import type { Tab } from "../../stores/tabs";
-import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
@@ -105,8 +104,6 @@ export function TabPane({
         : null;
     case "project":
       return <WorkTab route="project" projectSlug={tab.projectSlug} active={active} visible={visible} initialChatId={tab.chatId} initialChatTitle={tab.chatTitle} />;
-    case "task":
-      return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
       return tab.sharedScopeId
         ? <DesktopSharedTerminal scopeId={tab.sharedScopeId} />

@@ -52,9 +52,6 @@ describe("CreateProjectDialog add-project flows", () => {
     useBoard.setState({
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
-      firstLoadByProject: {},
-      refreshing: false,
       error: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
@@ -139,7 +136,7 @@ describe("CreateProjectDialog add-project flows", () => {
       });
       expect(init?.signal).toBeInstanceOf(AbortSignal);
 
-      await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "repo"));
+      await waitFor(() => expect(selectProject).toHaveBeenCalledWith("repo"));
       expect(loadProjects).toHaveBeenCalled();
       expect(openTab).toHaveBeenCalledWith({ kind: "project", projectSlug: "repo", title: "repo" });
       expect(onClose).toHaveBeenCalled();
@@ -380,7 +377,7 @@ describe("CreateProjectDialog add-project flows", () => {
         name: "Notes",
         mode: "scratch",
       }));
-      await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "notes"));
+      await waitFor(() => expect(selectProject).toHaveBeenCalledWith("notes"));
     });
 
     it("creates the folder via the mkdir route under a chosen parent, then binds it", async () => {
@@ -436,7 +433,7 @@ describe("CreateProjectDialog add-project flows", () => {
         mode: "folder",
         path: "code/side-project",
       }));
-      await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "side-project"));
+      await waitFor(() => expect(selectProject).toHaveBeenCalledWith("side-project"));
     });
 
     it("routes an explicitly selected Projects parent through scratch creation", async () => {

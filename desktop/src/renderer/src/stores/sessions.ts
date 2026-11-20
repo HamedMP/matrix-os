@@ -11,7 +11,6 @@ import {
   type WorkspaceSessionDTO,
   type TerminalWorkspaceDTO,
 } from "../lib/session-merge";
-import { useBoard } from "./board";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export interface SessionCreateInput {
@@ -110,10 +109,6 @@ async function deleteAttachableSession(api: ApiClient, attachName: string): Prom
   const ref = parseAttachRef(attachName);
   if (!ref) throw new Error("Invalid terminal reference");
   await api.delete(`/api/terminal/workspaces/${ref.workspaceId}/tabs/${ref.tabId}`);
-}
-
-async function deleteWorkspaceSession(api: ApiClient, sessionId: string): Promise<void> {
-  await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 async function fetchMergedSessions(api: ApiClient): Promise<{
@@ -379,37 +374,6 @@ export const useSessions = create<SessionsState>()((set, get) => ({
               error: null,
             };
           });
-        }
-        let linkError: unknown = null;
-        if (existing.projectSlug && existing.taskId) {
-          try {
-            await useBoard.getState().linkSession(api, existing.projectSlug, existing.taskId, {
-              linkedSessionId: sessionId,
-            });
-          } catch (err: unknown) {
-            console.error("[sessions] Failed to relink restarted session:", err);
-            linkError = err;
-          }
-          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-        }
-        if (linkError) {
-          if (nextAttachName) {
-            try {
-              await deleteAttachableSession(api, nextAttachName);
-              await get().load(api);
-            } catch (cleanupErr: unknown) {
-              console.error("[sessions] Failed to clean up unlinked restarted session:", cleanupErr);
-            }
-          } else {
-            try {
-              await deleteWorkspaceSession(api, sessionId);
-              await get().load(api);
-            } catch (cleanupErr: unknown) {
-              console.error("[sessions] Failed to delete unlinked restarted session:", cleanupErr);
-            }
-          }
-          set({ creating: false, error: linkError instanceof AppError ? linkError.category : "server" });
-          return null;
         }
         set({ creating: false, error: null });
         return { sessionId, attachName: nextAttachName };

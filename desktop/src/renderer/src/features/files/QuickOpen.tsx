@@ -2,10 +2,8 @@ import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { File } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../stores/connection";
-import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
-import { useEditorTabs } from "../editor/editor-tabs-store";
-import { useWorkspace } from "../../stores/workspace";
+import { openExactFileInDesktopEditor, useDesktopEditor } from "../editor/desktop-editor-store";
 
 const SEARCH_DEBOUNCE_MS = 150;
 const MAX_RESULTS = 30;
@@ -13,11 +11,7 @@ const MAX_RESULTS = 30;
 // Mounted only while open (fresh state per open, autoFocus instead of a focus
 // timeout). The search debounce timer is cleared on each change and unmount.
 function QuickOpenInner({ onClose }: { onClose: () => void }) {
-  const activeTab = useTabs((s) => s.tabs.find((t) => t.id === s.activeTabId));
   const api = useConnection((s) => s.api);
-  const openEditorTab = useEditorTabs((s) => s.openTab);
-  const togglePanel = useWorkspace((s) => s.togglePanel);
-  const layoutFor = useWorkspace((s) => s.layoutFor);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const [selected, setSelected] = useState(0);
@@ -67,14 +61,12 @@ function QuickOpenInner({ onClose }: { onClose: () => void }) {
     };
   }, [api, query]);
 
+  // Search results are Matrix home paths; they open in the Editor app.
   const openPath = (path: string) => {
-    if (activeTab?.kind !== "task" || !activeTab.taskId) {
-      setOpenError("Open a task tab before opening files.");
+    if (!openExactFileInDesktopEditor(path)) {
+      setOpenError(useDesktopEditor.getState().error ?? "That file can't be opened.");
       return;
     }
-    const taskId = activeTab.taskId;
-    openEditorTab(taskId, path);
-    if (!layoutFor(taskId).visible.editor) togglePanel(taskId, "editor");
     onClose();
   };
 

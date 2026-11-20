@@ -7,8 +7,7 @@ import QuickOpen from "../../desktop/src/renderer/src/features/files/QuickOpen";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
-import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
-import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
+import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 
 async function searchForFile(path: string): Promise<void> {
   fireEvent.change(screen.getByPlaceholderText(/go to file/i), { target: { value: path } });
@@ -33,8 +32,7 @@ describe("QuickOpen", () => {
       quickOpenOpen: true,
     });
     useTabs.setState(useTabs.getInitialState(), true);
-    useEditorTabs.setState(useEditorTabs.getInitialState(), true);
-    useWorkspace.setState(useWorkspace.getInitialState(), true);
+    useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
   });
 
   afterEach(() => {
@@ -43,30 +41,26 @@ describe("QuickOpen", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the dialog open with feedback when opening outside a task", async () => {
+  it("opens a result in the Editor app and dismisses", async () => {
     render(<QuickOpen />);
 
     await searchForFile("app");
     fireEvent.click(screen.getByRole("button", { name: /src\/app\.ts/i }));
 
-    expect(screen.getByRole("status").textContent).toContain("Open a task tab");
-    expect(useUi.getState().quickOpenOpen).toBe(true);
-    expect(useEditorTabs.getState().activePathByTask).toEqual({});
+    expect(useDesktopEditor.getState().activePath).toBe("src/app.ts");
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "editor")).toBe(true);
+    expect(useUi.getState().quickOpenOpen).toBe(false);
   });
 
-  it("opens the file and dismisses from a task view", async () => {
-    useTabs.getState().openTab({
-      kind: "task",
-      taskId: "task_a",
-      projectSlug: "alpha",
-      title: "Task A",
-    });
+  it("keeps the dialog open with feedback when a result cannot be opened", async () => {
+    useConnection.setState({ api: { get: vi.fn().mockResolvedValue({ results: ["../outside.ts"] }) } as never });
     render(<QuickOpen />);
 
-    await searchForFile("app");
-    fireEvent.click(screen.getByRole("button", { name: /src\/app\.ts/i }));
+    await searchForFile("outside");
+    fireEvent.click(screen.getByRole("button", { name: /outside\.ts/i }));
 
-    expect(useEditorTabs.getState().activePathByTask.task_a).toBe("src/app.ts");
-    expect(useUi.getState().quickOpenOpen).toBe(false);
+    expect(screen.getByRole("status").textContent).toContain("outside Matrix home");
+    expect(useUi.getState().quickOpenOpen).toBe(true);
+    expect(useDesktopEditor.getState().paths).toEqual([]);
   });
 });

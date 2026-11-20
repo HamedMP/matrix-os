@@ -25,7 +25,6 @@ const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   settings: "settings",
   terminal: "terminal",
   terminals: "terminal",
-  task: "coding_agent",
   work: "chat",
   chat: "chat",
   projects: "chat",

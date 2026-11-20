@@ -43,9 +43,6 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     projectsStatus: "idle",
     projectsError: null,
     activeProjectSlug: null,
-    cardsByProject: {},
-    firstLoadByProject: {},
-    refreshing: false,
     error: null,
   });
   useProjectLifecycle.setState({
