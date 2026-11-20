@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from "react";
 import { parseLabelFilter } from "./model.js";
 import type { MessageBoardClient } from "./client.js";
 import { messageBoardErrorCopy } from "./presentation.js";
@@ -23,27 +23,53 @@ const MAX_THREAD_LIMIT = 500;
 const EVENT_COALESCE_MS = 60;
 
 /**
- * Loads one value for `key` and reloads it when `version` moves. Stale
- * responses for an old key are dropped; the previous data stays visible
- * while a reload is in flight so live updates never flash a spinner.
+ * Loads one value for `key` and reloads it when `version` moves. A reload for
+ * the same key never cancels the request in flight: it waits, applies that
+ * response, then runs once more if events arrived meanwhile, so a steady
+ * stream of events cannot starve the view. Responses for an old key are
+ * dropped; previous data stays visible while a reload runs, so live updates
+ * never flash a spinner.
  */
 function useResource<T>(load: (() => Promise<T>) | null, key: string, version: number): Resource<T> {
   const [state, setState] = useState<Resource<T> & { key: string }>({ ...IDLE, key: "" });
   const enabled = load !== null;
   const runLoad = useEffectEvent(() => load!());
+  const flight = useRef<{ key: string; again: boolean } | null>(null);
   useEffect(() => {
-    if (!enabled) return;
-    let current = true;
-    runLoad().then(
-      (data) => { if (current) setState({ status: "ready", data, error: null, key }); },
-      (error: unknown) => {
-        if (!current) return;
-        console.warn("[message-board] load failed", key, error instanceof Error ? error.message : error);
-        setState((previous) => ({ status: "error", data: previous.key === key ? previous.data : null, error: messageBoardErrorCopy(error), key }));
-      },
-    );
-    return () => { current = false; };
+    if (!enabled) {
+      flight.current = null;
+      return;
+    }
+    if (flight.current?.key === key) {
+      flight.current.again = true;
+      return;
+    }
+    const start = () => {
+      const entry = { key, again: false };
+      flight.current = entry;
+      const settle = () => {
+        if (flight.current !== entry) return;
+        flight.current = null;
+        if (entry.again) start();
+      };
+      runLoad().then(
+        (data) => {
+          if (flight.current === entry) setState({ status: "ready", data, error: null, key });
+          settle();
+        },
+        (error: unknown) => {
+          if (flight.current === entry) {
+            console.warn("[message-board] load failed", key, error instanceof Error ? error.message : error);
+            setState((previous) => ({ status: "error", data: previous.key === key ? previous.data : null, error: messageBoardErrorCopy(error), key }));
+          }
+          settle();
+        },
+      );
+    };
+    start();
   }, [key, version, enabled]);
+  // Unmounting drops whatever is still in flight.
+  useEffect(() => () => { flight.current = null; }, []);
   if (!enabled) return IDLE;
   return state.key === key ? state : { status: "loading", data: null, error: null };
 }
