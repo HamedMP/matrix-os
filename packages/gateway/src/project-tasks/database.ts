@@ -67,6 +67,23 @@ export interface ProjectTaskDatabase {
     summary: string;
     created_at: Timestamp;
   };
+  project_task_relations: {
+    owner_id: string;
+    task_id: string;
+    blocked_by_task_id: string;
+    created_at: Timestamp;
+  };
+  project_task_comments: {
+    owner_id: string;
+    id: string;
+    project_id: string;
+    task_id: string;
+    author: string;
+    body: string;
+    created_at: Timestamp;
+    edited_at: NullableTimestamp;
+    deleted_at: NullableTimestamp;
+  };
   project_task_operations: {
     owner_id: string;
     client_request_id: string;
@@ -168,6 +185,38 @@ async function migrateProjectTasksV1(trx: ProjectTaskTrx): Promise<void> {
   await sql`CREATE INDEX idx_project_task_operations_age ON project_task_operations(created_at)`.execute(trx);
 }
 
+async function migrateTaskCommentsV2(trx: ProjectTaskTrx): Promise<void> {
+  await sql.raw(`
+    CREATE TABLE project_task_relations (
+      ${OWNER},
+      ${TASK_ID("task_id")},
+      ${TASK_ID("blocked_by_task_id")},
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (owner_id, task_id, blocked_by_task_id),
+      CHECK (task_id <> blocked_by_task_id)
+    )
+  `).execute(trx);
+  await sql`CREATE INDEX idx_project_task_relations_blocker ON project_task_relations(owner_id, blocked_by_task_id)`.execute(trx);
+  await sql.raw(`
+    CREATE TABLE project_task_comments (
+      ${OWNER},
+      id TEXT NOT NULL CHECK (id ~ '^tcm_[A-Za-z0-9_-]{1,128}$'),
+      ${PROJECT_ID},
+      ${TASK_ID("task_id")},
+      ${ACTOR("author")},
+      body TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND ${TASK_LIMITS.comment}),
+      created_at TIMESTAMPTZ NOT NULL,
+      edited_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ,
+      PRIMARY KEY (owner_id, id)
+    )
+  `).execute(trx);
+  await sql`
+    CREATE INDEX idx_project_task_comments_task ON project_task_comments(owner_id, task_id, created_at, id)
+    WHERE deleted_at IS NULL
+  `.execute(trx);
+}
+
 export interface ProjectTaskMigration {
   readonly version: number;
   readonly name: string;
@@ -177,6 +226,7 @@ export interface ProjectTaskMigration {
 /** Applied in order; never edit a released version, add a new one. */
 export const PROJECT_TASK_MIGRATIONS: ProjectTaskMigration[] = [
   { version: 1, name: "project_tasks", up: migrateProjectTasksV1 },
+  { version: 2, name: "task_comments_relations", up: migrateTaskCommentsV2 },
 ];
 
 export class ProjectTaskSchemaError extends Error {

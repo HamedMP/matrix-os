@@ -5,6 +5,7 @@ import { ListTasksResponseSchema, ProjectTaskErrorSchema, TaskResponseSchema, ty
 import { createTestPGlite } from "../../helpers/pglite-test-helper.js";
 import { bootstrapProjectTaskDatabase, type ProjectTaskDatabase } from "../../../packages/gateway/src/project-tasks/database.js";
 import { ProjectTaskRepository } from "../../../packages/gateway/src/project-tasks/repository.js";
+import { ProjectTaskCommentRepository } from "../../../packages/gateway/src/project-tasks/comments.js";
 import { ProjectTaskService, type TaskEventPublisher } from "../../../packages/gateway/src/project-tasks/service.js";
 import { createProjectTaskRoutes } from "../../../packages/gateway/src/project-tasks/routes.js";
 import type { TaskRecord } from "../../../packages/gateway/src/task-manager.js";
@@ -42,6 +43,8 @@ describe("project task routes", () => {
     legacyTasks = legacy(records);
     const service = new ProjectTaskService({
       repository: new ProjectTaskRepository(db),
+      comments: new ProjectTaskCommentRepository(db),
+      members: async () => [{ actor: "user:user_owner", name: "Owner", handle: "owner" }],
       projects: {
         getProject: async (slug: string) => (slug === PROJECT.slug
           ? { ok: true as const, project: { id: PROJECT.id, slug, name: "Board demo" } as never }
