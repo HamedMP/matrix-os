@@ -47,8 +47,10 @@ export function registerBoardEventsWebSocket(options: {
             return typeof raw?.bufferedAmount === "number" ? raw.bufferedAmount : 0;
           };
           // Subscribe before reading the starting cursor: anything published meanwhile is held, not lost.
+          const readable = await service.readableChannels(caller, board.id);
+          const canRead = readable ? (event: { channel?: string }) => !event.channel || readable.includes(event.channel) : undefined;
           const subscription = hub.subscribe({
-            ownerId: caller.ownerId, boardName: board.name, actorId: caller.actor.id, channel: query.channel,
+            ownerId: caller.ownerId, boardName: board.name, actorId: caller.actor.id, channel: query.channel, canRead,
             send, close: () => { if (!closed) ws.close(1001, "Board events closed"); }, backlog,
           });
           handle = subscription;
@@ -57,7 +59,7 @@ export function registerBoardEventsWebSocket(options: {
           let caughtUp = query.after === undefined;
           for (let page = 0; !caughtUp && page < MAX_REPLAY_PAGES && !closed; page += 1) {
             const latest = await service.resolveBoard(caller.ownerId, board.name);
-            const result = await readBoardEvents(service.db, latest, { after: cursor, limit: REPLAY_PAGE, channel: query.channel });
+            const result = await readBoardEvents(service.db, latest, { after: cursor, limit: REPLAY_PAGE, channel: query.channel, canRead });
             if (result.missed) send({ type: "missed", cursor: result.cursor });
             for (const event of result.events) {
               if (hub.overBacklog(backlog())) break;

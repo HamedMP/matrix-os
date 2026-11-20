@@ -92,6 +92,62 @@ export interface BoardTasksTable {
 
 export interface BoardTaskNeedsTable { owner_id: string; task_id: string; needs_task_id: string }
 
+export interface BoardWatchersTable {
+  id: string;
+  owner_id: string;
+  board_id: string;
+  name: string;
+  tail: Json<{ channel: string; label?: string; by?: string }>;
+  action: Json<Record<string, unknown>>;
+  enabled: boolean;
+  max_runs_per_hour: number;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface BoardWatcherRunsTable {
+  owner_id: string;
+  watcher_id: string;
+  event_cursor: ColumnType<string, string | number, never>;
+  message_id: string;
+  /** null while pending or retrying. */
+  outcome: "ok" | "failed" | null;
+  attempts: number;
+  next_attempt_at: Timestamp;
+  last_error: string | null;
+  created_at: Timestamp;
+  finished_at: NullableTimestamp;
+}
+
+export interface BoardSchedulesTable {
+  id: string;
+  owner_id: string;
+  board_id: string;
+  author: string;
+  author_actor: Json<StoredBoardActor>;
+  channel: string;
+  thread_id: string | null;
+  text: string;
+  next_run_at: Timestamp;
+  every: string | null;
+  remaining: number | null;
+  until_at: NullableTimestamp;
+  run_count: number;
+  created_at: Timestamp;
+}
+
+export interface BoardGrantsTable {
+  id: string;
+  owner_id: string;
+  board_id: string;
+  principal: string;
+  pattern: string;
+  permissions: Json<string[]>;
+  created_by: string;
+  created_at: Timestamp;
+}
+
 export interface MessageBoardDatabase {
   board_schema_migrations: BoardSchemaMigrationsTable;
   board_boards: BoardBoardsTable;
@@ -103,6 +159,10 @@ export interface MessageBoardDatabase {
   board_reads: BoardReadsTable;
   board_tasks: BoardTasksTable;
   board_task_needs: BoardTaskNeedsTable;
+  board_watchers: BoardWatchersTable;
+  board_watcher_runs: BoardWatcherRunsTable;
+  board_schedules: BoardSchedulesTable;
+  board_grants: BoardGrantsTable;
 }
 
 /** Distinct from every other gateway advisory lock key. */
@@ -188,7 +248,42 @@ const v2: BoardMigration = {
   },
 };
 
-export const MESSAGE_BOARD_MIGRATIONS: readonly BoardMigration[] = [v1, v2];
+const v3: BoardMigration = {
+  version: 3,
+  async up(trx) {
+    await sql`CREATE TABLE board_watchers (
+      id text PRIMARY KEY, owner_id text NOT NULL, board_id text NOT NULL REFERENCES board_boards(id) ON DELETE CASCADE,
+      name text NOT NULL, tail jsonb NOT NULL, action jsonb NOT NULL, enabled boolean NOT NULL DEFAULT true,
+      max_runs_per_hour integer NOT NULL CHECK (max_runs_per_hour BETWEEN 1 AND 120),
+      created_by text NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+      UNIQUE (board_id, name)
+    )`.execute(trx);
+    await sql`CREATE TABLE board_watcher_runs (
+      owner_id text NOT NULL, watcher_id text NOT NULL REFERENCES board_watchers(id) ON DELETE CASCADE,
+      event_cursor bigint NOT NULL, message_id text NOT NULL,
+      outcome text CHECK (outcome IN ('ok','failed')), attempts integer NOT NULL DEFAULT 0,
+      next_attempt_at timestamptz NOT NULL, last_error text, created_at timestamptz NOT NULL, finished_at timestamptz,
+      PRIMARY KEY (watcher_id, event_cursor)
+    )`.execute(trx);
+    await sql`CREATE INDEX board_watcher_runs_pending ON board_watcher_runs(next_attempt_at) WHERE outcome IS NULL`.execute(trx);
+    await sql`CREATE INDEX board_watcher_runs_recent ON board_watcher_runs(watcher_id, created_at)`.execute(trx);
+    await sql`CREATE TABLE board_schedules (
+      id text PRIMARY KEY, owner_id text NOT NULL, board_id text NOT NULL REFERENCES board_boards(id) ON DELETE CASCADE,
+      author text NOT NULL, author_actor jsonb NOT NULL, channel text NOT NULL, thread_id text REFERENCES board_messages(id) ON DELETE CASCADE,
+      text text NOT NULL, next_run_at timestamptz NOT NULL, every text, remaining integer, until_at timestamptz,
+      run_count integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL
+    )`.execute(trx);
+    await sql`CREATE INDEX board_schedules_due ON board_schedules(next_run_at)`.execute(trx);
+    await sql`CREATE TABLE board_grants (
+      id text PRIMARY KEY, owner_id text NOT NULL, board_id text NOT NULL REFERENCES board_boards(id) ON DELETE CASCADE,
+      principal text NOT NULL, pattern text NOT NULL, permissions jsonb NOT NULL,
+      created_by text NOT NULL, created_at timestamptz NOT NULL,
+      UNIQUE (board_id, principal, pattern)
+    )`.execute(trx);
+  },
+};
+
+export const MESSAGE_BOARD_MIGRATIONS: readonly BoardMigration[] = [v1, v2, v3];
 
 /**
  * Applies pending versioned migrations in one transaction under an advisory

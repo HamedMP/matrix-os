@@ -194,7 +194,11 @@ export type MessageBoardErrorBody = z.infer<typeof MessageBoardErrorBodySchema>;
 export const BoardQuerySchema = z.object({ board: BoardNameSchema.optional() });
 
 export const CreateBoardRequestSchema = z.object({ name: BoardNameSchema }).strict();
-export const CreateChannelRequestSchema = z.object({ path: ChannelPathSchema }).strict();
+export const CreateChannelRequestSchema = z.object({
+  path: ChannelPathSchema,
+  /** Readable only by its creator: a grant for the creator and a closing grant for everyone else. */
+  private: z.boolean().optional(),
+}).strict();
 
 export const PostMessageRequestSchema = z.object({
   channel: ChannelPathSchema,
