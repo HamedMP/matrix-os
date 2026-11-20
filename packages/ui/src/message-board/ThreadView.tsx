@@ -114,7 +114,11 @@ function LabelEditor({ labels, onChange }: {
   };
   return <div className="mt-1.5 flex flex-wrap items-center gap-1">
     {entries.map(([key, label]) => <LabelChip key={key} name={key} value={label}
-      onRemove={isReservedLabelKey(key) ? undefined : () => void onChange({ unset: [key] })} />)}
+      onRemove={isReservedLabelKey(key) ? undefined : async () => {
+        setError(null);
+        const result = await onChange({ unset: [key] });
+        if (!result.ok) setError(result.error);
+      }} />)}
     {adding
       ? <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input autoFocus aria-label="New label (key=value)" placeholder="key=value" value={value} maxLength={330}

@@ -135,6 +135,30 @@ describe("MessageBoard viewer", () => {
     });
   });
 
+  it("explains a failed label removal and never navigates for a post that lands after the form closed", async () => {
+    const root = await live.runtime.service.post(live.as(OWNER), undefined, { channel: "dev", text: "Labelled", labels: { kind: "bug" } });
+    render(<MessageBoard client={live.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Labelled/ }));
+    live.state.failing = true;
+    fireEvent.click(await screen.findByRole("button", { name: "Remove label kind" }));
+    expect((await screen.findAllByText("The board is not reachable right now. Try again.")).length).toBeGreaterThan(0);
+    live.state.failing = false;
+    // Hold the next post until the form is closed.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const post = live.client.post.bind(live.client);
+    live.client.post = async (...args) => { await held; return post(...args); };
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    const text = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(text, { target: { value: "Late post" } });
+    fireEvent.keyDown(text, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Close new thread" }));
+    release();
+    await waitFor(async () => expect(await live.runtime.service.listMessages(live.as(OWNER), undefined, { text: "Late post" })).toHaveLength(1));
+    expect(screen.queryByRole("region", { name: "Thread" })).toBeNull();
+    expect(root.id).toBeTruthy();
+  });
+
   it("collapses to one pane with back navigation in a narrow window", async () => {
     class NarrowObserver {
       constructor(private readonly callback: ResizeObserverCallback) {}
