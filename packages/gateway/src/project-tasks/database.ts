@@ -246,13 +246,17 @@ export async function bootstrapProjectTaskDatabase(
   migrations: readonly ProjectTaskMigration[] = PROJECT_TASK_MIGRATIONS,
 ): Promise<{ applied: number[] }> {
   if (migrations.some((migration, index) => migration.version !== index + 1)) throw new ProjectTaskSchemaError("unordered_migrations");
-  await sql`
-    CREATE TABLE IF NOT EXISTS project_task_schema_migrations (
-      version INTEGER PRIMARY KEY CHECK (version > 0),
-      name TEXT NOT NULL CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `.execute(db);
+  // Under the schema lock: two first-time gateways must not race on CREATE TABLE IF NOT EXISTS.
+  await db.transaction().execute(async (trx) => {
+    await lock(trx);
+    await sql`
+      CREATE TABLE IF NOT EXISTS project_task_schema_migrations (
+        version INTEGER PRIMARY KEY CHECK (version > 0),
+        name TEXT NOT NULL CHECK (name ~ '^[a-z][a-z0-9_]{0,63}$'),
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `.execute(trx);
+  });
   const applied: number[] = [];
   for (const migration of migrations) {
     const ran = await db.transaction().execute(async (trx) => {

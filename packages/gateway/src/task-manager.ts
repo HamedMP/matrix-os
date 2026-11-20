@@ -165,7 +165,7 @@ async function removeValidatedLegacyTask(
   });
 }
 
-async function listTaskRecords(homePath: string, projectSlug: string): Promise<TaskRecord[] | null> {
+async function listTaskRecords(homePath: string, projectSlug: string, maxIds = MAX_TASK_DISCOVERY_IDS): Promise<TaskRecord[] | null> {
   const ids = new Set<string>();
   for (const root of [tasksDir(homePath, projectSlug), createProjectRegistry({ homePath }).legacyTasksDir(projectSlug)]) {
     let directory: Awaited<ReturnType<typeof opendir>>;
@@ -175,7 +175,7 @@ async function listTaskRecords(homePath: string, projectSlug: string): Promise<T
         if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
         const taskId = entry.name.slice(0, -".json".length);
         if (!TaskIdSchema.safeParse(taskId).success || ids.has(taskId)) continue;
-        if (ids.size >= MAX_TASK_DISCOVERY_IDS) return null;
+        if (ids.size >= maxIds) return null;
         ids.add(taskId);
       }
     } catch (err: unknown) {
@@ -192,8 +192,10 @@ async function listTaskRecords(homePath: string, projectSlug: string): Promise<T
   return tasks;
 }
 
-export function createTaskManager(options: { homePath: string; now?: () => string }) {
+/** `maxDiscoveryIds` raises the file discovery bound for the one-time board import (spec 2699). */
+export function createTaskManager(options: { homePath: string; now?: () => string; maxDiscoveryIds?: number }) {
   const homePath = resolve(options.homePath);
+  const maxDiscoveryIds = Math.min(Math.max(1, options.maxDiscoveryIds ?? MAX_TASK_DISCOVERY_IDS), 5_000);
 
   return {
     async createTask(projectSlug: string, input: unknown, ownerScope?: OwnerScope): Promise<Result<{ task: TaskRecord }> | Failure> {
@@ -239,7 +241,7 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
       if (!parsed.success) return failure(400, "invalid_task_query", "Task query is invalid");
 
       const query = parsed.data;
-      const records = await listTaskRecords(homePath, projectSlug);
+      const records = await listTaskRecords(homePath, projectSlug, maxDiscoveryIds);
       if (!records) return failure(409, "task_limit_exceeded", "Task limit exceeded");
       const allTasks = records
         .filter((task) => query.includeArchived || task.status !== "archived")

@@ -67,8 +67,22 @@ function query<T>(c: Context, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
+/** The shared-project fence for one write; callers outside shared projects run directly. */
+export function createProjectTaskAdmission(admission: LegacyProjectOperationAdmission | undefined) {
+  return async <T>(who: TaskCaller, projectId: string, run: () => Promise<T>): Promise<T> => {
+    if (!admission) return run();
+    return admission.withLegacyAdmission({
+      ownerType: who.ownerScope.type === "org" ? "organization" : "personal",
+      ownerId: who.ownerScope.id,
+      projectId,
+      kind: "write",
+    }, run);
+  };
+}
+
 export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono {
   const app = new Hono();
+  const admitWrite = createProjectTaskAdmission(options.projectOperationAdmission);
   const limited = bodyLimit({
     maxSize: TASK_LIMITS.bodyBytes,
     onError: (c) => c.json(projectTaskErrorBody("invalid_request"), 413),
@@ -104,13 +118,8 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
   /** Writes go through the shared-project fence, as the legacy task routes did. */
   async function write<T>(who: TaskCaller, slug: string, run: () => Promise<T>): Promise<T> {
     if (!options.projectOperationAdmission) return run();
-    const context = await service().open(who, slug);
-    return options.projectOperationAdmission.withLegacyAdmission({
-      ownerType: who.ownerScope.type === "org" ? "organization" : "personal",
-      ownerId: who.ownerScope.id,
-      projectId: context.project.id,
-      kind: "write",
-    }, run);
+    const { project } = await service().resolve(who, slug);
+    return admitWrite(who, project.id, run);
   }
 
   const base = "/api/projects/:slug/tasks";
