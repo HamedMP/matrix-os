@@ -134,6 +134,13 @@ describe("Matrix integrations MCP server", () => {
       "jev_evaluate",
       "list_chat_agent_options",
       "create_chat_agent",
+      "project_task_list",
+      "project_task_get",
+      "project_task_create",
+      "project_task_update",
+      "project_task_move",
+      "project_task_comment",
+      "project_task_start",
     ]);
     expect(listed.tools[0]?.description).toContain("new conversation");
 
