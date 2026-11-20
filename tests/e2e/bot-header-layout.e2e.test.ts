@@ -18,7 +18,7 @@ beforeAll(async () => {
     format: "iife", platform: "browser", jsx: "automatic", loader: { ".svg": "dataurl", ".png": "dataurl", ".ttf": "dataurl" }, alias: { "@renderer": join(root, "desktop/src/renderer/src") },
     define: { "process.env.NODE_ENV": '"test"', "process.env": "{}", "import.meta.env": "{}" }, plugins: [{ name: "offline-data-seams", setup(builder) {
       builder.onResolve({ filter: /^react(?:-dom)?(?:\/.*)?$/ }, args => ({ path: desktopRequire.resolve(args.path) }));
-      // Mock the offline data seam, retaining the real archive context/outlet
+      // Mock the offline data seam, retaining the real archive and Side draft contexts
       // now consumed by the production header and sidebar composition.
       builder.onResolve({ filter: /\?archive-runtime$/ }, args => ({ path: args.path.replace(/\?archive-runtime$/, ""), namespace: "archive-runtime" }));
       builder.onLoad({ filter: /.*/, namespace: "archive-runtime" }, async args => ({ contents: await readFile(args.path, "utf8"), resolveDir: dirname(args.path), loader: "tsx" }));
@@ -26,7 +26,7 @@ beforeAll(async () => {
       builder.onLoad({ filter: /\/(?:ProjectLanding|ProjectChatsView|ProjectsIndex)\.tsx$/ }, args => ({ contents: args.path.endsWith("ProjectLanding.tsx") ? "export function ProjectLanding() { return null; }" : "export default function UnusedProjectView() { return null; }", loader: "tsx" }));
       builder.onLoad({ filter: /\/(?:TabContent|WorkSurfaceRuntime|ChatTab)\.tsx$/, namespace: "file" }, args => {
         const exports = args.path.endsWith("TabContent.tsx") ? "TabPane, TabErrorBoundary" : args.path.endsWith("WorkSurfaceRuntime.tsx") ? "useWorkSurfaceRuntime, WorkSurfaceRuntimeProvider" : "ChatContent as default";
-        const archive = args.path.endsWith("WorkSurfaceRuntime.tsx") ? `export { WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from ${JSON.stringify(`${args.path}?archive-runtime`)};` : "";
+        const archive = args.path.endsWith("WorkSurfaceRuntime.tsx") ? `export { WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation, SideChatDraftContext, useSideChatDraft } from ${JSON.stringify(`${args.path}?archive-runtime`)};` : "";
         return { contents: `export { ${exports} } from ${JSON.stringify(fixturePath)}; ${archive}`, loader: "tsx" };
       });
     } }] });
