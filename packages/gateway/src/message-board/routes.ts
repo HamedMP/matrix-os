@@ -93,8 +93,9 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
     if (body.private && !grants) return c.json(boardErrorBody("unavailable"), 503);
     await service.createChannel(caller, board(c), body.path, body.private && grants
       ? async (ctx) => {
-        await grants.writeGrants(ctx.trx, ctx.board.id, caller, [caller.actor.id], body.path, ["read", "post", "react", "label", "manage"], ctx.now);
-        await grants.writeGrants(ctx.trx, ctx.board.id, caller, ["*"], body.path, [], ctx.now);
+        // Recorded as grant.changed events in the same write, like any other grant.
+        await grants.grantInWrite(ctx, [caller.actor.id], body.path, ["read", "post", "react", "label", "manage"]);
+        await grants.grantInWrite(ctx, ["*"], body.path, []);
       }
       : undefined);
     return c.json({ channel: { path: body.path, private: Boolean(body.private) } }, 201);

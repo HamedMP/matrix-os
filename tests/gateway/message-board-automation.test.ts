@@ -306,6 +306,20 @@ describe("watcher durability and schedule edges", () => {
     expect(await runtime.schedules.runDue()).toBe(0);
     expect(await runtime.schedules.list(owner, undefined)).toEqual([]);
     expect((await runtime.service.listMessages(owner, undefined, { text: "Too late" }))).toEqual([]);
+    // Viewers reload schedules on events: the scheduler's own removal must announce itself.
+    const removed = await db.selectFrom("board_events").select(["payload"]).where("type", "=", "schedule.changed").orderBy("cursor", "desc").limit(1).execute();
+    expect((typeof removed[0]!.payload === "string" ? JSON.parse(removed[0]!.payload) : removed[0]!.payload)).toEqual({ schedule: ended.id, removed: true });
+  });
+
+  it("drops a schedule whose thread was deleted and announces the removal", async () => {
+    const root = await runtime.service.post(agent, undefined, { channel: "dev", text: "Short-lived" });
+    const follow = await runtime.schedules.create(agent, undefined, { thread: root.id, text: "Ping", in: "1m" });
+    await runtime.service.remove(agent, undefined, root.id, {});
+    await db.updateTable("board_schedules").set({ next_run_at: new Date(0) }).execute();
+    expect(await runtime.schedules.runDue()).toBe(0);
+    expect(await runtime.schedules.list(owner, undefined)).toEqual([]);
+    const [removed] = await db.selectFrom("board_events").select(["actor", "payload"]).where("type", "=", "schedule.changed").orderBy("cursor", "desc").limit(1).execute();
+    expect((typeof removed!.payload === "string" ? JSON.parse(removed!.payload) : removed!.payload)).toEqual({ schedule: follow.id, removed: true });
   });
 
   it("applies the grant cap to private channels too", async () => {

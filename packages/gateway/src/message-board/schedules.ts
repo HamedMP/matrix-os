@@ -31,6 +31,9 @@ function toSchedule(row: ScheduleRow): BoardSchedule {
  * the normal write path, so watchers and waits see them like any other post.
  * Each due post and its schedule update commit in one transaction.
  */
+/** Removals the scheduler makes on its own (finished, expired, no longer able to post). */
+const SCHEDULER = { id: "system:scheduler", kind: "system", name: "Scheduler" } as const;
+
 export class BoardScheduleService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking: Promise<number> | null = null;
@@ -99,12 +102,18 @@ export class BoardScheduleService {
         // A schedule that can no longer post (deleted thread, revoked access) is dropped, not retried forever.
         const reason = error instanceof MessageBoardServiceError ? error.reason : "unavailable";
         console.warn("[message-board] scheduled post failed:", reason);
-        if (reason !== "unavailable" && reason !== "rate_limited") {
-          await this.board.db.deleteFrom("board_schedules").where("id", "=", item.id).execute();
-        }
+        if (reason !== "unavailable" && reason !== "rate_limited") await this.drop(item.id, item.board_id, item.owner_id);
       }
     }
     return posted;
+  }
+
+  /** Removes a schedule that can no longer post, with the event viewers reload on. */
+  private async drop(id: string, boardId: string, ownerId: string): Promise<void> {
+    await this.board.write({ ownerId, actor: SCHEDULER }, { id: boardId }, async (ctx) => {
+      const deleted = await ctx.trx.deleteFrom("board_schedules").where("id", "=", id).returning("channel").execute();
+      if (deleted.length > 0) ctx.emit({ type: "schedule.changed", actor: SCHEDULER, channel: deleted[0]!.channel, payload: { schedule: id, removed: true } });
+    }, { internal: true });
   }
 
   private async postOne(id: string, boardId: string, ownerId: string): Promise<boolean> {
@@ -118,6 +127,7 @@ export class BoardScheduleService {
       if (row.until_at && ctx.now.getTime() > new Date(row.until_at).getTime()) {
         // Past its stop time (for example after the gateway was down): end it without posting.
         await ctx.trx.deleteFrom("board_schedules").where("id", "=", id).execute();
+        ctx.emit({ type: "schedule.changed", actor: SCHEDULER, channel: row.channel, payload: { schedule: id, removed: true } });
         return false;
       }
       await this.board.postInTransaction(ctx, { channel: row.channel, text: row.text, ...(row.thread_id ? { re: row.thread_id } : {}) });
@@ -133,6 +143,7 @@ export class BoardScheduleService {
       const finished = !next || remaining === 0 || (row.until_at !== null && next.getTime() > new Date(row.until_at).getTime());
       if (finished) {
         await ctx.trx.deleteFrom("board_schedules").where("id", "=", id).execute();
+        ctx.emit({ type: "schedule.changed", actor: SCHEDULER, channel: row.channel, payload: { schedule: id, removed: true } });
       } else {
         await ctx.trx.updateTable("board_schedules").set({ next_run_at: next!, remaining, run_count: row.run_count + 1 }).where("id", "=", id).execute();
       }

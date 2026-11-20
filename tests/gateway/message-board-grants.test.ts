@@ -92,6 +92,13 @@ describe("grants on the board", () => {
     const agentView = await (await app.request("/api/board/grants/explain?channel=security%2Fprivate&principal=agent%3Atws_1.tt_1")).json() as { explanation: { permissions: string[]; source: string } };
     expect(agentView.explanation).toEqual(expect.objectContaining({ permissions: ["read", "post", "react", "label"], source: "owner" }));
     expect((await runtime.service.getThread(ownerCaller, undefined, secret.id)).root.text).toBe("Rotate the key");
+    // Making the channel private recorded both grants, like any other permission change.
+    const audit = await db.selectFrom("board_events").select("payload").where("type", "=", "grant.changed").orderBy("cursor").execute();
+    expect(audit.map((row) => (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) as Record<string, unknown>))
+      .toEqual([
+        expect.objectContaining({ principal: owner.id, pattern: "security/private", permissions: ["read", "post", "react", "label", "manage"] }),
+        expect.objectContaining({ principal: "*", pattern: "security/private", permissions: [] }),
+      ]);
   });
 
   it("lets the owner grant, change and remove access", async () => {
