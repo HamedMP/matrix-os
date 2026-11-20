@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./client.js";
 export * from "./board-model.js";
 export * from "./board-preferences.js";
+export { createHttpProjectBoardClient, isProjectBoardSlug, type HttpProjectBoardClientOptions } from "./http-client.js";
 export { taskSessionTarget, type TaskSessionTarget } from "./session-ref.js";
 export { ProjectBoard, type ProjectBoardProps } from "./ProjectBoard.js";
 export { ProjectViewSwitch, type ProjectHomeView } from "./ProjectViewSwitch.js";
