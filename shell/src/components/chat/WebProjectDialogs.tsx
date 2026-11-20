@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { createWebProjectClient } from "./web-project-client";
-import { WebFolderPickerGateway, WebProjectFolderPicker } from "./WebProjectFolderPicker";
+import { WebFolderPickerGateway } from "./web-folder-picker-gateway";
+import { WebProjectFolderPicker } from "./WebProjectFolderPicker";
 import type { WebProject } from "./web-projects";
 
 const UNEXPECTED_FAILURE = "Something went wrong. Please try again.";
@@ -65,41 +66,59 @@ export function WebAddProjectDialog({ open, ...props }: {
   </Dialog>;
 }
 
-/** Deletes only after the gateway confirms; a failure keeps the project and the dialog. */
-export function WebProjectDeleteDialog({ project, gatewayUrl, onClose, onDeleted }: {
-  project: WebProject | null; gatewayUrl: string; onClose(): void; onDeleted(project: WebProject): void;
+// Mounted per target and computer, so pending state and errors never carry over.
+function WebProjectDeleteBody({ project, gatewayUrl, onClose, onDeleted, onPendingChange }: {
+  project: WebProject; gatewayUrl: string; onClose(): void; onDeleted(project: WebProject): void; onPendingChange(pending: boolean): void;
 }) {
   const client = useMemo(() => createWebProjectClient(gatewayUrl), [gatewayUrl]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
+  const mounted = useRef(true);
+  const releasePending = useRef(onPendingChange);
   useEffect(() => {
-    generation.current += 1;
-    setPending(false);
-    setError(null);
-  }, [gatewayUrl, project?.id]);
+    mounted.current = true;
+    const release = releasePending.current;
+    return () => {
+      mounted.current = false;
+      release(false);
+    };
+  }, []);
 
-  const confirm = async (target: WebProject, confirmation: string) => {
+  const confirm = (confirmation: string) => {
     if (pending) return;
-    const attempt = ++generation.current;
     setPending(true);
+    onPendingChange(true);
     setError(null);
-    const result = await client.deleteProject(target.slug, confirmation);
-    if (generation.current !== attempt) return;
-    setPending(false);
-    if (!result.ok) {
-      setError(result.message);
-      return;
-    }
-    onDeleted(target);
-    onClose();
+    void client.deleteProject(project.slug, confirmation).then(result => {
+      if (!mounted.current) return;
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // Local state changes only after the gateway confirmed the deletion.
+      onDeleted(project);
+      onClose();
+    }).finally(() => {
+      if (!mounted.current) return;
+      setPending(false);
+      onPendingChange(false);
+    });
   };
 
-  return <Dialog open={project !== null} onOpenChange={next => { if (!next && !pending) onClose(); }}>
+  return <ProjectDeleteConfirmation project={project} pending={pending} error={error} available
+    Button={DeleteProjectButton} onCancel={onClose} onConfirm={confirm} />;
+}
+
+/** Deletes only after the gateway confirms; a failure keeps the project and the dialog. */
+export function WebProjectDeleteDialog({ project, gatewayUrl, onClose, onDeleted }: {
+  project: WebProject | null; gatewayUrl: string; onClose(): void; onDeleted(project: WebProject): void;
+}) {
+  const pending = useRef(false);
+  return <Dialog open={project !== null} onOpenChange={next => { if (!next && !pending.current) onClose(); }}>
     <DialogContent role="alertdialog" aria-describedby={undefined} showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-[440px]" {...dialogLayer}>
       <DialogTitle className="sr-only">Delete project permanently?</DialogTitle>
-      {project ? <ProjectDeleteConfirmation key={project.id} project={project} pending={pending} error={error} available
-        Button={DeleteProjectButton} onCancel={onClose} onConfirm={confirmation => void confirm(project, confirmation)} /> : null}
+      {project ? <WebProjectDeleteBody key={`${gatewayUrl}\n${project.id}`} project={project} gatewayUrl={gatewayUrl}
+        onClose={onClose} onDeleted={onDeleted} onPendingChange={value => { pending.current = value; }} /> : null}
     </DialogContent>
   </Dialog>;
 }

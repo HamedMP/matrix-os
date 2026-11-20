@@ -1,7 +1,8 @@
 // Presentational per-mode steps for the add-project dialog. State and submit
 // orchestration live in AddProjectForm; these components only render fields
 // and forward edits. Each OS view injects its own Button and folder picker.
-import type { ComponentType, CSSProperties, ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
+import { DANGER_TEXT, FIELD_STYLE } from "./add-project-styles.js";
 import { projectForFolderPath, resolveProjectFolderChoice, type AddProjectRecord, type FolderPickerChoice } from "./add-project-model.js";
 
 export interface AddProjectButtonProps {
@@ -18,18 +19,6 @@ export interface AddProjectFolderPickerProps {
   resolveFolderChoice?(path: string): FolderPickerChoice;
   onAlternateFolderAction?(path: string): void;
 }
-
-export const FIELD_STYLE: CSSProperties = {
-  background: "var(--bg-raised)",
-  color: "var(--text-primary)",
-  border: "1px solid var(--border-default)",
-  borderRadius: "var(--radius)",
-  padding: "8px 10px",
-  fontSize: "var(--text-sm, 0.875rem)",
-  width: "100%",
-  outline: "none",
-};
-export const DANGER_TEXT = "var(--danger-text, var(--destructive))";
 
 export function CloneStepFields({
   url, onUrlChange, onUrlBlur, showUrlError, folderName, onFolderNameChange, showFolderNameError,
@@ -53,6 +42,7 @@ export function CloneStepFields({
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Repository URL</span>
         <input
+          // react-doctor-disable-next-line react-doctor/no-autofocus -- each step mounts only after the user picks it inside the open dialog; its first field takes focus as in Electron Desktop
           autoFocus
           value={url}
           disabled={submitting}
@@ -123,6 +113,7 @@ export function ExistingFolderStepFields({
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Name</span>
         <input
+          // react-doctor-disable-next-line react-doctor/no-autofocus -- each step mounts only after the user picks it inside the open dialog; its first field takes focus as in Electron Desktop
           autoFocus
           value={name}
           disabled={submitting}
@@ -169,6 +160,7 @@ export function NewFolderStepFields({
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Name</span>
         <input
+          // react-doctor-disable-next-line react-doctor/no-autofocus -- each step mounts only after the user picks it inside the open dialog; its first field takes focus as in Electron Desktop
           autoFocus
           value={name}
           disabled={submitting}
