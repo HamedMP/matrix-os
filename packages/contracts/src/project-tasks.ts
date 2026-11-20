@@ -4,6 +4,7 @@
  * `matrix tasks` CLI and the agent tools read responses through them.
  */
 import { z } from "zod/v4";
+import { CanonicalChatModelSelectionSchema } from "#canonical-chat";
 
 export const TASK_STATUSES = ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] as const;
 export const TaskStatusSchema = z.enum(TASK_STATUSES);
@@ -264,10 +265,17 @@ export const StartTaskBodySchema = z.object({
   harness: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
   worktree: z.enum(["new", "existing", "none"]).default("new"),
   message: z.string().max(TASK_LIMITS.comment).optional(),
+  /** With a model selection the server sends the first chat turn; without one it returns `firstMessage` for the composer. */
+  selection: CanonicalChatModelSelectionSchema.optional(),
+  /** Retrying with the same id resumes the same start instead of creating another session. */
+  clientRequestId: TaskClientRequestIdSchema.optional(),
 }).strict();
 export type StartTaskBody = z.input<typeof StartTaskBodySchema>;
 
 export const AttachSessionBodySchema = z.object({ ref: TaskSessionRefSchema }).strict();
+
+/** Pushes the task's branch and opens a pull request titled after the task. */
+export const CreatePullRequestBodySchema = z.object({ draft: z.boolean().optional() }).strict();
 
 export const UpdateBoardSettingsBodySchema = z.object({
   taskKey: TaskKeyPrefixSchema.optional(),
@@ -284,8 +292,14 @@ export const TaskResponseSchema = z.object({ task: ProjectTaskSchema });
 export const ListCommentsResponseSchema = z.object({ comments: z.array(TaskCommentSchema), nextCursor: z.string().nullable() });
 export const CommentResponseSchema = z.object({ comment: TaskCommentSchema });
 export const ListActivityResponseSchema = z.object({ activity: z.array(TaskActivitySchema), nextCursor: z.string().nullable() });
-export const StartTaskResponseSchema = z.object({ task: ProjectTaskSchema, session: TaskSessionSchema });
+export const StartTaskResponseSchema = z.object({
+  task: ProjectTaskSchema,
+  session: TaskSessionSchema,
+  /** The first message, when the server did not send it (no model selection, or a terminal session). */
+  firstMessage: z.string().min(1).max(TASK_LIMITS.description + TASK_LIMITS.comment + 1_000).optional(),
+});
 export const TaskGitResponseSchema = z.object({ git: TaskGitSummarySchema });
+export const TaskPullRequestResponseSchema = z.object({ task: ProjectTaskSchema, git: TaskGitSummarySchema });
 export const BoardSettingsResponseSchema = z.object({ settings: BoardSettingsSchema });
 export const BoardMembersResponseSchema = z.object({ members: z.array(BoardMemberSchema) });
 export const AttachableSessionsResponseSchema = z.object({ sessions: z.array(AttachableSessionSchema) });
@@ -294,7 +308,7 @@ export const AttachableSessionsResponseSchema = z.object({ sessions: z.array(Att
 export const PROJECT_TASK_ERROR_CODES = [
   "invalid_request", "project_not_found", "task_not_found", "comment_not_found", "task_revision_conflict",
   "task_agent_working", "task_limit_reached", "task_relation_invalid", "task_forbidden", "board_unavailable",
-  "board_sync_unavailable", "task_session_unavailable",
+  "board_sync_unavailable", "task_session_unavailable", "task_session_not_found", "task_session_taken",
 ] as const;
 export type ProjectTaskErrorCode = (typeof PROJECT_TASK_ERROR_CODES)[number];
 export const ProjectTaskErrorSchema = z.object({
