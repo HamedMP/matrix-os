@@ -28,7 +28,8 @@ export async function createLiveBoard() {
     fetch: (async (url: string, init?: RequestInit) => {
       if (state.failing) throw new TypeError("network down");
       const next = queue.then(() => app.request(url.replace("http://gateway.test", ""), init));
-      queue = next.catch(() => undefined);
+      // Only orders requests; the caller still receives `next`'s own result or error.
+      queue = Promise.allSettled([next]);
       return next;
     }) as typeof fetch,
   });
