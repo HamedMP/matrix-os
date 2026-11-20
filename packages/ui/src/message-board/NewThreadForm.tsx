@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft01Icon, BubbleChatIcon, Cancel01Icon, CheckListIcon, Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { POPOVER_LAYER } from "../layering.js";
@@ -31,6 +31,11 @@ export function NewThreadForm({ channels, defaultChannel, actors, viewerId, muta
   const [channel, setChannel] = useState(channels.includes(defaultChannel) ? defaultChannel : channels[0] ?? NEW_CHANNEL);
   const [newChannel, setNewChannel] = useState(channels.length === 0 ? defaultChannel : "");
   const [asTask, setAsTask] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [profile, setProfile] = useState(ANY_PROFILE);
   const path = channel === NEW_CHANNEL ? newChannel.trim() : channel;
   const pathValid = validateChannelPath(path);
@@ -75,7 +80,8 @@ export function NewThreadForm({ channels, defaultChannel, actors, viewerId, muta
           const result = await mutate(async (client, board) => {
             posted.message = await client.post(board, { channel: path, text, ...(asTask ? { task: profile === ANY_PROFILE ? {} : { forProfile: profile } } : {}) });
           });
-          if (result.ok && posted.message) onPosted(posted.message);
+          // Closing the form or switching boards unmounts it: a late reply must not navigate anywhere.
+          if (result.ok && posted.message && mounted.current) onPosted(posted.message);
           return result;
         }} />
       {asTask ? <p className="text-xs" style={textTertiary}>Task text is instructions: an agent that claims it will act on it.</p> : null}
