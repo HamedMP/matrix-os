@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
@@ -173,8 +175,9 @@ describe("shared OS-view contract", () => {
     expect(osViewFixedAppAppearanceForPath("__message-board__"))
       .toBe(OS_VIEW_FIXED_APP_APPEARANCES["message-board"]);
     expect(OS_VIEW_FIXED_APP_APPEARANCES["message-board"].iconSource).toBe("fixed");
-    // No bundled artwork exists yet, so renderers draw the fixed glyph instead of requesting a missing PNG.
-    expect(osViewBundledIconUrlForPath("__message-board__")).toBeUndefined();
+    // One shipped artwork for launcher, dock and title bar (a browser run found the dock and title bar on a generic grid).
+    expect(osViewBundledIconUrlForPath("__message-board__")).toBe("/system-app-icons/v2/message-board.svg");
+    expect(existsSync(resolve("shell/public/system-app-icons/v2/message-board.svg"))).toBe(true);
     expect(osViewFixedAppAppearanceForPath("apps/custom/index.html")).toBeUndefined();
   });
 

@@ -119,9 +119,10 @@ export function osViewFixedAppAppearanceForPath(path: string) {
 export function osViewBundledIconUrlForPath(path: string): string | undefined {
   if (path === "__cloud-desktop__") return "/system-app-icons/v3/desktop.png";
   if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
+  // The shipped `messages` artwork, so launcher, dock and title bar show one icon.
+  if (path === "__message-board__") return "/system-app-icons/v2/message-board.svg";
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
-  // Message Board has no bundled v2 artwork yet; renderers draw its fixed icon.
-  if (!id || id === "vscode" || id === "message-board") return undefined;
+  if (!id || id === "vscode") return undefined;
   return `/system-app-icons/v2/${id}.png`;
 }
 

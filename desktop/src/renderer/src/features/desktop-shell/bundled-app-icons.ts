@@ -13,6 +13,7 @@ import icon8 from "../../../../../../shell/public/system-app-icons/v2/whiteboard
 import icon9 from "../../../../../../shell/public/system-app-icons/v3/canvas.png";
 import icon10 from "../../../../../../shell/public/system-app-icons/v3/desktop.png";
 import icon11 from "../../../../../../shell/public/system-app-icons/v2/create-app.png";
+import icon12 from "../../../../../../shell/public/system-app-icons/v2/message-board.svg";
 
 const icons: Readonly<Record<string,string>> = {
   "chat": icon0,
@@ -27,6 +28,7 @@ const icons: Readonly<Record<string,string>> = {
   "canvas": icon9,
   "desktop": icon10,
   "create-app": icon11,
+  "message-board": icon12,
 };
 
 export function bundledDesktopIconForPath(path: string): string | undefined {

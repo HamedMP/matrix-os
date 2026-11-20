@@ -3,7 +3,7 @@ import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
-  it("ships Chat first with the eleven canonical desktop destinations in product order", () => {
+  it("ships Chat first with the eleven canonical desktop destinations in product order, then launcher-only Message Board", () => {
     expect(FIXED_DESKTOP_APPS.map((app) => app.id)).toEqual([
       "work",
       "terminal",
@@ -16,8 +16,10 @@ describe("native desktop default apps", () => {
       "cloud-desktop",
       "notes",
       "whiteboard",
+      "message-board",
     ]);
-    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
+    // Message Board is in the launcher, as on Web Desktop, but not among the default desktop icons.
+    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual([...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS, "__message-board__"]);
   });
 
   it("keeps every desktop destination identity unique even when surfaces are shared", () => {
@@ -44,6 +46,10 @@ describe("native desktop default apps", () => {
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "whiteboard")).toMatchObject({
       kind: "app",
       slug: "whiteboard",
+    });
+    expect(FIXED_DESKTOP_APPS.find((app) => app.id === "message-board")).toMatchObject({
+      kind: "message-board",
+      name: "Message Board",
     });
   });
 });

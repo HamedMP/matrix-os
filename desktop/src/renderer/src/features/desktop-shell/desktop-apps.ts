@@ -7,6 +7,7 @@ import {
   Globe2,
   Monitor,
   MessageSquare,
+  MessagesSquare,
   Notebook,
   Settings,
   SquareTerminal,
@@ -30,7 +31,8 @@ export type DesktopAppId =
   | "browser"
   | "cloud-desktop"
   | "notes"
-  | "whiteboard";
+  | "whiteboard"
+  | "message-board";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -152,6 +154,17 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     color: APPEARANCE.whiteboard.background,
     iconColor: APPEARANCE.whiteboard.foreground,
     slug: "whiteboard",
+  },
+  // Launcher-only, as on Web Desktop: not one of the default desktop icons.
+  {
+    id: "message-board",
+    path: "__message-board__",
+    iconUrl: bundledDesktopIconForPath("__message-board__"),
+    kind: "message-board",
+    icon: MessagesSquare,
+    name: "Message Board",
+    color: APPEARANCE["message-board"].background,
+    iconColor: APPEARANCE["message-board"].foreground,
   },
 ];
 

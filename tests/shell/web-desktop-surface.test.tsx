@@ -256,6 +256,27 @@ describe("WebDesktopSurface", () => {
     expect(screen.getByRole("navigation", { name: "Desktop apps" })).toBeTruthy();
   });
 
+  it("shows Message Board's own artwork in the taskbar although it is not a catalog app", () => {
+    const { container } = render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={[{ ...windows[0], id: "board-window", title: "Message Board", path: "__message-board__" }]}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Focus Message Board" });
+    expect(button.querySelector("img")?.getAttribute("src")).toContain("/system-app-icons/v2/message-board.svg");
+    expect(container.querySelectorAll('img[src*="message-board.svg"]').length).toBeGreaterThan(0);
+  });
+
   it("keeps minimized apps in the taskbar as restore targets", () => {
     const onActivateWindow = vi.fn();
     render(

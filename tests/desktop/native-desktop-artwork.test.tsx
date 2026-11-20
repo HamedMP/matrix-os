@@ -138,6 +138,15 @@ describe("Electron Desktop selected artwork", () => {
     expect(useTabs.getState().tabs.filter(tab => tab.title === name)).toHaveLength(1);
     expect(screen.getByRole("button", { name: `Focus ${name}` }).querySelector("img")?.getAttribute("src")).toBe(`https://runtime.example.com${iconUrl}`);
   });
+  // Fault detected (browser run): the Message Board's dock and title-bar icon was a generic glyph.
+  it("shows the shipped Message Board artwork for its tab, even when the tab carries no icon", () => {
+    const expected = bundledDesktopIconForPath("__message-board__");
+    expect(expected).toBeTruthy();
+    useTabs.getState().openTab({ kind: "message-board", title: "Message Board" });
+    render(<NativeDesktopShell overlayOpen={false} />);
+    expect(screen.getByRole("button", { name: "Focus Message Board" }).querySelector("img")?.getAttribute("src")).toBe(expected);
+  });
+
   it("keeps existing artwork when navigation reopens a tab without a replacement icon", () => {
     const icon = "https://runtime.example.com/icons/owner-notes.svg?v=selected";
     const id = useTabs.getState().openTab({ kind: "notes", title: "Notes", icon });
