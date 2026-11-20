@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { EMPTY_BOARD_FILTER, type BoardFilter } from "./board-model.js";
-import { TASK_PRIORITIES, TASK_STATUSES, type ActorRef } from "./types.js";
+import { TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES, type ActorRef } from "./types.js";
 
 /** Per-project, per-surface board view memory: layout and filters (spec 2699 section 8). */
 export interface BoardPreferences {
@@ -17,7 +17,7 @@ const PreferencesSchema = z.object({
   filter: z.object({
     statuses: z.array(z.enum(TASK_STATUSES)).max(TASK_STATUSES.length),
     priorities: z.array(z.enum(TASK_PRIORITIES)).max(TASK_PRIORITIES.length),
-    labels: z.array(z.string().min(1).max(40)).max(50),
+    labels: z.array(z.string().min(1).max(TASK_LIMITS.label)).max(50),
     assignees: z.array(z.union([z.literal("unassigned"), ACTOR])).max(100),
     search: z.string().max(200),
     showCanceled: z.boolean(),

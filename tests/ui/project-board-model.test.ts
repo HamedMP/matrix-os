@@ -180,3 +180,12 @@ describe("keyboardMoveTarget", () => {
     expect(keyboardMoveTarget(columns, shown, "t1", "left")).toBeNull();
   });
 });
+
+describe("planMove when the rank room has run out", () => {
+  it("still names both neighbours so the server can respace the column", () => {
+    const tight = [task("a1", { rank: "a" }), task("a2", { rank: `a${"0".repeat(126)}1` })];
+    const plan = planMove(tight, "t9", 1);
+    expect(plan).toMatchObject({ afterTaskId: "a1", beforeTaskId: "a2" });
+    expect(typeof plan.rank).toBe("string");
+  });
+});
