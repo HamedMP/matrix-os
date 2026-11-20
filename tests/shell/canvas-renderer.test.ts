@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { canvasWindowIconUrl, shouldHydrateCanvasWindow } from "../../shell/src/components/canvas/CanvasRenderer.js";
+import { shouldHydrateCanvasWindow } from "../../shell/src/components/canvas/CanvasRenderer.js";
+import { canvasWindowIconUrl } from "../../shell/src/lib/web-desktop-app-launch.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
