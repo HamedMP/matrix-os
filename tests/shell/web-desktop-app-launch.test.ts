@@ -39,7 +39,7 @@ describe("web Desktop built-in app launch routing", () => {
   it("lists Message Board in the launcher without adding it to the default Desktop icons", () => {
     const launcher = buildWebDesktopLauncherApps([{ name: "Notes clone", path: "apps/notes-clone/index.html" }]);
     const index = launcher.findIndex((app) => app.path === "__message-board__");
-    expect(launcher[index]).toMatchObject({ name: "Message Board", iconUrl: expect.stringContaining("/icons/messages.svg") });
+    expect(launcher[index]).toMatchObject({ name: "Message Board", iconUrl: expect.stringContaining("/system-app-icons/v2/message-board.svg") });
     expect(index).toBe(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length + 1);
     expect(launcher.at(-1)?.path).toBe("apps/notes-clone/index.html");
     expect(buildWebDesktopIconApps([]).some((app) => app.path === "__message-board__")).toBe(false);

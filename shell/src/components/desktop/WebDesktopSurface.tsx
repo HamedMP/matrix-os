@@ -14,6 +14,7 @@ import {
   normalizeOsViewDesktopAppPath,
   osViewIconUrlForApp,
   osViewFixedAppAppearanceForPath,
+  OS_VIEW_FIXED_APP_APPEARANCES,
 } from "@matrix-os/contracts";
 import {
   Blocks,
@@ -25,6 +26,7 @@ import {
   Globe2,
   LayoutGrid,
   MessageCircle,
+  MessagesSquare,
   Settings as SettingsGlyph,
   SquareTerminal,
   type LucideIcon,
@@ -94,6 +96,9 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (name === "notes") {
     return { color: "#E3B341", iconColor: "white", icon: FileText };
+  }
+  if (app.path === "__message-board__") {
+    return { color: OS_VIEW_FIXED_APP_APPEARANCES["message-board"].background, iconColor: "white", icon: MessagesSquare };
   }
   if (name === "whiteboard") {
     return { color: "#D46A92", iconColor: "white", icon: BrushIcon };
