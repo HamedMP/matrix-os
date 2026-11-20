@@ -19,6 +19,7 @@ describe("board chat port over the owner chat store", () => {
       projectManager: {} as never,
       worktreeManager: {} as never,
       chats: { service: createCanonicalChatService(repository), db: repository.kysely },
+      sessionCredentials: {} as never,
       terminalRuntime: {} as never,
     }).chats;
   });

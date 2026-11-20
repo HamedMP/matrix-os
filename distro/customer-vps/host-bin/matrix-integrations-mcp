@@ -29,6 +29,19 @@ for arg in "$@"; do
   esac
 done
 
+# A task session's board binding (spec 2699): forwarded through `env -i` only when well
+# formed and complete, so the board tools never start unbound inside a task session.
+task_binding=()
+if [ -n "${MATRIX_PROJECT_ID:-}" ] || [ -n "${MATRIX_TASK_ID:-}" ]; then
+  if [[ ! "${MATRIX_PROJECT_ID:-}" =~ ^proj_[A-Za-z0-9_-]{1,128}$ ]] ||
+     { [ -n "${MATRIX_TASK_ID:-}" ] && [[ ! "$MATRIX_TASK_ID" =~ ^task_[A-Za-z0-9_-]{1,128}$ ]]; }; then
+    echo "matrix-integrations-mcp: task session binding is invalid" >&2
+    exit 3
+  fi
+  task_binding+=("MATRIX_PROJECT_ID=$MATRIX_PROJECT_ID")
+  if [ -n "${MATRIX_TASK_ID:-}" ]; then task_binding+=("MATRIX_TASK_ID=$MATRIX_TASK_ID"); fi
+fi
+
 read_host_value() {
   local key value
   key="$1"
@@ -101,6 +114,7 @@ if [ -n "$scoped_token" ]; then
   exec /usr/bin/env -i \
     PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     GATEWAY_URL="http://127.0.0.1:4000" \
+    ${task_binding[@]+"${task_binding[@]}"} \
     MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token" \
     "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"
 fi
@@ -136,6 +150,7 @@ fi
 exec /usr/bin/env -i \
   PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
   GATEWAY_URL="http://127.0.0.1:4000" \
+  ${task_binding[@]+"${task_binding[@]}"} \
   MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
   MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
   "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"

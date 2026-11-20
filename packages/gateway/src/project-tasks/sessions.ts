@@ -67,6 +67,18 @@ export class ProjectTaskSessionRepository {
     return new Set(rows.map((row) => row.session_ref));
   }
 
+  /** The live task of `projectId` that a session (`chat_…` or `term.…`) is linked to, if any. */
+  async taskForSession(ownerId: string, projectId: string, ref: string): Promise<string | null> {
+    const row = await this.db.selectFrom("project_task_sessions as session")
+      .innerJoin("project_tasks as task", (join) => join
+        .onRef("task.owner_id", "=", "session.owner_id").onRef("task.id", "=", "session.task_id"))
+      .select("task.id")
+      .where("session.owner_id", "=", ownerId).where("session.session_ref", "=", ref)
+      .where("task.project_id", "=", projectId).where("task.deleted_at", "is", null)
+      .executeTakeFirst();
+    return row?.id ?? null;
+  }
+
   async count(scope: TaskScope, taskId: string): Promise<number> {
     const row = await this.db.selectFrom("project_task_sessions").select(sql<string>`count(*)`.as("count"))
       .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).executeTakeFirstOrThrow();
