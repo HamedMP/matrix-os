@@ -99,8 +99,6 @@ export function createIntegrationsMcpServer(
   if (surface.endsWith("-drive")) registerCompanyDriveTools(server, fetcher);
 
   if (full) registerOwnerDataImportTools(server, fetcher);
-  // Owner agents only; scoped Chat Run surfaces get board access in a follow-up with its own allowlist review.
-  if (full) registerBoardTools(server, fetcher);
   if (full || chat) {
     server.registerTool(
       "list_integration_inventory",
@@ -222,5 +220,7 @@ export function createIntegrationsMcpServer(
 
     registerChatAgentTools(server, fetcher);
   }
+  // Owner agents only; scoped Chat Run surfaces get board access in a follow-up with its own allowlist review.
+  if (full) registerBoardTools(server, fetcher);
   return server;
 }
