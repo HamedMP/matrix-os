@@ -8,6 +8,7 @@ import {
 import {
   MAX_MESSAGE_ATTACHMENTS,
   appendAttachments,
+  discardMatrixAttachmentDrafts,
   moveAttachmentDraft,
   readAttachmentDraft,
   rememberSentAttachments,
@@ -86,6 +87,9 @@ interface ComposerState {
   epoch: number;
   /** The account and computer this state belongs to, once known. */
   scope: string | null;
+  /** Matrix reads expire even when ownership is temporarily unknown and then returns. */
+  matrixContext: string;
+  matrixGeneration: number;
   shownChatId: string | null;
   /**
    * Bumped whenever the chat on screen changes. The new chat has no id of its
@@ -116,9 +120,10 @@ interface ComposerState {
   failed: FailedSend[];
 }
 
-function emptyComposerState(scope: string | null, shownChatId: string | null, epoch: number): ComposerState {
+function emptyComposerState(scope: string | null, shownChatId: string | null, epoch: number, projectId: string | null): ComposerState {
   return {
     epoch, scope, shownChatId, navigation: 0, drafts: {}, attachments: {}, sentAttachments: {},
+    matrixContext: JSON.stringify([scope, shownChatId, projectId]), matrixGeneration: 0,
     sending: null, adopted: null, pending: [], failed: [],
   };
 }
@@ -205,7 +210,14 @@ function reconcile(
     // on one computer; none of them carry over to another.
     next = next.scope === null
       ? { ...next, scope: on.scope }
-      : emptyComposerState(on.scope, on.activeChatId, next.epoch + 1);
+      : emptyComposerState(on.scope, on.activeChatId, next.epoch + 1, on.projectId);
+  }
+  const matrixContext = JSON.stringify([on.scope, on.activeChatId, on.projectId]);
+  if (next.matrixContext !== matrixContext) {
+    next = {
+      ...next, matrixContext, matrixGeneration: next.matrixGeneration + 1,
+      attachments: discardMatrixAttachmentDrafts(next.attachments),
+    };
   }
   if (next.shownChatId !== on.activeChatId) {
     next = { ...next, shownChatId: on.activeChatId, navigation: next.navigation + 1 };
@@ -305,11 +317,11 @@ export function useChatComposer({
 }: ChatComposerOptions) {
   const sendMessage = useSendChatMessage();
   const isSending = sendMessage.isPending;
-  const [stored, setState] = useState(() => emptyComposerState(scope, activeChatId, 0));
+  const [stored, setState] = useState(() => emptyComposerState(scope, activeChatId, 0, projectId));
   const state = reconcile(stored, { scope, activeChatId, detail, isSending, projectId });
   if (state !== stored) setState(state);
 
-  const { epoch, navigation } = state;
+  const { epoch, navigation, matrixGeneration } = state;
   const draftKey = chatDraftKey(activeChatId);
   const draft = state.drafts[draftKey] ?? "";
   const setDraft = useCallback((text: string) => {
@@ -319,10 +331,7 @@ export function useChatComposer({
     });
   }, [draftKey]);
 
-  const draftAttachments = readAttachmentDraft(state.attachments, draftKey);
-  const attachments = useMemo(() => scope === null
-    ? draftAttachments.filter(attachment => !attachment.matrixSource) : draftAttachments,
-  [scope, draftAttachments]);
+  const attachments = readAttachmentDraft(state.attachments, draftKey);
   const attachmentRoom = Math.max(0, MAX_MESSAGE_ATTACHMENTS - reservedAttachments(state, draftKey) - attachments.length);
   const unreadable = useMemo(() => (
     attachmentKinds ? unreadableAttachments(attachments, attachmentKinds) : NO_ATTACHMENTS
@@ -344,12 +353,15 @@ export function useChatComposer({
         : draftKey;
       const waiting = readAttachmentDraft(current.attachments, key);
       const limit = MAX_MESSAGE_ATTACHMENTS - reservedAttachments(current, key);
-      const next = appendAttachments(waiting, added, limit);
+      const eligible = added.filter((item) => !item.matrixSource || (
+        scope !== null && current.matrixGeneration === matrixGeneration
+      ));
+      const next = appendAttachments(waiting, eligible, limit);
       return next.length === waiting.length
         ? current
         : { ...current, attachments: writeAttachmentDraft(current.attachments, key, next) };
     });
-  }, [draftKey, epoch, navigation]);
+  }, [draftKey, epoch, navigation, scope, matrixGeneration]);
   const removeAttachment = useCallback((id: string) => {
     setState((current) => {
       const waiting = readAttachmentDraft(current.attachments, draftKey);
@@ -541,7 +553,7 @@ export function useChatComposer({
     removeAttachment,
     /** How many more can be added. Places are held for attachments still being sent, or not sent. */
     attachmentRoom,
-    matrixAttachmentScope: JSON.stringify([scope, activeChatId, navigation, projectId]),
+    matrixAttachmentScope: JSON.stringify([epoch, matrixGeneration, scope, activeChatId, navigation, projectId]),
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     attachmentNotice,

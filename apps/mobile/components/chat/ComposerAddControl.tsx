@@ -11,6 +11,7 @@ import { AddMenu, type AddMenuPage } from "./AddMenu";
 import { MatrixAttachmentPicker, type MatrixAttachmentBinding } from "./MatrixAttachmentPicker";
 
 const ADD_ICON_SIZE = 18;
+const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
 export interface ComposerAddControlProps {
   /** The kinds of attachment the selected model reads. */
@@ -38,7 +39,7 @@ export function ComposerAddControl({
   skills,
   disabled = false,
   matrix,
-  attachments = [],
+  attachments = NO_ATTACHMENTS,
   onAdd,
   onInvoke,
 }: ComposerAddControlProps) {

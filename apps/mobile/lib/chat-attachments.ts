@@ -243,6 +243,15 @@ export type ChatAttachmentDrafts = Readonly<Record<string, readonly ComposerAtta
 
 export const MAX_ATTACHMENT_DRAFTS = 20;
 
+/** Matrix reads belong to the current draft context; device selections keep their drafts. */
+export function discardMatrixAttachmentDrafts(drafts: ChatAttachmentDrafts): ChatAttachmentDrafts {
+  if (!Object.values(drafts).some((items) => items.some((item) => item.matrixSource))) return drafts;
+  return Object.fromEntries(Object.entries(drafts).flatMap(([key, items]) => {
+    const kept = items.filter((item) => !item.matrixSource);
+    return kept.length > 0 ? [[key, kept]] : [];
+  }));
+}
+
 const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
 export function readAttachmentDraft(drafts: ChatAttachmentDrafts, key: string): readonly ComposerAttachment[] {

@@ -205,6 +205,57 @@ describe("chat composer attachments", () => {
     expect(composer.result.current.sentAttachments).toEqual({});
   });
 
+  it.each([null, "chat_a"])("discards Matrix files when leaving draft %s, preserving device attachments", (activeChatId) => {
+    const original = { ...newChat, activeChatId, detail: activeChatId ? detailFor(activeChatId) : null };
+    const composer = renderComposer(original);
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Keep my text");
+      composer.result.current.addAttachments([photo("device"), matrix]);
+    });
+
+    composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
+    expect(waiting(composer)).toEqual([]);
+    composer.rerender(original);
+
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(composer.result.current.draft).toBe("Keep my text");
+  });
+
+  it.each([
+    ["temporarily unavailable ownership", { scope: null }],
+    ["a different project", { projectId: "project_b" }],
+  ] as const)("discards stored Matrix files after %s and rejects a late read", (_label, transition) => {
+    const composer = renderComposer();
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    const finishOldRead = composer.result.current.addAttachments;
+    act(() => { finishOldRead([matrix, photo("device")]); });
+    const originalBinding = composer.result.current.matrixAttachmentScope;
+
+    composer.rerender({ ...newChat, ...transition });
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    composer.rerender({ ...newChat });
+    act(() => { finishOldRead([matrix]); });
+
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(composer.result.current.matrixAttachmentScope).not.toBe(originalBinding);
+    // A fresh read in the current context is still usable.
+    act(() => { composer.result.current.addAttachments([matrix]); });
+    expect(waiting(composer)).toEqual(["device.jpg", "matrix.jpg"]);
+  });
+
+  it("rejects a Matrix read completed after navigating away and back", () => {
+    const composer = renderComposer();
+    const finishOldRead = composer.result.current.addAttachments;
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+
+    composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
+    composer.rerender({ ...newChat });
+    act(() => { finishOldRead([matrix]); });
+
+    expect(waiting(composer)).toEqual([]);
+  });
+
   it("uploads the attachments, then sends a message that names them after its text", async () => {
     const composer = renderComposer();
     attach(composer, "flowers", "falls");
