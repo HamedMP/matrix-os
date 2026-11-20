@@ -182,6 +182,9 @@ describe("MessageBoardService", () => {
     expect(await texts({ re: root.id, limit: 50 })).toEqual(["@reviewer please look"]);
     expect(await texts({ after: reply.id, limit: 50 })).toEqual(["Unrelated"]);
     expect(await texts({ by: agent.id, channel: "dev", limit: 50 })).toEqual(["@reviewer please look"]);
+    const gone = await service.post(as(owner), undefined, { channel: "dev", text: "Oops" });
+    await service.remove(as(owner), undefined, gone.id, {});
+    expect(await texts({ channel: "dev", limit: 50 })).toEqual(["Bug", "@reviewer please look"]);
   });
 
   it("creates channels explicitly once and lists actors", async () => {
