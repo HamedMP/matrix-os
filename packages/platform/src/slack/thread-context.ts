@@ -13,6 +13,7 @@ import { OrganizationIdSchema, SlackUserIdSchema, type SlackInstallation } from 
 import { hasActiveSlackUserMention } from "./owner-mention.js";
 import { mentionSourceEligible, slackMentionSourceProof, validSlackMentionSource } from "./mention-summary.js";
 import { createSlackPrivateThreadReader } from "./private-thread-context.js";
+import { attestSlackEnrolledEvent, validSlackEnrolledSource } from "./enrolled-source.js";
 
 const Event = SlackThreadContextEnvelopeSchema.shape.event.shape;
 const ThreadGrantSchema = SlackThreadContextAccessSchema.omit({ grantId: true }).extend({
@@ -84,6 +85,7 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     if (!request.success) return c.json({ error: "Invalid request" }, 400);
     if (Object.entries(access).some(([key, expected]) => request.data[key as keyof typeof access] !== expected)) return c.json({ allowed: false });
     if (request.data.summary && !validSlackMentionSource(options.config.signingSecret, grant, rule, request.data.summary)) return c.json({ allowed: false });
+    if (request.data.source && !validSlackEnrolledSource(options.config.signingSecret, grant, request.data.source)) return c.json({ allowed: false });
     const installation = await options.repository.getInstallation(grant.appId, grant.teamId);
     if (!installation || !validInstallation(installation) || !await hasOwnerAuthority()) return c.json({ allowed: false });
     const slack = await readSlackAccess(installation, AbortSignal.timeout(1500));
@@ -102,7 +104,8 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     routes,
     readEnrolledContext: createSlackEnrolledContextReader(options,grant,authorizeEnrollment),
     readPrivateThread: createSlackPrivateThreadReader(options, grant, async (request,runtime,signal)=>{
-      if(!validSlackMentionSource(options.config.signingSecret,grant,rule,request.summary))return null;
+      if (request.source ? !validSlackEnrolledSource(options.config.signingSecret, grant, request.source)
+        : !validSlackMentionSource(options.config.signingSecret, grant, rule, request.summary)) return null;
       return authorizeEnrollment(request,runtime,signal);
     }),
     async receive(event: Record<string, unknown>, body: string, installation: SlackInstallation, signal: AbortSignal): Promise<200 | 409 | 503> {
@@ -116,8 +119,11 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
       const parsed = SlackThreadContextEnvelopeSchema.safeParse({ ...access, event: source });
       if (!parsed.success) return 200;
       const envelope = parsed.data;
-      if (rule && mentionSourceEligible(grant, rule, envelope.event) && typeof event.text === "string"
-        && hasActiveSlackUserMention({ text: event.text, ...(Object.hasOwn(event, "blocks") ? { blocks: event.blocks } : {}) }, grant.ownerSlackId)) {
+      const ownerMention = envelope.event.userId !== grant.ownerSlackId && hasActiveSlackUserMention({
+        text: envelope.event.text, ...(Object.hasOwn(event, "blocks") ? { blocks: event.blocks } : {}),
+      }, grant.ownerSlackId);
+      envelope.source = attestSlackEnrolledEvent(options.config.signingSecret, grant, envelope.event, ownerMention);
+      if (rule && mentionSourceEligible(grant, rule, envelope.event) && ownerMention) {
         envelope.summary = { ruleId: rule.ruleId, version: rule.version,
           proof: slackMentionSourceProof(options.config.signingSecret, grant, rule, envelope.event) };
       }

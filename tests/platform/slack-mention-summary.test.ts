@@ -7,6 +7,7 @@ import { bootstrapSlackDatabase, type SlackDatabase } from "../../packages/platf
 import { SlackRepository } from "../../packages/platform/src/slack/repository.js";
 import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
 import { loadSlackMentionSummaryRule } from "../../packages/platform/src/slack/mention-summary.js";
+import { validSlackEnrolledSource } from "../../packages/platform/src/slack/enrolled-source.js";
 import { createCollaborationTestDatabase, createRealCollaborationTestDatabase } from "../gateway/collaboration-test-support.js";
 
 const clock = new Date("2026-11-19T10:00:00Z");
@@ -42,8 +43,12 @@ async function incoming(change: Record<string, unknown> = {}, eventId = "EvOwner
   } });
 }
 function requestFrom(envelope = dispatchContext.mock.calls[0]![0]) {
-  const { event, summary, ...access } = envelope;
+  const { event, summary, source: _source, ...access } = envelope;
   return { ...access, summary: { ...summary, eventId: event.eventId, userId: event.userId, ts: event.ts, threadTs: event.threadTs } };
+}
+function sourceRequest(envelope = dispatchContext.mock.calls[0]![0]) {
+  const { event, summary: _summary, source, ...access } = envelope;
+  return { ...access, source: { ...source, eventId: event.eventId, userId: event.userId, ts: event.ts, threadTs: event.threadTs } };
 }
 const post = (path: string, value: unknown) => app.request(path, { method: "POST", body: JSON.stringify(value), headers: { "content-type": "application/json" } });
 
@@ -65,6 +70,103 @@ beforeEach(async () => {
 afterEach(async () => { await app.shutdownSlack(); await destroy(); });
 
 describe("recipient-owned Slack mention summary authority", () => {
+  it.each([
+    { text: "ordinary human discussion", user: "U456", mentioned: false },
+    { text: "<@U123> please summarize", user: "U456", mentioned: true },
+    { text: "owner's own update", user: "U123", mentioned: false },
+    { text: "`<@U123>`", user: "U456", mentioned: false },
+  ])("attests enrolled human source independently of the environment rule: %j", async ({ mentioned, ...event }) => {
+    app = makeApp({ mentionSummaryRule: undefined });
+    expect((await incoming(event)).status).toBe(200);
+    const envelope = dispatchContext.mock.calls[0]![0];
+    expect(envelope.source).toEqual({
+      version: 1, ownerMention: mentioned,
+      textDigest: createHash("sha256").update(event.text, "utf8").digest("hex"),
+      proof: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(envelope.summary).toBeUndefined();
+    const request = sourceRequest(envelope);
+    expect(await (await post("/internal/slack/thread-context/access", request)).json()).toEqual({ allowed: true });
+    expect((await post("/internal/slack/context", request)).status).toBe(200);
+    expect(api.replies).toHaveBeenCalledWith(expect.objectContaining({ channelId: grant.channelId, ts: root }));
+    expect(api.postMessage).not.toHaveBeenCalled();
+    expect(api.addReaction).not.toHaveBeenCalled();
+  });
+
+  it("attests trusted rich-text mention classification before discarding blocks", async () => {
+    await incoming({ text: "fallback", blocks: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "user", user_id: "U123" }] }] }] });
+    expect(dispatchContext.mock.calls[0]![0].source).toMatchObject({ ownerMention: true, textDigest: createHash("sha256").update("fallback").digest("hex") });
+    expect(dispatchContext.mock.calls[0]![0].event).not.toHaveProperty("blocks");
+  });
+
+  it("binds the source proof to the full enrollment incarnation without borrowing environment policy", async () => {
+    await incoming({ text: "ordinary update" });
+    const request = sourceRequest();
+    expect(validSlackEnrolledSource(config.signingSecret, grant, request.source)).toBe(true);
+    for (const change of [
+      { ownerId: "user_other" }, { botId: "bot_87654321" }, { chatId: "chat_87654321" }, { runtimeId: "runtime_other" },
+      { appId: "A999" }, { teamId: "T999" }, { channelId: "C999" }, { organizationId: "org_other" },
+      { ownerSlackId: "U999" }, { installationGeneration: 2 }, { linkCreatedAt: "2026-11-19T09:59:00.000Z" },
+    ]) expect(validSlackEnrolledSource(config.signingSecret, { ...grant, ...change }, request.source)).toBe(false);
+    app = makeApp({ mentionSummaryRule: { ...rule, version: 9, enabledAfter: "2026-11-20T10:00:00.000Z" } });
+    expect((await post("/internal/slack/context", request)).status).toBe(200);
+    expect(await (await post("/internal/slack/thread-context/access", request)).json()).toEqual({ allowed: true });
+  });
+
+  it("rechecks source authority after fetching and retains bounded source-only pages", async () => {
+    await incoming({ text: "ordinary update" });
+    const request = sourceRequest();
+    api.replies.mockResolvedValue({ messages: Array.from({ length: 15 }, (_, i) => ({
+      ts: `${100 + i}.000001`, thread_ts: root, text: "ordinary",
+    })), hasMore: true, nextCursor: "repeat" });
+    expect(await (await post("/internal/slack/context", request)).json()).toMatchObject({ available: true, partial: true });
+    expect(api.replies).toHaveBeenCalledTimes(2);
+    api.replies.mockImplementation(async () => {
+      member = false;
+      return { messages: [{ ts: root, text: "must remain private" }], hasMore: false };
+    });
+    const denied = await post("/internal/slack/context", request);
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).not.toContain("must remain private");
+  });
+
+  it("rejects altered source attestations and mutually supplied legacy authority before reading", async () => {
+    await incoming();
+    const request = sourceRequest();
+    for (const patch of [
+      { version: 2 }, { ownerMention: false }, { textDigest: "f".repeat(64) }, { proof: "f".repeat(64) },
+      { eventId: "EvOther" }, { userId: "U789" }, { threadTs: "2.000001" }, { ts: "3.000001" },
+    ]) {
+      const forged = { ...request, source: { ...request.source, ...patch } };
+      expect((await post("/internal/slack/context", forged)).status).toBe(patch.version ? 422 : 403);
+      const check = await post("/internal/slack/thread-context/access", forged);
+      expect(check.status).toBe(patch.version ? 400 : 200);
+      if (!patch.version) expect(await check.json()).toEqual({ allowed: false });
+    }
+    const both = { ...request, summary: requestFrom().summary };
+    expect((await post("/internal/slack/context", both)).status).toBe(422);
+    expect((await post("/internal/slack/thread-context/access", both)).status).toBe(400);
+    expect(api.replies).not.toHaveBeenCalled();
+  });
+
+  it.each(["owner", "runtime", "grant", "channel", "incarnation", "installation", "link", "membership", "metadata", "external"])
+  ("fences source-only reads after current %s authority changes", async kind => {
+    await incoming({ text: "ordinary update" });
+    const request = sourceRequest();
+    if (kind === "owner") runtime = { ownerId: "user_other", runtimeId: grant.runtimeId };
+    if (kind === "runtime") runtime = { ownerId: grant.ownerId, runtimeId: "runtime_other" };
+    if (kind === "grant") request.grantId = "f".repeat(64);
+    if (kind === "channel") app = makeApp({ contextGrant: { ...grant, channelId: "C999" } });
+    if (kind === "incarnation") app = makeApp({ contextGrant: { ...grant, linkCreatedAt: "2026-11-19T09:59:00.000Z" } });
+    if (kind === "installation") await repository.revokeInstallation(grant.appId, grant.teamId);
+    if (kind === "link") await repository.removeLink(grant.appId, grant.teamId, grant.ownerId);
+    if (kind === "membership") member = false;
+    if (kind === "metadata") api.conversationInfo.mockResolvedValue({ canAccess: false, isExternalShared: false });
+    if (kind === "external") api.conversationInfo.mockResolvedValue({ canAccess: true, isExternalShared: true });
+    expect((await post("/internal/slack/context", request)).status).toBe(403);
+    expect(await (await post("/internal/slack/thread-context/access", request)).json()).toEqual({ allowed: false });
+    expect(api.replies).not.toHaveBeenCalled();
+  });
   it("mints one proof for an unlinked human mention without creating Slack output authority", async () => {
     expect((await incoming()).status).toBe(200);
     expect(dispatchContext).toHaveBeenCalledTimes(1);

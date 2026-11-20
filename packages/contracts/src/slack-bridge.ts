@@ -41,11 +41,20 @@ export const SlackMentionSummarySourceSchema = SlackMentionSummarySchema.extend(
   eventId: Provenance.shape.eventId, threadTs: Timestamp, ts: Timestamp, userId: Provenance.shape.userId,
 }).strict();
 export type SlackMentionSummarySource = z.infer<typeof SlackMentionSummarySourceSchema>;
+/** Source authenticity is independent of the owner's automation policy. */
+export const SlackEnrolledEventAttestationSchema = z.object({
+  version: z.literal(1), ownerMention: z.boolean(), textDigest: Digest, proof: Digest,
+}).strict();
+export type SlackEnrolledEventAttestation = z.infer<typeof SlackEnrolledEventAttestationSchema>;
+export const SlackEnrolledEventSourceSchema = SlackEnrolledEventAttestationSchema.extend({
+  eventId: Provenance.shape.eventId, threadTs: Timestamp, ts: Timestamp, userId: Provenance.shape.userId,
+}).strict();
+export type SlackEnrolledEventSource = z.infer<typeof SlackEnrolledEventSourceSchema>;
 export const SlackThreadContextAccessSchema = PrivateThread.extend({ grantId: Digest }).strict();
 export type SlackThreadContextAccess = z.infer<typeof SlackThreadContextAccessSchema>;
 export const SlackPrivateThreadContextRequestSchema = SlackThreadContextAccessSchema.extend({
-  summary: SlackMentionSummarySourceSchema,
-}).strict();
+  summary: SlackMentionSummarySourceSchema.optional(), source: SlackEnrolledEventSourceSchema.optional(),
+}).strict().refine(request => Boolean(request.summary) !== Boolean(request.source), { message: "Exactly one source authority is required" });
 export type SlackPrivateThreadContextRequest = z.infer<typeof SlackPrivateThreadContextRequestSchema>;
 export const SlackChannelMetadataSchema = z.object({
   id: z.string().regex(/^C[A-Z0-9]{2,63}$/),
@@ -55,7 +64,8 @@ export type SlackChannelMetadata = z.infer<typeof SlackChannelMetadataSchema>;
 export const SlackThreadContextAccessRequestSchema = SlackThreadContextAccessSchema.extend({
   includeChannelMetadata: z.literal(true).optional(),
   summary: SlackMentionSummarySourceSchema.optional(),
-}).strict();
+  source: SlackEnrolledEventSourceSchema.optional(),
+}).strict().refine(request => !(request.summary && request.source), { message: "Source authorities are mutually exclusive" });
 export const SlackThreadContextAccessResponseSchema = z.discriminatedUnion("allowed", [
   z.object({ allowed: z.literal(false) }).strict(),
   z.object({ allowed: z.literal(true), channel: SlackChannelMetadataSchema.optional() }).strict(),
@@ -64,6 +74,7 @@ export type SlackThreadContextAccessResponse = z.infer<typeof SlackThreadContext
 
 export const SlackThreadContextEnvelopeSchema = SlackThreadContextAccessSchema.extend({
   summary: SlackMentionSummarySchema.optional(),
+  source: SlackEnrolledEventAttestationSchema.optional(),
   event: Provenance.extend({
     channelId: z.string().regex(/^C[A-Z0-9]{2,63}$/), threadTs: Timestamp, text: z.string().min(1).max(40_000),
   }).strict().refine(event => Boolean(event.text.trim())),
@@ -128,4 +139,43 @@ export async function verifySlackBridgeRequest(input:{token:string;path:string;b
   if(age < -5000 || age > 30_000) return false;
   const bytes=Uint8Array.from(input.signature.match(/../g)!,pair=>Number.parseInt(pair,16));
   return crypto.subtle.verify("HMAC",await key(input.token),bytes,message(input.path,input.body,input.timestamp));
+}
+
+export const SLACK_CONTEXT_SOURCE_HEADER = "x-matrix-slack-source-v1";
+export const SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER = "x-matrix-slack-source-signature";
+const CONTEXT_PATH = "/api/internal/slack/context";
+function contextSourceMessage(path: string, body: string, timestamp: string, source: string) {
+  return encoder.encode(`matrix-slack-context-source-v1\nPOST\n${path}\n${timestamp}\n${body}\n${source}`);
+}
+
+/** Old owners keep their original strict body and base bridge signature. */
+export async function signSlackContextSource(input: {
+  token: string; path: string; body: string; timestamp: string; source: SlackEnrolledEventAttestation;
+}) {
+  if (input.path !== CONTEXT_PATH || !/^\d{1,12}$/.test(input.timestamp)) throw new Error("Slack source unavailable");
+  const source = JSON.stringify(SlackEnrolledEventAttestationSchema.parse(input.source));
+  const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", await key(input.token),
+    contextSourceMessage(input.path, input.body, input.timestamp, source)));
+  return {
+    [SLACK_CONTEXT_SOURCE_HEADER]: source,
+    [SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER]: Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join(""),
+  };
+}
+
+export async function verifySlackContextSource(input: {
+  token: string; path: string; body: string; timestamp?: string; source?: string; signature?: string; now?: Date;
+}): Promise<{ valid: false } | { valid: true; source?: SlackEnrolledEventAttestation }> {
+  if (input.source === undefined && input.signature === undefined) return { valid: true };
+  if (input.path !== CONTEXT_PATH || !input.source || input.source.length > 512 || !input.timestamp
+    || !/^\d{1,12}$/.test(input.timestamp) || !input.signature || !/^[a-f0-9]{64}$/.test(input.signature)) return { valid: false };
+  const age = (input.now ?? new Date()).getTime() - Number(input.timestamp) * 1000;
+  if (age < -5000 || age > 30_000) return { valid: false };
+  const bytes = Uint8Array.from(input.signature.match(/../g)!, pair => Number.parseInt(pair, 16));
+  if (!await crypto.subtle.verify("HMAC", await key(input.token), bytes,
+    contextSourceMessage(input.path, input.body, input.timestamp, input.source))) return { valid: false };
+  let value: unknown;
+  try { value = JSON.parse(input.source); }
+  catch (error) { if (error instanceof SyntaxError) return { valid: false }; throw error; }
+  const parsed = SlackEnrolledEventAttestationSchema.safeParse(value);
+  return parsed.success ? { valid: true, source: parsed.data } : { valid: false };
 }

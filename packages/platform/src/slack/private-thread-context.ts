@@ -15,6 +15,8 @@ export function createSlackPrivateThreadReader(options: SlackAppRouteOptions, gr
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(8_000)]);
     const authority = await authorize(request, runtime, deadline);
     if (!authority) return null;
+    const source = request.source ?? request.summary;
+    if (!source) return null;
     const token = decryptSlackToken(authority.installation.encryptedBotToken, options.config.tokenEncryptionKey, `${grant.appId}:${grant.teamId}`);
     try {
       const messages: SlackMessagePage["messages"] = [];
@@ -24,11 +26,11 @@ export function createSlackPrivateThreadReader(options: SlackAppRouteOptions, gr
       outer: for (let pageIndex = 0; pageIndex < 3; pageIndex++) {
         deadline.throwIfAborted();
         if (pageIndex > 0 && !await authorize(request, runtime, deadline)) return null;
-        const page = await options.api.replies({ token, channelId: grant.channelId, ts: request.summary.threadTs, ...(cursor ? { cursor } : {}), signal: deadline });
+        const page = await options.api.replies({ token, channelId: grant.channelId, ts: source.threadTs, ...(cursor ? { cursor } : {}), signal: deadline });
         partial ||= page.messages.length > 15;
         for (const message of page.messages.slice(0, 15)) {
-          if ((message.ts !== request.summary.threadTs && message.thread_ts !== request.summary.threadTs)
-            || (message.thread_ts !== undefined && message.thread_ts !== request.summary.threadTs)) { partial = true; continue; }
+          if ((message.ts !== source.threadTs && message.thread_ts !== source.threadTs)
+            || (message.thread_ts !== undefined && message.thread_ts !== source.threadTs)) { partial = true; continue; }
           const normalized = { ...(message.user ? { user: message.user } : {}), ts: message.ts,
             ...(message.thread_ts ? { thread_ts: message.thread_ts } : {}), ...(message.text !== undefined ? { text: message.text } : {}) };
           const candidate = { available: true, untrusted: true, partial: true, recipientUserId: grant.ownerSlackId,
@@ -43,7 +45,7 @@ export function createSlackPrivateThreadReader(options: SlackAppRouteOptions, gr
       }
       // Revocation or a changed source/recipient must fence data leaving the broker.
       if (!await authorize(request, runtime, deadline)) return null;
-      partial ||= !messages.some(message => message.ts === request.summary.threadTs);
+      partial ||= !messages.some(message => message.ts === source.threadTs);
       return SlackPrivateThreadContextResponseSchema.parse({ available: true, untrusted: true, partial,
         recipientUserId: grant.ownerSlackId,
         ...(authority.channel ? { channel: authority.channel } : {}), messages });

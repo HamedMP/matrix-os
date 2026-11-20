@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { SlackThreadContextAccessResponseSchema, type SlackThreadContextAccess, type SlackThreadContextAccessResponse, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 import type { OwnerBotDatabase } from "../bots/database.js";
@@ -50,6 +51,7 @@ export async function createPrivateSlackThreadContext(options: {
 
   return {
     async receive(envelope: SlackThreadContextEnvelope) {
+      if(envelope.source && createHash("sha256").update(envelope.event.text,"utf8").digest("hex")!==envelope.source.textDigest)return false;
       if (envelope.runtimeId !== options.runtimeId || envelope.ownerId !== options.ownerId
         || await options.botAvailable?.(envelope) === false) return false;
       return db.transaction().execute(async trx => {

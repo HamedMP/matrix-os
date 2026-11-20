@@ -1,3 +1,4 @@
+import { admittedOwnerHttpInput, type OwnerHttpInputProvenance } from "./owner-http-input.js";
 import { SLACK_SUMMARY_DISPATCH } from "./slack-summary-admission.js";
 import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "./routine-direct-admission.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
@@ -46,7 +47,7 @@ export interface TurnAdmissionOptions {
     promptOverride?: string, admissionKey?: string): Promise<void>;
 }
 
-export interface CanonicalTurnProvenance {
+export interface CanonicalTurnProvenance extends OwnerHttpInputProvenance {
   [SLACK_SUMMARY_DISPATCH]?: true;
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
@@ -247,6 +248,7 @@ export async function admitCanonicalTurn(
     try {
       deps.assertOpen();
       admitted = await deps.repository.admitTurn(owner, {
+        ...admittedOwnerHttpInput(principal, owner, provenance),
         chatId,
         baseRevision: input.baseRevision,
         requestHash,
