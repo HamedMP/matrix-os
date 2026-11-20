@@ -208,6 +208,30 @@ describe("watcher durability and schedule edges", () => {
     expect(started).toHaveLength(1);
   });
 
+  it("records an undelivered task as a final failure instead of retrying into a skipped launch", async () => {
+    runtime.configureAutomation({ actions: { start: async () => ({ delivered: false }) } });
+    runtime.watchers.start();
+    await runtime.watchers.create(owner, undefined, { name: "dev-watch", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } });
+    await runtime.service.post(agent, undefined, { channel: "dev", text: "Go" });
+    await runtime.watchers.idle();
+    expect(await db.selectFrom("board_watcher_runs").select(["outcome", "last_error"]).execute())
+      .toEqual([{ outcome: "failed", last_error: "The agent started but did not get its task. Open it from Terminal to continue." }]);
+  });
+
+  it("never pauses a watcher for a post it already admitted when live matching and replay race", async () => {
+    const started: unknown[] = [];
+    runtime.configureAutomation({ actions: { start: async (input) => { started.push(input); } } });
+    await runtime.watchers.create(owner, undefined, { name: "one-per-hour", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" }, maxRunsPerHour: 1 });
+    await db.insertInto("board_watcher_progress").values({ owner_id: "owner_1", board_id: (await runtime.service.resolveBoard("owner_1", undefined)).id, cursor: "0", updated_at: new Date() }).execute();
+    runtime.watchers.start();
+    await runtime.service.post(agent, undefined, { channel: "dev", text: "Only post" });
+    await runtime.watchers.idle();
+    await db.updateTable("board_watcher_progress").set({ cursor: "0" }).execute();
+    await runtime.watchers.sweep(); // replays the same post
+    expect(started).toHaveLength(1);
+    expect((await runtime.watchers.list(owner, undefined))[0]!.enabled).toBe(true);
+  });
+
   it("keeps runs pending until the gateway supplies its actions, then starts them", async () => {
     runtime.watchers.start();
     await runtime.watchers.create(owner, undefined, { name: "early", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } });
@@ -271,14 +295,19 @@ describe("watcher start adapter", () => {
     const { configureMessageBoardAutomation } = await import("../../packages/gateway/src/server/message-board-gateway-routes.js");
     let actions: { start?: (input: never) => Promise<void> } = {};
     const runtime = { configureAutomation: (next: { actions?: typeof actions }) => { actions = next.actions ?? {}; } } as unknown as MessageBoardRuntime;
-    const run = vi.fn(async () => ({}));
+    const run = vi.fn(async () => ({ firstMessage: { sent: true } }));
     const tabs: Array<{ name: string }> = [];
     configureMessageBoardAutomation(runtime, { runTerminalAgent: run, listTerminals: async () => [{ tabs }] });
     const input = { template: "fixer", name: "board-dev", task: "x", idempotencyKey: "wat_1:42", origin: { watcher: "dev", depth: 1 } };
-    await actions.start!(input as never);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "board-dev #42", labels: { "board.watcher": "dev", "board.depth": "1" } }));
-    tabs.push({ name: "board-dev #42" });
+    expect(await actions.start!(input as never)).toEqual({ delivered: true });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "board-dev wat_1:42", labels: { "board.watcher": "dev", "board.depth": "1" } }));
+    tabs.push({ name: "board-dev wat_1:42" });
     await actions.start!(input as never);
     expect(run).toHaveBeenCalledTimes(1);
+    // The same display name and cursor on another board's watcher is a different run.
+    await actions.start!({ ...input, idempotencyKey: "wat_2:42" } as never);
+    expect(run).toHaveBeenCalledTimes(2);
+    run.mockResolvedValueOnce({ firstMessage: { sent: false } } as never);
+    expect(await actions.start!({ ...input, idempotencyKey: "wat_3:7" } as never)).toEqual({ delivered: false });
   });
 });

@@ -13,7 +13,8 @@ type WatcherRow = Selectable<BoardWatchersTable>;
 
 /** How a watcher wakes something. Each call carries the event cursor as its idempotency key. */
 export interface WatcherActionRunner {
-  start?(input: { template: string; projectId?: string; name: string; task: string; idempotencyKey: string; origin: { watcher: string; depth: number } }): Promise<void>;
+  /** Resolves `{ delivered: false }` when the agent started but never received its task. */
+  start?(input: { template: string; projectId?: string; name: string; task: string; idempotencyKey: string; origin: { watcher: string; depth: number } }): Promise<{ delivered: boolean } | void>;
   send?(input: { session: string; text: string; idempotencyKey: string }): Promise<void>;
   routine?(input: { routine: string; input: string; idempotencyKey: string }): Promise<void>;
 }
@@ -31,6 +32,7 @@ const RETRY_BATCH = 20;
 const DISPATCH_LEASE_MS = 5 * 60_000;
 const FAILED_COPY = "The last run could not start. Check the watcher's action and try again.";
 const UNAVAILABLE_COPY = "This kind of action is not available on this computer yet.";
+const UNDELIVERED_COPY = "The agent started but did not get its task. Open it from Terminal to continue.";
 const MAX_TASK_TEXT = 6_000;
 /** Events read per board per catch-up pass. */
 const CATCH_UP_BATCH = 200;
@@ -237,19 +239,26 @@ export class BoardWatcherService {
 
   /** Writes the run row (once per cursor), pausing the watcher at its hourly cap. */
   private async admit(ownerId: string, boardName: string, watcher: WatcherRow, event: BoardEvent, threadId: string, depth: number): Promise<void> {
-    const db = this.board.db;
     const now = this.board.clock();
-    const recent = await db.selectFrom("board_watcher_runs").select((eb) => eb.fn.countAll<string>().as("count"))
-      .where("watcher_id", "=", watcher.id).where("created_at", ">", new Date(now.getTime() - HOUR_MS)).executeTakeFirstOrThrow();
-    if (Number(recent.count) >= watcher.max_runs_per_hour) {
-      await this.pause(ownerId, boardName, watcher, event.channel!, threadId, now);
-      return;
-    }
-    const inserted = await db.insertInto("board_watcher_runs").values({
-      owner_id: ownerId, watcher_id: watcher.id, event_cursor: event.cursor, message_id: event.messageId!,
-      outcome: null, attempts: 0, next_attempt_at: new Date(now.getTime() + DISPATCH_LEASE_MS), last_error: null, created_at: now, finished_at: null,
-    }).onConflict((oc) => oc.columns(["watcher_id", "event_cursor"]).doNothing()).returning("event_cursor").execute();
-    if (inserted.length === 0) return;
+    // One transaction under the watcher row lock: an event already admitted (live and replay can race)
+    // is skipped before the hourly cap is checked, and the count and insert cannot interleave.
+    const decision = await this.board.db.transaction().execute(async (trx): Promise<"skip" | "pause" | "run"> => {
+      const locked = await trx.selectFrom("board_watchers").select("enabled").where("id", "=", watcher.id).forUpdate().executeTakeFirst();
+      if (!locked?.enabled) return "skip";
+      const existing = await trx.selectFrom("board_watcher_runs").select("event_cursor").where("watcher_id", "=", watcher.id)
+        .where("event_cursor", "=", event.cursor as never).executeTakeFirst();
+      if (existing) return "skip";
+      const recent = await trx.selectFrom("board_watcher_runs").select((eb) => eb.fn.countAll<string>().as("count"))
+        .where("watcher_id", "=", watcher.id).where("created_at", ">", new Date(now.getTime() - HOUR_MS)).executeTakeFirstOrThrow();
+      if (Number(recent.count) >= watcher.max_runs_per_hour) return "pause";
+      await trx.insertInto("board_watcher_runs").values({
+        owner_id: ownerId, watcher_id: watcher.id, event_cursor: event.cursor, message_id: event.messageId!,
+        outcome: null, attempts: 0, next_attempt_at: new Date(now.getTime() + DISPATCH_LEASE_MS), last_error: null, created_at: now, finished_at: null,
+      }).execute();
+      return "run";
+    });
+    if (decision === "pause") await this.pause(ownerId, boardName, watcher, event.channel!, threadId, now);
+    if (decision !== "run") return;
     await this.dispatch(watcher, { board: boardName, cursor: event.cursor, messageId: event.messageId!, channel: event.channel!, depth });
   }
 
@@ -299,7 +308,9 @@ export class BoardWatcherService {
     let failure: string | null = null;
     try {
       if (action.kind === "start" && actions.start) {
-        await actions.start({ template: action.template, projectId: action.project, name: `board-${watcher.name}`.slice(0, 64), task: text, idempotencyKey, origin: { watcher: watcher.name, depth: run.depth + 1 } });
+        const started = await actions.start({ template: action.template, projectId: action.project, name: `board-${watcher.name}`.slice(0, 64), task: text, idempotencyKey, origin: { watcher: watcher.name, depth: run.depth + 1 } });
+        // Retrying would find the started agent and skip it, so an undelivered task is a final, explained failure.
+        if (started && started.delivered === false) failure = UNDELIVERED_COPY;
       } else if (action.kind === "send" && actions.send) {
         await actions.send({ session: action.session, text, idempotencyKey });
       } else if (action.kind === "routine" && actions.routine) {
@@ -320,7 +331,7 @@ export class BoardWatcherService {
     const current = await db.selectFrom("board_watcher_runs").select("attempts").where("watcher_id", "=", watcher.id)
       .where("event_cursor", "=", run.cursor as never).executeTakeFirst();
     const attempts = (current?.attempts ?? 0) + 1;
-    const giveUp = attempts >= MAX_ATTEMPTS || failure === UNAVAILABLE_COPY;
+    const giveUp = attempts >= MAX_ATTEMPTS || failure === UNAVAILABLE_COPY || failure === UNDELIVERED_COPY;
     await db.updateTable("board_watcher_runs").set({
       attempts, last_error: failure,
       ...(giveUp ? { outcome: "failed", finished_at: now } : { next_attempt_at: new Date(now.getTime() + (this.options.retryBaseMs ?? RETRY_BASE_MS) * 2 ** (attempts - 1)) }),
