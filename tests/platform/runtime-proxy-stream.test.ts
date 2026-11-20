@@ -24,7 +24,11 @@ describe("runtime proxy response streaming", () => {
     // Fault: the session proxy answered 413 for a recording over 10 MiB before it reached the owner's machine.
     const general = 10 * 1024 * 1024;
     const tenMinuteWav = 600 * 16_000 * 2 + 44;
-    for (const path of ["/api/speech/transcriptions", "/vm/alice/api/speech/transcriptions"]) {
+    for (const path of [
+      "/api/speech/transcriptions",
+      "/vm/alice/api/speech/transcriptions",
+      "/vm/alice/~runtime/studio/api/speech/transcriptions",
+    ]) {
       expect(runtimeProxyBodyLimitBytes("POST", path, general)).toBeGreaterThan(tenMinuteWav);
     }
     for (const [method, path] of [

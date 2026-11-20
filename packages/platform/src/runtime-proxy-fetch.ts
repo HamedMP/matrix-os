@@ -43,7 +43,9 @@ export function shouldReleaseRuntimeProxyTimeout(method: string, path: string): 
   return method === "GET" && (path === "/api/files/media" || path === "/api/chats/events");
 }
 
-const SPEECH_UPLOAD_PATH = /^(?:\/vm\/[a-z0-9][a-z0-9-]{0,62})?\/api\/speech\/transcriptions$/;
+// Bare, `/vm/<handle>`, and `/vm/<handle>/~runtime/<slot>` forms of the same upload.
+const SPEECH_UPLOAD_PATH =
+  /^(?:\/vm\/[a-z0-9][a-z0-9-]{0,62}(?:\/~runtime\/[a-z0-9][a-z0-9_-]{0,79})?)?\/api\/speech\/transcriptions$/;
 
 /**
  * Largest request body the session proxy forwards. A ten-minute dictation is
