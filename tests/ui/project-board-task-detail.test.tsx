@@ -183,3 +183,28 @@ describe("TaskDetail description review fixes", () => {
     await act(async () => { finish({ task: { ...task, description: "New", revision: 2 } }); });
   });
 });
+
+describe("TaskDetail review fixes, round 4", () => {
+  it("keeps the title read-only while its save is in flight", async () => {
+    const task = boardTask("t1", { title: "Old" });
+    let finish: (value: UpdateResult) => void = () => {};
+    const onUpdate = vi.fn(() => new Promise<UpdateResult>((resolve) => { finish = resolve; }));
+    render(<TaskDetail {...detailProps(task, { onUpdate })} />);
+    const title = screen.getByRole("textbox", { name: "Task title" }) as HTMLTextAreaElement;
+    fireEvent.focus(title);
+    fireEvent.change(title, { target: { value: "New" } });
+    await act(async () => { fireEvent.blur(title); });
+    expect(title.readOnly).toBe(true);
+    await act(async () => { finish({ task: { ...task, title: "New", revision: 2 } }); });
+    expect(title.readOnly).toBe(false);
+  });
+
+  it("shows a session that no longer exists as unavailable and does not offer to open it", () => {
+    const task = boardTask("t1", { sessions: [{ ref: "chat_gone", kind: "chat", title: "Old chat", role: "main", agentStatus: "idle", unavailable: true }] });
+    const onOpenSession = vi.fn();
+    render(<TaskDetail {...detailProps(task, { onOpenSession })} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Old chat/ }));
+    expect(screen.getByText("This chat no longer exists.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Open in Chat/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
