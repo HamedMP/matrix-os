@@ -183,9 +183,13 @@ code metadata (ahead/behind) and a pull request summary: number, URL, state,
 draft, review decision, mergeable, and the checks roll-up. The summary comes
 from `gh pr view --json` on the owner's computer for the task's branch.
 
-- Results are cached per task for 60 seconds. The board refreshes visible
-  cards with a PR at most once a minute while a viewer is connected, and never
-  in the background with no viewer. There are no GitHub webhooks.
+- Results are cached per task for 60 seconds. There are no GitHub webhooks,
+  so discovery is a bounded refresh while a viewer is connected: at most once
+  a minute, the board refreshes visible cards that have a branch, whether or
+  not a PR is known yet, so a PR an agent opens while the board is open is
+  found and can move the card to `in_review`. Each refresh covers at most 20
+  cards, least recently checked first, and runs `gh` lookups one at a time.
+  Nothing refreshes in the background with no viewer.
 - `gh` runs with a 10 second timeout. A missing or signed-out `gh` yields
   `prStatus: "unavailable"` with a prompt to connect GitHub, not an error card.
 - The task detail has **Create pull request** (pushes the branch and opens the
@@ -527,6 +531,10 @@ Two sequential GitHub native stacks, each with its own ENG ticket.
 2. Linear link, import and two-way sync
 3. Web Mobile and Native Mobile list view
 4. Docs, agent skill text for `matrix tasks`, removal of `task-manager.ts` callers
+
+Public docs: a separate PR in `FinnaAI/matrix-os-site` under `content/docs/`
+covering the board, start work, `matrix tasks` and Linear sync, opened once
+each stack's behavior is final.
 
 Stack 1 layers 3 and 6 depend on spec 2697's `AgentSessionRef`. If 2697 has
 not merged, they store the same string form (`chat_<id>`, `term.<ws>.<tab>`)

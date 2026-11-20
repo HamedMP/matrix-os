@@ -104,9 +104,21 @@ is mirrored as the reserved label `board.task` on the root.
 | needs | `needs <id> <id>…` replaces prerequisites while the task is unclaimed and unfinished. Completing a prerequisite readies dependents whose blockers are all complete. A failed or canceled prerequisite readies nothing. |
 | run | `tasks run --ready <channel> -- <command>` claims, sets `BOARD_TASK`, renews at a third of the lease, completes on exit 0, fails otherwise, and releases on interrupt |
 
-A claim returns an `epoch` and `token`. Every settle and renew carries them,
-and the write is `UPDATE … WHERE id = :id AND claim_epoch = :epoch`, so a
-lapsed holder can never settle a task someone else now holds.
+A claim returns an `epoch` and `token`. Every renew and settle carries them.
+Inside the write transaction the task row is locked (`SELECT … FOR UPDATE`),
+and the write goes through only when all of these hold at that moment:
+
+- `state = 'claimed'`;
+- the claim holder is the caller;
+- `claim_epoch = :epoch`, and the token's SHA-256 matches the stored hash,
+  compared in constant time;
+- `lease_until > now()`.
+
+Any failure is `claim_lost` and changes nothing; an expired lease fails the
+same way even before the 15-second sweep has reset the row. The `UPDATE`
+repeats `WHERE root_id = :id AND claim_epoch = :epoch AND state = :state`,
+so a lapsed holder can never settle a task someone else now holds. A person
+holding a claim may settle it without the token; agents always need it.
 
 Task events: `task.created ready claimed released completed failed blocked
 unblocked canceled reopened assigned needs_changed expired`.
@@ -144,7 +156,7 @@ lock. Every row carries `owner_id`.
 | `board_reactions` | `(message_id, actor, emoji)` unique |
 | `board_tasks` | `root_id`, `state`, `owner_actor`, `assigned_profile`, `claim_holder`, `claim_epoch`, `claim_token_hash`, `lease_until`, `result` |
 | `board_task_needs` | `(task_id, needs_task_id)` |
-| `board_events` | `cursor` (bigserial per board), `type`, `actor`, `message_id`, `payload` |
+| `board_events` | `cursor` (gapless per board, see below), `type`, `actor`, `message_id`, `payload` |
 | `board_grants` | Principals, channel pattern, permissions |
 | `board_watchers` | Section 6 |
 | `board_schedules` | Section 7 |
@@ -152,9 +164,19 @@ lock. Every row carries `owner_id`.
 
 Each write is one transaction: the row change, any task state change it
 causes (including readying dependents) and its `board_events` rows.
-Subscribers are notified after commit. Lease expiry is a sweep every 15
-seconds that runs `UPDATE … WHERE state = 'claimed' AND lease_until < now()`
-and writes `task.expired` in the same transaction.
+Subscribers are notified after commit.
+
+Cursor order is commit order. A cursor is not a sequence value: every write
+first locks its board row (`SELECT … FROM board_boards … FOR UPDATE`) and
+holds that lock until commit. The new events take `board_boards.last_cursor +
+1, + 2, …`, and the write stores the new `last_cursor` in the same
+transaction. Writes to one board therefore commit one at a time, in cursor
+order, with no gaps, so a reader resuming after cursor N can never miss an
+event that later commits with a smaller cursor.
+
+Lease expiry is a sweep every 15 seconds that runs `UPDATE … WHERE state =
+'claimed' AND lease_until <= now()` and writes `task.expired` in the same
+transaction.
 
 ### 5. Interfaces
 
@@ -249,6 +271,21 @@ principals, a channel pattern (exact, subtree or `*`) and permissions.
 - Private channel: `channels create <path> --private` writes a grant for the
   creator and a closing grant for everyone else, in one transaction.
 - `grants explain <channel> [--user …]` shows what applies and why.
+
+Task actions need no `manage`, so the default agent set can work a queue:
+
+| Action | Permission on the task's channel | Also requires |
+|---|---|---|
+| list, read a task | `read` | none |
+| create (one, or a plan) | `post` | none |
+| claim (by ID or `--ready`) | `post` | a task assigned to a profile only to that profile; `--ready` considers only readable channels |
+| renew, release, complete, fail | `post` | a valid claim, as in section 2 |
+| block | `post` | a valid claim on a claimed task; the board owner or the task's creator on a ready or waiting one |
+| unblock, reopen, assign, needs, cancel | `post` | the board owner or the task's creator (`task_not_owned` otherwise) |
+
+No one else can renew or settle a claimed task, and no one can claim it over
+its holder; a claim ends only by release, settle, lease expiry, or the board
+owner or task creator canceling the task.
 
 A shared board lives in the owner's Postgres and members reach it through a
 platform ticket, the relay and a direct session, exactly as shared projects
@@ -504,16 +541,23 @@ store.
 
 ## Delivery
 
-One GitHub native stack, 6 PRs, with its own ENG ticket.
+One GitHub native stack, 7 PRs, with its own ENG ticket, plus a public docs
+PR.
 
 1. Contracts, owner Postgres store, boards, channels, messages, threads, labels, reactions, event log, read routes
 2. Board tasks: create, claim, lease, settle, dependencies, sweeper; long-poll and `/ws/board/events`
 3. `matrix board` CLI, MCP and kernel tools, session `can` narrowing, profiles, agent skill
-4. Message Board viewer on Web Canvas, Web Desktop and Electron Desktop; project Messages view
-5. Watchers and schedules; notification sources
-6. Organization sharing and grants; bridge to project tasks (needs spec 2699 stack 1)
+4. Message Board viewer on Web Canvas and Web Desktop
+5. Watchers, schedules, channel grants; notification sources
+6. Message Board in Electron Desktop
+7. Bridge to project tasks and the project Messages view (needs spec 2699 stack 1)
 
-Follow-on stack: schemas and structured blocks, attachments, outbound sync
+Public docs: a separate PR in `FinnaAI/matrix-os-site` under `content/docs/`
+covering the Message Board, board tasks, `matrix board`, watchers,
+schedules and grants, opened once the stack's behavior is final.
+
+Follow-on stack: organization-shared boards (members as grant subjects),
+schemas and structured blocks, attachments, outbound sync
 (GitHub, Slack through the messaging bridge), Web Mobile and Native Mobile.
 
 ## Risks and open questions
