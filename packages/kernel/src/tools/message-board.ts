@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { LabelsSchema } from "@matrix-os/contracts/message-board";
 import { wrapExternalContent } from "../security/external-content.js";
 
 /**
@@ -35,7 +36,8 @@ const MessageId = z.string().regex(/^msg_[A-Za-z0-9]{8,40}$/);
 const Channel = z.string().regex(/^[a-z0-9_-]{1,48}(?:\/[a-z0-9_-]{1,48}){0,7}$/).max(200);
 const Scope = z.union([z.literal("*"), Channel, z.string().regex(/^[a-z0-9_-]{1,48}(?:\/[a-z0-9_-]{1,48}){0,7}\/$/)]);
 const Text = z.string().min(1).max(10_000);
-const Labels = z.record(z.string().regex(/^[a-z0-9_.-]{1,64}$/), z.string().min(1).max(256)).optional();
+/** The board's own label rules (count cap, no `|`, no surrounding spaces): tools must not bypass them. */
+const Labels = LabelsSchema.optional();
 const Profile = z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,31}$/).optional();
 const Token = z.string().regex(/^[a-f0-9]{64}$/);
 

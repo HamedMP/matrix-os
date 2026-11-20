@@ -41,20 +41,26 @@ export function formatThreadSummary(summary: unknown): string {
   return `${text(root.id)} ${text(root.channel)} ${state ? `${state} ` : ""}${author(root)}: ${firstLine(root.text)}${replies}`;
 }
 
+/** Every line of a message, for reading one thread: task instructions and answers are never cut. */
+function fullMessage(message: Record<string, unknown>, indent: string): string[] {
+  const [first = "", ...rest] = text(message.text).split("\n");
+  return [`${indent}${text(message.id)} ${author(message)}: ${first}${labels(message)}`, ...rest.map((line) => `${indent}  ${line}`)];
+}
+
 export function formatThread(thread: unknown): string {
   const t = record(thread);
   const root = record(t.root);
-  const lines = [`${text(root.channel)} ${formatMessage(root)}`, ...text(root.text).split("\n").slice(1).map((line) => `  ${line}`)];
+  const lines = fullMessage(root, `${text(root.channel)} `);
   const task = record(t.task);
   if (text(task.state)) {
     lines.push(`task: ${text(task.state)}${text(record(task.holder).name) ? ` held by ${text(record(task.holder).name)}` : ""}`
       + `${text(task.leaseUntil) ? ` until ${text(task.leaseUntil)}` : ""}`);
     for (const key of ["blockedReason", "result", "failureReason", "cancelReason"]) {
-      if (text(task[key])) lines.push(`${key}: ${firstLine(task[key], 200)}`);
+      if (text(task[key])) lines.push(`${key}: ${text(task[key])}`);
     }
   }
   for (const need of list(t.needs)) lines.push(`needs: ${text(need.id)} ${text(need.state)} ${firstLine(need.title)}`);
-  for (const reply of list(t.replies)) lines.push(`  ${formatMessage(reply)}`);
+  for (const reply of list(t.replies)) lines.push(...fullMessage(reply, "  "));
   return lines.join("\n");
 }
 

@@ -93,7 +93,8 @@ async function runHeld(ctx: BoardContext, held: HeldClaim, command: string[], in
     const sentAt = now();
     try {
       await taskVerb(ctx, "renew", taskId, () => (held.leaseSeconds ? { leaseSeconds: held.leaseSeconds } : {}), { proof });
-      if (!stopped) {
+      // A reply that lands after the command exited must not start a new deadline timer.
+      if (!stopped && !hasExited) {
         leaseEnds = sentAt + leaseMs;
         armDeadline();
       }
