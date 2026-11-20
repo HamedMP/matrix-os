@@ -9,12 +9,10 @@ import {
   actorLabel, formatLeaseCountdown, groupTasksByState, parseLabelFilter, sortThreadsByActivity,
   TASK_QUEUE_ORDER, TASK_STATE_LABELS, threadTitle,
 } from "./model.js";
-import {
-  chipClass, fieldClass, formatBoardTime, iconButtonClass, primaryButtonClass, primaryButtonStyle, rowClass,
-  subtleBorder, textPrimary, textSecondary, textTertiary,
-} from "./presentation.js";
+import { fieldClass, formatBoardTime, rowClass, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
 import { LabelChip, TaskStateChip } from "./TaskStateChip.js";
 import type { BoardActor, BoardTaskState, BoardThreadFilter, BoardThreadSummary, BoardViewMode } from "./types.js";
+import { BoardButton, BoardInput } from "./controls.js";
 
 export interface ThreadListProps {
   title: string;
@@ -51,27 +49,27 @@ export function ThreadList(props: ThreadListProps) {
 
   return <section aria-label={`${title} threads`} className="flex h-full min-h-0 flex-col">
     <header className="flex items-center gap-2 px-3 pb-2 pt-2.5">
-      {onBack ? <button type="button" aria-label="Back to channels" className={iconButtonClass} onClick={onBack}>
+      {onBack ? <BoardButton look="icon" aria-label="Back to channels" onClick={onBack}>
         <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
-      </button> : null}
+      </BoardButton> : null}
       <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold" style={textPrimary}>{title}</h2>
       <div role="group" aria-label="View" className="flex rounded-full p-0.5" style={{ background: "var(--bg-sunken, var(--muted))" }}>
-        {(["threads", "tasks"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value}
+        {(["threads", "tasks"] as const).map((value) => <BoardButton look="plain" key={value} type="button" aria-pressed={mode === value}
           onClick={() => props.onModeChange(value)}
           className="rounded-full px-2.5 py-0.5 text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))] aria-pressed:bg-[var(--bg-surface,var(--card))] aria-pressed:font-medium aria-pressed:shadow-sm"
           style={mode === value ? textPrimary : textSecondary}>
           {value === "threads" ? "Threads" : "Tasks"}
-        </button>)}
+        </BoardButton>)}
       </div>
-      <button type="button" className={primaryButtonClass} style={primaryButtonStyle} onClick={onNewThread}>
+      <BoardButton look="primary" onClick={onNewThread}>
         <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden /> New
-      </button>
+      </BoardButton>
     </header>
     <FilterBar {...props} labelInvalid={labelInvalid} />
     <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {status === "error" && !threads ? <div role="alert" className="px-3 py-8 text-center text-[13px]" style={textSecondary}>
         <p>{error ?? "Threads could not be loaded."}</p>
-        <button type="button" className={`${chipClass} mt-2`} onClick={onRetry}>Try again</button>
+        <BoardButton look="chip" className="mt-2" onClick={onRetry}>Try again</BoardButton>
       </div>
         : !threads ? <p role="status" className="px-3 py-8 text-center text-xs" style={textTertiary}>Loading threads…</p>
         : empty ? <EmptyList filtered={filtered} mode={mode} onClear={() => onFilterChange({ text: "", label: "", author: undefined, taskState: undefined })} />
@@ -92,10 +90,10 @@ export function ThreadList(props: ThreadListProps) {
               </ul>
             </section>)}
       {threads && threads.length >= props.limit && props.limit < 500
-        ? <button type="button" className={`${chipClass} mx-auto mt-2 flex`} style={textSecondary} onClick={props.onShowMore}>Show more</button>
+        ? <BoardButton look="chip" className="mx-auto mt-2 flex" style={textSecondary} onClick={props.onShowMore}>Show more</BoardButton>
         : null}
       {status === "error" && threads ? <p role="alert" className="px-3 pt-2 text-xs" style={textSecondary}>
-        {error} <button type="button" className="underline" onClick={onRetry}>Try again</button>
+        {error} <BoardButton look="plain" className="underline" onClick={onRetry}>Try again</BoardButton>
       </p> : null}
     </div>
   </section>;
@@ -107,16 +105,16 @@ function FilterBar({ filter, actors, onFilterChange, labelInvalid }: ThreadListP
   return <div className="flex flex-wrap items-center gap-1.5 border-b px-3 pb-2" style={subtleBorder}>
     <label className={`${fieldClass} flex h-8 min-w-[9rem] flex-[2_1_9rem] items-center gap-1.5`} style={subtleBorder}>
       <HugeiconsIcon icon={Search01Icon} size={13} strokeWidth={1.5} aria-hidden style={textTertiary} />
-      <input type="search" aria-label="Search messages" placeholder="Search" maxLength={200} value={filter.text ?? ""}
+      <BoardInput bare wrapperClassName="flex-1" type="search" aria-label="Search messages" placeholder="Search" maxLength={200} value={filter.text ?? ""}
         onChange={(event) => onFilterChange({ text: event.currentTarget.value })}
-        className="min-w-0 flex-1 bg-transparent outline-none" style={textPrimary} />
+      />
     </label>
     <label className={`${fieldClass} flex h-8 min-w-[7rem] flex-[1_1_7rem] items-center gap-1.5`}
       style={labelInvalid ? { borderColor: "var(--danger-text)" } : subtleBorder}>
       <HugeiconsIcon icon={Tag01Icon} size={13} strokeWidth={1.5} aria-hidden style={textTertiary} />
-      <input aria-label="Filter by label (k, k=v or k=v|w)" aria-invalid={labelInvalid} placeholder="kind=bug" maxLength={330}
+      <BoardInput bare wrapperClassName="flex-1" aria-label="Filter by label (k, k=v or k=v|w)" aria-invalid={labelInvalid} placeholder="kind=bug" maxLength={330}
         value={filter.label ?? ""} onChange={(event) => onFilterChange({ label: event.currentTarget.value })}
-        className="min-w-0 flex-1 bg-transparent font-mono text-[12px] outline-none" style={textPrimary} />
+        style={{ fontSize: 12, fontFamily: "var(--font-mono, ui-monospace, monospace)" }} />
     </label>
     <ChatComposerSelect label="Filter by author" value={filter.author ?? ""} menuSide="bottom" menuZIndex={POPOVER_LAYER}
       options={authorOptions} onChange={(value) => onFilterChange({ author: value || undefined })} />
@@ -169,6 +167,6 @@ function EmptyList({ filtered, mode, onClear }: { filtered: boolean; mode: Board
     <p className="text-xs" style={textTertiary}>
       {filtered ? "Try another filter, or clear them." : mode === "tasks" ? "Turn a thread into a task, or create one with New." : "Start one with New."}
     </p>
-    {filtered ? <button type="button" className={`${chipClass} mt-1`} onClick={onClear}>Clear filters</button> : null}
+    {filtered ? <BoardButton look="chip" className="mt-1" onClick={onClear}>Clear filters</BoardButton> : null}
   </div>;
 }

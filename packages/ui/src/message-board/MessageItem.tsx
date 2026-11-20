@@ -8,7 +8,8 @@ import { POPOVER_LAYER } from "../layering.js";
 import { BoardComposer } from "./BoardComposer.js";
 import { BoardMarkdown } from "./BoardMarkdown.js";
 import { actorLabel } from "./model.js";
-import { formatBoardTime, iconButtonClass, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { formatBoardTime, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { BoardButton } from "./controls.js";
 import type { BoardActor, BoardActorKind, BoardMessage } from "./types.js";
 import type { MutationResult } from "./use-message-board.js";
 
@@ -69,21 +70,21 @@ export function MessageItem({ message, viewerId, actors, nowMs, isRoot, onReact,
       {!deleted && !editing ? <Reactions message={message} viewerId={viewerId} actors={actors} onToggle={(emoji, on) => void run(() => onReact(emoji, on))} /> : null}
       {confirmDelete ? <div role="group" aria-label="Confirm delete" className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[13px]" style={subtleBorder}>
         <span style={textSecondary}>Delete this message? Replies stay in place.</span>
-        <button type="button" autoFocus className="rounded-md px-2 py-0.5 font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={{ color: "var(--danger-text)" }}
+        <BoardButton look="plain" autoFocus className="rounded-md px-2 py-0.5 font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={{ color: "var(--danger-text)" }}
           onClick={async () => { await run(onDelete); setConfirmDelete(false); }}
-          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setConfirmDelete(false); } }}>Delete</button>
-        <button type="button" className="rounded-md px-2 py-0.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textSecondary} onClick={() => setConfirmDelete(false)}>Cancel</button>
+          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setConfirmDelete(false); } }}>Delete</BoardButton>
+        <BoardButton look="plain" className="rounded-md px-2 py-0.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textSecondary} onClick={() => setConfirmDelete(false)}>Cancel</BoardButton>
       </div> : null}
       {error ? <p role="alert" className="pt-1 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
     </div>
     {own && !deleted && !editing && !confirmDelete ? <div className="absolute right-1.5 top-1.5 flex gap-0.5 rounded-lg border opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100"
       style={{ ...subtleBorder, background: "var(--bg-surface, var(--card))" }}>
-      <button type="button" aria-label="Edit message" className={iconButtonClass} onClick={() => setEditing(true)}>
+      <BoardButton look="icon" aria-label="Edit message" onClick={() => setEditing(true)}>
         <HugeiconsIcon icon={Edit02Icon} size={14} aria-hidden style={textSecondary} />
-      </button>
-      <button type="button" aria-label="Delete message" className={iconButtonClass} onClick={() => setConfirmDelete(true)}>
+      </BoardButton>
+      <BoardButton look="icon" aria-label="Delete message" onClick={() => setConfirmDelete(true)}>
         <HugeiconsIcon icon={Delete02Icon} size={14} aria-hidden style={{ color: "var(--danger-text)" }} />
-      </button>
+      </BoardButton>
     </div> : null}
   </article>;
 }
@@ -96,29 +97,29 @@ function Reactions({ message, viewerId, actors, onToggle }: {
   return <div className="mt-1 flex flex-wrap items-center gap-1">
     {message.reactions.map((reaction) => {
       const mine = reaction.actors.includes(viewerId);
-      return <button key={reaction.emoji} type="button" aria-pressed={mine} title={reaction.actors.map(nameOf).join(", ")}
+      return <BoardButton look="plain" key={reaction.emoji} type="button" aria-pressed={mine} title={reaction.actors.map(nameOf).join(", ")}
         aria-label={`${reaction.emoji} ${reaction.actors.length}, ${mine ? "remove your reaction" : "react"}`}
         onClick={() => onToggle(reaction.emoji, !mine)}
         className="inline-flex h-6 items-center gap-1 rounded-full border px-1.5 text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))] aria-pressed:border-[var(--composer-focus,var(--primary,currentColor))]"
         style={{ ...subtleBorder, ...textSecondary }}>
         <span aria-hidden>{reaction.emoji}</span>{reaction.actors.length}
-      </button>;
+      </BoardButton>;
     })}
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" aria-label="Add reaction"
-          className={`${iconButtonClass} size-6 opacity-60 group-hover/message:opacity-100`} style={textTertiary}>
+        <BoardButton look="icon" aria-label="Add reaction"
+          className="size-6 opacity-60 group-hover/message:opacity-100" style={textTertiary}>
           <HugeiconsIcon icon={SmileIcon} size={14} aria-hidden />
-        </button>
+        </BoardButton>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content side="top" align="start" sideOffset={6} aria-label="Reactions"
           className="flex gap-0.5 rounded-xl border p-1 shadow-lg" style={{ zIndex: POPOVER_LAYER, borderColor: "var(--border-default, var(--border))", background: "var(--bg-overlay, var(--popover))" }}>
           {QUICK_REACTIONS.map((emoji) => {
             const mine = message.reactions.some((reaction) => reaction.emoji === emoji && reaction.actors.includes(viewerId));
-            return <button key={emoji} type="button" aria-label={`React with ${emoji}`} aria-pressed={mine}
+            return <BoardButton look="plain" key={emoji} type="button" aria-label={`React with ${emoji}`} aria-pressed={mine}
               className="grid size-8 place-items-center rounded-lg text-base outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))] aria-pressed:bg-[var(--bg-selected,var(--bg-hover))]"
-              onClick={() => { onToggle(emoji, !mine); setOpen(false); }}>{emoji}</button>;
+              onClick={() => { onToggle(emoji, !mine); setOpen(false); }}>{emoji}</BoardButton>;
           })}
         </Popover.Content>
       </Popover.Portal>
