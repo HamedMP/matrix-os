@@ -67,6 +67,37 @@ export async function readBoardEvents(
   return { events: events.filter((event) => eventMatches(event, options)), cursor, ...(missed ? { missed: true } : {}) };
 }
 
+/**
+ * One long-poll: events after `after` (or from now), holding up to `waitSeconds`
+ * until something matching arrives. Shared by `GET /events`, the CLI and agent tools.
+ */
+export async function pollBoardEvents(
+  deps: { service: { db: Kysely<MessageBoardDatabase>; resolveBoard(ownerId: string, name: string | undefined): Promise<BoardRow> }; hub?: BoardEventHub },
+  ownerId: string,
+  options: { board?: string; after?: string; waitSeconds?: number; limit: number } & EventFilter,
+): Promise<BoardEventsPage> {
+  const deadline = Date.now() + (options.waitSeconds ?? 0) * 1000;
+  let target = await deps.service.resolveBoard(ownerId, options.board);
+  // Without `after`, waiting starts from the current end of the log.
+  let after = options.after ?? String(target.last_cursor);
+  let page = await readBoardEvents(deps.service.db, target, { ...options, after });
+  while (page.events.length === 0 && !page.missed) {
+    // A filtered page can be empty while matching events are already stored further on.
+    if (BigInt(page.cursor) < BigInt(target.last_cursor)) {
+      after = page.cursor;
+      page = await readBoardEvents(deps.service.db, target, { ...options, after });
+      continue;
+    }
+    if (!deps.hub || deps.hub.isClosed() || Date.now() >= deadline) break;
+    await deps.hub.waitForEvents(ownerId, target.name, deadline - Date.now());
+    if (deps.hub.isClosed()) break;
+    after = page.cursor;
+    target = await deps.service.resolveBoard(ownerId, options.board);
+    page = await readBoardEvents(deps.service.db, target, { ...options, after });
+  }
+  return page;
+}
+
 /* ---------------- live hub ---------------- */
 
 const DEFAULTS = {
@@ -94,8 +125,8 @@ interface Subscriber extends BoardSubscriberSpec {
 
 export interface BoardSubscriptionHandle {
   touch(): void;
-  /** Ends replay: delivers held live events after `cursor`, then streams live. */
-  live(cursor: string): void;
+  /** Ends replay: delivers held live events after `cursor`, then streams live. False (and closed) if delivery failed. */
+  live(cursor: string): boolean;
   close(): void;
 }
 
@@ -120,6 +151,9 @@ export class BoardEventHub {
   }
 
   size(): number { return this.subscribers.size; }
+  isClosed(): boolean { return this.closed; }
+  /** True when a transport has more queued than a subscriber may fall behind. */
+  overBacklog(bytes: number): boolean { return bytes > this.options.maxBacklogBytes; }
   waiting(): number { return this.waiters.length; }
 
   subscribe(spec: BoardSubscriberSpec): BoardSubscriptionHandle {
@@ -138,10 +172,13 @@ export class BoardEventHub {
     return {
       touch: () => { subscriber.lastTouched = this.now(); },
       live: (cursor) => {
+        if (!this.subscribers.has(subscriber.id)) return false;
         const held = subscriber.buffer ?? [];
         subscriber.buffer = null;
         subscriber.delivered = cursor;
-        this.deliver(subscriber, held.filter((event) => BigInt(event.cursor) > BigInt(cursor)));
+        if (this.deliver(subscriber, held.filter((event) => BigInt(event.cursor) > BigInt(cursor)))) return true;
+        this.remove(subscriber.id);
+        return false;
       },
       close: () => this.remove(subscriber.id),
     };

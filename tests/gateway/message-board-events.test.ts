@@ -3,7 +3,7 @@ import { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardActor, BoardEvent, BoardSocketFrame } from "@matrix-os/contracts/message-board";
 import { bootstrapMessageBoardDatabase, type MessageBoardDatabase } from "../../packages/gateway/src/message-board/database.js";
-import { BoardEventHub, readBoardEvents } from "../../packages/gateway/src/message-board/events.js";
+import { BoardEventHub, pollBoardEvents, readBoardEvents } from "../../packages/gateway/src/message-board/events.js";
 import { registerBoardEventsWebSocket } from "../../packages/gateway/src/message-board/events-ws.js";
 import { createMessageBoardRoutes } from "../../packages/gateway/src/message-board/routes.js";
 import { BoardTaskService } from "../../packages/gateway/src/message-board/tasks.js";
@@ -193,5 +193,99 @@ describe("board event log, long-poll and socket", () => {
     expect(ws.close).toHaveBeenCalledWith(1003, "Invalid message");
     handlers.onClose!();
     expect(hub.size()).toBe(0);
+  });
+});
+
+describe("board event delivery edge cases", () => {
+  let db: Kysely<MessageBoardDatabase>;
+  let tasks: BoardTaskService;
+  let hub: BoardEventHub;
+
+  beforeEach(async () => {
+    const pglite = await createTestPGlite();
+    db = new Kysely<MessageBoardDatabase>({ dialect: pglite.dialect });
+    await bootstrapMessageBoardDatabase(db);
+    hub = new BoardEventHub({ heartbeatMs: 0 });
+    tasks = BoardTaskService.attach(db, { onEvents: (o, e) => hub.publish(o, e), limits: { writesPerMinute: 10_000 } });
+  });
+
+  afterEach(async () => {
+    hub.shutdown();
+    await db.destroy();
+  });
+
+  function socket(path: string) {
+    const handlers: Record<string, (...args: unknown[]) => unknown> = {};
+    const socketApp = new Hono();
+    registerBoardEventsWebSocket({
+      app: socketApp, hub, service: tasks.board, resolveCaller: () => as(owner),
+      upgradeWebSocket: ((factory: (c: unknown) => Record<string, (...args: unknown[]) => unknown>) => async (c: unknown) => {
+        Object.assign(handlers, factory(c));
+        return new Response(null);
+      }) as never,
+    });
+    const sent: BoardSocketFrame[] = [];
+    const ws = { send: (data: string) => sent.push(JSON.parse(data)), close: vi.fn(), raw: { bufferedAmount: 0 } };
+    return {
+      handlers, sent, ws,
+      upgrade: () => socketApp.request(path),
+      open: async () => { await socketApp.request(path); await handlers.onOpen!({}, ws); },
+    };
+  }
+
+  it("does not wait while matching events are already stored behind unrelated ones", async () => {
+    await tasks.board.post(as(owner), undefined, { channel: "ops", text: "noise 1" });
+    await tasks.board.post(as(owner), undefined, { channel: "ops", text: "noise 2" });
+    await tasks.board.post(as(owner), undefined, { channel: "dev", text: "signal" });
+    const started = Date.now();
+    const page = await pollBoardEvents({ service: tasks.board, hub }, OWNER, { after: "0", limit: 1, channel: "dev", waitSeconds: 20 });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(page.events.map((item) => item.type)).toEqual(["channel.created"]);
+  });
+
+  it("ends an open long-poll promptly when the hub shuts down", async () => {
+    const pending = pollBoardEvents({ service: tasks.board, hub }, OWNER, { limit: 10, waitSeconds: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    hub.shutdown();
+    expect((await pending).events).toEqual([]);
+  });
+
+  it("closes with missed when a replay cannot finish, and never leaks a socket that closed while opening", async () => {
+    for (let index = 0; index < 3; index += 1) await tasks.board.post(as(owner), undefined, { channel: "dev", text: `m${index}` });
+    const slow = socket("/ws/board/events?after=0");
+    slow.ws.raw.bufferedAmount = 2 * 1024 * 1024;
+    await slow.open();
+    expect(slow.sent).toEqual([{ type: "missed", cursor: "0" }]);
+    expect(hub.size()).toBe(0);
+    const early = socket("/ws/board/events");
+    await early.upgrade();
+    early.handlers.onClose!();
+    await early.handlers.onOpen!({}, early.ws);
+    expect(hub.size()).toBe(0);
+  });
+
+  it("delivers an event that is published while a fresh socket is opening", async () => {
+    const fresh = socket("/ws/board/events");
+    const resolveBoard = tasks.board.resolveBoard.bind(tasks.board);
+    let injected = false;
+    vi.spyOn(tasks.board, "resolveBoard").mockImplementation(async (ownerId, name) => {
+      const row = await resolveBoard(ownerId, name);
+      if (!injected && hub.size() === 1) {
+        injected = true;
+        const snapshot = { ...row };
+        await tasks.board.post(as(owner), undefined, { channel: "dev", text: "Raced" });
+        return snapshot;
+      }
+      return row;
+    });
+    await fresh.open();
+    expect(fresh.sent.some((frame) => frame.type === "event" && frame.event.type === "message.posted")).toBe(true);
+  });
+
+  it("answers 503 on the socket path when the board is unavailable", async () => {
+    const bare = new Hono();
+    const { registerMessageBoardGatewayRoutes } = await import("../../packages/gateway/src/server/message-board-gateway-routes.js");
+    registerMessageBoardGatewayRoutes({ app: bare, runtime: null });
+    expect((await bare.request("/ws/board/events")).status).toBe(503);
   });
 });

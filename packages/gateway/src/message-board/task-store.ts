@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import type { BoardTask, BoardTaskNeed, BoardTaskState } from "@matrix-os/contracts/message-board";
 import type { BoardTasksTable } from "./database.js";
@@ -14,6 +14,14 @@ const TITLE_MAX = 200;
 
 export function hashClaimToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** Constant-time comparison of the presented token's hash with the stored one. */
+export function claimTokenMatches(token: string, storedHash: string | null): boolean {
+  if (!storedHash) return false;
+  const presented = Buffer.from(hashClaimToken(token), "hex");
+  const stored = Buffer.from(storedHash, "hex");
+  return presented.length === stored.length && timingSafeEqual(presented, stored);
 }
 
 export function newClaimToken(): string {

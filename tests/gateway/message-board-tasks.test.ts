@@ -88,6 +88,30 @@ describe("BoardTaskService", () => {
     expect((await tasks.claim(as(plain), undefined, { ready: "dev" })).taskId).toBe(open.root.id);
   });
 
+  it("takes another agent's task only when its creator is named", async () => {
+    const byFixer = await create(fixer, "Fixer's follow-up");
+    expect(await reason(tasks.claim(as(reviewer), undefined, { ready: "dev" }))).toBe("nothing_ready");
+    const own = await tasks.claim(as(fixer), undefined, { ready: "dev" });
+    expect(own.taskId).toBe(byFixer.root.id);
+    await tasks.release(as(fixer), undefined, byFixer.root.id, { epoch: own.epoch, token: own.token });
+    expect((await tasks.claim(as(reviewer), undefined, { ready: "dev", from: fixer.id })).taskId).toBe(byFixer.root.id);
+  });
+
+  it("sends ready dependents back to waiting when a prerequisite is reopened", async () => {
+    const fix = await create(owner, "Fix");
+    const review = await create(owner, "Review", { needs: [fix.root.id] });
+    await tasks.claim(as(owner), undefined, { id: fix.root.id });
+    await tasks.complete(as(owner), undefined, fix.root.id, {});
+    expect((await board.getThread(as(owner), undefined, review.root.id)).task?.state).toBe("ready");
+    await tasks.reopen(as(owner), undefined, fix.root.id);
+    const thread = await board.getThread(as(owner), undefined, review.root.id);
+    expect(thread.task?.state).toBe("waiting");
+    expect(thread.root.labels["board.task"]).toBe("waiting");
+    expect(await reason(tasks.claim(as(owner), undefined, { id: review.root.id }))).toBe("task_waiting");
+    const renewed = await create(owner, "With needs", { needs: [fix.root.id] });
+    expect(renewed.task.needs).toEqual([fix.root.id]);
+  });
+
   it("refuses claims on assigned, waiting, blocked and finished tasks with stable reasons", async () => {
     const assigned = await create(owner, "Reviewer only", { forProfile: "reviewer" });
     expect(await reason(tasks.claim(as(fixer), undefined, { id: assigned.root.id }))).toBe("task_assigned");
@@ -127,7 +151,8 @@ describe("BoardTaskService", () => {
     const task = await create(owner, "Lease me");
     const claim = await tasks.claim(as(fixer), undefined, { id: task.root.id, leaseSeconds: 60 });
     clock += 30_000;
-    await tasks.renew(as(fixer), undefined, task.root.id, { epoch: claim.epoch, token: claim.token, leaseSeconds: 60 });
+    const renewed = await tasks.renew(as(fixer), undefined, task.root.id, { epoch: claim.epoch, token: claim.token, leaseSeconds: 60 });
+    expect(renewed.leaseUntil).toBe(new Date(clock + 60_000).toISOString());
     clock += 50_000;
     expect(await tasks.sweepExpiredLeases()).toBe(0);
     clock += 20_000;
@@ -182,6 +207,7 @@ describe("BoardTaskService", () => {
       { key: "a", text: "A", needs: ["b"] }, { key: "b", text: "B", needs: ["a"] },
     ] }))).toBe("invalid_needs");
     expect(await reason(tasks.createPlan(as(owner), undefined, { channel: "dev", tasks: [{ key: "a", text: "A", needs: ["missing"] }] }))).toBe("invalid_needs");
+    expect(await reason(tasks.createPlan(as(owner), undefined, { channel: "dev", tasks: [{ key: "a", text: "A" }, { key: "b", text: "B", needs: ["a", "a"] }] }))).toBe("invalid_needs");
     expect((await board.listThreads(as(owner), undefined, { channel: "*", limit: 50 })).length).toBe(before);
   });
 

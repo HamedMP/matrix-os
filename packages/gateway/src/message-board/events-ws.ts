@@ -41,32 +41,44 @@ export function registerBoardEventsWebSocket(options: {
           const query = BoardSocketQuerySchema.parse(Object.fromEntries(new URL(c.req.url).searchParams.entries()));
           const caller = await options.resolveCaller(c);
           const board = await service.resolveBoard(caller.ownerId, query.board);
+          if (closed) return;
+          const backlog = () => {
+            const raw = ws.raw as { bufferedAmount?: unknown } | undefined;
+            return typeof raw?.bufferedAmount === "number" ? raw.bufferedAmount : 0;
+          };
+          // Subscribe before reading the starting cursor: anything published meanwhile is held, not lost.
           const subscription = hub.subscribe({
             ownerId: caller.ownerId, boardName: board.name, actorId: caller.actor.id, channel: query.channel,
-            send, close: () => { if (!closed) ws.close(1001, "Board events closed"); },
-            backlog: () => {
-              const raw = ws.raw as { bufferedAmount?: unknown } | undefined;
-              return typeof raw?.bufferedAmount === "number" ? raw.bufferedAmount : 0;
-            },
+            send, close: () => { if (!closed) ws.close(1001, "Board events closed"); }, backlog,
           });
           handle = subscription;
-          let cursor = String(board.last_cursor);
-          if (query.after !== undefined) {
-            cursor = query.after;
-            for (let page = 0; page < MAX_REPLAY_PAGES; page += 1) {
-              const latest = await service.resolveBoard(caller.ownerId, board.name);
-              const result = await readBoardEvents(service.db, latest, { after: cursor, limit: REPLAY_PAGE, channel: query.channel });
-              if (result.missed) {
-                send({ type: "missed", cursor: result.cursor });
-              }
-              for (const event of result.events) send({ type: "event", event });
-              const advanced = result.cursor !== cursor;
-              cursor = result.cursor;
-              if (!advanced || BigInt(cursor) >= BigInt(latest.last_cursor)) break;
+          const start = await service.resolveBoard(caller.ownerId, board.name);
+          let cursor = query.after ?? String(start.last_cursor);
+          let caughtUp = query.after === undefined;
+          for (let page = 0; !caughtUp && page < MAX_REPLAY_PAGES && !closed; page += 1) {
+            const latest = await service.resolveBoard(caller.ownerId, board.name);
+            const result = await readBoardEvents(service.db, latest, { after: cursor, limit: REPLAY_PAGE, channel: query.channel });
+            if (result.missed) send({ type: "missed", cursor: result.cursor });
+            for (const event of result.events) {
+              if (hub.overBacklog(backlog())) break;
+              send({ type: "event", event });
+              cursor = event.cursor;
             }
+            if (hub.overBacklog(backlog())) break;
+            cursor = result.cursor;
+            caughtUp = BigInt(cursor) >= BigInt(latest.last_cursor);
           }
-          if (closed) return;
-          subscription.live(cursor);
+          if (closed) {
+            subscription.close();
+            return;
+          }
+          if (!caughtUp) {
+            // Too far behind to replay here (page cap or a full socket): resume from the last cursor delivered.
+            send({ type: "missed", cursor });
+            subscription.close();
+            return;
+          }
+          if (!subscription.live(cursor)) return;
           send({ type: "ready", cursor });
         } catch (error: unknown) {
           handle?.close();
