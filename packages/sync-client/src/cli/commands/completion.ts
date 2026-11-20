@@ -5,6 +5,7 @@ import { resolveCliProfile } from "../profiles.js";
 
 const COMMANDS = [
   "routines",
+  "board",
   "login",
   "logout",
   "sync",
