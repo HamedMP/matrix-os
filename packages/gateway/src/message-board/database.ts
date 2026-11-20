@@ -68,6 +68,30 @@ export interface BoardEventsTable {
 
 export interface BoardReadsTable { owner_id: string; board_id: string; actor: string; root_id: string; read_at: Timestamp }
 
+export interface BoardTasksTable {
+  root_id: string;
+  owner_id: string;
+  board_id: string;
+  /** The root's channel; paths never change, so events can be filtered without a join. */
+  channel: string;
+  state: "waiting" | "ready" | "claimed" | "blocked" | "completed" | "failed" | "canceled";
+  /** Actor ID of the creator. */
+  owner_actor: string;
+  assigned_profile: string | null;
+  claim_holder: Json<StoredBoardActor | null>;
+  claim_epoch: number;
+  claim_token_hash: string | null;
+  lease_until: NullableTimestamp;
+  result: string | null;
+  failure_reason: string | null;
+  cancel_reason: string | null;
+  blocked_reason: string | null;
+  blocked_kind: string | null;
+  updated_at: Timestamp;
+}
+
+export interface BoardTaskNeedsTable { owner_id: string; task_id: string; needs_task_id: string }
+
 export interface MessageBoardDatabase {
   board_schema_migrations: BoardSchemaMigrationsTable;
   board_boards: BoardBoardsTable;
@@ -77,6 +101,8 @@ export interface MessageBoardDatabase {
   board_reactions: BoardReactionsTable;
   board_events: BoardEventsTable;
   board_reads: BoardReadsTable;
+  board_tasks: BoardTasksTable;
+  board_task_needs: BoardTaskNeedsTable;
 }
 
 /** Distinct from every other gateway advisory lock key. */
@@ -138,7 +164,31 @@ const v1: BoardMigration = {
   },
 };
 
-export const MESSAGE_BOARD_MIGRATIONS: readonly BoardMigration[] = [v1];
+const v2: BoardMigration = {
+  version: 2,
+  async up(trx) {
+    await sql`CREATE TABLE board_tasks (
+      root_id text PRIMARY KEY REFERENCES board_messages(id) ON DELETE CASCADE,
+      owner_id text NOT NULL, board_id text NOT NULL REFERENCES board_boards(id) ON DELETE CASCADE, channel text NOT NULL,
+      state text NOT NULL CHECK (state IN ('waiting','ready','claimed','blocked','completed','failed','canceled')),
+      owner_actor text NOT NULL, assigned_profile text, claim_holder jsonb, claim_epoch integer NOT NULL DEFAULT 0,
+      claim_token_hash text, lease_until timestamptz, result text, failure_reason text, cancel_reason text,
+      blocked_reason text, blocked_kind text, updated_at timestamptz NOT NULL,
+      CHECK ((state = 'claimed') = (lease_until IS NOT NULL))
+    )`.execute(trx);
+    await sql`CREATE INDEX board_tasks_state ON board_tasks(board_id, state)`.execute(trx);
+    await sql`CREATE INDEX board_tasks_lease ON board_tasks(lease_until) WHERE state = 'claimed'`.execute(trx);
+    await sql`CREATE TABLE board_task_needs (
+      owner_id text NOT NULL,
+      task_id text NOT NULL REFERENCES board_tasks(root_id) ON DELETE CASCADE,
+      needs_task_id text NOT NULL REFERENCES board_tasks(root_id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, needs_task_id), CHECK (task_id <> needs_task_id)
+    )`.execute(trx);
+    await sql`CREATE INDEX board_task_needs_reverse ON board_task_needs(needs_task_id)`.execute(trx);
+  },
+};
+
+export const MESSAGE_BOARD_MIGRATIONS: readonly BoardMigration[] = [v1, v2];
 
 /**
  * Applies pending versioned migrations in one transaction under an advisory

@@ -9,12 +9,18 @@ import {
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
 import { boardErrorBody, boardErrorStatus, MessageBoardServiceError } from "./errors.js";
 import type { BoardCaller, MessageBoardService } from "./service.js";
+import { EventsQuerySchema } from "@matrix-os/contracts/message-board";
+import { pollBoardEvents, type BoardEventHub } from "./events.js";
+import { mountTaskRoutes } from "./task-routes.js";
+import type { BoardTaskService } from "./tasks.js";
 
 /** Text is capped at 10,000 characters; 64 KiB leaves room for labels and JSON escaping. */
 export const MESSAGE_BOARD_BODY_LIMIT = 64 * 1024;
 
 export interface MessageBoardRouteDeps {
   service: MessageBoardService;
+  tasks?: BoardTaskService;
+  hub?: BoardEventHub;
   /** Resolves who is calling: the owner, or an agent session acting for the owner. */
   resolveCaller(c: Context): BoardCaller | Promise<BoardCaller>;
 }
@@ -119,6 +125,13 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
     const body = LabelPatchRequestSchema.parse(await readBody(c));
     await service.label(caller, board(c), messageId(c), body);
     return c.json({ ok: true });
+  }));
+
+  if (deps.tasks) mountTaskRoutes(app, { tasks: deps.tasks, handle, limit, readBody, withProfile });
+
+  app.get("/events", handle(async (c, caller) => {
+    const { board: name, wait, after, limit: pageSize, channel, thread } = EventsQuerySchema.parse(queryObject(c));
+    return c.json(await pollBoardEvents({ service, hub: deps.hub }, caller.ownerId, { board: name, after, waitSeconds: wait, limit: pageSize, channel, thread }));
   }));
 
   return app;

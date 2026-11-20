@@ -120,6 +120,7 @@ const WS_QUERY_TOKEN_PATHS = [
   "/ws/voice",
   "/ws/terminal/tab",
   "/ws/terminal/events",
+  "/ws/board/events",
   "/ws/onboarding",
   "/ws/vocal",
 ];

@@ -1972,7 +1972,7 @@ export async function createGateway(config: GatewayConfig) {
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
-      canvasSubscriptionHub?.close();
+      canvasSubscriptionHub?.close(); ownerDatabaseServices?.messageBoard?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
       browserLab.close();

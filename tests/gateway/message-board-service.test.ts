@@ -48,7 +48,7 @@ describe("MessageBoardService", () => {
   const tick = (minutes = 1) => { clock += minutes * 60_000; };
 
   it("bootstraps idempotently and creates the default General board on first use", async () => {
-    await expect(bootstrapMessageBoardDatabase(db)).resolves.toBe(1);
+    await expect(bootstrapMessageBoardDatabase(db)).resolves.toBe(2);
     expect(await service.listBoards(OWNER)).toEqual([expect.objectContaining({ name: "General", scope: "personal" })]);
     await service.createBoard(OWNER, "Ops");
     expect(await reason(service.createBoard(OWNER, "ops"))).toBe("duplicate_id");

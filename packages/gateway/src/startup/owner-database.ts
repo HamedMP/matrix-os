@@ -32,8 +32,8 @@ import { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
 import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { MessagingKyselyRepository } from "../messages/repository.js";
-import { bootstrapMessageBoardDatabase, type MessageBoardDatabase } from "../message-board/database.js";
-import { MessageBoardService } from "../message-board/service.js";
+import type { MessageBoardDatabase } from "../message-board/database.js";
+import { startMessageBoardRuntime, type MessageBoardRuntime } from "../message-board/runtime.js";
 import { createPushTokenStore, type PushTokenStore } from "../notifications/push-tokens.js";
 import { bootstrapNotificationDatabase, type NotificationDatabase } from "../notifications/schema.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
@@ -92,7 +92,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   messagingRepository: MessagingKyselyRepository | null;
   pushTokens: PushTokenStore | null;
   /** Owner message board (spec 2700); shares the owner pool and never closes it. */
-  messageBoard: MessageBoardService | null;
+  messageBoard: MessageBoardRuntime | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
@@ -202,8 +202,7 @@ export async function initializeOwnerDatabaseServices(
       const messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       services.messagingRepository = messagingRepository;
       await messagingRepository.bootstrap();
-      await bootstrapMessageBoardDatabase(kysely as Kysely<MessageBoardDatabase>);
-      services.messageBoard = new MessageBoardService(kysely as Kysely<MessageBoardDatabase>);
+      services.messageBoard = await startMessageBoardRuntime(kysely as Kysely<MessageBoardDatabase>);
       await bootstrapNotificationDatabase(kysely as Kysely<NotificationDatabase>);
       services.pushTokens = createPushTokenStore(kysely as Kysely<NotificationDatabase>);
       services.canvasSubscriptionHub = new CanvasSubscriptionHub({
