@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./message-board": "./src/message-board/index.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
     "./collaboration-direct": "./src/collaboration-direct.ts",
@@ -33,6 +34,7 @@
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",
+    "#message-board-schemas": "./src/message-board/schemas.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
