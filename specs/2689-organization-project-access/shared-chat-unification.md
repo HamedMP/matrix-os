@@ -137,6 +137,14 @@ authentication still signs the canonical path and query separately.
 
 ## Runtime provenance and bounded diagnostics (20 November)
 
+Reload validation also reproduced a shared URL reopening the personal draft.
+The canonical state hook clears its selected collaboration view when the first
+verified viewer scope replaces its temporary startup scope. Reconcile the
+validated current shared URL only for that first transition; a verified viewer
+switch must still clear the old view, and an intervening New Chat must win.
+Keep this change in the existing navigation reset boundary, with production
+hook regressions for all three transitions and a live reload retest.
+
 The diagnostic CI run44769544317 exhausted its25-minute PostgreSQL job
 budget while assertions were still passing. The final qualification runner
 started at23m17 and retains a240-second aggregate cap. The workflow now allows

@@ -254,12 +254,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   useEffect(() => {
     if (previousNavigationIdentity.current === navigationIdentity) return;
+    const initialAuthorityResolved = previousComposerIdentity.current.scope === undefined && navigationScope !== undefined;
     previousNavigationIdentity.current = navigationIdentity;
     detailRequestGeneration.current += 1;
     activeChatIdRef.current = activeChatId;
     detailRef.current = null;
     setDetail(null);
-    setSelectedCollaborationView(null);
+    // Startup sign-in must not erase a deep link. Re-read the validated URL so
+    // an intervening New Chat wins; switching verified viewers still clears it.
+    setSelectedCollaborationView(initialAuthorityResolved && typeof window !== "undefined"
+      ? collaborationViewFromLocation(window.location.pathname, window.location.search) : null);
     setSafeError(null);
     inputAttempt.current = null;
     draftSendAttempt.current = null;
@@ -269,7 +273,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       previousComposerIdentity.current = composerIdentity;
       setComposerDraftRequest(null);
     }
-  }, [navigationIdentity, activeChatId, composerIdentity]);
+  }, [navigationIdentity, activeChatId, composerIdentity, navigationScope]);
 
   useEffect(() => {
     const synchronizeFromHistory = () => {
