@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { appendSideChatAnswer } from "../../shell/src/components/chat/side-chat-draft";
+import { appendSideChatAnswer } from "../../shell/src/components/chat/useWebChatHistory";
 
 it("keeps an unsent main chat draft when a side answer is copied", () => {
   expect(appendSideChatAnswer("My unfinished thought", "Side answer"))

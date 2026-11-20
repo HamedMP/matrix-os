@@ -27,6 +27,10 @@ WorkTab already exceeds the entrypoint size guideline. Extract responsive layout
 
 The six failing native suites reproduce ten failures locally. Keep the existing assertions for unread mutations without opening a chat, import filtering, preview-read cancellation, destructive-menu separation and accessible status text. Update the UI entry points and semantic menu-label queries for the approved Figma layout. The status audit stays unchanged; production status/error labels use danger-text instead of fill tokens. Co-locate the small paging, persisted inspector layout, Side draft context, filter menu and archive destination helpers with their existing owning modules so this layer remains within 50 files without dropping tests or adding a PR. The first prepared three suites retain their 14 passing checks.
 
+### Web full-CI consumer reconciliation
+
+Seven Web suites fail red against the old input, width, preview-close and reorder signatures. Use the 240px desktop rail, actual filter popover and Search combobox, visible file-preview host control, and bounded visible-ID reorder argument. Preserve phone inline source+search coverage and add the desktop filter/global-dialog path. Small related helpers are co-located with existing paging, ordering, history, project-navigation and client modules to retain the 50-file limit.
+
 ### Full-CI unit shard reconciliation
 
 The Linux shard exposed three stale consumer tests: the agent chrome fixture replaced the archive hook, the token audit omitted shared UI CSS, and Done expected its Figma live count to disappear while expanded. Preserve the real archive exports, include shared CSS definitions in the existing token audit, and retain the live-count assertion through collapse/expand. CI supplies red evidence for all four assertions. Archive, Side chat, and paged-rail regression suites are retained unchanged in the final integration layer to keep the native layer at 50 files; none of their assertions are deleted. Runtime source is unchanged by this reconciliation.

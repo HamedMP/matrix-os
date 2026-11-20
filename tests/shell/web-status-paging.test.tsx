@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { usePagedStatusGroup } from "../../shell/src/components/chat/usePagedStatusGroup";
+import { usePagedStatusGroup } from "../../shell/src/components/chat/usePagedProjectChats";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { WebChatLifecycleGroups } from "../../shell/src/components/chat/WebChatLifecycleGroups";
