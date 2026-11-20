@@ -182,3 +182,22 @@ status at the owner broker. Never retain CLI stderr, prompt/response bodies,
 credentials or account identifiers in these diagnostics. Client errors remain
 generic. Exercise the production parser, broker and real Unix bridge in tests,
 then repeat the failing job through the normal shared Chat interface.
+
+## Owner-read recovery during shared preparation (20 November)
+
+An exact-head Electron Claude request was claimed while the gateway remained
+running, then an owner read marked it failed before its adapter finished
+preparing. Its sole error was the generic restart recovery event; no gateway
+restart occurred. Shared preparation is tracked by the coordinator before the
+claim transaction, but read recovery checked only active and personal pending
+runs. The inherited Chat's null legacy binding let recovery treat it as personal.
+
+Extract owner active-run recovery from the large orchestrator before changing
+its liveness rule. Skip only Chats currently being claimed/prepared by the
+bounded shared coordinator, including the commit-to-claim-result interval.
+Registering an active run remains synchronous after preparation. Preserve
+genuine orphan recovery after restart, preparation failures, shutdown fencing,
+and current shared authorization; no replay, timeout increase or bypass.
+Regression tests hold the real repository claim result or adapter preparation
+while an actual owner detail read runs, then require the original shared request
+to complete with one reply. Run them on disposable PostgreSQL as well as locally.

@@ -8,6 +8,7 @@
   "tests/gateway/collaboration-capabilities-postgres.test.ts",
   "tests/gateway/collaboration-chat-controls.test.ts",
   "tests/gateway/collaboration-chat-discussion-postgres.test.ts",
+  "tests/gateway/collaboration-chat-orchestrator.test.ts",
   "tests/gateway/collaboration-chat-queue.test.ts",
   "tests/gateway/collaboration-chat-scope-postgres.test.ts",
   "tests/gateway/collaboration-confirmation-key.test.ts",
