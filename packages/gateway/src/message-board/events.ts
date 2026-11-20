@@ -89,7 +89,11 @@ export async function pollBoardEvents(
       continue;
     }
     if (!deps.hub || deps.hub.isClosed() || Date.now() >= deadline) break;
-    await deps.hub.waitForEvents(ownerId, target.name, deadline - Date.now());
+    // Register first, then look again: an event committed in between wakes us or is read now.
+    const waiter = deps.hub.registerWaiter(ownerId, target.name, deadline - Date.now());
+    target = await deps.service.resolveBoard(ownerId, options.board);
+    if (BigInt(target.last_cursor) > BigInt(page.cursor)) waiter.cancel();
+    else await waiter.done;
     if (deps.hub.isClosed()) break;
     after = page.cursor;
     target = await deps.service.resolveBoard(ownerId, options.board);
@@ -203,9 +207,19 @@ export class BoardEventHub {
 
   /** Resolves on the next event for the board, or after `timeoutMs`. */
   waitForEvents(ownerId: string, boardName: string, timeoutMs: number): Promise<void> {
-    if (this.closed) return Promise.resolve();
+    return this.registerWaiter(ownerId, boardName, timeoutMs).done;
+  }
+
+  /**
+   * Registers a waiter now; `done` resolves on the next event or the timeout.
+   * Register before checking for work, then `cancel` if the check finds some,
+   * so an event published in between is never missed.
+   */
+  registerWaiter(ownerId: string, boardName: string, timeoutMs: number): { done: Promise<void>; cancel(): void } {
+    if (this.closed) return { done: Promise.resolve(), cancel: () => undefined };
     if (this.waiters.length >= this.options.maxWaiters) boardFail("unavailable");
-    return new Promise((resolve) => {
+    let finish: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => {
       const waiter = {
         key: boardKey(ownerId, boardName),
         resolve: () => {
@@ -217,7 +231,9 @@ export class BoardEventHub {
       };
       const timer = setTimeout(waiter.resolve, timeoutMs);
       this.waiters.push(waiter);
+      finish = waiter.resolve;
     });
+    return { done, cancel: () => finish() };
   }
 
   /** Shutdown drain: tell every subscriber, close them, and release waiters. */
