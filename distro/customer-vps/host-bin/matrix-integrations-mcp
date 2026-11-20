@@ -140,6 +140,14 @@ if [ ! -x "$NODE_BIN" ] || [ ! -f "$SERVER_PATH" ]; then
   exit 3
 fi
 
+# The Matrix terminal pane the agent runs in, so board tools act as that tab's
+# agent rather than as the owner. Only well-formed values pass; the gateway
+# still resolves and checks the pane itself.
+pane_env=()
+if [[ "${ZELLIJ_SESSION_NAME:-}" =~ ^matrix-(w-|rt_)[0-9a-f]{32}$ ]] && [[ "${ZELLIJ_PANE_ID:-}" =~ ^[0-9]{1,9}$ ]]; then
+  pane_env=(ZELLIJ_SESSION_NAME="$ZELLIJ_SESSION_NAME" ZELLIJ_PANE_ID="$ZELLIJ_PANE_ID")
+fi
+
 # Start from an empty environment so database, storage, analytics, and provider
 # secrets in host.env cannot cross into the agent-owned MCP process.
 exec /usr/bin/env -i \
@@ -148,4 +156,5 @@ exec /usr/bin/env -i \
   MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
   MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
   ${harness:+MATRIX_MCP_HARNESS="$harness"} \
+  ${pane_env[@]+"${pane_env[@]}"} \
   "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"

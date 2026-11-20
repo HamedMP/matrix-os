@@ -56,6 +56,29 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(result.stderr).not.toContain("Matrix authentication is unavailable");
   });
 
+  // Fault detected (review): the launcher's empty environment dropped the Matrix pane, so board
+  // tools from a terminal agent posted and claimed as the owner instead of that tab's agent.
+  it("forwards only a well-formed Matrix terminal pane on the owner path", async () => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-mcp-pane-wrapper-"));
+    try {
+      const hostEnv = join(fixtureDir, "host.env");
+      const serverPath = join(fixtureDir, "server.cjs");
+      await writeFile(hostEnv, "MATRIX_AUTH_TOKEN=fixture-host-token\nMATRIX_CLERK_USER_ID=fixture_owner\n");
+      await writeFile(serverPath, "console.log(JSON.stringify({session:process.env.ZELLIJ_SESSION_NAME??null,pane:process.env.ZELLIJ_PANE_ID??null}));");
+      const launcher = (await readFile(launcherPath, "utf8"))
+        .replace('HOST_ENV_FILE="/opt/matrix/env/host.env"', `HOST_ENV_FILE="${hostEnv}"`)
+        .replace('NODE_BIN="/opt/matrix/runtime/node/bin/node"', `NODE_BIN="${process.execPath}"`)
+        .replace('SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"', `SERVER_PATH="${serverPath}"`);
+      const run = (session: string, pane: string) => JSON.parse(spawnSync("bash", ["-c", launcher, "pane-fixture"], {
+        encoding: "utf8", timeout: 5_000, env: { PATH: process.env.PATH ?? "", ZELLIJ_SESSION_NAME: session, ZELLIJ_PANE_ID: pane },
+      }).stdout) as { session: string | null; pane: string | null };
+      const session = `matrix-w-${"a".repeat(32)}`;
+      expect(run(session, "7")).toEqual({ session, pane: "7" });
+      expect(run("other-session", "7")).toEqual({ session: null, pane: null });
+      expect(run(session, "7; rm -rf /")).toEqual({ session: null, pane: null });
+    } finally { await rm(fixtureDir, { recursive: true, force: true }); }
+  });
+
   it("accepts bounded host bearer syntax in the MCP launcher's Bash", async () => {
     const launcher = await readFile(launcherPath, "utf8");
     const validator = launcher.match(/^valid_host_bearer\(\) \{[\s\S]*?^\}/m)?.[0];
