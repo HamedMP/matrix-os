@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import { FolderOpen, PencilEditIcon } from "@renderer/lib/hugeicons";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ProjectConversationList, useMinuteClock } from "@matrix-os/ui";
@@ -8,6 +8,7 @@ import { DesktopProjectAgentContext } from "./DesktopProjectAgentContext";
 import { useProjectLandingChats } from "./use-project-landing-chats";
 import type { Project } from "../../stores/board";
 import { useProjectView } from "../../stores/project-view";
+import { useProjectChatLauncher } from "../../lib/project-chat";
 import { DesktopProjectBoard } from "./DesktopProjectBoard";
 import { ProjectEditDialog } from "../work/work-rail/ProjectActionDialogs";
 import { useProjectActions } from "../work/work-rail/use-project-actions";
@@ -26,8 +27,17 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   onSelectChat?: (record: ChatNavigationRecord) => void;
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
-  const view: ProjectHomeView = useProjectView((s) => s.entries[project.slug]?.view) === "board" ? "board" : "overview";
-  const setView = (next: ProjectHomeView) => useProjectView.getState().setView(project.slug, next);
+  const remembered: ProjectHomeView = useProjectView((s) => s.entries[project.slug]?.view) === "board" ? "board" : "overview";
+  // A new-chat request (Cmd/Ctrl+J, palette) shows the composer for this visit without changing the remembered view.
+  const composeRequest = useProjectChatLauncher((s) => (s.composerRequest && (s.composerRequest.projectId === project.slug || s.composerRequest.projectId === project.id)
+    ? s.composerRequest.requestId : null));
+  const [composeFor, setComposeFor] = useState<number | null>(null);
+  if (composeRequest !== null && composeRequest !== composeFor) setComposeFor(composeRequest);
+  const view: ProjectHomeView = composeFor !== null ? "overview" : remembered;
+  const setView = (next: ProjectHomeView) => {
+    setComposeFor(null);
+    useProjectView.getState().setView(project.slug, next);
+  };
   const board = showMetadata && view === "board";
   const list = conversationListState(records, useProjectLandingChats(project, client, eventSource, active && !board));
   const actions = useProjectActions(project);

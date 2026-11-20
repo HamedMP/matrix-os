@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProjectLanding } from "@desktop/renderer/src/features/project/ProjectLanding";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -130,4 +130,22 @@ it("opens a task's chat in the project's Chat and its terminal in the Terminal a
   fireEvent.click(within(sheet).getByRole("button", { name: "Open in Terminal" }));
   expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(true);
   expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(`${WORKSPACE}:${TAB}`);
+});
+
+it("shows the composer for a new-chat request on a project remembered as Board, without forgetting Board", async () => {
+  const { useProjectChatLauncher } = await import("@desktop/renderer/src/lib/project-chat");
+  connect();
+  useProjectView.getState().setView("alpha", "board");
+  renderLanding();
+  expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
+
+  act(() => { useProjectChatLauncher.getState().requestComposer("alpha"); });
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  expect(useProjectView.getState().viewFor("alpha")).toBe("board");
+
+  // The request being consumed keeps the composer for this visit; choosing Board shows the board again.
+  act(() => { useProjectChatLauncher.getState().consumeComposer("alpha"); });
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("group", { name: "Project view" })).getByRole("button", { name: "Board" }));
+  expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
 });
