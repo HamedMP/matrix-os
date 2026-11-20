@@ -189,10 +189,11 @@ describe("source development lifecycle", () => {
 
   it("owns process groups so watcher grandchildren cannot outlive a failed startup", () => {
     const orchestrator = readFileSync(resolve(root, "scripts/dev-local.mjs"), "utf8");
+    const owner = readFileSync(resolve(root, "scripts/source-processes.mjs"), "utf8");
 
-    expect(orchestrator).toContain('detached: process.platform !== "win32"');
-    expect(orchestrator).toContain("process.kill(-child.pid, signal)");
-    expect(orchestrator).toContain("spawn(process.execPath, service.args");
+    expect(owner).toContain('detached: process.platform !== "win32"');
+    expect(owner).toContain("process.kill(-child.pid, signal)");
+    expect(owner).toContain("spawn(process.execPath, service.args");
     expect(orchestrator).toMatch(/"dev",\s*"shell",\s*"--webpack"/);
     expect(orchestrator).not.toContain('spawn("pnpm", ["--filter", service');
   });
