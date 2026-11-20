@@ -24,3 +24,24 @@ describe("mapLegacyTasks", () => {
     expect(second!.rank < first!.rank).toBe(true);
   });
 });
+
+describe("readOwnerMember", () => {
+  it("names the owner from handle.json and falls back when it is missing or malformed", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { readOwnerMember } = await import("../../../packages/gateway/src/project-tasks/members.js");
+    const home = await mkdtemp(join(tmpdir(), "board-members-"));
+    try {
+      const owner = { type: "user" as const, id: "user_1" };
+      expect(await readOwnerMember(home, owner)).toEqual({ actor: "user:user_1", name: "You", handle: "me" });
+      await mkdir(join(home, "system"), { recursive: true });
+      await writeFile(join(home, "system", "handle.json"), JSON.stringify({ handle: "hamed", displayName: "Hamed" }));
+      expect(await readOwnerMember(home, owner)).toEqual({ actor: "user:user_1", name: "Hamed", handle: "hamed" });
+      await writeFile(join(home, "system", "handle.json"), "{oops");
+      expect((await readOwnerMember(home, owner)).handle).toBe("me");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});

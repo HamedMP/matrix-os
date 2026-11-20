@@ -6,14 +6,16 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import type {
-  ActorRef, BoardSettings, CreateTaskBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, ProjectTask, TaskActivity,
+  ActorRef, BoardMember, BoardSettings, CreateTaskBodySchema, TaskComment, ListTasksQuerySchema, MoveTaskBodySchema, ProjectTask, TaskActivity,
   UpdateTaskBodySchema,
 } from "@matrix-os/contracts/project-tasks";
 import type { z } from "zod/v4";
 import type { ProjectConfig } from "../project-manager.js";
 import type { OwnerScope } from "../state-ops.js";
 import type { createTaskManager } from "../task-manager.js";
+import { ProjectTaskCommentRepository, toTaskComment } from "./comments.js";
 import { ProjectTaskError } from "./errors.js";
+import { assignmentNotification, commentNotifications, type TaskNotification } from "./notifications.js";
 import { mapLegacyTasks, readLegacyTasks } from "./legacy-import.js";
 import {
   ProjectTaskRepository, RevisionConflict, toProjectTask, toTaskActivity, type BoardRow, type TaskRow, type TaskScope,
@@ -32,6 +34,11 @@ export type TaskEventPublisher = (event: { type: TaskEventType; projectSlug: str
 
 export interface ProjectTaskServiceOptions {
   repository: ProjectTaskRepository;
+  comments: ProjectTaskCommentRepository;
+  /** Who can be assigned and mentioned; the owner alone until organization sharing (stack 2). */
+  members(caller: TaskCaller): Promise<BoardMember[]>;
+  /** Delivery for assignment, mention and comment notifications. */
+  notify?(notification: TaskNotification, ownerScope: OwnerScope): Promise<void>;
   projects: ProjectLookup;
   legacyTasks: LegacyTasks;
   publish: TaskEventPublisher;
@@ -88,14 +95,20 @@ export class ProjectTaskService {
     return { slug, project: result.project, scope, board };
   }
 
-  task(context: BoardContext, row: TaskRow): ProjectTask {
-    return toProjectTask(row, context.board.task_key);
+  /** Wire tasks for rows, with their relations loaded in one query. */
+  async tasks(context: BoardContext, rows: readonly TaskRow[]): Promise<ProjectTask[]> {
+    const blockedBy = await this.options.repository.blockedByFor(context.scope, rows.map((row) => row.id));
+    return rows.map((row) => toProjectTask(row, context.board.task_key, { blockedBy: blockedBy[row.id] ?? [] }));
+  }
+
+  async task(context: BoardContext, row: TaskRow): Promise<ProjectTask> {
+    return (await this.tasks(context, [row]))[0]!;
   }
 
   async listTasks(caller: TaskCaller, slug: string, query: ListQuery): Promise<{ tasks: ProjectTask[]; nextCursor: string | null }> {
     const context = await this.open(caller, slug);
     const { rows, nextCursor } = await this.options.repository.listTasks(context.scope, query);
-    return { tasks: rows.map((row) => this.task(context, row)), nextCursor };
+    return { tasks: await this.tasks(context, rows), nextCursor };
   }
 
   async getTask(caller: TaskCaller, slug: string, taskId: string): Promise<ProjectTask> {
@@ -109,30 +122,38 @@ export class ProjectTaskService {
     const { row, created } = await this.options.repository.createTask(context.scope, {
       ...input, id: `task_${randomUUID()}`, clientRequestId, payloadHash: payloadHash(input),
     }, caller.actor);
-    const task = this.task(context, row);
-    if (created) await this.signal("task.created", context, task);
+    const task = await this.task(context, row);
+    if (created) {
+      await this.signal("task.created", context, task);
+      await this.deliver(caller, assignmentNotification({ ...this.about(context, task), actor: caller.actor, assignee: task.assignee }));
+    }
     return { task, created };
   }
 
   async updateTask(caller: TaskCaller, slug: string, taskId: string, body: UpdateTaskBody): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
-    if (body.blockedBy !== undefined) throw new ProjectTaskError("invalid_request");
-    const { baseRevision, blockedBy: _blockedBy, ...patch } = body;
+    const { baseRevision, ...patch } = body;
+    let row: TaskRow;
+    let before: TaskRow | undefined;
     try {
-      const row = await this.options.repository.updateTask(context.scope, taskId, baseRevision, patch, caller.actor);
-      const task = this.task(context, row);
-      await this.signal("task.updated", context, task);
-      return task;
+      before = patch.assignee !== undefined ? await this.options.repository.getTask(context.scope, taskId) : undefined;
+      row = await this.options.repository.updateTask(context.scope, taskId, baseRevision, patch, caller.actor);
     } catch (error: unknown) {
-      if (error instanceof RevisionConflict) throw new ProjectTaskError("task_revision_conflict", this.task(context, error.current));
+      if (error instanceof RevisionConflict) throw new ProjectTaskError("task_revision_conflict", await this.task(context, error.current));
       throw error;
     }
+    const task = await this.task(context, row);
+    await this.signal("task.updated", context, task);
+    if (before && before.assignee !== task.assignee) {
+      await this.deliver(caller, assignmentNotification({ ...this.about(context, task), actor: caller.actor, assignee: task.assignee }));
+    }
+    return task;
   }
 
   async moveTask(caller: TaskCaller, slug: string, taskId: string, body: MoveTaskBody): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
     const { row } = await this.options.repository.moveTask(context.scope, taskId, body, caller.actor);
-    const task = this.task(context, row);
+    const task = await this.task(context, row);
     await this.signal("task.moved", context, task);
     return task;
   }
@@ -140,7 +161,7 @@ export class ProjectTaskService {
   async setArchived(caller: TaskCaller, slug: string, taskId: string, archived: boolean): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
     const { row, changed } = await this.options.repository.setArchived(context.scope, taskId, archived, caller.actor);
-    const task = this.task(context, row);
+    const task = await this.task(context, row);
     if (changed) await this.signal("task.updated", context, task);
     return task;
   }
@@ -148,7 +169,7 @@ export class ProjectTaskService {
   async deleteTask(caller: TaskCaller, slug: string, taskId: string): Promise<void> {
     const context = await this.open(caller, slug);
     const row = await this.options.repository.deleteTask(context.scope, taskId, caller.actor);
-    await this.signal("task.deleted", context, this.task(context, row));
+    await this.signal("task.deleted", context, toProjectTask(row, context.board.task_key));
   }
 
   async listActivity(caller: TaskCaller, slug: string, taskId: string, after: number, limit: number): Promise<{ activity: TaskActivity[]; nextCursor: string | null }> {
@@ -156,6 +177,43 @@ export class ProjectTaskService {
     await this.requireRow(context, taskId);
     const { rows, nextCursor } = await this.options.repository.listActivity(context.scope, taskId, after, limit);
     return { activity: rows.map(toTaskActivity), nextCursor };
+  }
+
+  async listComments(caller: TaskCaller, slug: string, taskId: string, cursor: string | undefined, limit: number): Promise<{ comments: TaskComment[]; nextCursor: string | null }> {
+    const context = await this.open(caller, slug);
+    await this.requireRow(context, taskId);
+    const { rows, nextCursor } = await this.options.comments.list(context.scope, taskId, cursor, limit);
+    return { comments: rows.map(toTaskComment), nextCursor };
+  }
+
+  async addComment(caller: TaskCaller, slug: string, taskId: string, body: string): Promise<TaskComment> {
+    const context = await this.open(caller, slug);
+    const comment = toTaskComment(await this.options.comments.add(context.scope, taskId, caller.actor, body));
+    const task = await this.task(context, await this.requireRow(context, taskId));
+    await this.signal("task.comment_added", context, task);
+    await this.deliver(caller, commentNotifications({
+      ...this.about(context, task), commentId: comment.id, author: caller.actor, body: comment.body,
+      assignee: task.assignee, createdBy: task.createdBy, members: await this.options.members(caller),
+    }));
+    return comment;
+  }
+
+  async editComment(caller: TaskCaller, slug: string, taskId: string, commentId: string, body: string): Promise<TaskComment> {
+    const context = await this.open(caller, slug);
+    const comment = toTaskComment(await this.options.comments.edit(context.scope, taskId, commentId, caller.actor, body));
+    await this.signal("task.comment_added", context, await this.task(context, await this.requireRow(context, taskId)));
+    return comment;
+  }
+
+  async deleteComment(caller: TaskCaller, slug: string, taskId: string, commentId: string): Promise<void> {
+    const context = await this.open(caller, slug);
+    await this.options.comments.remove(context.scope, taskId, commentId, caller.actor);
+    await this.signal("task.updated", context, await this.task(context, await this.requireRow(context, taskId)));
+  }
+
+  async listMembers(caller: TaskCaller, slug: string): Promise<BoardMember[]> {
+    await this.open(caller, slug);
+    return this.options.members(caller);
   }
 
   async getSettings(caller: TaskCaller, slug: string): Promise<BoardSettings> {
@@ -181,6 +239,22 @@ export class ProjectTaskService {
     const row = await this.options.repository.getTask(context.scope, taskId);
     if (!row) throw new ProjectTaskError("task_not_found");
     return row;
+  }
+
+  private about(context: BoardContext, task: ProjectTask) {
+    return { taskId: task.id, taskKey: task.key, taskTitle: task.title, projectSlug: context.slug };
+  }
+
+  /** Notifications go out after commit and never fail the request. */
+  private async deliver(caller: TaskCaller, notifications: readonly TaskNotification[]): Promise<void> {
+    if (!this.options.notify) return;
+    for (const notification of notifications) {
+      try {
+        await this.options.notify(notification, caller.ownerScope);
+      } catch (error: unknown) {
+        console.warn("[project-tasks] notification failed", error instanceof Error ? error.name : typeof error);
+      }
+    }
   }
 
   /** Change signals go out after commit; a failed publish never undoes the write. */

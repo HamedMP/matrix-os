@@ -8,7 +8,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import {
-  ArchiveTaskBodySchema, CreateTaskBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, TASK_LIMITS, TaskIdSchema,
+  ArchiveTaskBodySchema, CreateCommentBodySchema, CreateTaskBodySchema, TaskCommentIdSchema, UpdateCommentBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, TASK_LIMITS, TaskIdSchema,
   UpdateBoardSettingsBodySchema, UpdateTaskBodySchema, type ActorRef,
 } from "@matrix-os/contracts/project-tasks";
 import { PROJECT_SLUG_REGEX } from "../project-registry.js";
@@ -16,11 +16,17 @@ import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-pr
 import type { OwnerScope } from "../state-ops.js";
 import { ProjectFenceError, type LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
 import { ProjectTaskError, projectTaskErrorBody } from "./errors.js";
+import { ownerActor } from "./members.js";
 import type { ProjectTaskService, TaskCaller } from "./service.js";
 
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const ActivityQuerySchema = z.object({
   after: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  limit: z.coerce.number().int().min(1).max(TASK_LIMITS.listMax).default(TASK_LIMITS.listDefault),
+});
+
+const CommentsQuerySchema = z.object({
+  cursor: TaskCommentIdSchema.optional(),
   limit: z.coerce.number().int().min(1).max(TASK_LIMITS.listMax).default(TASK_LIMITS.listDefault),
 });
 
@@ -35,10 +41,6 @@ export interface ProjectTaskRouteOptions {
 
 class InvalidInput extends Error {}
 
-function actorFor(ownerScope: OwnerScope): ActorRef {
-  const safe = ownerScope.id.replace(/[^A-Za-z0-9_.:@-]/g, "_").slice(0, 190);
-  return `user:${safe}`;
-}
 
 async function readBody<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
   let raw: unknown;
@@ -91,7 +93,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
 
   function caller(c: Context): TaskCaller {
     const ownerScope = options.getOwnerScope(c);
-    return { ownerScope, actor: options.getActor?.(c, ownerScope) ?? actorFor(ownerScope) };
+    return { ownerScope, actor: options.getActor?.(c, ownerScope) ?? ownerActor(ownerScope) };
   }
 
   function service(): ProjectTaskService {
@@ -186,6 +188,54 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const { after, limit } = query(c, ActivityQuerySchema);
       return c.json(await service().listActivity(caller(c), slug, taskId, after, limit));
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.get(`${base}/:taskId/comments`, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const { cursor, limit } = query(c, CommentsQuerySchema);
+      return c.json(await service().listComments(caller(c), slug, taskId, cursor, limit));
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.post(`${base}/:taskId/comments`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const who = caller(c);
+      const { body } = await readBody(c, CreateCommentBodySchema);
+      return c.json({ comment: await write(who, slug, () => service().addComment(who, slug, taskId, body)) }, 201);
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.patch(`${base}/:taskId/comments/:commentId`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const commentId = param(TaskCommentIdSchema, c.req.param("commentId"));
+      const who = caller(c);
+      const { body } = await readBody(c, UpdateCommentBodySchema);
+      return c.json({ comment: await write(who, slug, () => service().editComment(who, slug, taskId, commentId, body)) });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.delete(`${base}/:taskId/comments/:commentId`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const commentId = param(TaskCommentIdSchema, c.req.param("commentId"));
+      const who = caller(c);
+      await write(who, slug, () => service().deleteComment(who, slug, taskId, commentId));
+      return c.json({ ok: true });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.get("/api/projects/:slug/board/members", async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      return c.json({ members: await service().listMembers(caller(c), slug) });
     } catch (error: unknown) { return respond(c, error); }
   });
 

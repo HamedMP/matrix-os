@@ -48,6 +48,7 @@ export interface TaskPatch {
   labels?: readonly string[];
   dueAt?: string | null;
   parentTaskId?: string | null;
+  blockedBy?: readonly string[];
 }
 
 export interface MoveInput {
@@ -87,7 +88,11 @@ export interface ImportedTask {
 const iso = (value: Date | string) => new Date(value).toISOString();
 const isoOrNull = (value: Date | string | null) => (value === null ? null : iso(value));
 
-export function toProjectTask(row: TaskRow, keyPrefix: string): ProjectTask {
+export interface TaskExtras {
+  blockedBy?: readonly string[];
+}
+
+export function toProjectTask(row: TaskRow, keyPrefix: string, extras: TaskExtras = {}): ProjectTask {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -101,7 +106,7 @@ export function toProjectTask(row: TaskRow, keyPrefix: string): ProjectTask {
     assignee: row.assignee as ActorRef | null,
     labels: row.labels,
     parentTaskId: row.parent_task_id,
-    blockedBy: [],
+    blockedBy: [...(extras.blockedBy ?? [])],
     dueAt: isoOrNull(row.due_at),
     worktreeId: row.worktree_id,
     branch: row.branch,
@@ -190,6 +195,20 @@ export class ProjectTaskRepository {
       .where("id", "=", taskId).where("deleted_at", "is", null).executeTakeFirst();
   }
 
+  /** Live blockers of each task, keyed by task id. */
+  async blockedByFor(scope: TaskScope, taskIds: readonly string[]): Promise<Record<string, string[]>> {
+    const result: Record<string, string[]> = {};
+    if (taskIds.length === 0) return result;
+    const rows = await this.db.selectFrom("project_task_relations as r")
+      .innerJoin("project_tasks as b", (join) => join.onRef("b.owner_id", "=", "r.owner_id").onRef("b.id", "=", "r.blocked_by_task_id"))
+      .select(["r.task_id", "r.blocked_by_task_id"])
+      .where("r.owner_id", "=", scope.ownerId).where("b.project_id", "=", scope.projectId)
+      .where("b.deleted_at", "is", null).where("r.task_id", "in", [...taskIds])
+      .orderBy("r.created_at", "asc").execute();
+    for (const row of rows) (result[row.task_id] ??= []).push(row.blocked_by_task_id);
+    return result;
+  }
+
   async createTask(
     scope: TaskScope,
     input: CreateTaskInput & { id: string; clientRequestId: string; payloadHash: string },
@@ -244,6 +263,7 @@ export class ProjectTaskRepository {
       if (Number(before.revision) !== baseRevision) throw new RevisionConflict(before);
       if (patch.parentTaskId) await this.assertParent(trx, scope, taskId, patch.parentTaskId);
       const at = this.now();
+      const blockersChanged = patch.blockedBy !== undefined && await this.replaceBlockers(trx, scope, taskId, patch.blockedBy, at);
       const row = await trx.updateTable("project_tasks").set({
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -265,6 +285,9 @@ export class ProjectTaskRepository {
         throw new RevisionConflict(current);
       }
       for (const [kind, summary] of describePatch(before, patch)) await this.log(trx, scope, taskId, actor, kind, summary, at);
+      if (blockersChanged) {
+        await this.log(trx, scope, taskId, actor, "relations_changed", patch.blockedBy!.length ? "Changed what blocks this task" : "Removed all blockers", at);
+      }
       return row;
     });
   }
@@ -323,6 +346,8 @@ export class ProjectTaskRepository {
       await trx.updateTable("project_tasks")
         .set({ parent_task_id: null, updated_at: at, revision: sql<number>`revision + 1` })
         .where("owner_id", "=", scope.ownerId).where("parent_task_id", "=", taskId).where("deleted_at", "is", null).execute();
+      await trx.deleteFrom("project_task_relations").where("owner_id", "=", scope.ownerId)
+        .where((eb) => eb.or([eb("task_id", "=", taskId), eb("blocked_by_task_id", "=", taskId)])).execute();
       await this.log(trx, scope, taskId, actor, "deleted", "Deleted the task", at);
       return row;
     });
@@ -427,6 +452,28 @@ export class ProjectTaskRepository {
       }
       throw error;
     }
+  }
+
+  /** Replace a task's blockers; each must be another live task of this project. Returns whether the set changed. */
+  private async replaceBlockers(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, blockedBy: readonly string[], at: Date): Promise<boolean> {
+    const wanted = [...new Set(blockedBy)];
+    if (wanted.length > TASK_LIMITS.relations || wanted.includes(taskId)) throw new ProjectTaskError("task_relation_invalid");
+    if (wanted.length > 0) {
+      const live = await trx.selectFrom("project_tasks").select("id")
+        .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
+        .where("deleted_at", "is", null).where("id", "in", wanted).execute();
+      if (live.length !== wanted.length) throw new ProjectTaskError("task_relation_invalid");
+    }
+    const current = (await trx.selectFrom("project_task_relations").select("blocked_by_task_id")
+      .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).execute()).map((row) => row.blocked_by_task_id);
+    if (current.length === wanted.length && current.every((id) => wanted.includes(id))) return false;
+    await trx.deleteFrom("project_task_relations").where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).execute();
+    if (wanted.length > 0) {
+      await trx.insertInto("project_task_relations")
+        .values(wanted.map((id) => ({ owner_id: scope.ownerId, task_id: taskId, blocked_by_task_id: id, created_at: at })))
+        .execute();
+    }
+    return true;
   }
 
   /** A parent must be another live task of this project, and the chain must not loop back. */
