@@ -264,6 +264,8 @@ function ChatAppContent({
   const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
     && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
   const [projectHomeView, setProjectHomeView] = useProjectHomeView(projectHome?.id);
+  // Bumped when the board starts a chat server-side, so the focused rail reloads its project chats.
+  const [projectChatsRevision, setProjectChatsRevision] = useState(0);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -636,7 +638,7 @@ function ChatAppContent({
         {/* Conversation list */}
 
           <div className="px-2 pb-3">
-            {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
+            {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}/${projectChatsRevision}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
@@ -764,7 +766,8 @@ function ChatAppContent({
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
-              onSelectChat={onSwitchConversation} active={active !== false} view={projectHomeView} onViewChange={setProjectHomeView} /> : undefined}
+              onSelectChat={onSwitchConversation} active={active !== false} view={projectHomeView} onViewChange={setProjectHomeView}
+              onProjectChatsChanged={() => setProjectChatsRevision((revision) => revision + 1)} /> : undefined}
             projectHomeFullBleed={projectHome !== undefined && projectHomeView === "board"}
           /></>
         ) : (
