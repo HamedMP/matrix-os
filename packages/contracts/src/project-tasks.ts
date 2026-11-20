@@ -316,4 +316,4 @@ export function formatTaskKey(prefix: string, number: number): string {
   return `${prefix}-${number}`;
 }
 
-export * from "./project-task-rank.js";
+export * from "#project-task-rank";

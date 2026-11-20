@@ -8,8 +8,12 @@ const DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export const MAX_TASK_RANK_LENGTH = 128;
 
 export class TaskRankError extends Error {
-  constructor(readonly code: "invalid_rank" | "rank_order" | "rank_exhausted") {
+  // A declared field, not a parameter property: plain Node loads contracts with type stripping only.
+  readonly code: "invalid_rank" | "rank_order" | "rank_exhausted";
+
+  constructor(code: "invalid_rank" | "rank_order" | "rank_exhausted") {
     super(code);
+    this.code = code;
     this.name = "TaskRankError";
   }
 }
