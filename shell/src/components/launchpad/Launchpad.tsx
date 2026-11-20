@@ -13,6 +13,7 @@ import {
   Globe2,
   LayoutGrid,
   MessageSquare,
+  MessagesSquare,
   Monitor,
   Notebook,
   PlusIcon,
@@ -46,6 +47,7 @@ import "./launchpad.css";
 
 const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>> = {
   "message-square": MessageSquare,
+  "messages-square": MessagesSquare,
   "square-terminal": SquareTerminal,
   "folder-tree": FolderTree,
   "file-pen": FilePenLine,
