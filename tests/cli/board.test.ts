@@ -16,6 +16,25 @@ const message = (id: string, extra: Record<string, unknown> = {}) => ({
 
 // Fault detected: an agent in a Matrix terminal cannot post, read or label board
 // messages from the CLI, or its writes are attributed to the wrong actor.
+describe("matrix board read of one thread", () => {
+  // Fault detected (review): reading a thread cut the root and replies to their first line,
+  // so a task's instructions or a person's answer could disappear from the output.
+  it("prints every line of the root, the replies and the task outcome", async () => {
+    const long = "x".repeat(150);
+    const h = await harness(() => json({ thread: {
+      root: message(ROOT_ID, { text: `Fix it ${long}\nstep two\nstep three` }),
+      replies: [message(REPLY_ID, { text: "first line\nsecond line of the answer" })],
+      task: { state: "completed", result: `Merged #3501 ${long}` }, needs: [],
+    } }));
+    expect(await runBoardCli(["read", ROOT_ID], h.deps)).toBe(0);
+    const output = h.out.join("\n");
+    expect(output).toContain(long);
+    expect(output).toContain("step three");
+    expect(output).toContain("second line of the answer");
+    expect(output).toContain(`result: Merged #3501 ${long}`);
+  });
+});
+
 describe("matrix board message verbs", () => {
   it("posts with labels, an idempotency key and a profile", async () => {
     const h = await harness(() => json({ message: message(ROOT_ID) }, 201));

@@ -102,6 +102,27 @@ describe("matrix board tasks run", () => {
     expect(settlePaths(s.calls)).toEqual(["claim", "renew", "renew", "complete"]);
   });
 
+  // Fault detected (review): a renew reply that landed after the command exited armed a
+  // new deadline timer, keeping the CLI alive for most of a lease after it finished.
+  it("does not arm a deadline when a renew reply arrives after the command exited", async () => {
+    fakeTimers();
+    let releaseRenew: (response: Response) => void = () => undefined;
+    const s = await setup((call) => {
+      if (call.path.endsWith("/claim")) return json(claimBody({ task: { state: "claimed", leaseUntil: "x", epoch: 3, needs: [] } }));
+      if (call.path.endsWith("/renew")) return new Promise<Response>((resolve) => { releaseRenew = resolve; });
+      return json({ task: { state: "completed", needs: [] } });
+    });
+    const running = runBoardCli(["tasks", "run", "--ready", "build", "--lease", "3m", "--", "sleep", "1000"], s.deps);
+    await started(s);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await requests(s, 2);
+    s.child.exit(0);
+    expect(await running).toBe(0);
+    releaseRenew(json({ task: { state: "claimed", needs: [] } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   // Fault detected (review): Ctrl-C stopped only the direct child, so a shell's
   // grandchildren kept working on a task that had been released.
   it("stops the whole process group, escalates to SIGKILL, then releases and exits 130 on SIGINT", async () => {

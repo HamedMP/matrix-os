@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
+import { LabelsSchema } from "@matrix-os/contracts/message-board";
 import { gatewayAuthHeaders, type GatewayFetcher } from "../../kernel/dist/tools/integrations.js";
 
 /**
@@ -13,7 +14,7 @@ const MessageId = z.string().regex(/^msg_[A-Za-z0-9]{8,40}$/);
 const Channel = z.string().regex(/^[a-z0-9_-]{1,48}(?:\/[a-z0-9_-]{1,48}){0,7}$/).max(200);
 const Scope = z.string().regex(/^(?:\*|[a-z0-9_-]{1,48}(?:\/[a-z0-9_-]{1,48}){0,7}\/?)$/).max(201);
 const Text = z.string().min(1).max(10_000);
-const Labels = z.record(z.string().regex(/^[a-z0-9_.-]{1,64}$/), z.string().min(1).max(256)).optional();
+const Labels = LabelsSchema.optional();
 const LabelKeys = z.array(z.string().regex(/^[a-z0-9_.-]{1,64}$/)).max(20).optional();
 const Profile = z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,31}$/).optional();
 const Proof = { epoch: z.number().int().min(1), token: z.string().regex(/^[a-f0-9]{64}$/) };
