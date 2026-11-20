@@ -175,7 +175,7 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByRole("complementary", { name: "Chat file preview" })).toBeTruthy();
   });
 
-  it("closes a desktop file preview with its inspector", async () => {
+  it("closes a desktop file preview through its visible host control", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/files/list")
       ? Response.json({ entries: [] }) : Response.json(providerCatalog())));
     render(<ChatApp messages={[{ id: "desktop-file", role: "user", content: "", timestamp: 1000,
@@ -184,8 +184,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
       sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} />);
     fireEvent.click(await screen.findByRole("button", { name: "Preview notes.txt" }));
-    expect(await screen.findByRole("button", { name: "Close inspector" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(await screen.findByRole("button", { name: /^(?:Close preview|Toggle chat inspector)$/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^(?:Close preview|Toggle chat inspector)$/ }));
     expect(screen.queryByRole("complementary", { name: "Chat file preview" })).toBeNull();
   });
 

@@ -2,8 +2,8 @@ import React, { Fragment, useContext, useState, type ReactNode } from 'react';
 import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, resolveCanonicalChatLifecycleGroup, type ChatImportSourceFilterValue } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from '@matrix-os/contracts';
-import { orderWebChatRows } from "./web-chat-row-order";
-import { usePagedStatusGroup } from './usePagedStatusGroup';
+import { orderWebChatRows } from "./useWebChatRailOrder";
+import { usePagedStatusGroup } from './usePagedProjectChats';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
 export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {

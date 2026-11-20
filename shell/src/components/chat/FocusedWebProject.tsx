@@ -8,8 +8,8 @@ import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
 import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus, withRenamedProjectTitles } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
-import { orderWebChatRows } from "./web-chat-row-order";
-import { WebProjectArchiveAction } from "./WebProjectArchiveAction";
+import { orderWebChatRows } from "./useWebChatRailOrder";
+import { WebProjectArchiveAction } from "./WebProjectsNav";
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */

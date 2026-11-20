@@ -2,7 +2,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { WebProjectArchiveAction } from "../../shell/src/components/chat/WebProjectArchiveAction";
+import { WebProjectArchiveAction } from "../../shell/src/components/chat/WebProjectsNav";
 
 afterEach(cleanup);
 

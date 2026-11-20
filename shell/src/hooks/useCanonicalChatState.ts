@@ -1,6 +1,6 @@
 import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
-import { createCanonicalChatRowActions } from "@/lib/canonical-chat-row-actions";
+import { createCanonicalChatRowActions } from "@/lib/canonical-chat-client";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
