@@ -137,6 +137,13 @@ authentication still signs the canonical path and query separately.
 
 ## Runtime provenance and bounded diagnostics (20 November)
 
+The diagnostic CI run44769544317 exhausted its25-minute PostgreSQL job
+budget while assertions were still passing. The final qualification runner
+started at23m17 and retains a240-second aggregate cap. The workflow now allows
+30minutes, including120seconds for reports and cleanup; all suites, required
+gates and individual test deadlines remain unchanged. A workflow regression
+fails against the old budget using these measured timings.
+
 Recheck the installed owner and peer release and gateway code before every live
 acceptance run. A newer stable build can replace an unmerged PR build without
 containing its fixes. November20 stable2087 restored discovery-dependent reads;
