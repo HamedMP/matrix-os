@@ -21,6 +21,10 @@ The authenticated personal-owner HTTP create/queue route stamps a process-privat
 
 Rule management joins the current Run to its original Turn and exact committed owner message. It requires the native interactive bot route and current private direct binding. Mutations require a complete explicit standing instruction with source, trigger, timing, focus and language. This slice supports a bounded affirmative instruction grammar; keep these fields in one complete clause. Ambiguous, contradictory, imported or one-shot requests produce clarification without a saved policy. The tool's `ownerInstruction` must equal the original committed owner text; it is not a model assertion of permission.
 
+The model-facing tool must advertise a root object with explicit `operation`, `sourceId`, `ruleId`, `baseRevision`, `definition` and `ownerInstruction` properties. Derive these fields from the strict operation variants. The installed non-strict model adapter retains root `properties`/`required` and can discard a root union, silently advertising an empty object. Keep operation-specific requirements in the unchanged strict broker union; the transport projection is not authorization. `definition` is an object with `trigger`, `cadence`, `focus` and `language`, never serialized JSON. Tool guidance must distinguish the original owner message from injected Slack reference blocks.
+
+Personal-bot event adapters must forward the existing owner `toolOutputKey` when mapping events. Seal detailed tool output before canonical persistence; reveal it only through the authenticated private-owner projection. Shared/nonowner reads and wrong/missing keys retain coarse output. Strict-wrapper validation guidance describes argument structure without echoing values. Upstream Pi validation may still include received arguments in its private runtime transcript; do not claim universal validation redaction.
+
 Rule revision, audit history, original-message intent, private canonical receipt and outbox commit atomically under the Chat lock. Updates use revision CAS. The receipt reports source, trigger, cadence, focus, language, revision, state and private destination. One current policy per bot/enrollment prevents overlapping deliveries. A later replay returns current/superseded status rather than undoing pause/delete. A deleted rule retains an inactive audit tombstone. Resume advances `enabledAfter` without catch-up.
 
 The platform attests qualifying human events independently of the legacy environment rule. The inner HMAC binds the full enrollment incarnation, event/root/timestamp/sender, text digest and trusted mention classification. The owner checks the content digest. The transport keeps the old strict JSON body and original bridge HMAC unchanged, strips internal `source` from the wire body and signs a bounded source header over the exact body/path/timestamp/header. Old owners ignore the extension. New owners reject inline wire `source`, incomplete header pairs and invalid extensions before reconstructing the internal envelope.
@@ -41,6 +45,8 @@ Matching and source/job admission are transactional. Stable message/event identi
 | Pause/delete/update, unlink, membership loss or private audience change | Fence stale reads, inference and output; no legacy fallback. |
 | Resume | New events only; no historical catch-up. |
 | Provider unavailable or bounded partial context | Truthful unavailable/partial result; no empty-success claim or ambiguous paid replay. |
+| String `definition`, unknown/irrelevant operation fields | Reject before dispatch; explicit field/type or safe structural guidance. |
+| Missing owner tool-output key or nonowner/shared read | Coarse output only; no plaintext diagnostic fallback. |
 
 ## 5. Good / base / bad cases
 
@@ -55,6 +61,8 @@ Matching and source/job admission are transactional. Stable message/event identi
 - Signed ordinary event → real platform/home bridge → durable source/job → canonical queue → actual Pi loop and gateway inference broker with synthetic provider → one private summary. Assert zero tools, zero Slack destinations/posts/reactions, one inference and no ordinary-session/source replay pollution.
 - Coalescing/dedup across restart and concurrency; old revision and legacy pending work after owner control/pause; revocation before read/inference/publication.
 - Native manual reads, existing automatic summary, generic integration and canonical Chat/routine regressions. Canonical native typechecks plus release TypeScript compiler targets.
+- Capture the actual installed non-strict model adapter payload after its real context normalization. Require exactly one advertised rule tool and populated operation/source/definition fields. A handcrafted schema assertion or a fixture that accidentally omits all tools does not qualify this boundary.
+- Run correct and malformed arguments through Pi validation and the native strict broker wrapper; malformed requests never dispatch. Exercise the personal-bot adapter and owner projection together, including missing/wrong keys and nonowner/shared reads.
 
 Local synthetic evidence, remote CI, matching deployed runtime acceptance and release readiness are separate gates. This implementation does not activate a real rule, change subscriptions, send Slack messages or qualify a paid provider. A separate site-repository documentation PR and exact-version live acceptance remain before broader release.
 
@@ -67,3 +75,7 @@ Correct: save a revisioned owner policy from an authenticated original Chat inst
 Wrong: infer native origin from the user actor, client context or absence of a Slack inbox row.
 
 Correct: require the server-owned positive original HTTP input stamp and committed owner text. Receipt retention and model arguments cannot manufacture it.
+
+Wrong: advertise only a root operation union and assume every model adapter preserves it, or call the native wrapper directly and claim the actual model received the schema.
+
+Correct: advertise a derived root object, retain the strict broker union, and capture the actual adapter payload with normalized context before transport.

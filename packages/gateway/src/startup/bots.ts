@@ -551,6 +551,7 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
+    toolOutputKey: options.toolOutputKey,
     orchestrator, routines, summaries: slackMentionSummaries, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });

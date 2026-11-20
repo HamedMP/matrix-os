@@ -32,6 +32,18 @@ Source/test fingerprint before the local commit: `cce202754b905decdd2f892936eddc
 - [Platform source attestation](../../packages/platform/src/slack/enrolled-source.ts), [late output fence](../../packages/gateway/src/slack/rule-publication.ts) and [revoked work retirement](../../packages/gateway/src/slack/rule-revocation.ts).
 - [Actual native broker tests](../../tests/gateway/slack-rule-broker.test.ts) and [signed ingress / actual Pi integration](../../tests/gateway/slack-owner-rule-integration.test.ts).
 
+## Interactive Preview failure and transport correction
+
+The first exact-version interactive acceptance on `735c71a8a8f435ee08de8730661d0daf81fc3357` did **not** create a rule. An identity-guarded, read-only inspection of the owner runtime confirmed positive original HTTP provenance, an empty rule-list result, an initial empty argument object, and subsequent string-valued definitions rejected before broker dispatch. A later completed Chat response truthfully reported that no rule existed. These are failed interactive acceptance results, independent of the earlier local test passes.
+
+The installed non-strict model adapter retains root object properties but discards the root operation union advertised by the initial native tool. The fix derives a root object from the same strict operation variants, supplies explicit nested-definition and original-owner-text guidance, and keeps the strict broker contract and permission checks unchanged. Regression evidence must capture the actual adapter payload after its real context normalization and assert that the tool is present with usable fields; an unnormalized fixture that drops all tools is not valid evidence.
+
+A separate adapter wiring correction forwards the existing encryption key so detailed native tool output can be retained for the authorized private owner. It cannot recover old discarded diagnostics. Strict-wrapper guidance avoids echoing malformed values; upstream Pi validation errors can still echo arguments into the private runtime transcript. Owner-only encryption/projection and model argument validation are separate boundaries.
+
+Updated Preview installation, an actual English owner Chat rule receipt, and ordinary-message automatic delivery remain distinct runtime gates. A corrected synthetic provider payload alone does not close them.
+
+Local correction checks: the original root-union payload reproduced a missing-operation failure after normalization; the corrected four-case transport/validation suite passed. A preceding focused five-suite sweep passed 66 tests; independent review passed five suites/39 tests before the fourth new assertion was added. The final four-case suite was rerun successfully. Canonical eight-target typecheck, gateway/bot-runtime release TypeScript 5, pattern checks (zero violations; existing warning categories) and diff checks passed. These counts are overlapping checks, not one combined suite or a live-model pass.
+
 ## Reproduce the focused acceptance
 
 Use Node 24+, the frozen pnpm lockfile and the repository's normal test prerequisites. Set `MATRIX_TEST_POSTGRES_URL` to a disposable PostgreSQL 16 database. New owner-rule and provenance fixtures require an actual `pg.Pool`/Kysely `PostgresDialect`; the environment variable alone does not convert unrelated PGlite fixtures into PostgreSQL tests.

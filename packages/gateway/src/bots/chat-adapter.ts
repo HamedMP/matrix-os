@@ -38,6 +38,7 @@ const BotChatStateSchema = z.object({
 export type BotChatState = z.infer<typeof BotChatStateSchema>;
 
 const TOOL_LABELS: Record<string, string> = {
+  "slack.rules": "Managing Slack summary rules",
   "artifact.read": "Reading a file",
   "artifact.write": "Saving a file",
   "memory.search": "Checking what it remembers",
@@ -111,6 +112,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 }
 
 export function createMatrixBotChatProviderAdapter(options: {
+  toolOutputKey?: Buffer;
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   summaries?: Pick<import("../slack/mention-summary.js").SlackMentionSummaries, "prepareRun">;
   stopRuntime(runtimeHandle: string): Promise<void>;
@@ -165,7 +167,7 @@ export function createMatrixBotChatProviderAdapter(options: {
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
-          for (const event of mapBotEvent(item.event)) {
+          for (const event of mapBotEvent(item.event, { toolOutputKey: options.toolOutputKey })) {
             if (event.type === "tool.progress" || event.type === "agent.activity") {
               // Past the budget the reply still streams; further progress is summarized once.
               activities += 1;
