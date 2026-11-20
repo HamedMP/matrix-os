@@ -3,3 +3,8 @@ export * from "./client.js";
 export * from "./board-model.js";
 export * from "./board-preferences.js";
 export { taskSessionTarget, type TaskSessionTarget } from "./session-ref.js";
+export { ProjectBoard, type ProjectBoardProps } from "./ProjectBoard.js";
+export { ProjectViewSwitch, type ProjectHomeView } from "./ProjectViewSwitch.js";
+export { TaskCard } from "./TaskCard.js";
+export { TaskDetail } from "./TaskDetail.js";
+export type { MoveResult, UpdateResult } from "./use-project-board.js";
