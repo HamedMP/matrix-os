@@ -9,6 +9,7 @@
 @source "../../../../../packages/ui/src/chat-agents";
 @source "../../../../../packages/ui/src/collaboration";
 @source "../../../../../packages/ui/src/share";
+@source "../../../../../packages/ui/src/message-board";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/instrument-sans/400.css";
