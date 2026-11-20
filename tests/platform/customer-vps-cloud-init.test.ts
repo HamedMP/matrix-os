@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -35,25 +35,41 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain('PRIVATE KEY');
   });
 
-  it('renders a publishing location the Sites nginx helper accepts unchanged', async () => {
+  it('renders a publishing location the nginx helper accepts, and gains the speech upload location from it', async () => {
     const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
     const document = parseDocument(rendered).toJS() as { write_files: { path: string; content: string }[] };
     const nginx = document.write_files.find((file) => file.path === '/etc/nginx/sites-available/matrix')?.content;
     expect(nginx).toMatch(/# matrix-sites-publish-timeout-v1\n\s*location ~ "\^\/api\/apps\//);
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'matrix-sites-nginx-')));
-    try {
-      const target = join(root, 'etc/nginx/sites-available/matrix');
-      mkdirSync(join(root, 'etc/nginx/sites-available'), { recursive: true });
-      writeFileSync(target, nginx ?? '');
-      const helper = spawnSync('python3', ['-I', 'distro/customer-vps/host-bin/matrix-configure-sites-nginx', '--root', root], {
-        encoding: 'utf8', timeout: 15_000,
+    // User data is at Hetzner's size limit, so the speech upload location is
+    // not provisioned statically: host preparation adds it on first boot. Call
+    // the helper's transform directly so this holds on images without nginx.
+    const upgrade = (text: string) => {
+      const run = spawnSync('python3', ['-I', '-c', [
+        'import sys',
+        'from importlib.machinery import SourceFileLoader',
+        'helper = SourceFileLoader("matrix_nginx", sys.argv[1]).load_module()',
+        'sys.stdout.write(helper.upgrade(sys.stdin.read()))',
+      ].join('\n'), 'distro/customer-vps/host-bin/matrix-configure-sites-nginx'], {
+        input: text, encoding: 'utf8', timeout: 15_000,
       });
-      expect(helper.stderr).toBe('');
-      expect(helper.status).toBe(0);
-      expect(readFileSync(target, 'utf8')).toBe(nginx);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      expect(run.stderr).toBe('');
+      expect(run.status).toBe(0);
+      return run.stdout;
+    };
+    const speech = [
+      '  # matrix-speech-upload-limit-v1',
+      '  location = /api/speech/transcriptions {',
+      '    client_max_body_size 21m;',
+      '    proxy_read_timeout 90s;',
+      '    proxy_pass http://127.0.0.1:4000;',
+      '  }',
+      '',
+      '',
+    ].join('\n');
+    const publishing = '  # matrix-sites-publish-timeout-v1\n';
+    const prepared = upgrade(nginx ?? '');
+    expect(prepared).toBe((nginx ?? '').replace(publishing, speech + publishing));
+    expect(upgrade(prepared)).toBe(prepared);
   });
 
   it('rejects a missing or malformed operator key before rendering VPS user data', async () => {

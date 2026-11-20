@@ -1,3 +1,4 @@
+import { SPEECH_DICTATION_MAX_BYTES, SPEECH_DICTATION_MAX_DURATION_MS } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const IdentifierSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -90,8 +91,13 @@ function commonConfig(env: NodeJS.ProcessEnv): Omit<EnabledSpeechConfigBase, "mi
       admissionWindowMs: 60_000,
     },
     limits: {
-      maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, 10 * 1024 * 1024, 44, 10 * 1024 * 1024),
-      maxDurationMs: integer(env.PLATFORM_SPEECH_MAX_DURATION_MS, 120_000, 1_000, 60 * 60_000),
+      maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, SPEECH_DICTATION_MAX_BYTES, 44, SPEECH_DICTATION_MAX_BYTES),
+      maxDurationMs: integer(
+        env.PLATFORM_SPEECH_MAX_DURATION_MS,
+        SPEECH_DICTATION_MAX_DURATION_MS,
+        1_000,
+        SPEECH_DICTATION_MAX_DURATION_MS,
+      ),
       maxTranscriptChars: integer(env.PLATFORM_SPEECH_MAX_TRANSCRIPT_CHARS, 32_000, 1, 32_000),
     },
   };

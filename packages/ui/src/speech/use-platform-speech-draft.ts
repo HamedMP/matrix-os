@@ -20,6 +20,8 @@ export interface UsePlatformSpeechDraftResult {
   previewQuota: SpeechCapabilitiesResponse["previewQuota"];
   capabilitiesStale: boolean;
   elapsedMs: number;
+  /** Longest single dictation the current policy records, or null before it is known. */
+  maxDurationMs: number | null;
   /** Current microphone energy, normalized to the inclusive range 0..1. */
   inputLevel: number;
   /** Monotonic meter sample sequence so equal consecutive levels still render. */
@@ -74,6 +76,12 @@ export function platformSpeechControlState(
   };
 }
 
+/** Minutes and seconds, e.g. 65_000 -> "1:05". */
+export function formatSpeechClock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1_000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 export interface PlatformSpeechRecording {
   size: number;
   type: string;
@@ -114,6 +122,13 @@ interface ActiveRecording<TRecording extends PlatformSpeechRecording> {
   stopping: boolean;
   maxBytes: number;
 }
+
+/**
+ * When the duration limit stops a recording, the mic control changes from
+ * "Stop recording" to "Cancel transcription" under the pointer. A stop click
+ * that lands just after the limit must not discard the whole dictation.
+ */
+export const SPEECH_LIMIT_STOP_CANCEL_GUARD_MS = 2_000;
 
 interface ActiveRequest {
   requestId: string;
@@ -175,6 +190,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const requestRef = useRef<ActiveRequest | null>(null);
   const captureStartRef = useRef<AbortController | null>(null);
   const quotaRefreshRef = useRef<AbortController | null>(null);
+  const limitStoppedAtRef = useRef<number | null>(null);
 
   const cancelRemote = async (requestId: string): Promise<void> => {
     if (!client) return;
@@ -330,6 +346,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
     const generation = ++generationRef.current;
+    limitStoppedAtRef.current = null;
     setError(null);
     setElapsedMs(0);
     setInputMeter({ level: 0, sequence: 0 });
@@ -367,6 +384,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       capture,
       generation,
       timeout: setTimeout(() => {
+        limitStoppedAtRef.current = Date.now();
         void finishRecording(active);
       }, policy.maxDurationMs),
       elapsedTimer: setInterval(() => {
@@ -385,6 +403,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   }
 
   function cancel(): void {
+    const limitStoppedAt = limitStoppedAtRef.current;
+    if (limitStoppedAt !== null && !recordingRef.current
+      && Date.now() - limitStoppedAt < SPEECH_LIMIT_STOP_CANCEL_GUARD_MS) return;
     const cancelledRequest = requestRef.current !== null;
     const generation = ++generationRef.current;
     const cancellation = disposeActive(true);
@@ -446,6 +467,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     previewQuota: capabilities?.previewQuota,
     capabilitiesStale,
     elapsedMs,
+    maxDurationMs: capabilities?.fileTranscription.status === "ready"
+      ? capabilities.fileTranscription.dictation.maxDurationMs
+      : null,
     inputLevel: inputMeter.level,
     inputLevelSequence: inputMeter.sequence,
     start,

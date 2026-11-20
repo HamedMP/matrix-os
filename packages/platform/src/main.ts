@@ -137,6 +137,7 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
+import { runtimeProxyBodyLimitBytes } from './runtime-proxy-fetch.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -715,7 +716,15 @@ export function createApp(deps: {
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
-  app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), createSessionRoutingMiddleware({
+  const proxyBodyLimit = bodyLimit({ maxSize: PROXY_BODY_LIMIT });
+  const speechUploadBodyLimit = bodyLimit({
+    maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
+  });
+  app.use('*', (c, next) => (
+    runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
+      ? speechUploadBodyLimit(c, next)
+      : proxyBodyLimit(c, next)
+  ), createSessionRoutingMiddleware({
     db,
     docker,
     orchestrator,

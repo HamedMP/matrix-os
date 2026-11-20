@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchRuntimeProxy } from "../../packages/platform/src/session-routing-middleware.js";
+import { runtimeProxyBodyLimitBytes } from "../../packages/platform/src/runtime-proxy-fetch.js";
 
 describe("runtime proxy response streaming", () => {
   it.each([
@@ -10,11 +11,30 @@ describe("runtime proxy response streaming", () => {
     ["GET", "/api/apps/event/site", 30_000],
     ["POST", "/api/apps/event/site/rollback", 30_000],
     ["POST", "/api/apps/invalid!app/site", 30_000],
+    // A ten-minute dictation transcribes for longer than the default budget.
+    ["POST", "/api/speech/transcriptions", 92_000],
+    ["GET", "/api/speech/capabilities", 30_000],
   ])("bounds %s %s with the appropriate operation budget", async (method, path, expected) => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
     await fetchRuntimeProxy(`https://runtime.invalid${path}`, { method }, 30_000, false);
     expect(timeout).toHaveBeenCalledWith(expected);
+  });
+  it("forwards a ten-minute dictation upload while every other proxied body keeps the general limit", () => {
+    // Fault: the session proxy answered 413 for a recording over 10 MiB before it reached the owner's machine.
+    const general = 10 * 1024 * 1024;
+    const tenMinuteWav = 600 * 16_000 * 2 + 44;
+    for (const path of ["/api/speech/transcriptions", "/vm/alice/api/speech/transcriptions"]) {
+      expect(runtimeProxyBodyLimitBytes("POST", path, general)).toBeGreaterThan(tenMinuteWav);
+    }
+    for (const [method, path] of [
+      ["POST", "/api/files/upload"],
+      ["PUT", "/api/speech/transcriptions"],
+      ["POST", "/api/speech/transcriptions/extra"],
+      ["POST", "/vm/alice/extra/api/speech/transcriptions"],
+    ] as const) {
+      expect(runtimeProxyBodyLimitBytes(method, path, general)).toBe(general);
+    }
   });
   afterEach(() => {
     vi.useRealTimers();

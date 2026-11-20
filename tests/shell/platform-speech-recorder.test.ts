@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
   encodePcm16WavBytes,
   normalizeSpeechInputLevel,
@@ -64,5 +65,43 @@ describe("platform speech PCM recorder", () => {
     expect(resolveSpeechWorkletUrl()).toBe(
       `${window.location.origin}/vm/alice/~runtime/studio/speech-pcm-capture-worklet.js`,
     );
+  });
+
+  it("keeps a full ten-minute dictation instead of rejecting it as too large", async () => {
+    const SAMPLE_RATE = 16_000;
+    const CHUNK_SAMPLES = 16_384; // what the capture worklet posts per message
+    const port: { onmessage: ((event: MessageEvent<unknown>) => void) | null; postMessage(message: { type: string }): void } = {
+      onmessage: null,
+      postMessage(message) {
+        if (message.type === "flush") this.onmessage?.({ data: { type: "flushed" } } as MessageEvent<unknown>);
+      },
+    };
+    vi.stubGlobal("AudioWorkletNode", class { port = port; connect() {} disconnect() {} });
+    vi.stubGlobal("AudioContext", class {
+      sampleRate = SAMPLE_RATE;
+      state = "running";
+      destination = {};
+      audioWorklet = { addModule: async () => undefined };
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      async close() { this.state = "closed"; }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+    });
+    try {
+      const capture = await createWebPcmSpeechCaptureAdapter({ workletUrl: "https://app.example/worklet.js" }).start({
+        maxBytes: 20 * 1024 * 1024,
+        signal: new AbortController().signal,
+      });
+      const chunkCount = Math.ceil((600 * SAMPLE_RATE) / CHUNK_SAMPLES);
+      for (let index = 0; index < chunkCount; index += 1) {
+        port.onmessage?.({ data: { type: "audio", bytes: new ArrayBuffer(CHUNK_SAMPLES * 2) } } as MessageEvent<unknown>);
+      }
+      const recording = await capture.stop();
+      expect(recording.type).toBe("audio/wav");
+      expect(recording.size).toBe(44 + chunkCount * CHUNK_SAMPLES * 2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
