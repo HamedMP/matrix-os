@@ -4,7 +4,7 @@ import { escapeSlackText } from "./security.js";
 import { SlackAppIdSchema, SlackTeamIdSchema, SlackUserIdSchema, SlackTimestampSchema, SlackChannelIdSchema, type SlackApi, type SlackMessagePage } from "./types.js";
 
 export const SLACK_BOT_SCOPES = ["app_mentions:read", "channels:history", "groups:history", "im:history", "im:read", "channels:read", "groups:read", "chat:write", "reactions:write"] as const;
-const MessagePageSchema = z.object({ messages: z.array(z.object({ user: SlackUserIdSchema.optional(), text: z.string().max(65_536).optional(), ts: SlackTimestampSchema, thread_ts: SlackTimestampSchema.optional() }).passthrough()).max(100),
+const MessagePageSchema = z.object({ messages: z.array(z.object({ user: SlackUserIdSchema.optional(), text: z.string().max(65_536).optional(), ts: SlackTimestampSchema, thread_ts: SlackTimestampSchema.optional(), reply_count:z.number().int().nonnegative().max(1_000_000).optional(), latest_reply:SlackTimestampSchema.optional() }).passthrough()).max(100),
   has_more: z.boolean().optional(), response_metadata: z.object({ next_cursor: z.string().max(1_024).optional() }).optional() }).passthrough();
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
@@ -58,7 +58,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
   async function messagePage(method: "conversations.replies" | "conversations.history", input: { token: string; channelId: string; cursor?: string; ts?: string; signal?: AbortSignal }): Promise<SlackMessagePage> {
     const parsed = MessagePageSchema.parse(await call(method, { channel: SlackChannelIdSchema.parse(input.channelId), limit: 15,
       ...(input.ts ? { ts: SlackTimestampSchema.parse(input.ts) } : {}), ...(input.cursor ? { cursor: z.string().max(1_024).parse(input.cursor) } : {}) }, input.token, input.signal));
-    return { messages: parsed.messages.map(({ user, text, ts, thread_ts }) => ({ ...(user ? { user } : {}), ...(text !== undefined ? { text } : {}), ts, ...(thread_ts ? { thread_ts } : {}) })),
+    return { messages: parsed.messages.map(({ user, text, ts, thread_ts, reply_count, latest_reply }) => ({ ...(user ? { user } : {}), ...(text !== undefined ? { text } : {}), ts, ...(thread_ts ? { thread_ts } : {}), ...(reply_count !== undefined ? {reply_count} : {}), ...(latest_reply ? {latest_reply} : {}) })),
       hasMore: parsed.has_more ?? false, ...(parsed.response_metadata?.next_cursor ? { nextCursor: parsed.response_metadata.next_cursor } : {}) };
   }
   return {

@@ -8,7 +8,7 @@ import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import type { Kysely } from "kysely";
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
-import { BOT, OWNER, NOW, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, OWNER, NOW, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const CHAT = "chat_slack_recipe";
 const connection = { service: "gmail", connectionId: "conn_private", label: "Private mail" };
@@ -18,7 +18,7 @@ let state: Awaited<ReturnType<typeof createBotStateDatabase>>;
 let binding: BotRuntimeBinding;
 
 beforeEach(async () => {
-  state = await createBotStateDatabase();
+  state = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   await insertChat(state.db, CHAT);
   const task = await createBotTasksRepository(state.db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: NOW });
   binding = { runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "1", ownerId: OWNER, botId: BOT,
