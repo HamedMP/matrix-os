@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import {
-  newTaskClientRequestId, PROJECT_SLUG_PATTERN, PROJECT_TASK_CLIENT_MESSAGES, ProjectTaskClientError,
+  PROJECT_SLUG_PATTERN, PROJECT_TASK_CLIENT_MESSAGES, ProjectTaskClientError,
   projectMatchesSession, resolveTaskId, type ProjectTaskClient, type ProjectTaskSession,
 } from "@matrix-os/contracts/project-task-client";
 import {
@@ -82,6 +82,8 @@ const GetSchema = z.object({
   activityCursor: z.string().regex(/^(?:0|[1-9][0-9]{0,15})$/).optional()
     .describe("The activityNextCursor of the previous page, to read the next page of activity."),
 }).strict();
+/** Caller-held retry key: a lost response can be retried without a duplicate write. */
+const RetryKeyArg = z.string().regex(/^req_[A-Za-z0-9_-]{1,128}$/);
 const CreateSchema = z.object({
   project: ProjectArg,
   title: z.string().trim().min(1).max(TASK_LIMITS.title),
@@ -92,12 +94,12 @@ const CreateSchema = z.object({
   labels: z.array(LabelArg).max(TASK_LIMITS.labels).optional(),
   parentTask: z.string().min(1).max(140).optional().describe("Parent task id or key, for a subtask."),
   dueAt: DateArg.nullable().optional(),
-  clientRequestId: z.string().regex(/^req_[A-Za-z0-9_-]{1,128}$/).optional()
-    .describe("Reuse the same value when retrying a create so it is not duplicated."),
+  clientRequestId: RetryKeyArg
+    .describe("A key you choose, such as req_<uuid>. Send the same value when retrying so the task is not created twice."),
 }).strict();
 const UpdateSchema = z.object({
   project: ProjectArg, task: TaskArg,
-  baseRevision: z.number().int().positive().optional().describe("The revision you read; defaults to the current one."),
+  baseRevision: z.number().int().positive().describe("The revision of the task you read. A newer change is reported, never overwritten."),
   title: z.string().trim().min(1).max(TASK_LIMITS.title).optional(),
   description: z.string().max(TASK_LIMITS.description).optional(),
   priority: z.enum(TASK_PRIORITIES).optional(),
@@ -123,6 +125,8 @@ const StartSchema = z.object({
   harness: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
   worktree: z.enum(["new", "existing", "none"]).optional(),
   message: z.string().max(TASK_LIMITS.comment).optional(),
+  clientRequestId: RetryKeyArg
+    .describe("A key you choose, such as req_<uuid>. Send the same value when retrying so no second session starts."),
 }).strict();
 
 type Text = { content: Array<{ type: "text"; text: string }>; isError?: true };
@@ -246,7 +250,7 @@ export function projectTaskToolDefinitions(context: ProjectTaskToolContext, opti
         const scope = await target(project);
         const parentTaskId = parentTask ? await resolveTaskId(client, scope.slug, parentTask) : undefined;
         const task = bounded(await client.createTask(scope.slug, withoutUndefined({
-          ...fields, parentTaskId, clientRequestId: clientRequestId ?? newTaskClientRequestId(),
+          ...fields, parentTaskId, clientRequestId,
         }) as Parameters<ProjectTaskClient["createTask"]>[1]), scope.session);
         return data({ created: compact(task) });
       }),
@@ -259,8 +263,7 @@ export function projectTaskToolDefinitions(context: ProjectTaskToolContext, opti
       handler: (input: unknown) => safely(async () => {
         const { project, task, baseRevision, ...fields } = UpdateSchema.parse(input);
         const scope = await taskTarget(project, task);
-        const revision = baseRevision ?? bounded(await client.getTask(scope.slug, scope.taskId), scope.session).revision;
-        const updated = bounded(await client.updateTask(scope.slug, scope.taskId, { baseRevision: revision, ...withoutUndefined(fields) }), scope.session);
+        const updated = bounded(await client.updateTask(scope.slug, scope.taskId, { baseRevision, ...withoutUndefined(fields) }), scope.session);
         return data({ updated: compact(updated) });
       }),
     },

@@ -98,23 +98,28 @@ describe("project task agent tools", () => {
   it("creates with a retry key and never sends an actor from model input", async () => {
     const client = fakeClient();
     const call = tools(client);
-    const created = await call("project_task_create", { title: "Write docs", labels: ["docs"] });
+    // The caller holds the retry key, so a retry after a lost response reuses it.
+    const schemaOf = (name: string) => projectTaskToolDefinitions({ client, session: async () => SESSION }).find((definition) => definition.name === name)!.schema;
+    expect(schemaOf("project_task_create").safeParse({ title: "Write docs" }).success).toBe(false);
+    expect(schemaOf("project_task_start").safeParse({ kind: "chat" }).success).toBe(false);
+    const created = await call("project_task_create", { title: "Write docs", labels: ["docs"], clientRequestId: "req_docs_1" });
     const body = vi.mocked(client.createTask).mock.calls[0]![1];
-    expect(body).toMatchObject({ title: "Write docs", labels: ["docs"] });
-    expect(body.clientRequestId).toMatch(/^req_/);
+    expect(body).toMatchObject({ title: "Write docs", labels: ["docs"], clientRequestId: "req_docs_1" });
     expect(body).not.toHaveProperty("actor");
     expect(created.text).toContain("MOS-43");
     expect(() => projectTaskToolDefinitions({ client, session: async () => SESSION })
       .find((definition) => definition.name === "project_task_create")!.schema.parse({ title: "x", actor: "user:x" })).toThrow();
   });
 
-  it("reads the current revision for an update and explains a conflict instead of overwriting", async () => {
+  it("requires the revision the agent read and explains a conflict instead of overwriting", async () => {
     const client = fakeClient({
       updateTask: vi.fn(async () => { throw new ProjectTaskClientError("task_revision_conflict", { status: 409, task: taskFixture({ revision: 8 }) }); }),
     });
     const call = tools(client);
-    const result = await call("project_task_update", { title: "Renamed" });
-    expect(client.getTask).toHaveBeenCalledWith("matrix-os", "task_42");
+    expect(projectTaskToolDefinitions({ client, session: async () => SESSION }).find((definition) => definition.name === "project_task_update")!
+      .schema.safeParse({ title: "Renamed" }).success).toBe(false);
+    const result = await call("project_task_update", { title: "Renamed", baseRevision: 3 });
+    expect(client.getTask).not.toHaveBeenCalled();
     expect(client.updateTask).toHaveBeenCalledWith("matrix-os", "task_42", { baseRevision: 3, title: "Renamed" });
     expect(client.updateTask).toHaveBeenCalledTimes(1);
     expect(result.isError).toBe(true);
@@ -141,8 +146,8 @@ describe("project task agent tools", () => {
     const call = tools(client);
     await call("project_task_comment", { body: "PR is up" });
     expect(client.createComment).toHaveBeenCalledWith("matrix-os", "task_42", { body: "PR is up" });
-    const started = await call("project_task_start", { kind: "terminal", worktree: "existing", harness: "codex" });
-    expect(client.startTask).toHaveBeenCalledWith("matrix-os", "task_42", { kind: "terminal", worktree: "existing", harness: "codex" });
+    const started = await call("project_task_start", { kind: "terminal", worktree: "existing", harness: "codex", clientRequestId: "req_start_1" });
+    expect(client.startTask).toHaveBeenCalledWith("matrix-os", "task_42", { kind: "terminal", worktree: "existing", harness: "codex", clientRequestId: "req_start_1" });
     expect(started.text).toContain("chat_9");
     expect(started.text).toContain('"agentStarted": true');
   });
@@ -156,7 +161,7 @@ describe("project task agent tools", () => {
         firstMessage: "MOS-42 Fix login\n\nUse the new endpoint",
       })),
     });
-    const started = await tools(client)("project_task_start", { kind: "chat", message: "Use the new endpoint" });
+    const started = await tools(client)("project_task_start", { kind: "chat", message: "Use the new endpoint", clientRequestId: "req_start_2" });
     expect(started.isError).toBeUndefined();
     expect(started.text).toContain('"agentStarted": false');
     expect(started.text).toContain("Use the new endpoint");
