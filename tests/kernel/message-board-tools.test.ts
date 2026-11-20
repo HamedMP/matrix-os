@@ -22,6 +22,13 @@ describe("kernel message board tools", () => {
     expect(impl.post).toHaveBeenCalledOnce();
   });
 
+  it("refuses a fail or block reason longer than the board accepts", async () => {
+    const impl = tools();
+    const proof = { id: "msg_abcdefgh1234", epoch: 1, token: "a".repeat(64) };
+    expect((await tool(impl, "board_task_settle").handler({ ...proof, outcome: "block", text: "z".repeat(2_001) })).isError).toBe(true);
+    expect(impl.taskSettle).not.toHaveBeenCalled();
+  });
+
   it("wraps board content read by the kernel as untrusted data", async () => {
     const result = await tool(tools(), "board_read").handler({ target: "dev" });
     expect(result.content[0]!.text).toContain("EXTERNAL_UNTRUSTED_CONTENT");

@@ -64,3 +64,38 @@ it("maps settle outcomes to the task routes and surfaces only the reason on fail
     await f.close();
   }
 });
+
+// Fault detected (review): a valid long thread exceeded the response bound and could not be read at all.
+it("reads a thread larger than the response bound as its newest replies with a count of those left out", async () => {
+  const reply = (index: number) => ({ id: `msg_reply${String(index).padStart(6, "0")}`, text: "y".repeat(10_000) });
+  const thread = { root: { id: "msg_rootroot1234", text: "Root" }, replies: Array.from({ length: 60 }, (_, index) => reply(index)), task: null };
+  const f = await connect(vi.fn<GatewayFetcher>(async () => Response.json({ thread })));
+  try {
+    const result = await f.client.callTool({ name: "board_read", arguments: { target: "msg_rootroot1234" } });
+    expect(result.isError).not.toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]!.text;
+    expect(text.length).toBeLessThanOrEqual(256 * 1024);
+    const parsed = JSON.parse(text) as { thread: { root: { text: string }; replies: Array<{ id: string }> }; omittedEarlierReplies: number };
+    expect(parsed.thread.root.text).toBe("Root");
+    expect(parsed.omittedEarlierReplies).toBeGreaterThan(0);
+    expect(parsed.thread.replies.at(-1)!.id).toBe("msg_reply000059");
+    expect(parsed.omittedEarlierReplies + parsed.thread.replies.length).toBe(60);
+  } finally {
+    await f.close();
+  }
+});
+
+// Fault detected (review): a long fail reason passed the tool and then failed at the gateway, leaving the task claimed.
+it("refuses a fail reason longer than the gateway accepts before calling it", async () => {
+  const fetcher = vi.fn<GatewayFetcher>(async () => Response.json({}));
+  const f = await connect(fetcher);
+  try {
+    const result = await f.client.callTool({ name: "board_task_settle", arguments: { id: "msg_rootroot1234", epoch: 1, token: "a".repeat(64), outcome: "fail", text: "z".repeat(3_000) } });
+    expect(result.isError).toBe(true);
+    expect(fetcher).not.toHaveBeenCalled();
+    await f.client.callTool({ name: "board_task_settle", arguments: { id: "msg_rootroot1234", epoch: 1, token: "a".repeat(64), outcome: "complete", text: "z".repeat(3_000) } });
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally {
+    await f.close();
+  }
+});
