@@ -23,7 +23,9 @@ export interface BoardNotification { ownerId: string; dedupeKey: string; title: 
 export interface BoardNotifier { notify(notification: BoardNotification): void }
 
 const HOUR_MS = 3_600_000;
-const MAX_ATTEMPTS = 5;
+/** Attempts before a run is recorded as failed. */
+export const MAX_WATCHER_ATTEMPTS = 5;
+const MAX_ATTEMPTS = MAX_WATCHER_ATTEMPTS;
 const RETRY_BASE_MS = 30_000;
 const RETRY_SWEEP_MS = 30_000;
 const MAX_QUEUED_EVENTS = 1_000;
@@ -328,14 +330,19 @@ export class BoardWatcherService {
         .where("watcher_id", "=", watcher.id).where("event_cursor", "=", run.cursor as never).execute();
       return;
     }
-    const current = await db.selectFrom("board_watcher_runs").select("attempts").where("watcher_id", "=", watcher.id)
-      .where("event_cursor", "=", run.cursor as never).executeTakeFirst();
-    const attempts = (current?.attempts ?? 0) + 1;
-    const giveUp = attempts >= MAX_ATTEMPTS || failure === UNAVAILABLE_COPY || failure === UNDELIVERED_COPY;
+    // One targeted UPDATE: the count, the give-up decision and the backoff all read the row's own
+    // `attempts` (its value before this update), so overlapping dispatches cannot lose an increment.
+    const final = failure === UNAVAILABLE_COPY || failure === UNDELIVERED_COPY;
+    const giveUp = sql<boolean>`(${final} OR attempts + 1 >= ${MAX_ATTEMPTS})`;
+    const base = this.options.retryBaseMs ?? RETRY_BASE_MS;
     await db.updateTable("board_watcher_runs").set({
-      attempts, last_error: failure,
-      ...(giveUp ? { outcome: "failed", finished_at: now } : { next_attempt_at: new Date(now.getTime() + (this.options.retryBaseMs ?? RETRY_BASE_MS) * 2 ** (attempts - 1)) }),
-    }).where("watcher_id", "=", watcher.id).where("event_cursor", "=", run.cursor as never).execute();
+      attempts: sql`attempts + 1`,
+      last_error: failure,
+      outcome: sql`CASE WHEN ${giveUp} THEN 'failed' ELSE outcome END`,
+      finished_at: sql`CASE WHEN ${giveUp} THEN ${now}::timestamptz ELSE finished_at END`,
+      next_attempt_at: sql`CASE WHEN ${giveUp} THEN next_attempt_at
+        ELSE ${now}::timestamptz + (${base}::double precision * power(2, attempts)) * interval '1 millisecond' END`,
+    }).where("watcher_id", "=", watcher.id).where("event_cursor", "=", run.cursor as never).where("outcome", "is", null).execute();
   }
 
   /** Retries runs without an outcome whose backoff has passed, including runs a restart interrupted. */

@@ -172,7 +172,7 @@ export class BoardTaskService {
         profile ? eb("t.assigned_profile", "=", profile) : eb.val(false),
         eb.and([eb("t.assigned_profile", "is", null), eb("t.owner_actor", "in", creators)]),
       ]));
-    const readable = await this.board.readableChannels(ctx.caller, ctx.board.id);
+    const readable = await this.board.readableChannels(ctx.caller, ctx.board.id, ctx.trx);
     if (readable) query = readable.length ? query.where("t.channel", "in", readable) : query.where(sql<boolean>`false`);
     if (request.label) {
       const filter = parseBoardLabelFilter(request.label);

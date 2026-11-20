@@ -7,6 +7,7 @@ import { MessageBoardServiceError } from "../../packages/gateway/src/message-boa
 import { createMessageBoardRoutes } from "../../packages/gateway/src/message-board/routes.js";
 import { startMessageBoardRuntime, type MessageBoardRuntime } from "../../packages/gateway/src/message-board/runtime.js";
 import type { BoardCaller } from "../../packages/gateway/src/message-board/service.js";
+import { MAX_WATCHER_ATTEMPTS } from "../../packages/gateway/src/message-board/watchers.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 
 const owner: BoardCaller = { ownerId: "owner_1", actor: { id: "user:owner_1", kind: "user", name: "hamed" } };
@@ -88,6 +89,20 @@ describe("watchers", () => {
     [described] = await runtime.watchers.list(owner, undefined);
     expect(described!.lastError).toBeNull();
     expect(await runtime.watchers.retryPending()).toBe(0);
+  });
+
+  it("counts every failed attempt in the database and gives up at the limit", async () => {
+    await runtime.watchers.create(owner, undefined, { name: "flaky", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } });
+    fail = true;
+    await runtime.service.post(agent, undefined, { channel: "dev", text: "Keep failing" });
+    await settle();
+    for (let round = 0; round < 10; round += 1) {
+      await db.updateTable("board_watcher_runs").set({ next_attempt_at: new Date(0) }).execute();
+      await runtime.watchers.retryPending();
+    }
+    const [run] = await db.selectFrom("board_watcher_runs").select(["attempts", "outcome", "next_attempt_at"]).execute();
+    expect(run!.outcome).toBe("failed");
+    expect(run!.attempts).toBe(MAX_WATCHER_ATTEMPTS);
   });
 
   it("records a failed run when the action kind is not available here", async () => {

@@ -93,12 +93,16 @@ export class MessageBoardService {
     await this.access?.require(executor, caller, boardId, channel, permission);
   }
 
-  /** Readable channels for this caller, or null when nothing is restricted. */
-  async readableChannels(caller: BoardCaller, boardId: string): Promise<string[] | null> {
+  /**
+   * Readable channels for this caller, or null when nothing is restricted.
+   * Inside a write, pass its transaction: a second pool connection taken while
+   * holding the board lock can starve the pool under concurrent writes.
+   */
+  async readableChannels(caller: BoardCaller, boardId: string, executor: Kysely<MessageBoardDatabase> | BoardTrx = this.db): Promise<string[] | null> {
     if (!this.access) return null;
-    const channels = await this.db.selectFrom("board_channels").select("path").where("board_id", "=", boardId)
+    const channels = await executor.selectFrom("board_channels").select("path").where("board_id", "=", boardId)
       .limit(this.limits.channelsPerBoard).execute();
-    return this.access.readable(this.db, caller, boardId, channels.map((row) => row.path));
+    return this.access.readable(executor, caller, boardId, channels.map((row) => row.path));
   }
 
   /* ---------------- boards ---------------- */
