@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 import {
   disablePushNotifications,
@@ -69,6 +70,7 @@ export function syncPushRegistration(session: {
   return queuePushChange(async () => {
     if (!(await isPushNotificationsEnabled())) return "off";
 
+    await ensureNotificationChannels();
     const existing = await Notifications.getPermissionsAsync();
     const permission = existing.granted || !existing.canAskAgain
       ? existing
