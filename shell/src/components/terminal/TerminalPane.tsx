@@ -12,6 +12,7 @@ import type { Terminal } from "@xterm/xterm";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { TerminalControls, createTerminalNativeHistory } from "@matrix-os/ui";
 import { createTerminalKeyHandler } from "./terminal-key-handler";
+import { createTerminalEnterInput } from "./terminal-enter-input";
 import { useWebTerminalControls } from "./useWebTerminalControls";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { buildXtermTheme, getTerminalMinimumContrastRatio } from "./terminal-themes";
@@ -1543,7 +1544,7 @@ export function TerminalPane({
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current, sessionIdRef.current);
       });
 
-      term.attachCustomKeyEventHandler(createTerminalKeyHandler({
+      const keyHandler = createTerminalKeyHandler({
         isMac: isAppleCommandPlatform(navigator.platform),
         getSelection: () => term.getSelection(),
         getCommandBlock: () => commandBlockBufferRef.current,
@@ -1552,7 +1553,16 @@ export function TerminalPane({
         selectAll: () => term.selectAll(),
         toggleSearch: () => setSearchOpen((open) => !open),
         handleControls: handleControlKeyEvent,
-      }));
+      });
+      const enterInput = term.textarea ? createTerminalEnterInput({
+        textarea: term.textarea,
+        input: (data) => term.input(data, true),
+        handleLineBreak: keyHandler,
+      }) : null;
+      term.attachCustomKeyEventHandler((event) => {
+        const passthrough = keyHandler(event);
+        return enterInput?.handleKeyEvent(event, passthrough) ?? passthrough;
+      });
 
       // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
@@ -1577,6 +1587,7 @@ export function TerminalPane({
         container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
+        enterInput?.dispose();
         nativeHistory.dispose();
         gridPresentation.dispose();
         if (softGridLayoutRef.current === scheduleSoftGridLayout) {
