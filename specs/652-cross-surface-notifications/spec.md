@@ -91,6 +91,14 @@ Estimated effort (engineer-days): Track A 16–21, Track B 11–16, Track C 15�
 - The legacy coding-agent bridge reads its kinds from the new store, so the A5 switches also govern today's pushes.
 - Done when: an owner with legacy preferences reads the same choices back, and a `PUT` with a stale `revision` gets 409. Evidence: N/A (API only).
 
+A4 implementation notes (ENG-453, 2026-11-20):
+- New and legacy APIs share one owner document. `GET` and successful `PUT` return `{ preferences: document }`; the new `PUT` body is the complete document with its base `revision`. Saving increments the revision; stale writes return `notification_preferences_conflict` (409).
+- The bounded owner-file mutex spans migration, reading, checking the revision and atomic rename, including separate store instances. Runtime-configured owner identities authorize access; the canonical identity's legacy file wins, with the Clerk alias as fallback. Other principals cannot read or write this owner configuration.
+- Missing state is seeded once at revision 0. Invalid, oversized, linked or unreadable state blocks reads and saves with a generic 503 and blocks bridge pushes. Migration never enables previews or Time Sensitive delivery. Legacy writes update only the four event switches and preserve all new settings.
+- Production composition coverage runs the route registrar, both HTTP APIs, the owner file, channel startup and thread-event bridge together; only the final channel send is intercepted. Focused checks also cover concurrent saves, restarts, strict schemas, body limits, safe errors and foreign-principal denial. The existing two-minute dedupe and tap routing are unchanged.
+- Visual qualification: A4 adds no UI on Web Canvas, Web Desktop, Electron Desktop, Web Mobile or Native Mobile. Existing consumers retain their request/response contracts; API/bridge tests establish compatibility, not live visual evidence. Reviewer agreement on this API-only rationale remains part of review.
+- Required separate public-site docs PR (coordinator-owned, repository access currently unavailable): document the four notification kinds; default timing choices (minimum reply 10 s, away after 180 s, unread replies after 60 s); phone modes; opt-in previews and iOS Time Sensitive; owner/computer-scoped settings; reload on conflict and retry on unavailable state. State that A4 supplies the shared API and A5 supplies the mobile controls, while routing/timing enforcement arrives in A6/A8/A9 and computer controls in B4. Do not imply A4 changes current push timing.
+
 **A5 · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): kinds, phone timing, previews and Time Sensitive (iOS only). It reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
 
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)

@@ -1,3 +1,4 @@
+import { createLegacyNotificationPreferenceRoutes } from "../notifications/routes.js";
 import { projectThreadSnapshotForClient } from "./thread-client-projection.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -38,8 +39,6 @@ import {
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
-  CodingAgentNotificationPreferencesSchema,
-  CodingAgentNotificationPreferencesUpdateSchema,
   CodingAgentProjectCreateRequestSchema,
 } from "@matrix-os/contracts";
 import {
@@ -111,7 +110,6 @@ const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = USER_INPUT_ANSWER_BODY_LIMIT_BYTES;
 const FILE_WRITE_BODY_LIMIT = 512 * 1024;
 const SOURCE_CONTROL_BODY_LIMIT = 256 * 1024;
-const NOTIFICATION_PREFERENCES_BODY_LIMIT = 4 * 1024;
 const PROJECT_MUTATION_BODY_LIMIT = 4 * 1024;
 
 const AbortThreadBodySchema = z.object({
@@ -246,15 +244,6 @@ function sourceControlNoChanges() {
     code: "source_control_no_changes",
     safeMessage: "No source changes are ready to commit.",
     retryable: false,
-  });
-}
-
-function notificationPreferencesUnavailable() {
-  return SafeClientErrorSchema.parse({
-    code: "notification_preferences_unavailable",
-    safeMessage: "Notification preferences are temporarily unavailable. Try again.",
-    retryable: true,
-    recoveryActions: ["retry"],
   });
 }
 
@@ -422,10 +411,6 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   });
   const sourceControlBodyLimit = bodyLimit({
     maxSize: SOURCE_CONTROL_BODY_LIMIT,
-    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
-  });
-  const notificationPreferencesBodyLimit = bodyLimit({
-    maxSize: NOTIFICATION_PREFERENCES_BODY_LIMIT,
     onError: (c) => c.json({ error: bodyTooLarge() }, 413),
   });
 
@@ -946,46 +931,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   }
 
   if (deps.notificationPreferences) {
-    app.get("/notification-preferences", async (c) => {
-      try {
-        const principal = principalFor(c);
-        const preferences = CodingAgentNotificationPreferencesSchema.parse(
-          await deps.notificationPreferences!.load(principal),
-        );
-        return c.json({ preferences });
-      } catch (err: unknown) {
-        if (isRequestPrincipalError(err)) {
-          const mapped = mapRequestPrincipalError(err);
-          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
-        }
-        logCodingAgentWarning("notification preferences route failed", err);
-        return c.json({ error: notificationPreferencesUnavailable() }, 503);
-      }
-    });
-
-    app.put("/notification-preferences", notificationPreferencesBodyLimit, async (c) => {
-      try {
-        const principal = principalFor(c);
-        const request = CodingAgentNotificationPreferencesUpdateSchema.parse(await c.req.json());
-        const preferences = CodingAgentNotificationPreferencesSchema.parse(
-          await deps.notificationPreferences!.save(principal, request),
-        );
-        return c.json({ preferences });
-      } catch (err: unknown) {
-        if (isBodyLimitError(err)) {
-          return c.json({ error: bodyTooLarge() }, 413);
-        }
-        if (isRequestPrincipalError(err)) {
-          const mapped = mapRequestPrincipalError(err);
-          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
-        }
-        if (err instanceof z.ZodError || err instanceof SyntaxError) {
-          return c.json({ error: validationFailed() }, 400);
-        }
-        logCodingAgentWarning("notification preferences update failed", err);
-        return c.json({ error: notificationPreferencesUnavailable() }, 503);
-      }
-    });
+    app.route("/", createLegacyNotificationPreferenceRoutes({ store: deps.notificationPreferences, getPrincipal: principalFor }));
   }
 
   return app;

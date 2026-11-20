@@ -1,3 +1,4 @@
+export * from "#notifications";
 export * from "#messaging-origin";
 export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
@@ -472,26 +473,6 @@ export const RuntimeLimitsSchema = z.object({
   maxTerminalInputBytes: z.number().int().min(1).max(256 * 1024),
   maxListItems: z.number().int().min(1).max(200),
 }).strict();
-
-export const CodingAgentAttentionNotificationKindSchema = z.enum(["approval", "input", "failed", "completed"]);
-
-export const CodingAgentNotificationPreferencesSchema = z.object({
-  attentionPush: z.object({
-    approval: z.boolean(),
-    input: z.boolean(),
-    failed: z.boolean(),
-    completed: z.boolean().default(true),
-  }).strict(),
-}).strict();
-
-export const CodingAgentNotificationPreferencesUpdateSchema = CodingAgentNotificationPreferencesSchema;
-
-export type CodingAgentAttentionNotificationKind =
-  z.infer<typeof CodingAgentAttentionNotificationKindSchema>;
-export type CodingAgentNotificationPreferences =
-  z.infer<typeof CodingAgentNotificationPreferencesSchema>;
-export type CodingAgentNotificationPreferencesUpdate =
-  z.infer<typeof CodingAgentNotificationPreferencesUpdateSchema>;
 
 export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "pi", "custom"]);
 export const ProviderAvailabilitySchema = z.enum([

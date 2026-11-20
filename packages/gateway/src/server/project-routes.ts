@@ -1,3 +1,4 @@
+import { createNotificationPreferenceRoutes } from "../notifications/routes.js";
 import type { Hono } from "hono";
 import { createProductionChatDriveContext } from "../chat/drive-context-production.js";
 import { createChatDriveProjectRoutes } from "../chat/drive-projects.js";
@@ -20,6 +21,11 @@ type CodingAgentOptions = Omit<CodingAgentRouteDeps, "projectMutations" | "resol
 
 export function registerGatewayCodingAgentRoutes(app: Hono, options: CodingAgentOptions): void {
   const { projects, projectOperationAdmission, ...deps } = options;
+  if (deps.notificationPreferences) {
+    app.route("/api/notifications", createNotificationPreferenceRoutes({
+      store: deps.notificationPreferences.preferences, getPrincipal: deps.getPrincipal,
+    }));
+  }
   app.route("/api/coding-agents", createCodingAgentRoutes({
     ...deps,
     projectMutations: createCodingAgentProjectMutationService({ projects }),

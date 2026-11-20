@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./notifications": "./src/notifications.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
     "./collaboration-direct": "./src/collaboration-direct.ts",
@@ -32,6 +33,7 @@
     "./routine-destination": "./src/routine-destination.ts"
   },
   "imports": {
+    "#notifications": "./src/notifications.ts",
     "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
