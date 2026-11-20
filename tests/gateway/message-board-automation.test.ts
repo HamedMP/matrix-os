@@ -178,3 +178,107 @@ describe("schedules", () => {
     expect((await app.request("/api/board/schedules")).status).toBe(200);
   });
 });
+
+describe("watcher durability and schedule edges", () => {
+  let db: Kysely<MessageBoardDatabase>;
+  let runtime: MessageBoardRuntime;
+
+  beforeEach(async () => {
+    const pglite = await createTestPGlite();
+    db = new Kysely<MessageBoardDatabase>({ dialect: pglite.dialect });
+    runtime = await startMessageBoardRuntime(db, { timers: false });
+  });
+
+  afterEach(async () => {
+    runtime.close();
+    await db.destroy();
+  });
+
+  it("matches posts the in-memory queue missed by replaying the event log from saved progress", async () => {
+    const started: unknown[] = [];
+    runtime.configureAutomation({ actions: { start: async (input) => { started.push(input); } } });
+    await runtime.watchers.create(owner, undefined, { name: "dev-watch", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } });
+    await runtime.watchers.sweep(); // first pass records where matching starts
+    // The dispatcher is down (restart, full queue): the post is committed but never matched live.
+    await runtime.service.post(agent, undefined, { channel: "dev", text: "Missed live" });
+    expect(started).toHaveLength(0);
+    runtime.watchers.start();
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    await runtime.watchers.sweep();
+    expect(started).toHaveLength(1);
+  });
+
+  it("keeps runs pending until the gateway supplies its actions, then starts them", async () => {
+    runtime.watchers.start();
+    await runtime.watchers.create(owner, undefined, { name: "early", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } });
+    await runtime.service.post(agent, undefined, { channel: "dev", text: "Before actions" });
+    await runtime.watchers.idle();
+    expect(await db.selectFrom("board_watcher_runs").select("outcome").execute()).toEqual([{ outcome: null }]);
+    const started: unknown[] = [];
+    await db.updateTable("board_watcher_runs").set({ next_attempt_at: new Date(0) }).execute();
+    runtime.configureAutomation({ actions: { start: async (input) => { started.push(input); } } });
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+  });
+
+  it("cuts a long post to what a terminal launch accepts and points at the whole message", async () => {
+    const { watcherTaskText } = await import("../../packages/gateway/src/message-board/watchers.js");
+    const text = watcherTaskText({ board: "General", channel: "dev", messageId: "msg_abcdefgh1234" }, "x".repeat(9_000));
+    expect(text.length).toBeLessThan(8_192);
+    expect(text).toContain("matrix board read msg_abcdefgh1234");
+  });
+
+  it("keeps a watcher session's provenance on its scheduled posts", async () => {
+    const fromWatcher: BoardCaller = { ...agent, origin: { watcher: "triage", depth: 1 } };
+    const root = await runtime.service.post(owner, undefined, { channel: "dev", text: "Root" });
+    await runtime.schedules.create(fromWatcher, undefined, { thread: root.id, text: "Follow up", in: "1m" });
+    await db.updateTable("board_schedules").set({ next_run_at: new Date(0) }).execute();
+    await runtime.schedules.runDue();
+    const [reply] = (await runtime.service.getThread(owner, undefined, root.id)).replies;
+    const labels = await db.selectFrom("board_labels").select(["key", "value"]).where("message_id", "=", reply!.id).execute();
+    expect(Object.fromEntries(labels.map((row) => [row.key, row.value]))).toEqual({ "matrix.watcher": "triage", "matrix.depth": "1" });
+  });
+
+  it("skips missed repetitions and ends a schedule past its stop time without posting", async () => {
+    const hourly = await runtime.schedules.create(agent, undefined, { channel: "dev", text: "Hourly", in: "1m", every: "1h" });
+    await db.updateTable("board_schedules").set({ next_run_at: new Date(Date.now() - 5 * 3_600_000) }).where("id", "=", hourly.id).execute();
+    expect(await runtime.schedules.runDue()).toBe(1);
+    const [rescheduled] = await runtime.schedules.list(owner, undefined);
+    expect(Date.parse(rescheduled!.nextRunAt)).toBeGreaterThan(Date.now());
+    expect(await runtime.schedules.runDue()).toBe(0);
+    await runtime.schedules.cancel(owner, undefined, hourly.id);
+    const ended = await runtime.schedules.create(agent, undefined, { channel: "dev", text: "Too late", in: "1m", every: "1m", until: new Date(Date.now() + 120_000).toISOString() });
+    await db.updateTable("board_schedules").set({ next_run_at: new Date(0), until_at: new Date(Date.now() - 1_000) }).where("id", "=", ended.id).execute();
+    expect(await runtime.schedules.runDue()).toBe(0);
+    expect(await runtime.schedules.list(owner, undefined)).toEqual([]);
+    expect((await runtime.service.listMessages(owner, undefined, { text: "Too late" }))).toEqual([]);
+  });
+
+  it("applies the grant cap to private channels too", async () => {
+    for (let batch = 0; batch < 15; batch += 1) {
+      await runtime.grants.create(owner, undefined, { principals: Array.from({ length: 32 }, (_, index) => `user:u${batch}_${index}`), channel: "*", permissions: ["read"] });
+    }
+    await runtime.grants.create(owner, undefined, { principals: Array.from({ length: 19 }, (_, index) => `user:x${index}`), channel: "*", permissions: ["read"] });
+    expect(await reason(runtime.service.createChannel(owner, undefined, "secret", async (ctx) => {
+      await runtime.grants.writeGrants(ctx.trx, ctx.board.id, owner, [owner.actor.id], "secret", ["read"], ctx.now);
+      await runtime.grants.writeGrants(ctx.trx, ctx.board.id, owner, ["*"], "secret", [], ctx.now);
+    }))).toBe("limit_reached");
+    expect((await runtime.service.listChannels(owner, undefined)).map((channel) => channel.path)).not.toContain("secret");
+  });
+});
+
+describe("watcher start adapter", () => {
+  it("does not start a second terminal when a retried run's tab already exists", async () => {
+    const { configureMessageBoardAutomation } = await import("../../packages/gateway/src/server/message-board-gateway-routes.js");
+    let actions: { start?: (input: never) => Promise<void> } = {};
+    const runtime = { configureAutomation: (next: { actions?: typeof actions }) => { actions = next.actions ?? {}; } } as unknown as MessageBoardRuntime;
+    const run = vi.fn(async () => ({}));
+    const tabs: Array<{ name: string }> = [];
+    configureMessageBoardAutomation(runtime, { runTerminalAgent: run, listTerminals: async () => [{ tabs }] });
+    const input = { template: "fixer", name: "board-dev", task: "x", idempotencyKey: "wat_1:42", origin: { watcher: "dev", depth: 1 } };
+    await actions.start!(input as never);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "board-dev #42", labels: { "board.watcher": "dev", "board.depth": "1" } }));
+    tabs.push({ name: "board-dev #42" });
+    await actions.start!(input as never);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

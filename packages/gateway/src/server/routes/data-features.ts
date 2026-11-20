@@ -35,6 +35,7 @@ export function registerDataFeatureRoutes(options: DataFeatureRouteOptions): voi
   });
   configureMessageBoardAutomation(options.messageBoard, {
     runTerminalAgent: options.terminalAgents ? (input) => options.terminalAgents!.kernelTools.run(input) : undefined,
+    listTerminals: options.terminalAgents ? () => options.terminalAgents!.kernelTools.list() : undefined,
     push: options.push,
     ownerHandles: options.ownerName ? [options.ownerName] : [],
   });

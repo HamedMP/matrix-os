@@ -5,7 +5,7 @@ import {
 } from "@matrix-os/contracts/message-board";
 import type { BoardWatchersTable } from "./database.js";
 import { boardFail, MessageBoardServiceError } from "./errors.js";
-import { eventMatches } from "./events.js";
+import { eventMatches, readBoardEvents } from "./events.js";
 import { newBoardId, toIso } from "./rows.js";
 import type { BoardCaller, MessageBoardService } from "./service.js";
 
@@ -31,6 +31,9 @@ const RETRY_BATCH = 20;
 const DISPATCH_LEASE_MS = 5 * 60_000;
 const FAILED_COPY = "The last run could not start. Check the watcher's action and try again.";
 const UNAVAILABLE_COPY = "This kind of action is not available on this computer yet.";
+const MAX_TASK_TEXT = 6_000;
+/** Events read per board per catch-up pass. */
+const CATCH_UP_BATCH = 200;
 
 function parseJson<T>(value: unknown): T {
   return (typeof value === "string" ? JSON.parse(value) : value) as T;
@@ -38,7 +41,11 @@ function parseJson<T>(value: unknown): T {
 
 /** The message text a woken session gets, marked so it can tell a board message from its user. */
 export function watcherTaskText(event: { board: string; channel: string; messageId: string }, text: string): string {
-  return `<matrix from="board:${event.board}/${event.channel}#${event.messageId}">\n${text}\n</matrix>`;
+  // Terminal launches take at most 8 KiB of task text; a long post is cut with a pointer to the whole message.
+  const body = text.length > MAX_TASK_TEXT
+    ? `${text.slice(0, MAX_TASK_TEXT)}\n[cut; read the whole post with: matrix board read ${event.messageId}]`
+    : text;
+  return `<matrix from="board:${event.board}/${event.channel}#${event.messageId}">\n${body}\n</matrix>`;
 }
 
 /**
@@ -59,6 +66,8 @@ export class BoardWatcherService {
 
   configure(options: { actions?: WatcherActionRunner; notifier?: BoardNotifier }): void {
     Object.assign(this.options, options);
+    // Runs recovered before the gateway supplied its actions were left pending; start them now.
+    if (options.actions && !this.stopped) void this.sweep();
   }
 
   /* ---------------- management (owner only; routes enforce `manage`) ---------------- */
@@ -160,9 +169,48 @@ export class BoardWatcherService {
   }
 
   private async handleEvent(ownerId: string, event: BoardEvent): Promise<void> {
-    if (!event.messageId || !event.channel) return;
-    const db = this.board.db;
     const board = await this.board.resolveBoard(ownerId, event.board);
+    await this.matchEvent(ownerId, board, event);
+    await this.recordProgress(ownerId, board.id, event.cursor);
+  }
+
+  /** Remembers the newest cursor matched, so a restart or a full queue replays from there. */
+  private async recordProgress(ownerId: string, boardId: string, cursor: string): Promise<void> {
+    await this.board.db.insertInto("board_watcher_progress")
+      .values({ owner_id: ownerId, board_id: boardId, cursor, updated_at: this.board.clock() })
+      .onConflict((oc) => oc.column("board_id").doUpdateSet({ cursor: sql`GREATEST(board_watcher_progress.cursor, excluded.cursor)`, updated_at: this.board.clock() }))
+      .execute();
+  }
+
+  /**
+   * Replays committed events the in-memory queue never matched (overflow,
+   * restart). A board without progress starts from its current end.
+   */
+  async catchUp(): Promise<number> {
+    const db = this.board.db;
+    const boards = await db.selectFrom("board_watchers as w").innerJoin("board_boards as b", "b.id", "w.board_id")
+      .leftJoin("board_watcher_progress as p", "p.board_id", "b.id")
+      .select(["b.id", "b.name", "b.owner_id", "b.last_cursor", "p.cursor as progress"]).distinct().where("w.enabled", "=", true).execute();
+    let replayed = 0;
+    for (const row of boards) {
+      if (row.progress == null) {
+        await this.recordProgress(row.owner_id, row.id, String(row.last_cursor));
+        continue;
+      }
+      const board = await this.board.resolveBoard(row.owner_id, row.name);
+      const page = await readBoardEvents(db, board, { after: String(row.progress), limit: CATCH_UP_BATCH });
+      for (const event of page.events) {
+        if (event.type === "message.posted") await this.matchEvent(row.owner_id, board, event);
+        replayed += 1;
+      }
+      if (page.cursor !== String(row.progress)) await this.recordProgress(row.owner_id, row.id, page.cursor);
+    }
+    return replayed;
+  }
+
+  private async matchEvent(ownerId: string, board: { id: string; name: string }, event: BoardEvent): Promise<void> {
+    if (event.type !== "message.posted" || !event.messageId || !event.channel) return;
+    const db = this.board.db;
     const watchers = await db.selectFrom("board_watchers").selectAll().where("board_id", "=", board.id).where("enabled", "=", true).execute();
     if (watchers.length === 0) return;
     const message = await db.selectFrom("board_messages").select(["id", "root_id", "text", "author"]).where("id", "=", event.messageId).executeTakeFirst();
@@ -205,20 +253,30 @@ export class BoardWatcherService {
     await this.dispatch(watcher, { board: boardName, cursor: event.cursor, messageId: event.messageId!, channel: event.channel!, depth });
   }
 
+  /** Pausing and its one notice commit together: a crash leaves neither, so the next event retries both. */
   private async pause(ownerId: string, boardName: string, watcher: WatcherRow, channel: string, threadId: string, now: Date): Promise<void> {
-    const paused = await this.board.db.updateTable("board_watchers").set({ enabled: false, updated_at: now })
-      .where("id", "=", watcher.id).where("enabled", "=", true).returning("id").execute();
-    if (paused.length === 0) return;
     const actor: BoardActor = { id: `watcher:${watcher.name}`, kind: "watcher", name: watcher.name };
+    let paused = false;
     try {
-      await this.board.write({ ownerId, actor }, boardName, (ctx) => this.board.postInTransaction(ctx, {
-        channel, re: threadId,
-        text: `Watcher ${watcher.name} paused itself after ${watcher.max_runs_per_hour} runs this hour. Resume it in Watchers when you are ready.`,
-      }), { internal: true });
+      paused = await this.board.write({ ownerId, actor }, boardName, async (ctx) => {
+        const updated = await ctx.trx.updateTable("board_watchers").set({ enabled: false, updated_at: now })
+          .where("id", "=", watcher.id).where("enabled", "=", true).returning("id").execute();
+        if (updated.length === 0) return false;
+        await this.board.postInTransaction(ctx, {
+          channel, re: threadId,
+          text: `Watcher ${watcher.name} paused itself after ${watcher.max_runs_per_hour} runs this hour. Resume it in Watchers when you are ready.`,
+        });
+        ctx.emit({ type: "watcher.changed", actor, payload: { watcher: watcher.name, paused: true } });
+        return true;
+      }, { internal: true });
     } catch (error: unknown) {
       if (!(error instanceof MessageBoardServiceError)) throw error;
+      // The thread cannot take the notice (deleted, full): pause without it rather than keep waking.
       console.warn("[message-board] watcher pause notice not posted:", error.reason);
+      paused = (await this.board.db.updateTable("board_watchers").set({ enabled: false, updated_at: now })
+        .where("id", "=", watcher.id).where("enabled", "=", true).returning("id").execute()).length > 0;
     }
+    if (!paused) return;
     this.options.notifier?.notify({
       ownerId, dedupeKey: `board:watcher:${watcher.name}:paused:${now.toISOString().slice(0, 13)}`,
       title: "Watcher paused", body: `${watcher.name} reached ${watcher.max_runs_per_hour} runs this hour.`,
@@ -231,7 +289,13 @@ export class BoardWatcherService {
     const message = await db.selectFrom("board_messages").select(["text", "deleted_at"]).where("id", "=", run.messageId).executeTakeFirst();
     const text = watcherTaskText(run, message && !message.deleted_at ? message.text : "");
     const idempotencyKey = `${watcher.id}:${run.cursor}`;
-    const actions = this.options.actions ?? {};
+    const actions = this.options.actions;
+    if (!actions) {
+      // The gateway has not supplied its actions yet (startup): keep the run pending for the next sweep.
+      await db.updateTable("board_watcher_runs").set({ next_attempt_at: new Date(this.board.clock().getTime() + RETRY_SWEEP_MS) })
+        .where("watcher_id", "=", watcher.id).where("event_cursor", "=", run.cursor as never).execute();
+      return;
+    }
     let failure: string | null = null;
     try {
       if (action.kind === "start" && actions.start) {
@@ -287,14 +351,21 @@ export class BoardWatcherService {
     return dispatched;
   }
 
+  /** One maintenance pass: replay unmatched events, then retry due runs. */
+  async sweep(): Promise<void> {
+    try {
+      await this.catchUp();
+      if (this.options.actions) await this.retryPending();
+    } catch (error: unknown) {
+      console.error("[message-board] watcher sweep failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
   start(): void {
     this.stop();
     this.stopped = false;
-    const sweep = () => this.retryPending().catch((error: unknown) => {
-      console.error("[message-board] watcher retry failed:", error instanceof Error ? error.name : "UnknownError");
-    });
-    void sweep();
-    this.timer = setInterval(sweep, RETRY_SWEEP_MS);
+    void this.sweep();
+    this.timer = setInterval(() => void this.sweep(), RETRY_SWEEP_MS);
     this.timer.unref?.();
   }
 
