@@ -137,6 +137,10 @@ skills-lock.json
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
 !.claude/skills/product-demo-video
+# Team-only local verification driver (pstack create-verification-skill); not part of skills/matrix
+!.agents/skills/verify-matrix/
+!.agents/skills/verify-matrix/**
+!.claude/skills/verify-matrix
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**
