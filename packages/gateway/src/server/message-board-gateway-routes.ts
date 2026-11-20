@@ -62,13 +62,16 @@ export function configureMessageBoardAutomation(runtime: MessageBoardRuntime | n
   runtime.configureAutomation({
     actions: run ? {
       async start(input) {
-        // The tab name carries the run's idempotency key: a retry after a lost outcome finds it and starts nothing.
-        const name = `${input.name.slice(0, 40)} #${input.idempotencyKey.split(":").at(-1)}`.slice(0, 64);
-        if (deps.listTerminals && await terminalNamed(deps.listTerminals, name)) return;
-        await run({
+        // The tab name carries the run's whole idempotency key (watcher ID and cursor), unique across boards:
+        // a retry after a lost outcome finds the tab and starts nothing.
+        const name = `${input.name.slice(0, 20)} ${input.idempotencyKey}`.slice(0, 64);
+        if (deps.listTerminals && await terminalNamed(deps.listTerminals, name)) return { delivered: true };
+        const result = await run({
           ...(input.projectId ? { projectId: input.projectId } : {}), name, cwd: "", template: input.template, task: input.task,
           labels: { "board.watcher": input.origin.watcher, "board.depth": String(input.origin.depth) },
         });
+        const sent = (result as { firstMessage?: { sent?: unknown } } | null)?.firstMessage?.sent;
+        return { delivered: sent !== false };
       },
     } : {},
     ...(push ? { notifier: createDedupingNotifier((notification) => push({
