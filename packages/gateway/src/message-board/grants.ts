@@ -6,7 +6,7 @@ import {
 import type { BoardGrantsTable, MessageBoardDatabase } from "./database.js";
 import { boardFail } from "./errors.js";
 import { newBoardId, toIso, type BoardTrx } from "./rows.js";
-import type { BoardCaller, MessageBoardService } from "./service.js";
+import type { BoardCaller, MessageBoardService, WriteContext } from "./service.js";
 
 type Executor = Kysely<MessageBoardDatabase> | BoardTrx;
 type GrantRow = Selectable<BoardGrantsTable>;
@@ -76,11 +76,14 @@ export class BoardGrantService {
 
   /** One grant per principal at the pattern; writing again replaces its permissions. */
   async create(caller: BoardCaller, boardName: string | undefined, input: CreateGrantRequest): Promise<BoardGrant[]> {
-    return this.board.write(caller, boardName, async (ctx) => {
-      const written = await this.writeGrants(ctx.trx, ctx.board.id, caller, input.principals, input.channel, input.permissions, ctx.now);
-      for (const grant of written) ctx.emit(grantChanged(caller, grant, "set"));
-      return written;
-    });
+    return this.board.write(caller, boardName, (ctx) => this.grantInWrite(ctx, input.principals, input.channel, input.permissions));
+  }
+
+  /** Writes grants inside an open board write and records each change as a `grant.changed` event in it. */
+  async grantInWrite(ctx: WriteContext, principals: readonly string[], pattern: string, permissions: readonly BoardGrantPermission[]): Promise<BoardGrant[]> {
+    const written = await this.writeGrants(ctx.trx, ctx.board.id, ctx.caller, principals, pattern, permissions, ctx.now);
+    for (const grant of written) ctx.emit(grantChanged(ctx.caller, grant, "set"));
+    return written;
   }
 
   async writeGrants(trx: BoardTrx, boardId: string, caller: BoardCaller, principals: readonly string[], pattern: string,
