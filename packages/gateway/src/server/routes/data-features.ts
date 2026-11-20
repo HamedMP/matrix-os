@@ -6,7 +6,9 @@ import type { CanvasSubscriptionHub } from "../../canvas/subscriptions.js";
 import type { GatewayCollaborationRuntime } from "../../collaboration/wiring.js";
 import type { MessageBoardRuntime } from "../../message-board/runtime.js";
 import { registerCanvasGatewayRoutes } from "../canvas-gateway-routes.js";
-import { registerMessageBoardGatewayRoutes } from "../message-board-gateway-routes.js";
+import {
+  boardTerminalCaller, configureMessageBoardAutomation, registerMessageBoardGatewayRoutes, type BoardTerminalAgents,
+} from "../message-board-gateway-routes.js";
 import { registerGatewayMessagingRoutes } from "../owner-data-routes.js";
 
 export interface DataFeatureRouteOptions {
@@ -18,7 +20,9 @@ export interface DataFeatureRouteOptions {
   gatewayCollaboration: GatewayCollaborationRuntime | null;
   messageBoard: MessageBoardRuntime | null;
   ownerName?: string;
-  resolveTerminalCaller?: Parameters<typeof registerMessageBoardGatewayRoutes>[0]["resolveTerminalCaller"];
+  /** Spec 2692 terminal agents: identifies a calling pane and starts watcher sessions. */
+  terminalAgents?: BoardTerminalAgents;
+  push?: Parameters<typeof configureMessageBoardAutomation>[1]["push"];
   logUnexpectedWsSendFailure(context: string, error: unknown): void;
 }
 
@@ -26,7 +30,13 @@ export function registerDataFeatureRoutes(options: DataFeatureRouteOptions): voi
   const { app, upgradeWebSocket } = options;
   registerGatewayMessagingRoutes(app, options.messagingRepository);
   registerMessageBoardGatewayRoutes({
-    app, upgradeWebSocket, runtime: options.messageBoard, ownerName: options.ownerName, resolveTerminalCaller: options.resolveTerminalCaller,
+    app, upgradeWebSocket, runtime: options.messageBoard, ownerName: options.ownerName,
+    ...(options.terminalAgents ? { resolveTerminalCaller: boardTerminalCaller(options.terminalAgents) } : {}),
+  });
+  configureMessageBoardAutomation(options.messageBoard, {
+    runTerminalAgent: options.terminalAgents ? (input) => options.terminalAgents!.kernelTools.run(input) : undefined,
+    push: options.push,
+    ownerHandles: options.ownerName ? [options.ownerName] : [],
   });
   registerCanvasGatewayRoutes({
     app, upgradeWebSocket, canvasService: options.canvasService, canvasSubscriptionHub: options.canvasSubscriptionHub,

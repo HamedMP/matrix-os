@@ -10,7 +10,7 @@ export type BoardTrx = Transaction<MessageBoardDatabase>;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /** Opaque, unguessable IDs such as `msg_3fK9…`. */
-export function newBoardId(prefix: "msg" | "brd" | "wat" | "sch"): string {
+export function newBoardId(prefix: "msg" | "brd" | "wat" | "sch" | "grt"): string {
   const bytes = randomBytes(20);
   let id = "";
   for (const byte of bytes) id += ID_ALPHABET[byte % ID_ALPHABET.length];

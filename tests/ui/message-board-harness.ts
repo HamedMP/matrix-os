@@ -14,10 +14,11 @@ export const FIXER: BoardActor = { id: "agent:tws_1.tt_fixer", kind: "agent", na
 export async function createLiveBoard() {
   const pglite = await createTestPGlite();
   const db = new Kysely<MessageBoardDatabase>({ dialect: pglite.dialect });
-  const runtime: MessageBoardRuntime = await startMessageBoardRuntime(db);
+  const runtime: MessageBoardRuntime = await startMessageBoardRuntime(db, { timers: false });
   const app = new Hono();
   app.route("/api/board", createMessageBoardRoutes({
     service: runtime.service, tasks: runtime.tasks, hub: runtime.hub,
+    automation: { watchers: runtime.watchers, schedules: runtime.schedules, grants: runtime.grants },
     resolveCaller: () => ({ ownerId: "owner_1", actor: OWNER }),
   }));
   const state = { failing: false };

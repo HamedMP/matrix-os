@@ -4,6 +4,7 @@ import {
   BoardUsageError, channelPath, channelScope, defaultBoardDeps, EXIT_USAGE, isMessageId, labelKeys, labelPairs, messageId, openBoardContext, parseVerbArgs, printSuccess,
   reportFailure, requireText, strings, usage, type BoardDeps, type BoardVerb,
 } from "../board-cli-support.js";
+import { BOARD_AUTOMATION_VERBS } from "./board-automation.js";
 import { BOARD_EVENT_VERBS } from "./board-events.js";
 import { formatMessage, formatThread, formatThreadSummary, list } from "./board-format.js";
 import { BOARD_TASK_VERBS } from "./board-tasks.js";
@@ -155,9 +156,11 @@ const VERBS: Record<string, BoardVerb> = {
   actors: listing("/actors", "actors", (a) => `${String(a.id)} ${String(a.name ?? "")}`.trim()),
   boards: listing("/boards", "boards", (b) => `${String(b.name)} (${String(b.scope ?? "")})`),
   ...BOARD_EVENT_VERBS,
+  ...BOARD_AUTOMATION_VERBS,
 };
 
-const USAGE = `matrix board <verb>: post, reply, read, tail, wait, label, react, edit, delete, channels, actors, whoami, boards,
+const USAGE = `matrix board <verb>: post, reply, read, tail, wait, label, react, edit, delete, channels [create], actors, whoami, boards,
+  schedule, schedules, grants explain,
   tasks list|create|claim|renew|release|complete|fail|block|unblock|reopen|assign|needs|cancel|run.
 Global flags: --json, --board <name>, --as <profile>.`;
 

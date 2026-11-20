@@ -77,6 +77,7 @@ export class BoardTaskService {
       const root = await ctx.trx.selectFrom("board_messages").selectAll().where("id", "=", rootId).where("board_id", "=", ctx.board.id).forUpdate().executeTakeFirst();
       if (!root || root.root_id) boardFail("not_found");
       if (root.deleted_at) boardFail("message_deleted");
+      await this.board.requireAccess(ctx.trx, ctx.caller, ctx.board.id, root.channel, "post");
       if (await ctx.trx.selectFrom("board_tasks").select("root_id").where("root_id", "=", rootId).executeTakeFirst()) boardFail("duplicate_id");
       await validateNeeds(ctx, null, input.needs ?? []);
       const [message] = await hydrateMessages(ctx.trx, [root]);
@@ -171,6 +172,8 @@ export class BoardTaskService {
         profile ? eb("t.assigned_profile", "=", profile) : eb.val(false),
         eb.and([eb("t.assigned_profile", "is", null), eb("t.owner_actor", "in", creators)]),
       ]));
+    const readable = await this.board.readableChannels(ctx.caller, ctx.board.id);
+    if (readable) query = readable.length ? query.where("t.channel", "in", readable) : query.where(sql<boolean>`false`);
     if (request.label) {
       const filter = parseBoardLabelFilter(request.label);
       query = query.where(({ exists, selectFrom }) => exists(selectFrom("board_labels as l").select("l.key").whereRef("l.message_id", "=", "m.id")
@@ -187,6 +190,7 @@ export class BoardTaskService {
     if (row.assigned_profile && row.assigned_profile !== ctx.caller.actor.profile) boardFail("task_assigned");
     const root = await ctx.trx.selectFrom("board_messages").select("deleted_at").where("id", "=", row.root_id).executeTakeFirst();
     if (!root || root.deleted_at) boardFail("message_deleted");
+    await this.board.requireAccess(ctx.trx, ctx.caller, ctx.board.id, row.channel, "post");
     const needs = (await needsFor(ctx.trx, [row.root_id])).get(row.root_id) ?? [];
     if (await readinessOf(ctx, needs) !== "ready") boardFail("task_waiting");
     const token = newClaimToken();
@@ -235,7 +239,11 @@ export class BoardTaskService {
   }
 
   private async withTask<T>(caller: BoardCaller, boardName: string | undefined, taskId: string, work: (ctx: WriteContext, row: TaskRow) => Promise<T>): Promise<T> {
-    return this.board.write(caller, boardName, async (ctx) => work(ctx, await lockTask(ctx, taskId)));
+    return this.board.write(caller, boardName, async (ctx) => {
+      const row = await lockTask(ctx, taskId);
+      await this.board.requireAccess(ctx.trx, ctx.caller, ctx.board.id, row.channel, "post");
+      return work(ctx, row);
+    });
   }
 
   renew(caller: BoardCaller, boardName: string | undefined, taskId: string, input: ClaimProofInput & { leaseSeconds?: number }) {
