@@ -66,7 +66,7 @@ export function AutomationPanel({ panel, watchers, schedules, viewerId, nowMs, m
                 <HugeiconsIcon icon={panel === "watchers" ? WorkflowSquare03Icon : Calendar03Icon} size={16} />
               </span>
               <p className="text-[13.5px] font-medium" style={textPrimary}>No {title.toLowerCase()} yet</p>
-              <p className="font-mono text-xs" style={textTertiary}>{panel === "watchers" ? "matrix board watchers create" : "matrix board schedule dev \"…\" --in 5m"}</p>
+              <p className="font-mono text-xs" style={textTertiary}>{panel === "watchers" ? "matrix board watchers create triage --tail dev --start fixer" : "matrix board schedule dev \"…\" --in 5m"}</p>
             </div>
           : panel === "watchers"
             ? <ul className="flex flex-col gap-2">{watchers.data!.map((watcher) => <li key={watcher.id}>

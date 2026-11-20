@@ -1,5 +1,5 @@
 import { BoardDurationSchema } from "@matrix-os/contracts/message-board";
-import { channelPath, isMessageId, printSuccess, requireText, usage, type BoardVerb } from "../board-cli-support.js";
+import { channelPath, channelScope, isMessageId, printSuccess, requireText, usage, type BoardVerb } from "../board-cli-support.js";
 import { list } from "./board-format.js";
 
 type Json = Record<string, unknown>;
@@ -95,4 +95,41 @@ const grants: BoardVerb = {
   },
 };
 
-export const BOARD_AUTOMATION_VERBS: Record<string, BoardVerb> = { schedule, schedules, channels, grants };
+function watcherLine(item: Json): string {
+  const tail = (item.tail ?? {}) as Json;
+  const action = (item.action ?? {}) as Json;
+  return `${String(item.id)} ${String(item.name)} ${item.enabled ? "on" : "paused"}: #${String(tail.channel)}${tail.label ? ` [${String(tail.label)}]` : ""} -> start ${String(action.template ?? action.kind)}`;
+}
+
+/**
+ * `matrix board watchers` lists; `watchers create <name> --tail <channel> --start <template>
+ * [--label <filter>] [--project <id>] [--max-per-hour <n>]` starts an agent for each matching post.
+ * Only the owner may create one (the board refuses agents).
+ */
+const watchers: BoardVerb = {
+  options: { tail: { type: "string" }, label: { type: "string" }, start: { type: "string" }, project: { type: "string" }, "max-per-hour": { type: "string" } },
+  prepare([sub, name], values) {
+    if (sub === "create") {
+      const tail = channelScope(typeof values.tail === "string" ? values.tail : undefined);
+      if (!name || !tail || typeof values.start !== "string") usage("Usage: matrix board watchers create <name> --tail <channel> --start <template> [--label k=v] [--project <id>] [--max-per-hour <n>]");
+      const max = values["max-per-hour"] === undefined ? undefined : Number(values["max-per-hour"]);
+      if (max !== undefined && (!Number.isInteger(max) || max < 1 || max > 120)) usage("--max-per-hour takes a whole number from 1 to 120");
+      const body = {
+        name, tail: { channel: tail!, ...(typeof values.label === "string" ? { label: values.label } : {}) },
+        action: { kind: "start", template: values.start, ...(typeof values.project === "string" ? { project: values.project } : {}) },
+        ...(max ? { maxRunsPerHour: max } : {}),
+      };
+      return async (ctx) => {
+        const { watcher } = await ctx.client.request("POST", "/watchers", { body });
+        printSuccess(ctx.deps.io, ctx.json, { watcher }, `Created ${watcherLine(watcher as Json)}`);
+      };
+    }
+    if (sub !== undefined) usage("Usage: matrix board watchers [create <name> --tail <channel> --start <template>]");
+    return async (ctx) => {
+      const payload = await ctx.client.request("GET", "/watchers");
+      printSuccess(ctx.deps.io, ctx.json, { watchers: payload.watchers }, list(payload.watchers).map(watcherLine).join("\n") || "No watchers.");
+    };
+  },
+};
+
+export const BOARD_AUTOMATION_VERBS: Record<string, BoardVerb> = { schedule, schedules, channels, grants, watchers };
