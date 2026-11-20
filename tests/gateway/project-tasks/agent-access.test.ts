@@ -238,7 +238,7 @@ describe("board tools in a chat run", () => {
     try {
       // The run's task is the default: the gateway reports it from the task session link.
       expect(text(await client.callTool({ name: "project_task_comment", arguments: { body: "PR is up" } }))).toContain("tcm_");
-      const created = await client.callTool({ name: "project_task_create", arguments: { title: "Follow-up" } });
+      const created = await client.callTool({ name: "project_task_create", arguments: { title: "Follow-up", clientRequestId: "req_follow_up" } });
       expect(created.isError).not.toBe(true);
       const tasks = ListTasksResponseSchema.parse(await (await loopback("http://127.0.0.1:4000/api/projects/alpha/tasks", { headers: { Authorization: "Bearer owner-runtime-token-that-is-long" } })).json()).tasks;
       expect(tasks.find((entry) => entry.title === "Follow-up")?.createdBy).toBe("agent:chat_abc");
