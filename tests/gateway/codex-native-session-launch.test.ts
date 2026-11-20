@@ -3,10 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 async function fixture(native: boolean, denied = false) {
   const homePath = await mkdtemp("/tmp/codex-native-session-"); homes.push(homePath);
+  const codexExecutable = await writeCodexVersionFixture(homePath);
   const resolveNativeCodexSubscription = vi.fn(async () => {
     if (denied) throw new Error("native unavailable");
     return native ? { codexHome: `${homePath}/.codex`, expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } : undefined;
@@ -17,7 +19,7 @@ async function fixture(native: boolean, denied = false) {
     terminateTab: vi.fn(), writeInput: vi.fn(), listWorkspaces: vi.fn(async () => []),
   };
   const manager = createAgentSessionManager({ homePath, resolveNativeCodexSubscription, terminalRuntime,
-    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: "/tmp/synthetic-codex" }),
+    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable }),
     worktreeManager: createWorktreeManager({ homePath, runCommand: vi.fn() }), idGenerator: () => "sess_native_fixture" });
   return { manager, resolveNativeCodexSubscription, terminalRuntime };
 }

@@ -461,7 +461,7 @@ export function createAgentSessionManager(options: {
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
         const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
         launch = request.kind === "agent"
-          ? options.agentLauncher.buildLaunch({
+          ? await options.agentLauncher.buildLaunch({
             agent: request.agent!,
             ...(nativeCodexSubscription ? { nativeCodexSubscription } : {}),
             cwd,

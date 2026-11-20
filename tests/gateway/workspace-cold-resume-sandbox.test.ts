@@ -7,6 +7,7 @@ import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.j
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 
@@ -18,6 +19,7 @@ describe("cold resume with retained workspace sandbox", () => {
     "preserves sandbox ownership during %s", async (scenario) => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "matrix-cold-sandbox-")));
     homes.push(homePath);
+    const codexExecutable = await writeCodexVersionFixture(homePath);
     const launches: string[][] = [];
     const tabs = new Map<string, { id: string; workspaceId: string; status: "running" }>();
     const terminalRuntime = {
@@ -37,7 +39,7 @@ describe("cold resume with retained workspace sandbox", () => {
     const agentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: createWorktreeManager({ homePath }),
-      agentLauncher: createAgentLauncher({ runtimeHome: homePath }),
+      agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable }),
       terminalRuntime,
     });
     const orchestrator = createWorkspaceSessionOrchestrator({

@@ -20,6 +20,7 @@ import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orche
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { KyselyPGlite } from "kysely-pglite";
 import { catalog, owner, principal } from "./helpers/canonical-codex-catalog.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 
@@ -57,12 +58,13 @@ function createTestTerminalRuntime(options: {
 describe("Codex startup failure evidence", () => {
   it.each([false, true])("requires actual terminal tab termination, not an interrupt ACK (stop fails=%s)", async (stopFails) => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "codex-stop-")));
+    const codexExecutable = await writeCodexVersionFixture(homePath);
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const operations: string[] = [];
     const terminalRuntime = createTestTerminalRuntime({ operations, stopFails });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), terminalRuntime });
+      agentLauncher: createAgentLauncher({ codexExecutable }), terminalRuntime });
     const reconciler = createCodingAgentSessionStopReconciler();
     const publisher = createWorkspaceEventPublisher({ eventStore: createWorkspaceEventStore({ homePath }),
       onSessionStopped: (session) => reconciler.handleSessionStopped(session) });
@@ -108,13 +110,14 @@ describe("Codex startup failure evidence", () => {
 
   it("retains the failed system launch cause correlated to the thread without leaking it to Chat", async () => {
     const homePath = await realpath(await mkdtemp(join(tmpdir(), "codex-startup-")));
+    const codexExecutable = await writeCodexVersionFixture(homePath);
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const terminalRuntime = createTestTerminalRuntime({
       startError: Object.assign(new Error("spawn denied token=private-token /opt/private"), { code: "EAGAIN" }),
     });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), terminalRuntime });
+      agentLauncher: createAgentLauncher({ codexExecutable }), terminalRuntime });
     const workspace = createWorkspaceSessionOrchestrator({ homePath,
       projectManager: createProjectManager({ homePath }), worktreeManager,
       agentSessionManager: manager, agentSandbox: createAgentSandbox({ homePath, getUid: () => 1000 }),

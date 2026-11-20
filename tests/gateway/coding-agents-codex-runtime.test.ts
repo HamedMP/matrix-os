@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { buildAgentLaunch, createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
@@ -94,6 +94,41 @@ describe("Codex structured event runtime", () => {
     expect(launch.args).not.toContain("-c");
     expect(launch.args).not.toContain("app-server");
     expect(launch.args).not.toContain("app-server");
+  });
+
+  it("rejects an executable version change before app-server startup and event writes", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-version-fence-"));
+    const executable = join(homePath, "codex");
+    const startupPath = join(homePath, "started");
+    const eventPath = codexProviderEventPath(homePath, "sess_version_fence");
+    const install = (version: string) => writeFile(executable, [
+      "#!/usr/bin/env node",
+      "import { writeFileSync } from 'node:fs';",
+      `if (process.argv[2] === '--version') console.log('codex-cli ${version}');`,
+      `else writeFileSync(${JSON.stringify(startupPath)}, 'app-server started');`,
+    ].join("\n"), { mode: 0o700 });
+    try {
+      await install("0.169.0");
+      const launcher = createAgentLauncher({ codexExecutable: executable });
+      const launch = await launcher.buildLaunch({
+        agent: "codex",
+        cwd: homePath,
+        prompt: "Check launch version.",
+        sandbox: { enabled: true, mode: "workspace-write" },
+        providerEventPath: eventPath,
+      });
+      expect(launch.args[2]).toBe("0.169.0");
+      await install(CODEX_VERIFIED_VERSION);
+
+      const result = await runProcess(launch.command, launch.args, homePath);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("Codex provider version is not verified.");
+      await expect(readFile(startupPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(eventPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("runs a real child process, persists raw complete JSONL, and prints only safe terminal output", async () => {

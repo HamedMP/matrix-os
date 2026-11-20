@@ -10,6 +10,7 @@ import {
   type AgentModelOption,
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { codexAppServerContractStatus } from "./coding-agents/codex-app-server-version.js";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
@@ -93,7 +94,7 @@ export interface AgentLaunchSpec {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number; env?: Record<string, string> },
+  options: { cwd: string; timeout: number; env?: Record<string, string>; inheritEnv?: false },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 const execFileAsync = promisify(execFile);
@@ -147,7 +148,7 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     timeout: options.timeout,
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
-    env: options.env ? { ...process.env, ...options.env } : process.env,
+    env: options.inheritEnv === false ? options.env : { ...process.env, ...options.env },
   });
   return { stdout, stderr };
 };
@@ -157,10 +158,13 @@ function firstLine(value: string): string | undefined {
   return line || undefined;
 }
 
-function isExactVerifiedCodexVersion(version: string | undefined): boolean {
-  if (!version) return false;
-  const status = codexExecContractStatus(version);
-  return status.status === "verified" && status.version === CODEX_VERIFIED_VERSION;
+function qualifiedCodexWorkspaceVersion(output: string | undefined): string | undefined {
+  if (!output) return undefined;
+  const exec = codexExecContractStatus(output);
+  // Protocol qualification alone does not select a workspace runtime.
+  if (exec.status !== "verified" || (exec.version !== CODEX_VERIFIED_VERSION && exec.version !== "0.169.0")) return undefined;
+  const appServer = codexAppServerContractStatus(output);
+  return appServer.status === "verified" && appServer.version === exec.version ? exec.version : undefined;
 }
 
 function promptArgs(prompt?: string): string[] {
@@ -413,7 +417,7 @@ function workspaceCompatibility(
   version: string | undefined,
 ): AgentWorkspaceCompatibility {
   if (id !== "codex") return "not_applicable";
-  return isExactVerifiedCodexVersion(version) ? "compatible" : "unsupported";
+  return qualifiedCodexWorkspaceVersion(version) ? "compatible" : "unsupported";
 }
 
 function unavailableAgentStatus(
@@ -469,14 +473,26 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
   });
 }
 
-export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-  const parsed = SupportedAgentSchema.parse(input.agent);
-  const command = parsed === "codex" && input.codexExecutable
+function prepareAgentLaunch(input: AgentLaunchInput) {
+  const agent = SupportedAgentSchema.parse(input.agent);
+  const command = agent === "codex" && input.codexExecutable
     ? CodexExecutableSchema.parse(input.codexExecutable)
-    : AGENTS[parsed].command;
-  const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
-  const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
-  switch (parsed) {
+    : AGENTS[agent].command;
+  const base = buildAgentRuntimeEnvironment(input.runtimeHome);
+  const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, base) : undefined;
+  return { agent, command, env: nativePolicy?.env ?? base, nativePolicy };
+}
+
+export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
+  return buildPreparedAgentLaunch(input, prepareAgentLaunch(input));
+}
+
+function buildPreparedAgentLaunch(
+  input: AgentLaunchInput,
+  { agent, command, env, nativePolicy }: ReturnType<typeof prepareAgentLaunch>,
+  codexVersion = CODEX_VERIFIED_VERSION,
+): AgentLaunchSpec {
+  switch (agent) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
@@ -501,7 +517,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           args: [
             CODEX_APP_SERVER_RUNNER_PATH,
             providerEventPath,
-            CODEX_VERIFIED_VERSION,
+            codexVersion,
             command,
             ...(nativePolicy?.args ?? []),
             appServerConfig,
@@ -543,15 +559,17 @@ export function createAgentLauncher(options: {
       : AGENTS[id].command;
   }
 
+  async function readVersion(command: string, directory: string, env: Record<string, string>, inheritEnv?: false): Promise<string | undefined> {
+    const result = await runCommand(command, ["--version"], {
+      cwd: directory, timeout: DETECT_TIMEOUT_MS, env, ...(inheritEnv === false ? { inheritEnv } : {}),
+    });
+    return firstLine(result.stdout) ?? firstLine(result.stderr);
+  }
+
   async function probeInstallation(id: SupportedAgent): Promise<AgentStatus> {
     const config = AGENTS[id];
     try {
-      const result = await runCommand(commandFor(id), ["--version"], {
-        cwd,
-        timeout: DETECT_TIMEOUT_MS,
-        env: detectEnv,
-      });
-      const version = firstLine(result.stdout) ?? firstLine(result.stderr);
+      const version = await readVersion(commandFor(id), cwd, detectEnv);
       const compatibility = workspaceCompatibility(id, version);
       return {
         id,
@@ -705,11 +723,19 @@ export function createAgentLauncher(options: {
     /** @deprecated Use detectAgentInstallations for executable availability. */
     detectAgents: detectAgentInstallations,
 
-    buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch({
+    buildLaunch(input: AgentLaunchInput): AgentLaunchSpec | Promise<AgentLaunchSpec> {
+      const launchInput = {
         ...input,
         runtimeHome: input.runtimeHome ?? options.runtimeHome,
         codexExecutable: input.codexExecutable ?? options.codexExecutable,
+      };
+      const prepared = prepareAgentLaunch(launchInput);
+      if (prepared.agent !== "codex" || !launchInput.providerEventPath) return buildPreparedAgentLaunch(launchInput, prepared);
+      const inheritEnv = prepared.nativePolicy ? false : undefined;
+      return readVersion(prepared.command, launchInput.cwd, prepared.env, inheritEnv).then(output => {
+        const version = qualifiedCodexWorkspaceVersion(output);
+        if (!version) throw new Error("Codex provider version is not verified");
+        return buildPreparedAgentLaunch(launchInput, prepared, version);
       });
     },
   };
