@@ -58,6 +58,12 @@ export interface TranscriptMessage {
   /** Only resolvable when the message is tied to a run (assistant turns). */
   elapsedSeconds?: number;
   isRunning: boolean;
+  /**
+   * Set on the reply that closes its turn: a run's last reply, or one that
+   * belongs to no run. Its actions (Copy, Share, its time) go under it once
+   * it has finished, as Electron Desktop shows them under a turn's final reply.
+   */
+  endsTurn?: true;
   createdAt: number;
   /**
    * A message sent from this phone that the computer does not have yet: on
@@ -171,12 +177,34 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   // tend to surface.
   const lastAssistantSeqByRun = new Map<string, number>();
   const runIdsWithAssistantMessage = new Set<string>();
+  const lastAssistantSeqByTurn = new Map<string, number>();
   for (const message of ordered) {
-    if (message.role !== "assistant" || !message.runId) continue;
+    if (message.role !== "assistant") continue;
+    const turnId = message.turnId ?? (message.runId ? runsById.get(message.runId)?.turnId : undefined);
+    if (turnId) lastAssistantSeqByTurn.set(turnId, message.seq);
+    if (!message.runId) continue;
     runIdsWithAssistantMessage.add(message.runId);
     const current = lastAssistantSeqByRun.get(message.runId) ?? -1;
     if (message.seq > current) lastAssistantSeqByRun.set(message.runId, message.seq);
   }
+
+  // A retried turn has a run per attempt. Only the latest attempt's reply
+  // ends the turn, so an earlier, failed attempt does not keep its own actions.
+  const latestRunByTurn = new Map<string, CanonicalChatRun>();
+  for (const run of detail.runs) {
+    const latest = latestRunByTurn.get(run.turnId);
+    if (!latest || run.attempt > latest.attempt) latestRunByTurn.set(run.turnId, run);
+  }
+  // Run history is capped independently of messages. An omitted run is not
+  // evidence that its attempt is latest; use the message's durable turn ID
+  // to keep only that turn's last visible reply when run metadata is absent.
+  const isLatestAttempt = (message: CanonicalChatMessage, run: CanonicalChatRun | undefined) => {
+    const turnId = message.turnId ?? run?.turnId;
+    if (!turnId) return false;
+    const latest = latestRunByTurn.get(turnId);
+    return (!latest || latest.id === message.runId)
+      && lastAssistantSeqByTurn.get(turnId) === message.seq;
+  };
 
   const transcript = ordered.map((message): TranscriptMessage => {
     const receipt = routineReceiptMessage(message, detail.record?.chat.id);
@@ -196,6 +224,9 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
       isRunning: run ? !TERMINAL_RUN_STATUSES.has(run.status) : false,
+      ...(message.role === "assistant" && (!message.runId || (isRunsLastAssistantMessage && isLatestAttempt(message, run)))
+        ? { endsTurn: true as const }
+        : {}),
       createdAt: Date.parse(message.createdAt),
     };
   }).reverse(); // Newest-first, matching the inverted transcript FlatList.
