@@ -286,7 +286,9 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const { git } = await work().git(caller(c), slug, taskId);
+      const who = caller(c);
+      // The read is open to the caller; storing the refreshed summary goes behind the write fence.
+      const { git } = await work().git(who, slug, taskId, (run) => write(who, slug, run));
       return c.json({ git });
     } catch (error: unknown) { return respond(c, error); }
   });

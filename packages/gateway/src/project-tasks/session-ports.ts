@@ -48,7 +48,8 @@ export interface ProjectChat {
 }
 
 export interface ChatPort {
-  create(ownerScope: OwnerScope, input: { clientRequestId: string; title: string; projectId: string }): Promise<{ id: string; revision: number }>;
+  /** `worktreeId` becomes the chat's default root, so turns without one (the composer) still run in the task worktree. */
+  create(ownerScope: OwnerScope, input: { clientRequestId: string; title: string; projectId: string; worktreeId?: string }): Promise<{ id: string; revision: number }>;
   /** Admit the chat's first turn; idempotent on `clientRequestId`. */
   admitFirstTurn(input: {
     principal: RequestPrincipal;
@@ -89,6 +90,8 @@ export interface TerminalPort {
     harness?: string;
   }): Promise<{ tabId: string }>;
   listForProject(projectId: string): Promise<ProjectTerminalTab[]>;
+  /** Refs (`term.<workspaceId>.<tabId>`) of every tab the project's workspaces still hold, in any status. */
+  existingRefs(projectId: string): Promise<string[]>;
   /** Agent status of every live tab, keyed by `term.<workspaceId>.<tabId>`. */
   statuses(): Promise<Record<string, TaskAgentStatus>>;
 }

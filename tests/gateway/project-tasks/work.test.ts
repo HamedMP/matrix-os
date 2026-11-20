@@ -15,6 +15,7 @@ import { ProjectTaskWork, taskBranchName } from "../../../packages/gateway/src/p
 import { PullRequestCache } from "../../../packages/gateway/src/project-tasks/pr-cache.js";
 import { createProjectTaskRoutes } from "../../../packages/gateway/src/project-tasks/routes.js";
 import type { PullRequestLookup, TaskSessionPorts } from "../../../packages/gateway/src/project-tasks/session-ports.js";
+import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence.js";
 
 const OWNER = { type: "user" as const, id: "user_owner" };
 const PROJECT = { id: "proj_demo", slug: "board-demo", defaultBranch: "main" };
@@ -26,7 +27,7 @@ function fakePorts() {
   const state = {
     git: true,
     worktrees: new Map<string, { id: string; path: string; branch: string }>(),
-    chats: new Map<string, { id: string; title: string; projectId: string | null; requestId: string }>(),
+    chats: new Map<string, { id: string; title: string; projectId: string | null; requestId: string; defaultWorktreeId?: string }>(),
     tabs: new Map<string, { workspaceId: string; tabId: string; name: string; cwd: string; env: Record<string, string> }>(),
     turns: [] as Array<{ chatId: string; clientRequestId: string; text: string; executionRoot: unknown }>,
     statuses: {} as Record<string, TaskAgentStatus>,
@@ -54,11 +55,19 @@ function fakePorts() {
         const existing = [...state.chats.values()].find((chat) => chat.requestId === input.clientRequestId);
         if (existing) return { id: existing.id, revision: 0 };
         const id = `chat_${state.chats.size + 1}`;
-        state.chats.set(id, { id, title: input.title, projectId: input.projectId, requestId: input.clientRequestId });
+        state.chats.set(id, {
+          id, title: input.title, projectId: input.projectId, requestId: input.clientRequestId,
+          ...(input.worktreeId ? { defaultWorktreeId: input.worktreeId } : {}),
+        });
         return { id, revision: 0 };
       },
       async admitFirstTurn(input) { state.turns.push(input); },
-      async describe(_owner, ids) { return ids.flatMap((id) => (state.chats.has(id) ? [state.chats.get(id)!] : [])); },
+      async describe(_owner, ids) {
+        return ids.flatMap((id) => {
+          const chat = state.chats.get(id);
+          return chat ? [{ id: chat.id, title: chat.title, projectId: chat.projectId }] : [];
+        });
+      },
       async listForProject(_owner, projectId) { return [...state.chats.values()].filter((chat) => chat.projectId === projectId); },
       async statuses(_owner, ids) { return Object.fromEntries(ids.filter((id) => state.statuses[id]).map((id) => [id, state.statuses[id]!])); },
     },
@@ -69,6 +78,7 @@ function fakePorts() {
         return { tabId: input.tabId };
       },
       async listForProject() { return [...state.tabs.values()].map(({ workspaceId, tabId, name }) => ({ workspaceId, tabId, name })); },
+      async existingRefs() { return [...state.tabs.values()].map(({ workspaceId, tabId }) => `term.${workspaceId}.${tabId}`); },
       async statuses() { return { ...state.statuses }; },
     },
     pullRequests: {
@@ -88,6 +98,8 @@ describe("project task start work, sessions and pull requests", () => {
   let fake: ReturnType<typeof fakePorts>;
   let sessions: ProjectTaskSessionRepository;
   let clock = 0;
+  let fenceClosed = false;
+  const fenced: string[] = [];
 
   async function build() {
     db = new Kysely<ProjectTaskDatabase>({ dialect: (await createTestPGlite()).dialect });
@@ -114,8 +126,16 @@ describe("project task start work, sessions and pull requests", () => {
     clock = 1_000_000;
     const work = new ProjectTaskWork({ tasks, sessions, ports: fake.ports, cache: new PullRequestCache(500, 60_000, () => clock) });
     app = new Hono();
+    fenceClosed = false;
+    fenced.length = 0;
     app.route("/", createProjectTaskRoutes({
       service: tasks, work, getOwnerScope: () => OWNER, getPrincipal: () => ({ userId: OWNER.id, source: "jwt" }) as never,
+      projectOperationAdmission: {
+        async withLegacyAdmission(input, operation) {
+          if (fenceClosed) { fenced.push(input.projectId); throw new ProjectFenceError("fenced"); }
+          return operation();
+        },
+      },
     }));
   }
 
@@ -360,6 +380,73 @@ describe("project task start work, sessions and pull requests", () => {
     expect((await call("POST", `/tasks/${task.id}/pull-request`, {})).status).toBe(400);
     expect((await call("POST", `/tasks/${task.id}/start`, { kind: "chat", branch: "evil" })).status).toBe(400);
     expect((await call("POST", `/tasks/${task.id}/start`, { kind: "chat", clientRequestId: "nope" })).status).toBe(400);
+  });
+
+  it("keeps the task worktree as the chat's default root when no model is selected", async () => {
+    const task = await create("Composer later");
+    const body = StartTaskResponseSchema.parse((await start(task, { kind: "chat", clientRequestId: "req_composer" })).body);
+    expect(fake.state.turns).toEqual([]);
+    expect(fake.state.chats.get(body.session.ref)).toMatchObject({ projectId: PROJECT.id, defaultWorktreeId: body.task.worktreeId });
+  });
+
+  it("refreshes the PR after 60 s even when the board keeps reading it", async () => {
+    const task = await create("Busy reader");
+    await start(task, { kind: "terminal", clientRequestId: "req_reader" });
+    fake.state.pr = { status: "ok", pullRequest: { number: 3, url: "https://github.com/o/r/pull/3", state: "open", checks: "pending", review: "none" } };
+    await call("GET", `/tasks/${task.id}/git`);
+    expect(fake.state.prCalls).toBe(1);
+    clock += 40_000;
+    await call("GET", `/tasks/${task.id}/git`);
+    expect(fake.state.prCalls).toBe(1);
+    clock += 30_000;
+    await call("GET", `/tasks/${task.id}/git`);
+    expect(fake.state.prCalls).toBe(2);
+  });
+
+  it("serves git state but skips storing the PR and automation when the project fence rejects writes", async () => {
+    const task = await create("Fenced", { status: "in_progress" });
+    await start(task, { kind: "terminal", clientRequestId: "req_fenced" });
+    fake.state.pr = { status: "ok", pullRequest: { number: 9, url: "https://github.com/o/r/pull/9", state: "open", checks: "passing", review: "none" } };
+    fenceClosed = true;
+    const response = await call("GET", `/tasks/${task.id}/git`);
+    expect(response.status).toBe(200);
+    expect(TaskGitResponseSchema.parse(await response.json()).git).toMatchObject({ prStatus: "ok", pullRequest: { number: 9 } });
+    expect(fenced).toEqual([PROJECT.id]);
+    fenceClosed = false;
+    expect(await get(task)).toMatchObject({ status: "in_progress", pullRequest: null });
+    clock += 61_000;
+    await call("GET", `/tasks/${task.id}/git`);
+    expect(await get(task)).toMatchObject({ status: "in_review", pullRequest: { number: 9 } });
+  });
+
+  it("marks deleted chats and closed tabs unavailable and does not count them toward the session limit", async () => {
+    const task = await create("Stale");
+    const chat = StartTaskResponseSchema.parse((await start(task, { kind: "chat", clientRequestId: "req_stale_chat" })).body);
+    const tab = StartTaskResponseSchema.parse((await start(task, { kind: "terminal", clientRequestId: "req_stale_tab" })).body);
+    expect((await get(task)).sessions.map((session) => session.unavailable)).toEqual([undefined, undefined]);
+
+    fake.state.chats.delete(chat.session.ref);
+    fake.state.tabs.delete(tab.session.ref.split(".")[2]!);
+    const stale = await get(task);
+    expect(stale.sessions.map((session) => [session.ref, session.unavailable, session.agentStatus])).toEqual([
+      [chat.session.ref, true, "idle"], [tab.session.ref, true, "idle"],
+    ]);
+
+    for (let index = 0; index < 16; index += 1) {
+      expect((await start(task, { kind: "terminal", clientRequestId: `req_live${index}` })).status).toBe(201);
+    }
+    const full = await get(task);
+    expect(full.sessions.filter((session) => !session.unavailable)).toHaveLength(16);
+    expect(full.sessions.some((session) => session.unavailable)).toBe(false);
+    expect(full.sessions.filter((session) => session.role === "main")).toHaveLength(1);
+    expect((await start(task, { kind: "terminal", clientRequestId: "req_live16" })).status).toBe(409);
+  });
+
+  it("keeps sessions available when the liveness source fails", async () => {
+    const task = await create("Flaky source");
+    await start(task, { kind: "chat", clientRequestId: "req_flaky_source" });
+    fake.ports.chats.describe = async () => { throw new Error("chat store down"); };
+    expect((await get(task)).sessions.map((session) => session.unavailable)).toEqual([undefined]);
   });
 
 });

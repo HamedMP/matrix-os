@@ -82,6 +82,8 @@ export const TaskSessionSchema = z.object({
   role: z.enum(["main", "extra"]),
   agentStatus: TaskAgentStatusSchema,
   harness: z.string().min(1).max(80).optional(),
+  /** The chat was deleted or archived, or the terminal tab closed; the link stays until it is detached or replaced. */
+  unavailable: z.boolean().optional(),
 });
 export type TaskSession = z.infer<typeof TaskSessionSchema>;
 

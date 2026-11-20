@@ -129,6 +129,8 @@ describe("board session ports over the terminal runtime", () => {
       listAgentStatuses: async () => [{ ref: { workspaceId: WS, tabId: "tt_live" }, status: "blocked" }],
     });
     expect(await terminals.listForProject("proj_demo")).toEqual([{ workspaceId: WS, tabId: "tt_live", name: "tt_live" }]);
+    // Existence is any status: an exited tab is still there to reopen; only a closed tab is gone.
+    expect(await terminals.existingRefs("proj_demo")).toEqual([`term.${WS}.tt_live`, `term.${WS}.tt_chat`, `term.${WS}.tt_dead`]);
     expect(await terminals.statuses()).toEqual({ [`term.${WS}.tt_live`]: "blocked" });
   });
 
