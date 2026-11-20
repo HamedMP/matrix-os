@@ -1,5 +1,6 @@
 import { terminalAgentToolDefinitions, type TerminalAgentKernelTools } from "./tools/terminal-agents.js";
 import { ownerDataImportToolDefinitions } from "./tools/data-imports.js";
+import { projectTaskKernelContext, projectTaskToolDefinitions, type ProjectTaskKernelBinding } from "./tools/project-tasks.js";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -85,7 +86,10 @@ export async function createIpcServer(
   osViewTools?: OsViewAgentTools,
   ownerAudioTranscriber?: OwnerAudioTranscriber,
   terminalTools?: TerminalAgentKernelTools,
+  projectTasks?: ProjectTaskKernelBinding,
 ) {
+  // Resolved and verified now: a broken binding fails the run's setup, not a later tool call.
+  const projectTaskContext = projectTasks ? projectTaskKernelContext(projectTasks) : undefined;
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
     ? createTranscribeAudioToolHandler({ homePath, transcriber: ownerAudioTranscriber })
@@ -97,6 +101,9 @@ export async function createIpcServer(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )),
       ...(terminalTools ? terminalAgentToolDefinitions(terminalTools).map(definition => tool(
+        definition.name, definition.description, definition.schema.shape, definition.handler,
+      )) : []),
+      ...(projectTaskContext ? projectTaskToolDefinitions(projectTaskContext).map(definition => tool(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )) : []),
       tool(

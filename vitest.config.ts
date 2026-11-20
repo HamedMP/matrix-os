@@ -87,6 +87,7 @@ export default defineConfig({
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
       "@matrix-os/contracts/preview-pair-artifact": path.resolve(__dirname, "packages/contracts/src/preview-pair-artifact.ts"),
       "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
+      "@matrix-os/contracts/project-task-client": path.resolve(__dirname, "packages/contracts/src/project-task-client.ts"),
       "@matrix-os/contracts/preview-pair-control": path.resolve(__dirname, "packages/contracts/src/preview-pair-control.ts"),
       "@matrix-os/contracts/preview-pair": path.resolve(__dirname, "packages/contracts/src/preview-pair.ts"),
       "@matrix-os/contracts/project-tasks": path.resolve(__dirname, "packages/contracts/src/project-tasks.ts"),
