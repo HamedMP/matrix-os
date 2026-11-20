@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { MessageBoardClient } from "./client.js";
-import { AutomationPanel } from "./AutomationPanel.js";
 import { ChannelSidebar, type BoardSidePanel } from "./ChannelSidebar.js";
 import { buildChannelTree, channelScopeLabel } from "./model.js";
 import { EmptyBoard, NewThreadForm } from "./NewThreadForm.js";
@@ -126,19 +125,11 @@ export function MessageBoard({ client, initialBoard, headerAccessory }: MessageB
     </header>
     <div className="flex min-h-0 flex-1">
       {showPane(0) ? <div className={`${capacity === 1 ? "flex-1" : "w-56 shrink-0 border-r"} min-h-0`} style={{ ...subtleBorder, background: "var(--bg-surface, var(--card))" }}>
-        <ChannelSidebar boards={board.boards.data ?? []} board={board.board} tree={tree} totalUnread={totalUnread} scope={board.scope}
-          activeWatchers={(board.watchers.data ?? []).filter((watcher) => watcher.enabled).length}
-          activeSchedules={(board.schedules.data ?? []).length} panel={panel}
+        <ChannelSidebar boards={board.boards.data ?? []} board={board.board} tree={tree} totalUnread={totalUnread} scope={board.scope} panel={panel}
           onSelectBoard={(name) => { board.selectBoard(name); setDetail(null); setPanel(null); setFocus(1); }}
-          onSelectScope={(scope) => { board.selectScope(scope); setDetail(null); setPanel(null); setFocus(1); }}
-          onOpenPanel={(next) => { setPanel(next); setDetail(null); board.selectThread(null); setFocus(1); }} />
+          onSelectScope={(scope) => { board.selectScope(scope); setDetail(null); setPanel(null); setFocus(1); }} />
       </div> : null}
-      {panel && (showPane(1) || showPane(2))
-        ? <div className="min-h-0 min-w-0 flex-1">
-            <AutomationPanel panel={panel} watchers={board.watchers} schedules={board.schedules} viewerId={viewerId} nowMs={nowMs}
-              mutate={board.mutate} onClose={() => setPanel(null)} onBack={backToSidebar} onOpenThread={openThread} />
-          </div>
-        : boardEmpty && activeDetail !== "new" && (showPane(1) || showPane(2))
+      {boardEmpty && activeDetail !== "new" && (showPane(1) || showPane(2))
           ? <div className="min-h-0 min-w-0 flex-1"><EmptyBoard boardName={board.board} onPost={startNew} onBack={backToSidebar} /></div>
           : <>
               {showPane(1) ? <div className={`${!showPane(2) ? "flex-1" : capacity === 3 ? "w-[22rem] shrink-0 border-r" : "w-[45%] shrink-0 border-r"} min-h-0 min-w-0`} style={subtleBorder}>

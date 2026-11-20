@@ -16,17 +16,18 @@ export interface ChannelSidebarProps {
   tree: readonly ChannelTreeNode[];
   totalUnread: number;
   scope: string;
-  activeWatchers: number;
-  activeSchedules: number;
-  panel: BoardSidePanel | null;
+  activeWatchers?: number;
+  activeSchedules?: number;
+  panel?: BoardSidePanel | null;
   onSelectBoard(name: string): void;
   onSelectScope(scope: string): void;
-  onOpenPanel(panel: BoardSidePanel): void;
+  /** Shows the Automation entries; omitted where watchers and schedules are not offered. */
+  onOpenPanel?(panel: BoardSidePanel): void;
 }
 
 /** Left pane: board switcher, channels grouped by prefix with unread counts, and automation entries. */
 export function ChannelSidebar({
-  boards, board, tree, totalUnread, scope, activeWatchers, activeSchedules, panel, onSelectBoard, onSelectScope, onOpenPanel,
+  boards, board, tree, totalUnread, scope, activeWatchers = 0, activeSchedules = 0, panel = null, onSelectBoard, onSelectScope, onOpenPanel,
 }: ChannelSidebarProps) {
   return <nav aria-label="Channels" className="flex h-full min-h-0 flex-col">
     <div className="flex items-center gap-1 border-b px-2 py-2" style={subtleBorder}>
@@ -46,6 +47,7 @@ export function ChannelSidebar({
         </li>
         {tree.map((node) => <ChannelNode key={node.path} node={node} scope={scope} panelOpen={panel !== null} onSelectScope={onSelectScope} />)}
       </ul>
+      {onOpenPanel ? <>
       <p className={sectionLabelClass} style={textTertiary}>AUTOMATION</p>
       <ul className="flex flex-col gap-px">
         <li>
@@ -57,6 +59,7 @@ export function ChannelSidebar({
             active={panel === "schedules"} onSelect={() => onOpenPanel("schedules")} />
         </li>
       </ul>
+      </> : null}
     </div>
   </nav>;
 }
