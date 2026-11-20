@@ -45,7 +45,7 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
   const profiles = [...new Set(actors.flatMap((actor) => (actor.profile ? [actor.profile] : [])))].sort();
   const messageHandlers = (message: BoardMessage) => ({
     onReact: (emoji: string, on: boolean) => mutate((client, board) => client.react(board, message.id, emoji, on)),
-    onEdit: (text: string) => mutate((client, board) => client.edit(board, message.id, text, message.revision)),
+    onEdit: (text: string, revision: number) => mutate((client, board) => client.edit(board, message.id, text, revision)),
     onDelete: () => mutate((client, board) => client.remove(board, message.id)),
   });
 
@@ -72,12 +72,7 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
     <div className="min-h-0 flex-1 overflow-y-auto pb-2 pt-2">
       {task
         ? <TaskPanel taskId={root.id} task={task} needs={needs} viewerId={viewerId} profiles={profiles} nowMs={nowMs} mutate={mutate} onOpenThread={onOpenThread} />
-        : !root.deletedAt ? <div className="mx-3 mb-2">
-            <button type="button" className={actionButtonClass} style={{ ...subtleBorder, ...textSecondary }}
-              onClick={() => void mutate((client, board) => client.createTask(board, root.id))}>
-              <HugeiconsIcon icon={CheckListIcon} size={14} aria-hidden /> Make this a task
-            </button>
-          </div> : null}
+        : !root.deletedAt ? <MakeTask onMake={() => mutate((client, board) => client.createTask(board, root.id))} /> : null}
       <div className="px-1">
         <MessageItem message={root} viewerId={viewerId} actors={actors} nowMs={nowMs} isRoot {...messageHandlers(root)} />
       </div>
@@ -128,5 +123,26 @@ function LabelEditor({ labels, onChange }: {
           <HugeiconsIcon icon={Add01Icon} size={11} aria-hidden /> Label
         </button>}
     {error ? <span role="alert" className="w-full text-[11px]" style={{ color: "var(--danger-text)" }}>{error}</span> : null}
+  </div>;
+}
+
+function MakeTask({ onMake }: { onMake(): Promise<MutationResult> }) {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const make = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await onMake();
+      if (!result.ok) setError(result.error);
+    } finally {
+      setPending(false);
+    }
+  };
+  return <div className="mx-3 mb-2">
+    <button type="button" disabled={pending} className={actionButtonClass} style={{ ...subtleBorder, ...textSecondary }} onClick={() => void make()}>
+      <HugeiconsIcon icon={CheckListIcon} size={14} aria-hidden /> Make this a task
+    </button>
+    {error ? <p role="alert" className="pt-1 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
   </div>;
 }

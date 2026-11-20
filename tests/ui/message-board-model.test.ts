@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeMentionQuery, availableTaskActions, buildChannelTree, channelInScope, filterThreads,
+  activeMentionQuery, availableTaskActions, buildChannelTree, channelInScope,
   formatLeaseCountdown, groupTasksByState, insertMention, matchesLabelFilter, parseLabelFilter,
   parseLabelInput, sortThreadsByActivity, validateChannelPath,
 } from "../../packages/ui/src/message-board/model";
@@ -99,26 +99,6 @@ describe("thread list", () => {
       summary("b", { lastActivityAt: "2026-11-19T11:00:00.000Z" }),
     ]);
     expect(sorted.map((thread) => thread.root.id)).toEqual(["c", "b", "a"]);
-  });
-
-  it("filters by label, author, task state and text together", () => {
-    const threads = [
-      summary("bug", { labels: { kind: "bug" }, by: fixer, task: task({ state: "claimed" }), text: "Fix flaky login test" }),
-      summary("docs", { labels: { kind: "docs" }, text: "Deploy notes" }),
-      summary("idea", { text: "Login page copy" }),
-    ];
-    expect(filterThreads(threads, { label: "kind=bug" }).map((t) => t.root.id)).toEqual(["bug"]);
-    expect(filterThreads(threads, { author: fixer.id }).map((t) => t.root.id)).toEqual(["bug"]);
-    expect(filterThreads(threads, { taskState: "claimed" }).map((t) => t.root.id)).toEqual(["bug"]);
-    expect(filterThreads(threads, { text: "LOGIN" }).map((t) => t.root.id)).toEqual(["bug", "idea"]);
-    expect(filterThreads(threads, { text: "login", label: "kind" }).map((t) => t.root.id)).toEqual(["bug"]);
-    expect(filterThreads(threads, { label: "Bad=" })).toHaveLength(3);
-  });
-
-  it("finds text in the latest reply too, but not in deleted roots", () => {
-    const reply = { ...summary("r").root, id: "reply", re: "x", text: "merging now" };
-    const threads = [summary("x", { latestReply: reply }), summary("gone", { text: "", root: { ...summary("gone").root, text: "", deletedAt: "2026-11-19T09:30:00.000Z" } })];
-    expect(filterThreads(threads, { text: "merging" }).map((t) => t.root.id)).toEqual(["x"]);
   });
 
   it("groups board tasks into queue order and leaves plain threads out", () => {

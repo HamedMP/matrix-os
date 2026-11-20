@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import {
-  BOARD_TEXT_MAX, BoardActorIdSchema, BoardCursorSchema, BoardMessageIdSchema, BoardNameSchema, BoardTaskStateSchema,
+  BOARD_EVENT_TYPES, BOARD_TEXT_MAX, BoardActorIdSchema, BoardActorSchema, BoardCursorSchema, BoardMessageIdSchema, BoardNameSchema, BoardTaskStateSchema,
   ChannelPathSchema, ChannelScopeSchema, LabelFilterSchema, LabelsSchema, ProfileNameSchema,
   type BoardEvent, type BoardTask,
 } from "#message-board-schemas";
@@ -120,6 +120,29 @@ export type BoardSocketFrame =
   | { type: "error"; reason: "unavailable" | "capacity" | "invalid_input" | "forbidden" };
 
 export const BoardSocketClientFrameSchema = z.object({ type: z.literal("ping") }).strict();
+
+const SocketEventSchema = z.object({
+  cursor: BoardCursorSchema,
+  type: z.enum(BOARD_EVENT_TYPES),
+  board: z.string().min(1).max(64),
+  createdAt: z.string().max(64),
+  actor: BoardActorSchema,
+  channel: z.string().max(200).optional(),
+  messageId: z.string().max(64).optional(),
+  threadId: z.string().max(64).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** Every server frame on `WS /ws/board/events`, checked by clients before anything is used. */
+export const BoardSocketServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ready"), cursor: BoardCursorSchema }),
+  z.object({ type: z.literal("event"), event: SocketEventSchema }),
+  z.object({ type: z.literal("heartbeat") }),
+  z.object({ type: z.literal("pong") }),
+  z.object({ type: z.literal("missed"), cursor: BoardCursorSchema }),
+  z.object({ type: z.literal("shutdown") }),
+  z.object({ type: z.literal("error"), reason: z.enum(["unavailable", "capacity", "invalid_input", "forbidden"]) }),
+]);
 
 export const BoardSocketQuerySchema = z.object({
   board: BoardNameSchema.optional(),

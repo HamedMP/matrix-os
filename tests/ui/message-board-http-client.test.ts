@@ -35,6 +35,15 @@ describe("HTTP message board client", () => {
     expect(calls.every((call) => call.signal instanceof AbortSignal)).toBe(true);
   });
 
+  it("sends filters and the Tasks view to the board so it filters before its limit", async () => {
+    const { fn, calls } = fetcher([[200, { threads: [] }]]);
+    const client = createHttpMessageBoardClient({ baseUrl: "http://gw", fetch: fn });
+    await client.listThreads("General", "dev", { label: "kind=bug", author: "agent:a", text: "login", taskState: "ready", tasksOnly: true, limit: 300 });
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/api/board/threads");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ channel: "dev", label: "kind=bug", by: "agent:a", text: "login", taskState: "ready", kind: "tasks", limit: "300", board: "General" });
+  });
+
   it("creates tasks through /tasks and maps failures to stable reasons only", async () => {
     const { fn, calls } = fetcher([
       [201, { root, task: { state: "ready" } }],
@@ -70,14 +79,20 @@ describe("HTTP message board client", () => {
         },
       });
       const seen: string[] = [];
-      const stop = client.subscribe("General", (event) => seen.push(event.cursor));
+      const resyncs: number[] = [];
+      const stop = client.subscribe("General", (event) => seen.push(event.cursor), () => resyncs.push(seen.length));
       await vi.advanceTimersByTimeAsync(0);
       const first = sockets[0]!;
       first.onopen?.({});
       first.onmessage?.({ data: JSON.stringify({ type: "ready", cursor: "4" }) });
       first.onmessage?.({ data: JSON.stringify({ type: "event", event: { cursor: "5", type: "message.posted", board: "General", createdAt: "x", actor: root.by } }) });
       first.onmessage?.({ data: "{not json" });
+      first.onmessage?.({ data: "null" });
+      first.onmessage?.({ data: JSON.stringify({ type: "event", event: { cursor: "../6", type: "message.posted", board: "General", createdAt: "x", actor: root.by } }) });
+      first.onmessage?.({ data: JSON.stringify({ type: "missed", cursor: "not-a-cursor" }) });
       expect(seen).toEqual(["5"]);
+      // A (re)connect or a missed frame asks the viewer to reload everything it shows.
+      expect(resyncs).toEqual([0]);
       await vi.advanceTimersByTimeAsync(20_000);
       expect(first.sent).toContain(JSON.stringify({ type: "ping" }));
       first.onclose?.({});

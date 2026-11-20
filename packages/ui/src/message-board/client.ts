@@ -1,6 +1,6 @@
 import type {
   BoardActor, BoardChannel, BoardEvent, BoardMessage, BoardSchedule, BoardSummary,
-  BoardThread, BoardThreadSummary, BoardWatcher,
+  BoardTaskState, BoardThread, BoardThreadSummary, BoardWatcher,
 } from "./types.js";
 
 export { MESSAGE_BOARD_ERROR_REASONS, type MessageBoardErrorReason } from "@matrix-os/contracts/message-board";
@@ -35,6 +35,16 @@ export interface LabelPatch {
 
 export type BoardEventListener = (event: BoardEvent) => void;
 
+export interface ThreadListQuery {
+  label?: string;
+  author?: string;
+  taskState?: BoardTaskState;
+  text?: string;
+  /** Board tasks only (the Tasks view). */
+  tasksOnly?: boolean;
+  limit?: number;
+}
+
 /**
  * Everything the viewer does goes through this interface, so the HTTP/WS
  * client for `/api/board` and test doubles are interchangeable.
@@ -45,8 +55,8 @@ export interface MessageBoardClient {
   listBoards(): Promise<BoardSummary[]>;
   listActors(board: string): Promise<BoardActor[]>;
   listChannels(board: string): Promise<BoardChannel[]>;
-  /** Threads in a channel, or a subtree when `channel` ends with `/`, or every channel for `*`. */
-  listThreads(board: string, channel: string): Promise<BoardThreadSummary[]>;
+  /** Threads in a channel, a subtree (`security/`) or `*`, filtered by the board before its limit applies. */
+  listThreads(board: string, channel: string, query?: ThreadListQuery): Promise<BoardThreadSummary[]>;
   getThread(board: string, rootId: string): Promise<BoardThread>;
   markRead(board: string, rootId: string): Promise<void>;
 
@@ -76,6 +86,9 @@ export interface MessageBoardClient {
   listSchedules(board: string): Promise<BoardSchedule[]>;
   cancelSchedule(board: string, scheduleId: string): Promise<void>;
 
-  /** Live events for a board; returns the unsubscribe function. */
-  subscribe(board: string, listener: BoardEventListener): () => void;
+  /**
+   * Live events for a board; returns the unsubscribe function. `onResync` runs
+   * when the stream (re)connects or reports missed events: reload everything.
+   */
+  subscribe(board: string, listener: BoardEventListener, onResync?: () => void): () => void;
 }

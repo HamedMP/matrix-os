@@ -6,7 +6,7 @@ import { Add01Icon, ArrowLeft01Icon, Search01Icon, SearchRemoveIcon, Tag01Icon }
 import { POPOVER_LAYER } from "../layering.js";
 import { ChatComposerSelect } from "../chat/composer/ChatComposerSelect.js";
 import {
-  actorLabel, filterThreads, formatLeaseCountdown, groupTasksByState, parseLabelFilter, sortThreadsByActivity,
+  actorLabel, formatLeaseCountdown, groupTasksByState, parseLabelFilter, sortThreadsByActivity,
   TASK_QUEUE_ORDER, TASK_STATE_LABELS, threadTitle,
 } from "./model.js";
 import {
@@ -23,6 +23,9 @@ export interface ThreadListProps {
   error: string | null;
   mode: BoardViewMode;
   filter: BoardThreadFilter;
+  /** The page size asked for; a full page offers "Show more". */
+  limit: number;
+  onShowMore(): void;
   actors: readonly BoardActor[];
   viewerId: string;
   nowMs: number;
@@ -39,8 +42,10 @@ export interface ThreadListProps {
 /** Middle pane: threads newest activity first, or the same scope as a queue grouped by task state. */
 export function ThreadList(props: ThreadListProps) {
   const { title, threads, status, error, mode, filter, viewerId, selectedId, onSelect, onFilterChange, onNewThread, onRetry, onBack } = props;
-  const visible = useMemo(() => sortThreadsByActivity(filterThreads(threads ?? [], filter)), [threads, filter]);
+  // The board filters before its page limit; the list only orders and groups what came back.
+  const visible = useMemo(() => sortThreadsByActivity(threads ?? []), [threads]);
   const groups = useMemo(() => groupTasksByState(visible), [visible]);
+  const empty = mode === "tasks" ? groups.length === 0 : visible.length === 0;
   const filtered = Boolean(filter.text || filter.label || filter.author || filter.taskState);
   const labelInvalid = Boolean(filter.label?.trim()) && parseLabelFilter(filter.label ?? "") === null;
 
@@ -69,7 +74,7 @@ export function ThreadList(props: ThreadListProps) {
         <button type="button" className={`${chipClass} mt-2`} onClick={onRetry}>Try again</button>
       </div>
         : !threads ? <p role="status" className="px-3 py-8 text-center text-xs" style={textTertiary}>Loading threads…</p>
-        : visible.length === 0 ? <EmptyList filtered={filtered} mode={mode} onClear={() => onFilterChange({ text: "", label: "", author: undefined, taskState: undefined })} />
+        : empty ? <EmptyList filtered={filtered} mode={mode} onClear={() => onFilterChange({ text: "", label: "", author: undefined, taskState: undefined })} />
         : mode === "threads"
           ? <ul aria-label="Threads" className="flex flex-col gap-px">
               {visible.map((thread) => <li key={thread.root.id}>
@@ -86,6 +91,9 @@ export function ThreadList(props: ThreadListProps) {
                 </li>)}
               </ul>
             </section>)}
+      {threads && threads.length >= props.limit && props.limit < 500
+        ? <button type="button" className={`${chipClass} mx-auto mt-2 flex`} style={textSecondary} onClick={props.onShowMore}>Show more</button>
+        : null}
       {status === "error" && threads ? <p role="alert" className="px-3 pt-2 text-xs" style={textSecondary}>
         {error} <button type="button" className="underline" onClick={onRetry}>Try again</button>
       </p> : null}
