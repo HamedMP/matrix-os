@@ -92,7 +92,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   return [...firstClass.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) })), ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }
 
-const messageBoardLauncherApp = (): AppEntry => ({ name: "Message Board", path: "__message-board__", iconUrl: iconUrlForSlug("messages") });
+const messageBoardLauncherApp = (): AppEntry => ({ name: "Message Board", path: "__message-board__", iconUrl: webShellIconUrlForApp({ path: "__message-board__" }) });
 
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
