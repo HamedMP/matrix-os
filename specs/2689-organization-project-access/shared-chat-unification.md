@@ -201,3 +201,12 @@ and current shared authorization; no replay, timeout increase or bypass.
 Regression tests hold the real repository claim result or adapter preparation
 while an actual owner detail read runs, then require the original shared request
 to complete with one reply. Run them on disposable PostgreSQL as well as locally.
+
+The Electron owner visual check also showed a duplicate header: project routing
+dropped the existing shared toolbar host and metadata callback. Always reserve
+that toolbar host in Work chrome and forward it through the canonical project
+route, so the same shared controls portal into the title row for owners and
+peers. Extract title rendering from WorkTab first, retaining its existing rename
+workflow. The production project-route regression must find the actual shared
+discussion/access controls inside the supplied toolbar, without an extra session
+subheader. Recheck both light peer and dark owner layouts in Electron.
