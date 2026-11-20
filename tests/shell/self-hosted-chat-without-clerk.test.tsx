@@ -16,7 +16,7 @@ vi.mock("@clerk/nextjs", () => {
   const missingProvider = () => {
     throw new Error("@clerk/react: useAuth can only be used within the <ClerkProvider /> component.");
   };
-  return { useAuth: missingProvider, useUser: missingProvider, useOrganization: missingProvider };
+  return { useAuth: missingProvider, useUser: missingProvider, useOrganization: missingProvider, useOrganizationList: missingProvider, useClerk: missingProvider };
 });
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -30,6 +30,7 @@ vi.mock("@matrix-os/ui", async original => ({ ...await original<typeof import("@
 }));
 
 import { ChatApp } from "../../shell/src/components/ChatApp";
+import { FileBrowser } from "../../shell/src/components/file-browser/FileBrowser";
 import { CanonicalRoutineActionMessage } from "../../shell/src/components/chat/CanonicalRoutineActionMessage";
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
 
@@ -60,4 +61,13 @@ it("opens a shared Chat view without ClerkProvider and explains that sharing is 
 it("renders a routine action confirmation in a Chat message without ClerkProvider", () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   expect(() => render(<CanonicalRoutineActionMessage challengeId="rac_10000000000000000000000000" />)).not.toThrow();
+});
+
+it("opens the Files app, including its download controls, without ClerkProvider", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: [] })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}>
+    <FileBrowser windowId="self-hosted-files" />
+  </OrganizationStateProvider>);
+  expect(await screen.findByRole("group", { name: "File browser" })).toBeTruthy();
 });
