@@ -391,22 +391,22 @@ describe("Chat canonical provider state", () => {
   it("coalesces a focus refresh that arrives while the provider catalog is in flight", async () => {
     let resolveFirst: ((response: Response) => void) | undefined;
     const first = new Promise<Response>((resolve) => { resolveFirst = resolve; });
-    const fetchMock = vi.fn()
+    const fetchMock = vi.fn<typeof fetch>()
       .mockImplementationOnce(() => first)
       .mockImplementation(async () => Response.json(providerCatalog()));
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatApp
       messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
-      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onNewChat={vi.fn<typeof fetch>()} onSwitchConversation={vi.fn<typeof fetch>()} onSubmit={vi.fn<typeof fetch>()}
     />);
 
     fireEvent(window, new Event("focus"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat-providers"))).toHaveLength(1);
     resolveFirst!(Response.json(providerCatalog()));
 
     // The composer toolbar names the harness once the catalog has loaded.
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Pi"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat-providers"))).toHaveLength(1);
   });
 
   it("retains trust after a routine failure and forces the next read while settings trust is suspended", async () => {

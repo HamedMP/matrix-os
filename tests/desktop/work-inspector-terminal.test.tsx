@@ -7,7 +7,7 @@ import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
 import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
-import { SideChatDraftContext } from "@desktop/renderer/src/features/work/SideChatDraftContext";
+import { SideChatDraftContext } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
 import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
