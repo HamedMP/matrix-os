@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useAuth } from "@clerk/clerk-expo";
-import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 import FingerPrintIcon from "@hugeicons/core-free-icons/FingerPrintIcon";
@@ -22,14 +21,7 @@ import {
   getSupportedBiometricTypes,
   isBiometricAvailable,
 } from "@/lib/auth";
-import {
-  disablePushNotifications,
-  enablePushNotifications,
-  isPushNotificationsEnabled,
-} from "@/lib/push";
-import { queuePushChange, subscribePushTurnedOff } from "@/lib/push-registration-sync";
-import { fetchActiveComputer, mobileQueryKeys } from "@/lib/requests";
-import { getSettings, HOSTED_GATEWAY_URL, saveSettings, type AppSettings } from "@/lib/storage";
+import { getSettings, saveSettings, type AppSettings } from "@/lib/storage";
 import { applyMobileThemePreference, type MobileThemePreference } from "@/lib/theme-preference";
 
 const THEME_LABELS: Record<MobileThemePreference, string> = {
@@ -39,25 +31,14 @@ const THEME_LABELS: Record<MobileThemePreference, string> = {
 };
 
 export default function AppSettingsScreen() {
-  const { getToken, isLoaded, isSignedIn, userId } = useAuth();
+  const router = useRouter();
   const { theme: uiTheme } = useUnistyles();
-  const authEnabled = Boolean(isLoaded && isSignedIn && userId);
-  const activeComputer = useQuery({
-    queryKey: mobileQueryKeys.activeComputer(userId ?? "signed-out"),
-    enabled: authEnabled,
-    queryFn: async () => {
-      const token = await getToken();
-      if (!token) throw new Error("Computer unavailable.");
-      return fetchActiveComputer(token);
-    },
-  });
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [biometricLabel, setBiometricLabel] = useState("Biometric lock");
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [themeSheetVisible, setThemeSheetVisible] = useState(false);
   // The value a switch was just turned to, shown until the change settles.
   const [biometricTarget, setBiometricTarget] = useState<boolean | null>(null);
-  const [pushTarget, setPushTarget] = useState<boolean | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -65,10 +46,9 @@ export default function AppSettingsScreen() {
       getSettings(),
       isBiometricAvailable(),
       getSupportedBiometricTypes(),
-      isPushNotificationsEnabled(),
-    ]).then(([storedSettings, available, types, pushEnabled]) => {
+    ]).then(([storedSettings, available, types]) => {
       if (!active) return;
-      setSettings({ ...storedSettings, notificationsEnabled: pushEnabled });
+      setSettings(storedSettings);
       setBiometricAvailable(available);
       setBiometricLabel(available ? `${getBiometricLabel(types)} lock` : "Biometric lock");
     }).catch((error: unknown) => {
@@ -81,11 +61,6 @@ export default function AppSettingsScreen() {
       active = false;
     };
   }, []);
-
-  // Re-registration turns push off when the phone refuses permission; follow it.
-  useEffect(() => subscribePushTurnedOff(() => {
-    setSettings((current) => current ? { ...current, notificationsEnabled: false } : current);
-  }), []);
 
   if (!settings) {
     return (
@@ -115,14 +90,12 @@ export default function AppSettingsScreen() {
             value={biometricTarget ?? settings.biometricEnabled}
             onValueChange={(enabled) => void changeBiometric(enabled)}
           />
-          <SettingsSwitchRow
+          <SettingsRow
             card
             title="Push notifications"
-            detail={activeComputer.data ? "Notifications from this computer" : "Connect a computer to enable"}
+            detail="Device permission and notification preferences"
             icon={Notification02Icon}
-            disabled={!activeComputer.data || pushTarget !== null}
-            value={pushTarget ?? settings.notificationsEnabled}
-            onValueChange={(enabled) => void changePush(enabled)}
+            onPress={() => router.push("/settings-detail/notifications" as never)}
           />
         </SettingsCardStack>
       </SettingsPage>
@@ -195,34 +168,6 @@ export default function AppSettingsScreen() {
       Alert.alert("Couldn’t update biometric lock", "Try again in a moment.");
     } finally {
       setBiometricTarget(null);
-    }
-  }
-
-  async function changePush(enabled: boolean) {
-    if (pushTarget !== null || !activeComputer.data) return;
-    setPushTarget(enabled);
-    try {
-      const token = await getToken();
-      if (!token) throw new Error("Authentication unavailable.");
-      const gatewayUrl = `${HOSTED_GATEWAY_URL}${activeComputer.data.gatewayPath}`;
-      // After any re-registration still running, so it cannot undo this change.
-      await queuePushChange(async () => {
-        if (enabled) {
-          await enablePushNotifications({ clerkToken: token, gatewayUrl });
-        } else {
-          await disablePushNotifications({ clerkToken: token, gatewayUrl });
-        }
-      });
-      await saveSettings({ notificationsEnabled: enabled });
-      setSettings((current) => current ? { ...current, notificationsEnabled: enabled } : current);
-    } catch (error: unknown) {
-      console.warn("[mobile] push setting failed", error instanceof Error ? error.name : "unknown");
-      Alert.alert(
-        enabled ? "Couldn’t enable notifications" : "Couldn’t disable notifications",
-        "Check notification permissions and try again.",
-      );
-    } finally {
-      setPushTarget(null);
     }
   }
 }

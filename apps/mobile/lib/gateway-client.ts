@@ -1,3 +1,5 @@
+import { notificationPreferencesRequest } from "@/lib/notification-preferences-client";
+import type { NotificationPreferences } from "@matrix-os/contracts/notifications";
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
   isSafeSessionId,
@@ -1011,6 +1013,14 @@ export class GatewayClient {
       logCodingAgentCatchWarning("/api/coding-agents/projects/:projectId/workspace unavailable", err);
       return { ok: false, error: "Project workspace unavailable" };
     }
+  }
+
+  getNotificationPreferences() {
+    return notificationPreferencesRequest((path, init) => this.fetchGateway(path, init));
+  }
+
+  updateNotificationPreferences(preferences: NotificationPreferences) {
+    return notificationPreferencesRequest((path, init) => this.fetchGateway(path, init), preferences);
   }
 
   async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
