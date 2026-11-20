@@ -10,7 +10,7 @@ import { boardFilterIsActive, matchesBoardFilter, groupTasksByStatus, type Board
 import { readBoardPreferences, writeBoardPreferences, type BoardPreferences, type PreferenceStorage } from "./board-preferences.js";
 import { focusRing, tone } from "./board-style.js";
 import { BoardToolbar } from "./BoardToolbar.js";
-import type { ProjectBoardClient } from "./client.js";
+import type { ProjectBoardClient , StartedTaskSession } from "./client.js";
 import { TaskDetail } from "./TaskDetail.js";
 import { BOARD_COLUMN_STATUSES, TASK_STATUS_LABEL, type ProjectTask, type TaskSession, type TaskStatus } from "./types.js";
 import { useProjectBoard } from "./use-project-board.js";
@@ -29,7 +29,7 @@ export interface ProjectBoardProps {
   /** Opens a task's chat or terminal in the surface's own Chat or Terminal; omitted, the open buttons are disabled. */
   onOpenSession?: (session: TaskSession) => void;
   /** A task started a chat or terminal; the surface refreshes its chat or terminal lists. */
-  onSessionStarted?: (session: TaskSession) => void;
+  onSessionStarted?: (session: StartedTaskSession) => void;
   active?: boolean;
 }
 

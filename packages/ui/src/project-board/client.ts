@@ -62,7 +62,7 @@ export interface ProjectBoardClient {
   listComments(taskId: string): Promise<readonly TaskComment[]>;
   addComment(taskId: string, body: string): Promise<TaskComment>;
   listActivity(taskId: string): Promise<readonly TaskActivity[]>;
-  startSession(taskId: string, input: StartSessionInput): Promise<TaskSession>;
+  startSession(taskId: string, input: StartSessionInput): Promise<StartedTaskSession>;
   listAttachableSessions(): Promise<readonly AttachableSession[]>;
   attachSession(taskId: string, session: AttachableSession): Promise<TaskSession>;
   detachSession(taskId: string, ref: string): Promise<ProjectTask>;
@@ -74,6 +74,9 @@ export interface ProjectBoardClient {
   /** Returns an unsubscribe function. */
   subscribe(listener: (event: ProjectBoardEvent) => void): () => void;
 }
+
+/** A started session, with the task's first message when the server did not send it (no model selected yet). */
+export type StartedTaskSession = TaskSession & { firstMessage?: string };
 
 export const PROJECT_BOARD_EVENT_TYPES = ["task.created", "task.updated", "task.moved", "task.deleted", "task.comment_added"] as const;
 export type ProjectBoardEventType = (typeof PROJECT_BOARD_EVENT_TYPES)[number];

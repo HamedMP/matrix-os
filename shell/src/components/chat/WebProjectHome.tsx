@@ -20,7 +20,7 @@ const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
  * Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat.
  * The Board view shows the project's task board from the gateway's task routes.
  */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, view = "overview", onViewChange, onProjectChatsChanged }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, view = "overview", onViewChange, onProjectChatsChanged, onTaskChatStarted }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -43,12 +43,14 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   onViewChange?: (view: ProjectHomeView) => void;
   /** The board created a chat in this project; the rail reloads its project chats. */
   onProjectChatsChanged?: () => void;
+  /** A task started a chat that has not run yet: open it with the task text in the composer. */
+  onTaskChatStarted?: (chatId: string, firstMessage: string) => void;
 }) {
   if (view === "board") {
     return <div className="flex min-h-0 flex-1 flex-col" data-slot="chat-project-board">
       <ProjectHomeHeader name={project.name} view={view} onViewChange={onViewChange} className="px-5 pb-3 pt-5" />
       <WebProjectBoard key={`${identity}/${project.id}`} gatewayUrl={gatewayUrl} project={project} onSelectChat={onSelectChat}
-        onProjectChatsChanged={onProjectChatsChanged} active={active} />
+        onProjectChatsChanged={onProjectChatsChanged} onTaskChatStarted={onTaskChatStarted} active={active} />
     </div>;
   }
   return <WebProjectOverview project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority}
@@ -57,8 +59,9 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
 }
 
 /** The project's board over the owner's gateway. Chats open in this Chats window; terminals in the durable Terminal window. */
-function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChanged, active }: {
-  gatewayUrl: string; project: WebProject; onSelectChat?: (chatId: string) => void; onProjectChatsChanged?: () => void; active: boolean;
+function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChanged, onTaskChatStarted, active }: {
+  gatewayUrl: string; project: WebProject; onSelectChat?: (chatId: string) => void; onProjectChatsChanged?: () => void;
+  onTaskChatStarted?: (chatId: string, firstMessage: string) => void; active: boolean;
 }) {
   const client = useMemo(() => isProjectBoardSlug(project.slug) ? createHttpProjectBoardClient({ gatewayUrl, projectSlug: project.slug }) : null,
     [gatewayUrl, project.slug]);
@@ -69,7 +72,13 @@ function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChan
   };
   if (!client) return <p role="alert" className="px-5 py-16 text-center text-[13px] text-muted-foreground">This project's board isn't available.</p>;
   return <ProjectBoard client={client} preferencesKey={boardPreferencesKey("web", project.id)} storage={projectBoardStorage()} active={active}
-    onOpenSession={openSession} onSessionStarted={(session) => { if (session.kind === "chat") onProjectChatsChanged?.(); }} />;
+    onOpenSession={openSession} onSessionStarted={(session) => {
+      if (session.kind !== "chat") return;
+      onProjectChatsChanged?.();
+      // No model was chosen yet, so the server returned the task text: open the chat with it in the composer.
+      const target = taskSessionTarget(session.ref);
+      if (session.firstMessage && target?.kind === "chat") onTaskChatStarted?.(target.chatId, session.firstMessage);
+    }} />;
 }
 
 function ProjectHomeHeader({ name, view, onViewChange, className }: { name: string; view: ProjectHomeView; onViewChange?: (view: ProjectHomeView) => void; className?: string }) {

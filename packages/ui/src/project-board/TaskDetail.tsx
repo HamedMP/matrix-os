@@ -4,7 +4,7 @@ import { FocusScope } from "@radix-ui/react-focus-scope";
 import { Archive, ArchiveRestore, Link2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { chipButtonClass, focusRing, tone } from "./board-style.js";
-import type { ProjectBoardClient, UpdateTaskInput } from "./client.js";
+import type { ProjectBoardClient, UpdateTaskInput , StartedTaskSession } from "./client.js";
 import { DescriptionEditor, TitleEditor } from "./TaskTextEditors.js";
 import { TaskDetailRail } from "./TaskDetailRail.js";
 import { TaskSessionPane, TaskSessionTabs, type TaskDetailTab } from "./TaskSessions.js";
@@ -28,7 +28,7 @@ export interface TaskDetailProps {
   run<T>(action: () => Promise<T>, failure: string): Promise<T | null>;
   onOpenSession?: (session: TaskSession) => void;
   /** A chat or terminal was created for the task, so surfaces can refresh their own lists. */
-  onSessionStarted?: (session: TaskSession) => void;
+  onSessionStarted?: (session: StartedTaskSession) => void;
 }
 
 /**

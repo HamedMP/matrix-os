@@ -176,6 +176,12 @@ describe("createHttpProjectBoardClient requests", () => {
     expect(calls.map((call) => call.body)).toEqual([{}, {}, {}]);
   });
 
+  it("keeps the first message the server returns when it did not start a turn", async () => {
+    const session = { ref: "chat_new", kind: "chat", title: "Chat 1", role: "main", agentStatus: "idle" } as const;
+    const { fetch } = fakeFetch(() => json({ task: task(1, { sessions: [session] }), session, firstMessage: "MOS-1: Task 1" }, 201));
+    expect(await client(fetch).startSession("task_1", { kind: "chat" })).toEqual({ ...session, firstMessage: "MOS-1: Task 1" });
+  });
+
   it("starts and attaches sessions and returns the task's session", async () => {
     const session = { ref: "chat_abc", kind: "chat", title: "Chat 1", role: "main", agentStatus: "working", harness: "claude" } as const;
     const { fetch, calls } = fakeFetch(
@@ -285,6 +291,19 @@ describe("createHttpProjectBoardClient subscribe", () => {
     expect(listener).toHaveBeenCalledWith({ type: "board.resync" });
     await vi.advanceTimersByTimeAsync(2_000);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("resyncs every 20s while quiet, because agent status changes publish no task events", async () => {
+    const quiet = () => events([]);
+    const { fetch } = fakeFetch(...Array.from({ length: 20 }, () => quiet));
+    const listener = vi.fn();
+    client(fetch).subscribe(listener);
+    await vi.advanceTimersByTimeAsync(0);
+    listener.mockClear();
+    await vi.advanceTimersByTimeAsync(18_000);
+    expect(listener).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(listener).toHaveBeenCalledWith({ type: "board.resync" });
   });
 
   it("does not advance the cursor past a page when a later page in the same poll fails", async () => {
