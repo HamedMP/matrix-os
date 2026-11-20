@@ -31,11 +31,12 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   // A new-chat request (Cmd/Ctrl+J, palette) shows the composer for this visit without changing the remembered view.
   const composeRequest = useProjectChatLauncher((s) => (s.composerRequest && (s.composerRequest.projectId === project.slug || s.composerRequest.projectId === project.id)
     ? s.composerRequest.requestId : null));
-  const [composeFor, setComposeFor] = useState<number | null>(null);
-  if (composeRequest !== null && composeRequest !== composeFor) setComposeFor(composeRequest);
-  const view: ProjectHomeView = composeFor !== null ? "overview" : remembered;
+  // Each request is honoured once: choosing a view ends the override even while the request is still pending.
+  const [compose, setCompose] = useState<{ handled: number | null; showing: boolean }>({ handled: null, showing: false });
+  if (composeRequest !== null && composeRequest !== compose.handled) setCompose({ handled: composeRequest, showing: true });
+  const view: ProjectHomeView = compose.showing ? "overview" : remembered;
   const setView = (next: ProjectHomeView) => {
-    setComposeFor(null);
+    setCompose((current) => ({ ...current, showing: false }));
     useProjectView.getState().setView(project.slug, next);
   };
   const board = showMetadata && view === "board";

@@ -149,3 +149,16 @@ it("shows the composer for a new-chat request on a project remembered as Board, 
   fireEvent.click(within(screen.getByRole("group", { name: "Project view" })).getByRole("button", { name: "Board" }));
   expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
 });
+
+it("lets Board end the composer override even while the new-chat request is still pending", async () => {
+  const { useProjectChatLauncher } = await import("@desktop/renderer/src/lib/project-chat");
+  connect();
+  useProjectView.getState().setView("alpha", "board");
+  renderLanding();
+  act(() => { useProjectChatLauncher.getState().requestComposer("alpha"); });
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("group", { name: "Project view" })).getByRole("button", { name: "Board" }));
+  expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
+  expect(useProjectChatLauncher.getState().composerRequest).not.toBeNull();
+  act(() => { useProjectChatLauncher.getState().consumeComposer("alpha"); });
+});
